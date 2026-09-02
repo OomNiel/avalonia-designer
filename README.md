@@ -36,13 +36,22 @@ parent + Grid cell boundaries for drag-to-re-cell).
 
 ## Getting started
 
-Prerequisites: **Node.js**, **.NET SDK** (8.0+), and the Avalonia tooling as needed.
+Prerequisites: **Node.js** and the **.NET SDK**. A .NET 8+ SDK is enough to build and run the
+bundled preview host; **creating/running generated projects needs a .NET SDK that supports
+`net10.0`** (e.g. .NET 10 SDK). Works on Linux, macOS and Windows.
 
 ```bash
 npm install          # ws, @xmldom/xmldom, typescript
 dotnet build host/PreviewerHost.csproj   # builds the C# renderer host
 npm run compile      # compiles src/ -> out/
 ```
+
+> **Version matrix & preview fidelity.** Generated projects target **`net10.0` + Avalonia 12.1.1**.
+> The bundled Previewer Host renders with **`net8.0` + Avalonia 11.0.10** (it auto-builds on first
+> use). The preview is therefore a close but not pixel-perfect match for Avalonia 12 apps — some
+> controls or custom types render as approximations. The designer is **opt-in**: `.axaml` files open
+> in the normal text editor by default; use **Avalonia: Open in Designer** (or the editor's tab
+> dropdown) to open them in the designer.
 
 Then press **F5** in this folder (`.vscode/launch.json` is pre-configured) to launch an
 Extension Development Host. The first time a designer opens, the extension spawns

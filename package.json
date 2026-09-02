@@ -2,14 +2,35 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "1.0.0",
+    "version": "1.0.0-beta.1",
     "publisher": "grumpy",
     "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/OomNiel/avalonia-designer.git"
+    },
+    "homepage": "https://github.com/OomNiel/avalonia-designer",
+    "bugs": {
+        "url": "https://github.com/OomNiel/avalonia-designer/issues"
+    },
     "engines": {
         "vscode": "^1.85.0"
     },
     "categories": [
-        "Other"
+        "Other",
+        "Visualization"
+    ],
+    "keywords": [
+        "avalonia",
+        "xaml",
+        "wysiwyg",
+        "designer",
+        "gui",
+        "ui",
+        "form",
+        "vb.net",
+        "vbnet",
+        "csharp"
     ],
     "main": "./out/extension.js",
     "activationEvents": [
