@@ -1,0 +1,15 @@
+.vscode/**
+**/*.map
+**/*.ts
+!out/**
+host/obj/**
+host/bin/**
+**/node_modules/.cache/**
+.gitignore
+# The automated test suite (runner, jsdom, generated test projects) is not part of the runtime extension.
+tests/**
+TEST_PLAN.md
+# Dev-only docs (kept out of the package; README/USER_MANUAL/CONTROLS stay in).
+NOTES.md
+NOTES_ARCHIVE.md
+SESSION.md

@@ -1,0 +1,12 @@
+{
+    "name": "avalonia-designer-tests",
+    "private": true,
+    "version": "1.0.0",
+    "description": "Test suite for the Avalonia Designer extension. Run from the workspace root with `npm test` (or `npm run test:runtime`).",
+    "scripts": {
+        "test": "node runner.js"
+    },
+    "dependencies": {
+        "jsdom": "^24.1.0"
+    }
+}

@@ -1,0 +1,1056 @@
+:root {
+    --bg: #1e1e1e;
+    --panel: #252526;
+    --panel-2: #2d2d30;
+    --border: #3c3c3c;
+    --fg: #cccccc;
+    --fg-dim: #8a8a8a;
+    --accent: #4fc3f7;
+    --accent-2: #1e90ff;
+    --sel: rgba(79, 195, 247, 0.15);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--vscode-font-family, system-ui, sans-serif);
+    font-size: 13px;
+    overflow: hidden;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* ---------- toolbar ---------- */
+#toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+
+#toolbar button {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+#toolbar button:hover {
+    background: #3a3a3d;
+}
+
+#btnNewForm {
+    color: #9ccc65;
+    font-weight: 600;
+}
+
+#zoomValue {
+    width: 48px;
+    text-align: center;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--fg);
+    font-size: 12px;
+}
+
+.sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border);
+    margin: 0 4px;
+}
+
+#status {
+    margin-left: auto;
+    color: var(--fg-dim);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 55%;
+}
+
+/* ---------- main ---------- */
+#main {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+#canvasWrap {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 24px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    background:
+        repeating-conic-gradient(#232323 0% 25%, #2a2a2a 0% 50%) 0 0 / 22px 22px;
+}
+
+#canvas {
+    position: relative;
+    overflow: hidden;
+    background: #ffffff;
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
+    flex: 0 0 auto;
+}
+
+#preview {
+    display: block;
+    width: 100%;
+    height: 100%;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+#overlayLayer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+#overlayLayer .ov {
+    position: absolute;
+    border: 1px solid rgba(0, 0, 0, 0.07);
+}
+
+#overlayLayer .ov.drop {
+    border: 1.5px dashed var(--accent);
+    background: var(--sel);
+}
+
+/* ---------- selection + handles ---------- */
+/* The selection box is pointer-events:none so clicks pass through to hit-testing even when it
+   covers the whole canvas (e.g. the locked Body). The resize handles stay pointer-events:auto,
+   and moving a control is grabbed by hit-testing the pointer on the canvas instead. */
+#selection.sel {
+    position: absolute;
+    pointer-events: none;
+    border: 1px dashed var(--accent);
+    background: var(--sel);
+    z-index: 20;
+}
+
+#selection.sel.dragging {
+    border: 2px solid var(--accent);
+    background: transparent;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+/* Locked design surface (the Body canvas): no drag cursor, no handles, a small lock badge. */
+#selection.sel.locked {
+    cursor: default;
+}
+
+#selection.sel .lock-badge {
+    position: absolute;
+    top: -18px;
+    right: -18px;
+    width: 18px;
+    height: 18px;
+    font-size: 12px;
+    line-height: 18px;
+    text-align: center;
+    background: var(--sel);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    pointer-events: none;
+}
+
+#selection.sel .handle {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    background: #ffffff;
+    border: 1px solid var(--accent-2);
+    border-radius: 2px;
+    pointer-events: auto;
+    cursor: nwse-resize;
+}
+
+#selection.sel .handle.n {
+    top: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: ns-resize;
+}
+
+#selection.sel .handle.s {
+    bottom: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: ns-resize;
+}
+
+#selection.sel .handle.e {
+    right: -5px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: ew-resize;
+}
+
+#selection.sel .handle.w {
+    left: -5px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: ew-resize;
+}
+
+#selection.sel .handle.ne {
+    top: -5px;
+    right: -5px;
+}
+
+#selection.sel .handle.nw {
+    top: -5px;
+    left: -5px;
+}
+
+#selection.sel .handle.se {
+    bottom: -5px;
+    right: -5px;
+}
+
+#selection.sel .handle.sw {
+    bottom: -5px;
+    left: -5px;
+}
+
+/* ---------- properties panel ---------- */
+#props {
+    flex: 0 0 260px;
+    min-width: 200px;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    /* No whole-panel scroll: the header / control list / help / Show-advanced stay pinned and
+       only #propsBody (the property items) scrolls (see below). */
+    overflow: hidden;
+}
+
+#propsHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel-2);
+    flex: 0 0 auto;
+}
+
+#propsHeader button {
+    background: transparent;
+    color: var(--fg-dim);
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+#propsHeader button:hover {
+    color: var(--fg);
+}
+
+#controlListRow {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel-2);
+    flex: 0 0 auto;
+}
+
+#controlList {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+#propsEmpty {
+    padding: 14px 10px;
+    color: var(--fg-dim);
+    font-size: 12px;
+    flex: 0 0 auto;
+}
+
+/* The property items list is the ONLY scrolling region in the panel: everything above it
+   (header, control selector, About-help, Show advanced) stays visible and pinned. */
+#propsBody {
+    padding: 8px 10px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+/* ---------- context menu ---------- */
+#contextMenu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 120px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    padding: 4px;
+}
+
+#contextMenu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--fg);
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+#contextMenu button:hover {
+    background: var(--accent-2);
+    color: #ffffff;
+}
+
+#contextMenu button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+#contextMenu button:disabled:hover {
+    background: transparent;
+    color: var(--fg);
+}
+
+.prop-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 7px;
+}
+
+.prop-row label {
+    flex: 0 0 92px;
+    color: var(--fg-dim);
+    font-size: 12px;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.prop-row input,
+.prop-row select {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 12px;
+}
+
+.prop-row input:focus,
+.prop-row select:focus {
+    outline: 1px solid var(--accent);
+}
+
+.prop-row input[disabled] {
+    opacity: 0.6;
+}
+
+.prop-input-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.prop-input-group input,
+.prop-input-group select {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.prop-input-group .unit {
+    flex: 0 0 auto;
+    color: var(--fg-dim);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.color-swatch {
+    flex: 0 0 30px !important;
+    width: 30px;
+    height: 22px;
+    padding: 1px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+    background: var(--panel-2);
+}
+
+.color-drop {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--panel-2);
+    color: var(--fg);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.color-drop:hover {
+    background: var(--accent-2);
+    color: #ffffff;
+}
+
+/* Colour palette popup — fixed-position, ~5 rows visible then scroll. */
+#colorPalette {
+    position: fixed;
+    z-index: 1001;
+    min-width: 160px;
+    max-width: 220px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    padding: 4px;
+    overflow-y: auto;
+}
+
+#colorPalette[hidden] {
+    display: none;
+}
+
+#colorPalette .cp-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 8px;
+    font-size: 12px;
+    color: var(--fg);
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+#colorPalette .cp-row:hover {
+    background: var(--accent-2);
+    color: #ffffff;
+}
+
+#colorPalette .cp-swatch {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid rgba(0, 0, 0, 0.35);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+/* ---------- help panel ("About this control") ---------- */
+#helpPanel {
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex: 0 0 auto;
+}
+
+#helpHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--accent);
+    background: var(--panel-2);
+}
+
+#helpHeader button {
+    background: transparent;
+    border: none;
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+#helpHeader button:hover {
+    color: var(--fg);
+}
+
+#helpBody {
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--fg);
+    overflow-y: auto;
+    max-height: 130px;
+}
+
+#helpBody .help-desc {
+    margin-bottom: 6px;
+}
+
+#helpBody .help-use {
+    color: var(--fg-dim);
+}
+
+/* ---------- advanced toggle ---------- */
+#propsToggleRow {
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex: 0 0 auto;
+    font-size: 12px;
+}
+
+#propsToggleRow label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    color: var(--fg-dim);
+}
+
+#propsToggleRow label:hover {
+    color: var(--fg);
+}
+
+/* ---------- Tab Items section (TabControl) ---------- */
+.tab-items-section {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+}
+
+.tab-items-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+.tab-items-title {
+    color: var(--fg-dim);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.btn-tab-add {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.btn-tab-add:hover {
+    background: #3a3a3d;
+}
+
+.tab-item-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 5px;
+}
+
+.ti-header,
+.ti-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 12px;
+}
+
+.ti-header:focus,
+.ti-content:focus {
+    outline: 1px solid var(--accent);
+}
+
+.btn-tab-remove {
+    flex: 0 0 auto;
+    background: #c55a11;
+    color: #fff;
+    border: 1px solid #a9420a;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 12px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.btn-tab-remove:hover {
+    background: #d36a1c;
+}
+
+/* --- ListBox "List Items" editor --- */
+.list-items-section {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+}
+
+.list-items-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+.list-items-title {
+    color: var(--fg-dim);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.btn-list-add {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.btn-list-add:hover {
+    background: #3a3a3d;
+}
+
+.list-item-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 5px;
+}
+
+.li-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 12px;
+}
+
+.li-content:focus {
+    outline: 1px solid var(--accent);
+}
+
+.btn-list-remove {
+    flex: 0 0 auto;
+    background: #c55a11;
+    color: #fff;
+    border: 1px solid #a9420a;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 12px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.btn-list-remove:hover {
+    background: #d36a1c;
+}
+
+/* ---------- 'Items' batch editor (ComboBox / ListBox / ItemsControl) ---------- */
+.prop-button {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: center;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.prop-button:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.prop-button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+/* The `hidden` attribute must beat `.modal`'s display:flex — otherwise the modal is
+   always visible and Cancel/Escape can't dismiss it. */
+.modal[hidden] {
+    display: none;
+}
+
+.modal-box {
+    width: min(90vw, 420px);
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+
+.modal-box h3 {
+    margin: 0 0 4px 0;
+    font-size: 14px;
+}
+
+.modal-hint {
+    margin: 0 0 8px 0;
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+.modal-box textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 6px;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.modal-box textarea:focus {
+    outline: 1px solid var(--accent);
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.modal-btn {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.modal-btn:hover {
+    border-color: var(--accent);
+}
+
+.modal-btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+/* Grid 'Rows & Columns' editor modal */
+.modal-wide {
+    width: min(92vw, 620px);
+}
+
+.grid-defs {
+    display: flex;
+    gap: 14px;
+}
+
+.grid-defs-col {
+    flex: 1;
+    min-width: 0;
+}
+
+.grid-defs-col h4 {
+    margin: 2px 0 6px;
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+.grid-def-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.grid-def-item {
+    display: flex;
+    gap: 4px;
+}
+
+.grid-def-item input {
+    flex: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+.grid-def-item input:focus {
+    outline: 1px solid var(--accent);
+}
+
+.grid-def-del {
+    flex: 0 0 auto;
+    width: 26px;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.grid-def-del:hover {
+    border-color: #e05050;
+    color: #e05050;
+}
+
+/* Highlighted Grid cell while drag-to-re-celling a Grid child. */
+.cell-highlight {
+    position: absolute;
+    pointer-events: none;
+    box-sizing: border-box;
+    border: 2px solid var(--accent, #0a84ff);
+    background: rgba(10, 132, 255, 0.15);
+    border-radius: 2px;
+    z-index: 5;
+}
+
+.cell-highlight[hidden] {
+    display: none;
+}
+
+/* '…' Browse button for file-path properties (Image Source, Window Icon, Title Bar Icon). */
+.prop-browse {
+    flex: 0 0 auto;
+    min-width: 28px;
+    padding: 3px 8px;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.prop-browse:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.prop-browse:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+/* ---------- dot grid overlay + toolbar toggles ---------- */
+/* Toolbar toggle buttons get a pressed/highlighted look when active. */
+#toolbar button.tb-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+/* Toolbar buttons that need a selection are disabled until there is one. */
+#toolbar button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+/* The dotted grid is drawn ON TOP of the design surface (highest layer, non-interactive). Its
+   pattern is set from the settings via JS (radial-gradient dots); spacing is the background size,
+   dot size is the gradient stop, color is the gradient colour. */
+#dotGrid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 25;
+}
+
+#dotGrid[hidden] {
+    display: none;
+}
+
+/* ---------- multi-selection + marquee ---------- */
+/* Outlines for the NON-anchor selected controls (the anchor keeps the full selection box with
+   resize handles). Non-interactive so clicks/drags still hit-test the canvas. */
+#multiSel {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 19;
+}
+
+.multi-sel {
+    position: absolute;
+    box-sizing: border-box;
+    border: 1px dashed var(--accent);
+    background: var(--sel);
+    opacity: 0.75;
+}
+
+/* Drag-box (marquee) rectangle drawn while selecting multiple controls. */
+#marquee {
+    position: absolute;
+    pointer-events: none;
+    border: 1px dashed var(--accent);
+    background: rgba(10, 132, 255, 0.12);
+    z-index: 22;
+}
+
+#marquee[hidden] {
+    display: none;
+}
+
+/* ---------- shape drag-point handles (Line ends / Arc centre + ends) ---------- */
+/* A Line/Arc selection shows its draggable POINTS instead of the 8-handle box: a Line's two ends,
+   an Arc's centre + two ends. The selection box is just the container (no fill/border for a Line,
+   a faint dashed box for an Arc so its bounding box is visible). */
+#selection.sel.shape {
+    background: none;
+    border: none;
+}
+
+#selection.sel.shape-arc {
+    border: 1px dashed rgba(10, 132, 255, 0.45);
+}
+
+.shape-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 2px solid var(--accent);
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+    cursor: pointer;
+    z-index: 3;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.shape-handle.centre {
+    background: var(--accent);
+    border-color: #ffffff;
+}
+
+.shape-handle:hover {
+    background: #cde4ff;
+}
+
+/* Thin guide line from an Arc's centre to the pointer while setting its radius. */
+#radiusGuide {
+    position: absolute;
+    height: 0;
+    border-top: 1px dashed var(--accent);
+    transform-origin: 0 0;
+    pointer-events: none;
+    z-index: 21;
+}
+
+#radiusGuide[hidden] {
+    display: none;
+}
+
+/* Dot grid settings popup */
+.modal-narrow {
+    width: min(90vw, 340px);
+}
+
+.grid-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.grid-settings label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12px;
+    opacity: 0.9;
+}
+
+.grid-settings input {
+    width: 120px;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.grid-settings input:focus {
+    outline: 1px solid var(--accent);
+}

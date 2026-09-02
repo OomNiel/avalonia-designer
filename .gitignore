@@ -1,0 +1,20 @@
+# Node
+node_modules/
+
+# TypeScript build output (the vsix packages out/ via !out/**; the repo keeps only src/)
+out/
+
+# Test-suite generated artefacts (created when the tests run)
+tests/out/
+tests/node_modules/
+tests/package-lock.json
+
+# C# Previewer Host build output
+host/bin/
+host/obj/
+
+# VS Code extension packaging
+*.vsix
+
+# Local tooling (private settings, not for the repo)
+.poolside/

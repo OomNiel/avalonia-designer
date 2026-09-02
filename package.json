@@ -1,0 +1,245 @@
+{
+    "name": "avalonia-designer",
+    "displayName": "Avalonia Designer for VS Code",
+    "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
+    "version": "1.0.0",
+    "publisher": "grumpy",
+    "license": "MIT",
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "main": "./out/extension.js",
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "contributes": {
+        "customEditors": [
+            {
+                "viewType": "avaloniaDesigner.axamlDesigner",
+                "displayName": "Avalonia Form Designer",
+                "selector": [
+                    {
+                        "filenamePattern": "*.axaml"
+                    }
+                ],
+                "priority": "option"
+            },
+            {
+                "viewType": "avaloniaDesigner.dataSetDesigner",
+                "displayName": "Avalonia DataSet Designer",
+                "selector": [
+                    {
+                        "filenamePattern": "*.adset"
+                    }
+                ],
+                "priority": "option"
+            }
+        ],
+        "commands": [
+            {
+                "command": "avaloniaDesigner.newForm",
+                "title": "New Form",
+                "category": "Avalonia",
+                "icon": "$(new-file)"
+            },
+            {
+                "command": "avaloniaDesigner.refresh",
+                "title": "Refresh Designer",
+                "category": "Avalonia",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "avaloniaDesigner.clearCanvas",
+                "title": "Clear Canvas",
+                "category": "Avalonia",
+                "icon": "$(clear-all)"
+            },
+            {
+                "command": "avaloniaDesigner.openInDesigner",
+                "title": "Open in Designer",
+                "category": "Avalonia"
+            },
+            {
+                "command": "avaloniaDesigner.newDataSet",
+                "title": "New DataSet…",
+                "category": "Avalonia",
+                "icon": "$(database)"
+            },
+            {
+                "command": "avaloniaDesigner.openDataSet",
+                "title": "Open in DataSet Designer",
+                "category": "Avalonia"
+            },
+            {
+                "command": "avaloniaDesigner.newProject",
+                "title": "New Project…",
+                "category": "Avalonia",
+                "icon": "$(rocket)"
+            },
+            {
+                "command": "avaloniaDesigner.openLastProject",
+                "title": "Open Created Project",
+                "category": "Avalonia",
+                "icon": "$(folder-opened)"
+            }
+        ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "avaloniaDesigner",
+                    "title": "Avalonia Designer",
+                    "icon": "media/toolbox.svg"
+                }
+            ]
+        },
+        "views": {
+            "avaloniaDesigner": [
+                {
+                    "type": "webview",
+                    "id": "avaloniaDesigner.projects",
+                    "name": "New Project",
+                    "contextualTitle": "Avalonia Designer",
+                    "icon": "media/project.svg"
+                },
+                {
+                    "id": "avaloniaDesigner.toolbox",
+                    "name": "Toolbox",
+                    "contextualTitle": "Avalonia Designer Toolbox",
+                    "icon": "media/toolbox.svg"
+                }
+            ]
+        },
+        "menus": {
+            "view/title": [
+                {
+                    "command": "avaloniaDesigner.newForm",
+                    "when": "view == avaloniaDesigner.toolbox",
+                    "group": "navigation@0"
+                },
+                {
+                    "command": "avaloniaDesigner.refresh",
+                    "when": "view == avaloniaDesigner.toolbox",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "avaloniaDesigner.clearCanvas",
+                    "when": "view == avaloniaDesigner.toolbox",
+                    "group": "navigation@2"
+                },
+                {
+                    "command": "avaloniaDesigner.newProject",
+                    "when": "view == avaloniaDesigner.projects",
+                    "group": "navigation@0"
+                },
+                {
+                    "command": "avaloniaDesigner.openLastProject",
+                    "when": "view == avaloniaDesigner.projects",
+                    "group": "navigation@1"
+                }
+            ],
+            "explorer/context": [
+                {
+                    "command": "avaloniaDesigner.openInDesigner",
+                    "when": "resourceExtname == .axaml",
+                    "group": "navigation@5"
+                },
+                {
+                    "command": "avaloniaDesigner.openDataSet",
+                    "when": "resourceExtname == .adset",
+                    "group": "navigation@6"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "avaloniaDesigner.newForm"
+                },
+                {
+                    "command": "avaloniaDesigner.refresh"
+                },
+                {
+                    "command": "avaloniaDesigner.clearCanvas"
+                },
+                {
+                    "command": "avaloniaDesigner.openInDesigner",
+                    "when": "false"
+                },
+                {
+                    "command": "avaloniaDesigner.newProject"
+                },
+                {
+                    "command": "avaloniaDesigner.openLastProject"
+                },
+                {
+                    "command": "avaloniaDesigner.newDataSet"
+                },
+                {
+                    "command": "avaloniaDesigner.openDataSet",
+                    "when": "false"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "Avalonia Designer",
+            "properties": {
+                "avaloniaDesigner.dotGrid.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the dotted grid overlay on the designer surface (always on top, non-interactive)."
+                },
+                "avaloniaDesigner.dotGrid.snapToGrid": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Snap controls to the grid when moving or resizing them."
+                },
+                "avaloniaDesigner.dotGrid.spacingX": {
+                    "type": "number",
+                    "default": 16,
+                    "minimum": 4,
+                    "description": "Horizontal spacing between dots, in design pixels."
+                },
+                "avaloniaDesigner.dotGrid.spacingY": {
+                    "type": "number",
+                    "default": 16,
+                    "minimum": 4,
+                    "description": "Vertical spacing between dots, in design pixels."
+                },
+                "avaloniaDesigner.dotGrid.color": {
+                    "type": "string",
+                    "default": "#9db4d0",
+                    "description": "Color of the dots (any CSS color, e.g. #9db4d0)."
+                },
+                "avaloniaDesigner.dotGrid.dotSize": {
+                    "type": "number",
+                    "default": 1.5,
+                    "minimum": 0.5,
+                    "description": "Diameter of each dot in pixels."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "vscode:prepublish": "npm run compile",
+        "test": "node tests/runner.js",
+        "test:list": "node tests/runner.js --list",
+        "test:fast": "node tests/runner.js --layer t2-logic",
+        "test:build": "node tests/runner.js --layer t0-build",
+        "test:preview": "node tests/runner.js --layer t1-preview",
+        "test:webview": "node tests/runner.js --layer t3-webview",
+        "test:runtime": "node tests/runner.js --layer t4-runtime"
+    },
+    "dependencies": {
+        "@xmldom/xmldom": "^0.8.10",
+        "ws": "^8.17.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.11.0",
+        "@types/vscode": "^1.85.0",
+        "@types/ws": "^8.5.10",
+        "typescript": "^5.4.0"
+    }
+}
