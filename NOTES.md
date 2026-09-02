@@ -306,7 +306,7 @@ lives in `designerPanel.ts` + `media/designer.js`).
 - **Point 4 (version):** bumped to **`1.0.0-beta.1`** (semver prerelease; publish with `--pre-release` on the Marketplace, tag `v1.0.0-beta.1` on GitHub). Flatten to `1.0.0` when stable.
 - **Point 5 (CHANGELOG):** added `CHANGELOG.md` (Keep a Changelog) with the `1.0.0-beta.1` entry; it's included in the vsix (not in `.vscodeignore`).
 - **Point 7 (README):** prerequisites clarified — .NET SDK needed; `net10.0` for generated projects vs `net8.0`/Avalonia 11 for the host; added a "Version matrix & preview fidelity" note (designer is opt-in).
-- **Point 8 (partial):** keywords/categories added; extension **icon** deferred (needs a PNG; only SVGs exist today).
+- **Point 8:** keywords/categories added and the extension **icon** is now set — user supplied `Grumpy.png` (98×106); converted with Pillow to a **256×256 RGBA PNG** (aspect-preserved, padded to square on transparent) and referenced as `"icon": "Grumpy.png"` (original backed up to `/tmp/Grumpy.png.orig`). vsix now 94 files / 421KB.
 - Tests: unchanged (metadata/docs only). Repackaged as **avalonia-designer-1.0.0-beta.1.vsix** (93 files, 376KB), installed. Committed + pushed to `origin/main`. Docs: NOTES §67.
 
 ## 7. Feature history (one line per section — details in NOTES_ARCHIVE.md)
@@ -371,7 +371,7 @@ lives in `designerPanel.ts` + `media/designer.js`).
 | 64 | Lock the root layout panel | 2026-09-02 | `isLockedStructure` = Body OR `rootContainer` (window's top-level content panel, e.g. `DockPanel Name="Root"`) → frame `locked:true` hides handles/blocks drag like the Body; used in every move/resize/delete/cut/rename/move-to-container/align guard; `lockedLabel` toasts name the locked panel |
 | 65 | Select the FORM to resize it | 2026-09-02 | form (Window root, name null) was unselectable → resize needed hand-editing `.axaml`. Now: frame carries `formTitle`; control drop-down's FIRST entry is **"Form - <Title>"** (value ''); clicking EMPTY design space (locked Body / gap) selects the form (`select` name null → Window props incl. Width/Height). Form selection shows no outline (no handles on the whole window). |
 | 66 | New projects are F5-ready (Linux-safe) | 2026-09-02 | scaffold now writes `.vscode/launch.json` (`type: coreclr`, program → `bin/Debug/net10.0/<name>.dll` — no Windows `.exe`; `preLaunchTask: build`) + `.vscode/tasks.json` (default `dotnet build`) for C# AND VB. vbnet-companion's "VB.NET: Launch" snippet is Windows-biased (.exe/net8.0) — don't use it; coreclr + the built dll is the cross-platform way. **Fix 1:** VB bridge DLL path resolved at generation time (no hardcoded path). **Fix 2:** `dotnet restore` runs before a new project opens so the language server isn't stale. |
-| 67 | Public GitHub Beta (release hygiene) | 2026-09-02 | git init `main` + hardened `.gitignore` + pushed to github.com/OomNiel/avalonia-designer (public); package.json `repository`/`homepage`/`bugs`/`keywords`/categories; version **1.0.0-beta.1**; `CHANGELOG.md`; README prereq + version-matrix clarity. Icon deferred (needs a PNG). |
+| 67 | Public GitHub Beta (release hygiene) | 2026-09-02 | git init `main` + hardened `.gitignore` + pushed to github.com/OomNiel/avalonia-designer (public); package.json `repository`/`homepage`/`bugs`/`keywords`/categories; version **1.0.0-beta.1**; `CHANGELOG.md`; README prereq + version-matrix clarity. **Icon:** `Grumpy.png` converted (Pillow) to a 256×256 square PNG. |
 
 ---
 
