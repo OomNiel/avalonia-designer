@@ -31,6 +31,8 @@
         btnAlignText: $('btnAlignText'),
         btnSameWidth: $('btnSameWidth'),
         btnSameHeight: $('btnSameHeight'),
+        btnEqualV: $('btnEqualV'),
+        btnEqualH: $('btnEqualH'),
         multiSel: $('multiSel'),
         marquee: $('marquee'),
         radiusGuide: $('radiusGuide'),
@@ -494,6 +496,18 @@
         });
         els.btnSameWidth.disabled = !hasSizableTarget;
         els.btnSameHeight.disabled = !hasSizableTarget;
+        // Equal spacing needs >= 3 controls that can be freely moved (not locked, not a direct Grid
+        // child — those are placed by Grid.Row/Column, so their position isn't coordinate-based).
+        const movable = multi && state.frame ? names.filter((n) => {
+            const c = state.frame.controls.find((x) => x.name === n);
+            if (!c || c.locked || !c.name) return false;
+            if (!c.parent) return true;
+            const p = state.frame.controls.find((x) => x.name === c.parent);
+            return !p || p.type !== 'Grid';
+        }) : [];
+        const eq = movable.length >= 3;
+        els.btnEqualV.disabled = !eq;
+        els.btnEqualH.disabled = !eq;
     }
 
     /** A Line or Arc has draggable point handles (sent by the extension in the frame) instead of
@@ -1827,6 +1841,8 @@
     // Make same Width/Height: resize every non-anchor selected control to the anchor's size.
     els.btnSameWidth.addEventListener('click', () => postAlign('sameWidth'));
     els.btnSameHeight.addEventListener('click', () => postAlign('sameHeight'));
+    els.btnEqualV.addEventListener('click', () => postAlign('equalV'));
+    els.btnEqualH.addEventListener('click', () => postAlign('equalH'));
     // Align Text: centres the text horizontally inside each selected single-line text control.
     els.btnAlignText.addEventListener('click', () => {
         const names = selectionNames();

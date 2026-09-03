@@ -1213,6 +1213,42 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     const isSizeAlign = align === 'sameWidth' || align === 'sameHeight';
                     const before = doc.model.serialize(true);
                     let changed = false;
+                    if (align === 'equalV' || align === 'equalH') {
+                        // Equal spacing: spread the selected controls with EQUAL edge-to-edge gaps
+                        // along the tool's axis, keeping the two OUTERMOST controls fixed. Sort by
+                        // position (vertical = top Y, horizontal = left X); every control keeps its
+                        // other-axis position and its size. Grid children + locked controls can't be
+                        // freely moved, so they're skipped — needs >= 3 movable controls.
+                        const vert = align === 'equalV';
+                        const items = names.map((n) => ({
+                            n, el: doc.model.findByName(n), b: this.boundsOf(doc, n)
+                        })).filter((x) => {
+                            const el = x.el!;
+                            const par = el && el.parentNode && el.parentNode.nodeType === 1 ? (el.parentNode as Element) : null;
+                            return !!el && !!x.b && !isLockedStructure(doc.model, x.n) && !(par && localName(par.tagName) === 'Grid');
+                        });
+                        if (items.length < 3) return;
+                        items.sort((a, c) => vert ? a.b!.y - c.b!.y : a.b!.x - c.b!.x);
+                        const start = vert ? items[0].b!.y : items[0].b!.x;
+                        const end = vert
+                            ? items[items.length - 1].b!.y + items[items.length - 1].b!.height
+                            : items[items.length - 1].b!.x + items[items.length - 1].b!.width;
+                        const sumLen = items.reduce((s, x) => s + (vert ? x.b!.height : x.b!.width), 0);
+                        const gap = (end - start - sumLen) / (items.length - 1);
+                        let cursor = start;
+                        for (const it of items) {
+                            const cur = vert ? it.b!.y : it.b!.x;
+                            if (Math.abs(cur - cursor) > 0.01) {
+                                const dx = vert ? 0 : Math.round(cursor - cur);
+                                const dy = vert ? Math.round(cursor - cur) : 0;
+                                doc.model.move(it.el!, dx, dy, it.b!);
+                                changed = true;
+                            }
+                            cursor += (vert ? it.b!.height : it.b!.width) + gap;
+                        }
+                        if (changed) { this.notifyEdit(doc, panel, before); await this.render(doc, panel); }
+                        return;
+                    }
                     for (const n of names) {
                         if (n === anchor) continue;
                         const el = doc.model.findByName(n);
@@ -2357,6 +2393,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
       <button id="btnAlignText" title="Centre the text horizontally in the selected text controls" disabled>Aa</button>
       <button id="btnSameWidth" title="Make every selected control the same WIDTH as the first-selected control" disabled>⇔</button>
       <button id="btnSameHeight" title="Make every selected control the same HEIGHT as the first-selected control" disabled>⇕</button>
+      <span class="sep"></span>
+      <button id="btnEqualV" title="Equal vertical spacing: 3+ controls spread with equal gaps between them (topmost &amp; bottommost stay put)" disabled>⋮</button>
+      <button id="btnEqualH" title="Equal horizontal spacing: 3+ controls spread with equal gaps between them (leftmost &amp; rightmost stay put)" disabled>⋯</button>
       <span id="status">Ready</span>
     </div>
     <div id="main">

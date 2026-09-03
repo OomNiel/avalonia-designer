@@ -26,7 +26,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'dotGridSave', 'dotGridCancel',
     'multiSel', 'marquee', 'radiusGuide',
     'btnAlignLeft', 'btnAlignCentre', 'btnAlignRight', 'btnAlignTop', 'btnAlignMiddle', 'btnAlignBottom',
-    'btnAlignText', 'btnSameWidth', 'btnSameHeight',
+    'btnAlignText', 'btnSameWidth', 'btnSameHeight', 'btnEqualV', 'btnEqualH',
     'crosshair', 'chH', 'chV', 'btnCrosshair',
     'crosshairModal', 'chModeShort', 'chModeLong', 'chShortLength', 'chThickness', 'chOpacity',
     'chColor', 'crosshairSave', 'crosshairCancel',
@@ -692,6 +692,20 @@ module.exports = async (t) => {
         t.equal($('marquee').hidden, true, 'multisel', 'marquee hidden after drop');
         t.equal($('multiSel').children.length, 2, 'multisel', 'two non-anchor outlines (btn1, btn2)');
         t.ok(alignBtns.every((id) => !$(id).disabled), 'multisel', 'three selected → edge-align enabled');
+
+        // Equal-spacing tools light up with 3+ selected and post their align kinds (the extension
+        // equalises the gaps between the movable controls, keeping the two outermost fixed).
+        t.equal($('btnEqualV').disabled, false, 'eqsp', '3 selected → equal vertical spacing enabled');
+        t.equal($('btnEqualH').disabled, false, 'eqsp', '3 selected → equal horizontal spacing enabled');
+        posted.length = 0;
+        $('btnEqualV').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const eqv = posted[posted.length - 1];
+        t.equal(eqv.type, 'align', 'eqsp', 'Equal V posts align');
+        t.equal(eqv.align, 'equalV', 'eqsp', 'align kind = equalV');
+        t.ok(Array.isArray(eqv.names) && eqv.names.length === 3, 'eqsp', 'carries the three selected controls');
+        posted.length = 0;
+        $('btnEqualH').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1].align, 'equalH', 'eqsp', 'Equal H posts align equalH');
 
         // Consume the browser click that follows the marquee drag, then a plain click on txt1
         // collapses the multi-selection back to a single selection.
