@@ -6,8 +6,10 @@
 ## Where to look when starting a new session
 
 - **`NOTES.md`** — lean developer quick-reference (build/run, structure, architecture, key gotchas,
-  the "add a toolbox control" checklist, current Grid/test-suite state, feature history table).
-- **`NOTES_ARCHIVE.md`** — the full verbatim history of all 51 NOTES sections (reference only).
+  the "add a toolbox control" checklist, current state, history pointers).
+- **`NOTES_ARCHIVE.md`** — the full verbatim history of all 51 original NOTES sections (reference only).
+- **`NOTES_2026-09-03.md`** — the 2026-08-31 → 2026-09-03 dev log (§52–§69 write-ups + feature-history table).
+- **`NOTES_MEMORY_2026-09-03.md`** — the old (2,530-line) Copilot repo-memory log (2026-08-25 → 2026-09-03).
 - **`README.md`** — user-facing intro + architecture + getting started.
 - **`USER_MANUAL.md`** — full beginner user guide (every feature, plain language).
 - **`CONTROLS.md`** — every Avalonia control and its designer support.
