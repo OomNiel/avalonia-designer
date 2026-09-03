@@ -185,8 +185,11 @@
                 n.className = 'rul-num';
                 n.textContent = String(pos);
                 if (vertical) {
+                    // Keep the (rotated, bottom-to-top) number on the FAR LEFT of the strip so it
+                    // sits at the inner end of the major marker and never over the minor grads
+                    // (which start 8 px in from the design edge).
                     n.style.top = css + 'px';
-                    n.style.left = '14px';
+                    n.style.left = '2px';
                     n.style.transform = 'rotate(-90deg)';
                     n.style.transformOrigin = '0 0';
                 } else {
