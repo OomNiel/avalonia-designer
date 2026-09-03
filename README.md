@@ -2,6 +2,15 @@
 
 A WYSIWYG form designer for the **Avalonia** framework with a drag-and-drop toolbox.
 
+> ## ⚠️ BETA — incomplete & buggy
+>
+> This is an **early Beta** of a hobbyist extension. It is **incomplete and will be buggy**;
+> development is **on-going** and features are still being added, changed and fixed. Treat it as
+> a work-in-progress preview rather than a finished tool. Please report issues on the
+> [issue tracker](https://github.com/OomNiel/avalonia-designer/issues) — feedback is welcome.
+>
+> **What's next:** database access & data binding support.
+
 > **📗 Full user guide: `USER_MANUAL.md`** — documents every feature (New Project, toolbox,
 > properties, docking, templates, code-behind, keyboard shortcuts, known issues) in plain
 > language for beginners.
@@ -139,6 +148,13 @@ avalonia-designer-extension/
 - A Grid's rows/columns are edited via the **Rows & Columns** editor (there is no
   drag-resize of columns/rows yet); new controls auto-fill the next free cell and can
   be dragged to another cell.
+
+## Roadmap / what's next
+
+- **Database access & data binding** — connect the designer to a database and bind data to
+  controls (the next planned addition).
+- Closer preview fidelity between the Avalonia 11 host and Avalonia 12 generated apps.
+- Broader control/property coverage and drag-resize of Grid rows/columns.
 
 ## License
 
