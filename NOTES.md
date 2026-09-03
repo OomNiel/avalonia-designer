@@ -154,7 +154,9 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
 
 - **RELEASED: `v1.0.0-beta.1` + `v1.0.0-beta.2` GitHub PRE-RELEASES** (tags pushed, .vsix attached,
   README/CHANGELOG updated). URLs: .../releases/tag/v1.0.0-beta.1 and .../releases/tag/v1.0.0-beta.2
-  Marketplace publish NOT done (publisher `grumpy` has no vsce login/PAT). Next planned feature:
+  Marketplace publish NOT done (publisher `grumpy` has no vsce login/PAT; **global Azure DevOps PATs
+  retire 2026-12-01** — durable route is `vsce package` + browser upload on marketplace.visualstudio.com/manage,
+  no PAT needed). Next planned feature:
   **database access + data binding**.
 - WYSIWYG Avalonia form designer for VS Code: Toolbox → designer canvas (click-to-place/drag), Properties
   panel, alignment + multi-select, dot grid + snap-to-grid, shape controls (Line/Rectangle/Ellipse/Arc),
