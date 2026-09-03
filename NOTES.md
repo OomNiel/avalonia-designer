@@ -157,7 +157,10 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   DataSet designer, C#/VB project + form scaffolding (net10 + Avalonia 12, F5-ready), ChromeWindow custom
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
-- Suite green: **1450 passed**; PROBLEMS clean after every change.
+- Suite green: **1457 passed**; PROBLEMS clean after every change.
+- Rulers (§69c): white-on-black strips hug the canvas top/left and scroll+zoom with it; scale in
+  design px. Major grad every 5× grid spacing, minor = 10 divisions per major (= grid/2); numeric
+  labels on majors; rulers re-render on frame/zoom/grid-spacing changes.
 - §69b: "Align vertical/horizontal centres" buttons were swapped — `btnAlignMiddle` (↕, vertical
   centres) now posts `centre` (centre-X → a vertical line of centres); `btnAlignCentre` (↔,
   horizontal centres) posts `middle` (centre-Y → a horizontal line). Geometry was already correct.

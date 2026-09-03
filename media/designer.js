@@ -67,6 +67,8 @@
         gridSave: $('gridSave'),
         gridCancel: $('gridCancel'),
         cellHighlight: $('cellHighlight'),
+        rulerH: $('rulerH'),
+        rulerV: $('rulerV'),
         crosshair: $('crosshair'),
         chH: $('chH'),
         chV: $('chV'),
@@ -137,6 +139,74 @@
         els.btnSnapGrid.classList.toggle('tb-active', !!g.snap);
     }
 
+    // ---------------- design rulers (top + left: white ticks on black) ----------------
+    // Black strips hug the form's top/left edges and scroll+zoom with the canvas; the scale is in
+    // DESIGN px. Major grads every 5 × the dot-grid spacing; minors are 10 equal divisions of a
+    // major (= grid/2). A numeric label sits on every major. Tick LENGTH stays a fixed screen size;
+    // only the SPACING scales with the zoom.
+    const RULER_STRIP = 18;      // css px strip thickness (matches designer.css)
+    const RULER_TICK_MINOR = 5;  // css px minor tick length
+    const RULER_TICK_MAJOR = 10; // css px major tick length
+    const RULER_MAJORS = 5;      // major gradation = RULER_MAJORS × grid spacing
+    function rulerTickLayer(vertical, tickLen, stepCss, color) {
+        const d = document.createElement('div');
+        d.className = 'rul-tick';
+        if (vertical) {
+            d.style.top = '0'; d.style.bottom = '0'; d.style.right = '0'; d.style.width = tickLen + 'px';
+            d.style.backgroundImage =
+                'repeating-linear-gradient(180deg,' + color + ' 0 1px,transparent 1px ' + stepCss + 'px)';
+        } else {
+            d.style.left = '0'; d.style.right = '0'; d.style.bottom = '0'; d.style.height = tickLen + 'px';
+            d.style.backgroundImage =
+                'repeating-linear-gradient(90deg,' + color + ' 0 1px,transparent 1px ' + stepCss + 'px)';
+        }
+        return d;
+    }
+    function renderRulerAxis(axisEl, vertical, gridStep) {
+        const sc = state.scale;
+        const majorDesign = Math.max(1, RULER_MAJORS * Math.max(1, gridStep)); // design px per major
+        const minorDesign = majorDesign / 10;                                  // gridStep / 2
+        const minorCss = minorDesign * sc;
+        const majorCss = majorDesign * sc;
+        axisEl.innerHTML = '';
+        if (minorCss >= 3) {
+            axisEl.appendChild(rulerTickLayer(vertical, RULER_TICK_MINOR, minorCss, 'rgba(255,255,255,0.55)'));
+        }
+        if (majorCss >= 5) {
+            axisEl.appendChild(rulerTickLayer(vertical, RULER_TICK_MAJOR, majorCss, '#ffffff'));
+        }
+        if (majorCss >= 28) {
+            const designLen = vertical ? state.designH : state.designW;
+            const count = Math.floor(designLen / majorDesign);
+            for (let i = 0; i <= count; i++) {
+                const pos = i * majorDesign;
+                const css = pos * sc;
+                const n = document.createElement('span');
+                n.className = 'rul-num';
+                n.textContent = String(pos);
+                if (vertical) {
+                    n.style.top = css + 'px';
+                    n.style.left = '9px';
+                    n.style.transform = 'rotate(-90deg)';
+                    n.style.transformOrigin = '0 0';
+                } else {
+                    n.style.top = '2px';
+                    n.style.left = css + 'px';
+                    n.style.transform = 'translateX(-50%)';
+                    if (i === 0) { n.style.transform = ''; n.style.left = '2px'; }
+                }
+                axisEl.appendChild(n);
+            }
+        }
+    }
+    function renderRulers() {
+        const g = state.dotGrid || {};
+        const sx = Math.max(4, g.spacingX || 16);
+        const sy = Math.max(4, g.spacingY || 16);
+        renderRulerAxis(els.rulerH, false, sx);
+        renderRulerAxis(els.rulerV, true, sy);
+    }
+
     // Snaps a drag's total delta so the resulting outline/position aligns to the grid.
     // Uses the same per-corner maths as xamlModel.move/resize so the snapped outline and the
     // final applied position stay consistent. Returns the adjusted { dx, dy }.
@@ -181,6 +251,7 @@
         }
         renderOverlays();
         renderSelection();
+        renderRulers();
         populateControlList();
         els.status.title = msg.error || '';
         els.status.textContent = msg.error
@@ -191,6 +262,8 @@
     function layout() {
         els.canvas.style.width = (state.designW * state.scale) + 'px';
         els.canvas.style.height = (state.designH * state.scale) + 'px';
+        els.rulerH.style.width = els.canvas.style.width;
+        els.rulerV.style.height = els.canvas.style.height;
         els.zoom.value = Math.round(state.scale * 100) + '%';
     }
 
@@ -1679,6 +1752,7 @@
             case 'dotGrid': {
                 if (msg.dotGrid) state.dotGrid = msg.dotGrid;
                 applyDotGrid();
+                renderRulers();
                 break;
             }
             case 'crosshair': {
@@ -1717,16 +1791,16 @@
     els.btnZoomIn.addEventListener('click', () => {
         state.fitted = false;
         state.scale = Math.min(4, state.scale * 1.2);
-        layout(); renderOverlays(); renderSelection();
+        layout(); renderOverlays(); renderSelection(); renderRulers();
     });
     els.btnZoomOut.addEventListener('click', () => {
         state.fitted = false;
         state.scale = Math.max(0.05, state.scale / 1.2);
-        layout(); renderOverlays(); renderSelection();
+        layout(); renderOverlays(); renderSelection(); renderRulers();
     });
     els.btnFit.addEventListener('click', () => {
         state.fitted = false;
-        fit(); renderOverlays(); renderSelection();
+        fit(); renderOverlays(); renderSelection(); renderRulers();
     });
     els.btnClearSel.addEventListener('click', deselect);
 
@@ -1919,6 +1993,7 @@
             fit();
             renderOverlays();
             renderSelection();
+            renderRulers();
         }
     });
 

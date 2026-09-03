@@ -29,7 +29,8 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'btnAlignText', 'btnSameWidth', 'btnSameHeight',
     'crosshair', 'chH', 'chV', 'btnCrosshair',
     'crosshairModal', 'chModeShort', 'chModeLong', 'chShortLength', 'chThickness', 'chOpacity',
-    'chColor', 'crosshairSave', 'crosshairCancel'];
+    'chColor', 'crosshairSave', 'crosshairCancel',
+    'rulerH', 'rulerV'];
 
 function setup() {
     const { JSDOM } = require('jsdom');
@@ -145,6 +146,20 @@ module.exports = async (t) => {
     t.equal($('controlList').options[0].value, '', 'frame', 'first option is the form');
     const bodyOpt = [...$('controlList').children].find((o) => o.value === 'Body');
     t.ok(bodyOpt && bodyOpt.textContent.includes('🔒'), 'frame', 'Body dropdown shows 🔒');
+
+    // --- design rulers: black strips hug the canvas top/left, sized to the design; white ticks ---
+    t.equal($('rulerH').style.width, '800px', 'rulers', 'top ruler spans the canvas width');
+    t.equal($('rulerV').style.height, '450px', 'rulers', 'left ruler spans the canvas height');
+    // Default grid spacing 16 → major every 80 px (5×16), minor every 8 px (10 per major).
+    t.ok($('rulerH').querySelectorAll('.rul-tick').length >= 2, 'rulers', 'top ruler has minor + major tick layers');
+    t.ok($('rulerV').querySelectorAll('.rul-tick').length >= 2, 'rulers', 'left ruler has minor + major tick layers');
+    t.ok($('rulerH').querySelectorAll('.rul-num').length >= 5, 'rulers', 'top ruler labels every major (0,80,160,…)');
+    t.ok($('rulerV').querySelectorAll('.rul-num').length >= 5, 'rulers', 'left ruler labels every major');
+    // A dotGrid message with a coarser spacing re-renders the ruler majors.
+    msg({ type: 'dotGrid', dotGrid: { enabled: true, snap: false, spacingX: 40, spacingY: 40, color: '#111111', dotSize: 2 } });
+    t.ok($('rulerH').querySelectorAll('.rul-num').length >= 2, 'rulers', 'ruler re-renders when the grid spacing changes');
+    // Restore the default spacing so later tests (snap etc.) see spacing 16 again.
+    msg({ type: 'dotGrid', dotGrid: { enabled: true, snap: false, spacingX: 16, spacingY: 16, color: '#9db4d0', dotSize: 1.5 } });
 
     // --- click-select: clicking a button selects it (deepest control wins) ---
     dispatch('click', 'canvas', { clientX: 110, clientY: 60 });

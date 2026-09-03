@@ -2347,7 +2347,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     </div>
     <div id="main">
       <div id="canvasWrap">
-        <div id="canvas">
+        <div id="rulerTop">
+          <div id="rulerCorner"></div>
+          <div id="rulerH"></div>
+        </div>
+        <div id="rulerSide">
+          <div id="rulerV"></div>
+          <div id="canvas">
           <img id="preview" alt="Design surface"/>
           <div id="dotGrid" class="dot-grid" hidden></div>
           <div id="overlayLayer"></div>
@@ -2357,6 +2363,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
           <div id="selection" class="sel" hidden></div>
           <div id="cellHighlight" class="cell-highlight" hidden></div>
           <div id="crosshair" hidden><i id="chH"></i><i id="chV"></i></div>
+          </div>
         </div>
       </div>
       <div id="props">
