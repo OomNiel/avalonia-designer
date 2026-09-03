@@ -152,8 +152,8 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
 
 ## 6. Current feature state (2026-09-03)
 
-- **RELEASED 2026-09-03: `v1.0.0-beta.1` GitHub PRE-RELEASE** (tag pushed, .vsix attached,
-  README/CHANGELOG updated). URL: https://github.com/OomNiel/avalonia-designer/releases/tag/v1.0.0-beta.1
+- **RELEASED: `v1.0.0-beta.1` + `v1.0.0-beta.2` GitHub PRE-RELEASES** (tags pushed, .vsix attached,
+  README/CHANGELOG updated). URLs: .../releases/tag/v1.0.0-beta.1 and .../releases/tag/v1.0.0-beta.2
   Marketplace publish NOT done (publisher `grumpy` has no vsce login/PAT). Next planned feature:
   **database access + data binding**.
 - WYSIWYG Avalonia form designer for VS Code: Toolbox → designer canvas (click-to-place/drag), Properties
