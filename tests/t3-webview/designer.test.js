@@ -615,6 +615,20 @@ module.exports = async (t) => {
         t.equal(al.anchor, 'btn1', 'multisel', 'anchor = first selected');
         t.equal(JSON.stringify(al.names), '["btn1","btn2"]', 'multisel', 'names carry both');
 
+        // Centre alignment buttons match their labels (regression: they were swapped): "Align
+        // VERTICAL centres…" (↕) aligns centre-X (kind 'centre' → a vertical line of centres);
+        // "Align HORIZONTAL centres…" (↔) aligns centre-Y (kind 'middle' → a horizontal line).
+        posted.length = 0;
+        $('btnAlignMiddle').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const am = posted[posted.length - 1];
+        t.equal(am.type, 'align', 'multisel', 'Align vertical centres posts align');
+        t.equal(am.align, 'centre', 'multisel', 'vertical-centres button posts centre (centre-X)');
+        posted.length = 0;
+        $('btnAlignCentre').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const ac = posted[posted.length - 1];
+        t.equal(ac.type, 'align', 'multisel', 'Align horizontal centres posts align');
+        t.equal(ac.align, 'middle', 'multisel', 'horizontal-centres button posts middle (centre-Y)');
+
         // Align Text with the multi-selection posts alignText for both names.
         posted.length = 0;
         $('btnAlignText').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));

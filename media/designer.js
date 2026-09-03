@@ -1738,11 +1738,14 @@
         if (names.length < 2 || !state.selected || !state.selected.name) return;
         post({ type: 'align', align, anchor: state.selected.name, names });
     }
+    // 'centre' aligns each control's centre-X to the anchor's (the centres form a VERTICAL line),
+    // 'middle' aligns centre-Y (a HORIZONTAL line). The buttons post the kind that matches their
+    // label/glyph: "Align vertical centres…" (↕) = centre-X, "Align horizontal centres…" (↔) = centre-Y.
     els.btnAlignLeft.addEventListener('click', () => postAlign('left'));
-    els.btnAlignCentre.addEventListener('click', () => postAlign('centre'));
+    els.btnAlignCentre.addEventListener('click', () => postAlign('middle'));
     els.btnAlignRight.addEventListener('click', () => postAlign('right'));
     els.btnAlignTop.addEventListener('click', () => postAlign('top'));
-    els.btnAlignMiddle.addEventListener('click', () => postAlign('middle'));
+    els.btnAlignMiddle.addEventListener('click', () => postAlign('centre'));
     els.btnAlignBottom.addEventListener('click', () => postAlign('bottom'));
     // Make same Width/Height: resize every non-anchor selected control to the anchor's size.
     els.btnSameWidth.addEventListener('click', () => postAlign('sameWidth'));
