@@ -1015,11 +1015,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     return;
                 }
                 case 'setCrosshair': {
-                    // The toolbar Short/Long buttons set the (global) designer crosshair mode.
-                    const mode = msg.mode === 'long' ? 'long' : 'short';
+                    // The Crosshair settings popup writes thickness/colour/opacity/length/mode to the
+                    // global config (all settings apply to every form).
+                    const s = (msg.settings ?? {}) as Record<string, unknown>;
                     const ccfg = vscode.workspace.getConfiguration('avaloniaDesigner.crosshair');
-                    await ccfg.update('mode', mode, vscode.ConfigurationTarget.Global);
-                    await panel.webview.postMessage({ type: 'crosshair', mode });
+                    const write = async (key: string, value: unknown) => { await ccfg.update(key, value, vscode.ConfigurationTarget.Global); };
+                    if (s.mode === 'short' || s.mode === 'long') await write('mode', s.mode);
+                    if (typeof s.shortLength === 'number') await write('shortLength', Math.max(6, Math.round(s.shortLength)));
+                    if (typeof s.thickness === 'number') await write('thickness', Math.min(12, Math.max(1, Math.round(s.thickness))));
+                    if (typeof s.opacity === 'number') await write('opacity', Math.min(100, Math.max(0, Math.round(s.opacity))));
+                    if (typeof s.color === 'string' && /^#[0-9a-f]{6}$/i.test(s.color)) await write('color', s.color);
+                    await panel.webview.postMessage({ type: 'crosshair', crosshair: this.crosshairConfig() });
                     return;
                 }
                 case 'addTabItem': {
@@ -1587,7 +1593,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const formTitle = (rootEl.getAttribute('Title') || rootEl.getAttribute('TitleBarTitle') || '').trim();
         await panel.webview.postMessage({
             type: 'frame', ...frame, controls, formTitle,
-            dotGrid: this.dotGridConfig(), crosshair: this.crosshairConfig().mode
+            dotGrid: this.dotGridConfig(), crosshair: this.crosshairConfig()
         });
         await panel.webview.postMessage({ type: 'clipboard', has: !!clipboard });
         if (imageSyncChanged && !followUp) {
@@ -1608,10 +1614,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         };
     }
 
-    /** The crosshair mode ('short' = 50 px cross, 'long' = full-canvas lines) from the global VS Code config. */
-    private crosshairConfig(): { mode: string } {
+    /** The full crosshair settings (mode, length, thickness, opacity, colour) from the global
+     *  VS Code config — sent to the webview on every frame so the saved style is applied. */
+    private crosshairConfig(): Record<string, unknown> {
         const cfg = vscode.workspace.getConfiguration('avaloniaDesigner.crosshair');
-        return { mode: cfg.get<string>('mode', 'short') };
+        return {
+            mode: cfg.get<string>('mode', 'short'),
+            shortLength: cfg.get<number>('shortLength', 50),
+            thickness: cfg.get<number>('thickness', 1),
+            opacity: cfg.get<number>('opacity', 100),
+            color: cfg.get<string>('color', '#ff4d4d')
+        };
     }
 
     /** Updates one dot-grid setting in the global config (the grid is a global, cross-form feature). */
@@ -2319,9 +2332,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
       <button id="btnSnapGrid" title="Toggle snap-to-grid when moving/resizing">Snap</button>
       <button id="btnGridSettings" title="Dot grid settings (spacing, color, dot size)">Grid…</button>
       <span class="sep"></span>
-      <span class="tb-caption">Crosshair</span>
-      <button id="btnCrosshairShort" title="Crosshair: short — a 50 px cross centred on the pointer">Short</button>
-      <button id="btnCrosshairLong" title="Crosshair: long — lines reach the edges of the form">Long</button>
+      <button id="btnCrosshair" title="Crosshair settings (thickness, colour, opacity, length)">Crosshair</button>
       <span class="sep"></span>
       <button id="btnAlignLeft" title="Align left edges to the first-selected control" disabled>⇤</button>
       <button id="btnAlignCentre" title="Align horizontal centres to the first-selected control" disabled>↔</button>
@@ -2423,6 +2434,28 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         <div class="modal-buttons">
           <button id="dotGridCancel" type="button" class="modal-btn">Cancel</button>
           <button id="dotGridSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="crosshairModal" class="modal" hidden>
+      <div class="modal-box modal-narrow">
+        <h3>Crosshair</h3>
+        <p class="modal-hint">Shown while the pointer is over the form — it crosses on the control's top-left corner while moving and on the drag handle while resizing. Settings apply to every form (global).</p>
+        <div class="grid-settings">
+          <label>Length
+            <span class="ch-seg">
+              <button id="chModeShort" type="button" class="ch-seg-btn active">Short</button>
+              <button id="chModeLong" type="button" class="ch-seg-btn">Long</button>
+            </span>
+          </label>
+          <label>Short length (px) <input id="chShortLength" type="number" min="6" step="1"/></label>
+          <label>Thickness (px) <input id="chThickness" type="number" min="1" max="12" step="1"/></label>
+          <label>Opacity (%) <input id="chOpacity" type="number" min="0" max="100" step="1"/></label>
+          <label>Colour <input id="chColor" type="color"/></label>
+        </div>
+        <div class="modal-buttons">
+          <button id="crosshairCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="crosshairSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

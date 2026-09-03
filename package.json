@@ -246,7 +246,32 @@
                         "long"
                     ],
                     "default": "short",
-                    "description": "Designer crosshair style: Short = a 50 px cross centred on the pointer; Long = lines reach the edges of the form."
+                    "description": "Designer crosshair length: Short = a fixed-length cross; Long = lines reach the edges of the form."
+                },
+                "avaloniaDesigner.crosshair.shortLength": {
+                    "type": "number",
+                    "default": 50,
+                    "minimum": 6,
+                    "description": "Total length of the Short crosshair, in pixels."
+                },
+                "avaloniaDesigner.crosshair.thickness": {
+                    "type": "number",
+                    "default": 1,
+                    "minimum": 1,
+                    "maximum": 12,
+                    "description": "Thickness of each crosshair line, in pixels."
+                },
+                "avaloniaDesigner.crosshair.opacity": {
+                    "type": "number",
+                    "default": 100,
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": "Opacity of the crosshair, in percent."
+                },
+                "avaloniaDesigner.crosshair.color": {
+                    "type": "string",
+                    "default": "#ff4d4d",
+                    "description": "Colour of the crosshair lines. The outline is picked automatically for contrast."
                 }
             }
         }

@@ -70,8 +70,16 @@
         crosshair: $('crosshair'),
         chH: $('chH'),
         chV: $('chV'),
-        btnCrosshairShort: $('btnCrosshairShort'),
-        btnCrosshairLong: $('btnCrosshairLong')
+        btnCrosshair: $('btnCrosshair'),
+        crosshairModal: $('crosshairModal'),
+        chModeShort: $('chModeShort'),
+        chModeLong: $('chModeLong'),
+        chShortLength: $('chShortLength'),
+        chThickness: $('chThickness'),
+        chOpacity: $('chOpacity'),
+        chColor: $('chColor'),
+        crosshairSave: $('crosshairSave'),
+        crosshairCancel: $('crosshairCancel')
     };
 
     const state = {
@@ -90,7 +98,9 @@
         controlListKey: null,
         recell: null, // { gridName, cells: { v: [], h: [] } } when the selected control is a Grid child
         dotGrid: { enabled: true, snap: false, spacingX: 16, spacingY: 16, color: '#9db4d0', dotSize: 1.5 },
-        crosshair: 'short', // 'short' = 50 px cross at the pointer; 'long' = lines reach the canvas edges
+        // Crosshair look/length: mode 'short'|'long', shortLength px (Short cross total), line
+        // thickness px, opacity %, line colour. The outline colour is auto-derived for contrast.
+        crosshair: { mode: 'short', shortLength: 50, thickness: 1, opacity: 100, color: '#ff4d4d' },
         // All currently selected control names (multi-select). state.selected stays the ANCHOR
         // (the first-selected control that edge-alignment aligns everything else to).
         multi: new Set()
@@ -160,10 +170,7 @@
         if (msg.png) els.img.src = 'data:image/png;base64,' + msg.png;
         if (msg.dotGrid) state.dotGrid = msg.dotGrid;
         applyDotGrid();
-        if (msg.crosshair === 'short' || msg.crosshair === 'long') {
-            state.crosshair = msg.crosshair;
-            applyCrosshair();
-        }
+        if (msg.crosshair && typeof msg.crosshair === 'object') setCrosshairConfig(msg.crosshair);
         if (state.fitted && sizeChanged) {
             state.fitted = false;
             fit();
@@ -761,42 +768,108 @@
     els.canvas.addEventListener('pointermove', onPointerMove);
     els.canvas.addEventListener('pointerup', onPointerUp);
 
-    // ---------------- crosshair overlay (Short / Long) ----------------
-    // While the pointer is over the design surface the native cursor is hidden (CSS) and a
-    // custom crosshair is drawn crossing exactly at the pointer. 'short' = a 50 px cross (25 px
-    // each side); 'long' = the lines span the whole form. The mode is picked in the toolbar and
-    // persisted (globally) by the extension — the frame message carries the saved mode.
+    // ---------------- crosshair overlay (settings-driven) ----------------
+    // The native cursor is hidden while the pointer is over the design surface (CSS); a custom
+    // crosshair is drawn instead. Anchor rules: idle hover -> the pointer; a MOVE drag -> the
+    // dragged control's TOP-LEFT corner; a RESIZE drag -> the active drag handle (edge handles
+    // centre on the edge midpoint). Line thickness, colour, opacity and length (Short = the
+    // short-length px cross, Long = full form) come from state.crosshair, which the extension
+    // keeps in sync with its global config and sends on every frame.
+    let crosshairAnchor = null; // last drawn crossing in css px within the canvas (null = hidden)
+    function contrastFor(colour) {
+        const m = /^#?([0-9a-f]{6})$/i.exec(String(colour || '').trim());
+        if (!m) return '#000000';
+        const v = parseInt(m[1], 16);
+        const lum = 0.299 * ((v >> 16) & 255) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255);
+        return lum > 128 ? '#000000' : '#ffffff'; // light line -> dark outline, dark -> light
+    }
+    function setCrosshairConfig(cfg) {
+        const c = state.crosshair;
+        if (cfg.mode === 'short' || cfg.mode === 'long') c.mode = cfg.mode;
+        if (typeof cfg.shortLength === 'number') c.shortLength = cfg.shortLength;
+        if (typeof cfg.thickness === 'number') c.thickness = cfg.thickness;
+        if (typeof cfg.opacity === 'number') c.opacity = cfg.opacity;
+        if (typeof cfg.color === 'string') c.color = cfg.color;
+        applyCrosshair();
+    }
     function applyCrosshair() {
-        const mode = state.crosshair === 'long' ? 'long' : 'short';
-        els.btnCrosshairShort.classList.toggle('tb-active', mode === 'short');
-        els.btnCrosshairLong.classList.toggle('tb-active', mode === 'long');
+        const c = state.crosshair || {};
+        els.crosshair.style.opacity = String(clampNum(c.opacity, 0, 100, 100) / 100);
+        const colour = /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : '#ff4d4d';
+        const outline = contrastFor(colour);
+        [els.chH, els.chV].forEach((arm) => {
+            arm.style.background = colour;
+            // Crisp 1 px outline on EACH side of the line (never wider) — no soft shadow.
+            arm.style.boxShadow = '0 0 0 1px ' + outline;
+        });
+        // Re-draw an already-visible crosshair so style/length changes show immediately.
+        if (crosshairAnchor && !els.crosshair.hidden) drawCrosshair(crosshairAnchor.x, crosshairAnchor.y);
+    }
+    function drawCrosshair(x, y) {
+        const c = state.crosshair || {};
+        const T = Math.max(1, Math.min(12, Math.round(clampNum(c.thickness, 1, 12, 1))));
+        const long = c.mode === 'long';
+        const half = Math.floor(T / 2);
+        const x0 = Math.round(x) - half; // left edge of the (T wide) vertical arm
+        const y0 = Math.round(y) - half; // top edge of the (T tall) horizontal arm
+        if (long) {
+            const r = els.canvas.getBoundingClientRect();
+            els.chH.style.left = '0px';
+            els.chH.style.width = r.width + 'px';
+            els.chH.style.top = y0 + 'px';
+            els.chH.style.height = T + 'px';
+            els.chV.style.top = '0px';
+            els.chV.style.height = r.height + 'px';
+            els.chV.style.left = x0 + 'px';
+            els.chV.style.width = T + 'px';
+        } else {
+            const sl = Math.max(6, Math.round(clampNum(c.shortLength, 6, 4000, 50)));
+            const hl = Math.round(sl / 2);
+            els.chH.style.left = (Math.round(x) - hl) + 'px';
+            els.chH.style.width = (hl * 2) + 'px';
+            els.chH.style.top = y0 + 'px';
+            els.chH.style.height = T + 'px';
+            els.chV.style.top = (Math.round(y) - hl) + 'px';
+            els.chV.style.height = (hl * 2) + 'px';
+            els.chV.style.left = x0 + 'px';
+            els.chV.style.width = T + 'px';
+        }
+        crosshairAnchor = { x, y };
+        els.crosshair.hidden = false;
     }
     function hideCrosshair() {
+        crosshairAnchor = null;
         els.crosshair.hidden = true;
+    }
+    /** Crosshair crossing: MOVE drag -> the dragged control's top-left corner; RESIZE drag -> the
+     *  active handle point (edge handles centre on the edge midpoint); otherwise null (pointer). */
+    function crosshairPoint(e, r) {
+        if (drag && drag.mode === 'move') {
+            return { x: parseFloat(els.selection.style.left) || 0, y: parseFloat(els.selection.style.top) || 0 };
+        }
+        if (drag && drag.mode === 'resize') {
+            const L = parseFloat(els.selection.style.left) || 0;
+            const T = parseFloat(els.selection.style.top) || 0;
+            const W = parseFloat(els.selection.style.width) || 0;
+            const H = parseFloat(els.selection.style.height) || 0;
+            const cor = drag.corner || 'se';
+            let ax = L, ay = T;
+            if (cor === 'n' || cor === 's') ax = L + W / 2;
+            else if (cor.includes('e')) ax = L + W;
+            if (cor === 'w' || cor === 'e') ay = T + H / 2;
+            else if (cor.includes('s')) ay = T + H;
+            return { x: ax, y: ay };
+        }
+        return null;
     }
     function updateCrosshair(e) {
         const r = els.canvas.getBoundingClientRect();
+        const anchor = crosshairPoint(e, r);
+        if (anchor) { drawCrosshair(anchor.x, anchor.y); return; }
         const x = e.clientX - r.left;
         const y = e.clientY - r.top;
         if (x < 0 || y < 0 || x > r.width || y > r.height) { hideCrosshair(); return; }
-        const cx = Math.round(x) - 0.5; // centre the 1 px lines on the pointer's pixel
-        const cy = Math.round(y) - 0.5;
-        if (state.crosshair === 'long') {
-            els.chH.style.left = '0px';
-            els.chH.style.width = r.width + 'px';
-            els.chH.style.top = cy + 'px';
-            els.chV.style.top = '0px';
-            els.chV.style.height = r.height + 'px';
-            els.chV.style.left = cx + 'px';
-        } else {
-            els.chH.style.left = (cx - 25) + 'px';
-            els.chH.style.width = '50px';
-            els.chH.style.top = cy + 'px';
-            els.chV.style.top = (cy - 25) + 'px';
-            els.chV.style.height = '50px';
-            els.chV.style.left = cx + 'px';
-        }
-        els.crosshair.hidden = false;
+        drawCrosshair(x, y);
     }
     els.canvas.addEventListener('pointermove', updateCrosshair);
     els.canvas.addEventListener('pointerleave', hideCrosshair);
@@ -1609,10 +1682,7 @@
                 break;
             }
             case 'crosshair': {
-                if (msg.mode === 'short' || msg.mode === 'long') {
-                    state.crosshair = msg.mode;
-                    applyCrosshair();
-                }
+                if (msg.crosshair && typeof msg.crosshair === 'object') setCrosshairConfig(msg.crosshair);
                 break;
             }
             case 'properties':
@@ -1687,8 +1757,42 @@
     // --- dot grid toolbar toggles + settings popup ---
     els.btnDotGrid.addEventListener('click', () => post({ type: 'toggleDotGrid' }));
     els.btnSnapGrid.addEventListener('click', () => post({ type: 'toggleSnapToGrid' }));
-    els.btnCrosshairShort.addEventListener('click', () => post({ type: 'setCrosshair', mode: 'short' }));
-    els.btnCrosshairLong.addEventListener('click', () => post({ type: 'setCrosshair', mode: 'long' }));
+    // --- crosshair settings popup (single Crosshair toolbar button) ---
+    function openCrosshairSettings() {
+        const c = state.crosshair || {};
+        els.chModeShort.classList.toggle('active', c.mode !== 'long');
+        els.chModeLong.classList.toggle('active', c.mode === 'long');
+        els.chShortLength.value = clampNum(c.shortLength, 6, 4000, 50);
+        els.chThickness.value = clampNum(c.thickness, 1, 12, 1);
+        els.chOpacity.value = clampNum(c.opacity, 0, 100, 100);
+        els.chColor.value = /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : '#ff4d4d';
+        els.crosshairModal.hidden = false;
+    }
+    function closeCrosshairSettings() { els.crosshairModal.hidden = true; }
+    els.btnCrosshair.addEventListener('click', openCrosshairSettings);
+    els.chModeShort.addEventListener('click', () => {
+        els.chModeShort.classList.add('active');
+        els.chModeLong.classList.remove('active');
+    });
+    els.chModeLong.addEventListener('click', () => {
+        els.chModeLong.classList.add('active');
+        els.chModeShort.classList.remove('active');
+    });
+    els.crosshairCancel.addEventListener('click', closeCrosshairSettings);
+    els.crosshairModal.addEventListener('click', (e) => {
+        if (e.target === els.crosshairModal) closeCrosshairSettings(); // click outside the box
+    });
+    els.crosshairSave.addEventListener('click', () => {
+        const settings = {
+            mode: els.chModeLong.classList.contains('active') ? 'long' : 'short',
+            shortLength: clampNum(els.chShortLength.value, 6, 4000, 50),
+            thickness: clampNum(els.chThickness.value, 1, 12, 1),
+            opacity: clampNum(els.chOpacity.value, 0, 100, 100),
+            color: els.chColor.value || '#ff4d4d'
+        };
+        closeCrosshairSettings();
+        post({ type: 'setCrosshair', settings });
+    });
     els.btnGridSettings.addEventListener('click', () => {
         const g = state.dotGrid || {};
         els.dotGridSpacingX.value = g.spacingX || 16;
@@ -1799,6 +1903,7 @@
             if (!els.itemsModal.hidden) closeItemsEditor();
             if (!els.gridModal.hidden) els.gridModal.hidden = true;
             if (!els.dotGridModal.hidden) closeDotGridSettings();
+            if (!els.crosshairModal.hidden) closeCrosshairSettings();
         }
     });
 
@@ -1815,7 +1920,7 @@
     });
 
     applyDotGrid(); // initial toolbar state (overlay follows the first frame message)
-    applyCrosshair(); // initial Short/Long toolbar state (the frame message may override it)
+    applyCrosshair(); // initial crosshair style (the frame message carries the saved settings)
 
     // tell the extension the webview is ready (triggers the first render)
     post({ type: 'ready' });

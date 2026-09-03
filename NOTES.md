@@ -353,6 +353,29 @@ lives in `designerPanel.ts` + `media/designer.js`).
   800×450, Short = 50 px, hidden on leave/outside, buttons post + active states). Full suite
   **1414 passed** (was 1401). tsc clean, PROBLEMS clean, packaged+installed (422KB). Docs: NOTES §68.
 
+### Crosshair enhancement — one settings button, styled lines + move/resize anchors (§69, 2026-09-03)
+- **Single toolbar button:** the old `Short`/`Long` pair (and its `.tb-caption`) is gone — one
+  **Crosshair** button now opens a settings popup (mirrors the Grid… pattern) with: **Length**
+  (Short/Long segmented toggle), **Short length (px)**, **Thickness (px)**, **Opacity (%)** and
+  **Colour**. All settings are global + persisted via `avaloniaDesigner.crosshair.*` (mode,
+  shortLength, thickness, opacity, color); the `frame` message now carries the whole object.
+- **Anchors:** idle hover → the crosshair crosses on the pointer. **MOVE drag → centred on the
+  dragged control's TOP-LEFT corner** (reads the live outline box, so it tracks snap-to-grid too).
+  **RESIZE drag → centred on the ACTIVE drag handle** (corner handles → the corner; edge handles →
+  the edge MIDPOINT). Implemented by `crosshairPoint()` reading `drag.mode` + the live selection box.
+- **Visuals:** line thickness/colour/opacity come from the settings; each arm gets a CRISP 1 px
+  outline on BOTH sides (`box-shadow 0 0 0 1px`, no soft shadow — that fuzzy second shadow is what
+  made the old crosshair look too broad). The outline colour is AUTO (user choice): light line →
+  black outline, dark line → white (`contrastFor` luminance), so it always contrasts with the line
+  and the canvas.
+- Tests: T3 crosshair block rewritten (+26 → 204): style/opacity/thickness/length application,
+  auto-contrast (red→black, white→black, black→white), popup open/prefill/toggle/save/cancel,
+  MOVE anchor = control top-left (NOT the pointer), RESIZE `n` anchor = the edge midpoint. Full
+  suite **1446 passed** (was 1420). tsc clean, PROBLEMS clean, packaged+installed (425KB).
+  Docs: NOTES §69.
+
+## 7. Feature history (one line per section — details in NOTES_ARCHIVE.md)
+
 | § | Feature | Date | Key lesson |
 |---|---|---|---|
 | 10 | create-avalonia-vb refactor | 2026-08-24 | shared bash lib; **superseded** by §12 |
@@ -416,6 +439,7 @@ lives in `designerPanel.ts` + `media/designer.js`).
 | 67 | Public GitHub Beta (release hygiene) | 2026-09-02 | git init `main` + hardened `.gitignore` + pushed to github.com/OomNiel/avalonia-designer (public); package.json `repository`/`homepage`/`bugs`/`keywords`/categories; version **1.0.0-beta.1**; `CHANGELOG.md`; README prereq + version-matrix clarity. **Icon:** `Grumpy.png` converted (Pillow) to a 256×256 square PNG. |
 | 68 | Designer crosshair (Short / Long) | 2026-09-03 | native cursor hidden over the canvas (CSS) + custom 1 px crosshair drawn at the pointer (`pointer-events:none`, z-index 200); Short = 50 px (25/side), Long = lines span the form; toolbar `Short`/`Long` toggle buttons post setCrosshair; mode persisted in `avaloniaDesigner.crosshair.mode` (default short) and carried in the frame message; crosshair wins over resize-handle cursors (user: "always"). `updatePendingTool` no longer sets a native crosshair. T3 +13 → **1414 passed**. |
 | 68b | Top-edge resize dropped the control down (fix) | 2026-09-03 | host reports window-ABSOLUTE bounds but `Canvas.Top/Left` are parent-relative; on a ChromeWindow (Body at y=44) a top/west resize wrote `Canvas.Top = bounds.y + dy` → landed 44 px below the dragged outline ("whole control shifts down"). Fix: move the edge by the delta from the control's CURRENT attribute (`parseNumAttr(attr)+delta`), like `move()`; applied in `resize()` + `resizeLine()`. Verified on a real host ChromeWindow (abs y 64 → top drag −12 → 52). T2 +6 → **1420 passed**. |
+| 69 | Crosshair: one settings button, styled lines, move/resize anchors | 2026-09-03 | single `Crosshair` toolbar button opens a popup (Length Short/Long, Short length, Thickness, Opacity, Colour) persisted in `avaloniaDesigner.crosshair.*` (frame carries the object). Crosshair crosses: at the pointer when idle; on the dragged control's TOP-LEFT corner while MOVING; on the ACTIVE drag handle (edge handles → edge midpoint) while RESIZING. Lines are T px with a crisp 1 px outline on each side (auto-contrast: light line→black, dark→white). T3 +26 → **1446 passed**. |
 
 ---
 

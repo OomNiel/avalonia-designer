@@ -938,18 +938,13 @@ body {
     display: none;
 }
 
-/* Toolbar group caption (e.g. "Crosshair" before the Short/Long toggle buttons). */
-.tb-caption {
-    color: var(--fg-dim);
-    font-size: 12px;
-    margin: 0 2px 0 6px;
-}
-
-/* ---------- crosshair overlay (Short / Long) ---------- */
-/* While the pointer is over the design surface the native cursor is hidden EVERYWHERE inside
-   #canvas (even over resize/shape handles — crosshairs always win) and a custom crosshair of
-   two 1 px lines is drawn with its crossing exactly at the pointer. 'short' = a 50 px cross
-   (25 px each side); 'long' = the lines span the whole form. Positioned from JS on pointermove. */
+/* ---------- crosshair overlay (settings-driven) ---------- */
+/* The native cursor is hidden EVERYWHERE inside #canvas and a custom crosshair is drawn instead.
+   Hovering the form: it crosses on the pointer. Moving a control: it centres on the control's
+   top-left corner. Resizing: it centres on the active drag handle. Line colour, thickness,
+   opacity and length (Short = Short-length px, Long = full form) come from the Crosshair settings
+   popup. Every line carries a crisp 1 px outline on BOTH sides — never wider — whose colour is
+   auto-picked for contrast with the line colour (light line -> dark outline, dark -> light). */
 #canvas,
 #canvas * {
     cursor: none !important;
@@ -960,6 +955,7 @@ body {
     inset: 0;
     pointer-events: none;
     z-index: 200;
+    opacity: 1;
 }
 
 #crosshair[hidden] {
@@ -970,10 +966,9 @@ body {
     position: absolute;
     display: block;
     pointer-events: none;
-    background: #ff4d4d;
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75), 0 0 2px rgba(0, 0, 0, 0.4);
 }
 
+/* Base thickness: the JS sets width/height/colour/outline per the settings on every move. */
 #crosshair i#chH {
     height: 1px;
 }
@@ -1097,4 +1092,31 @@ body {
 
 .grid-settings input:focus {
     outline: 1px solid var(--accent);
+}
+
+/* Crosshair settings modal: the Short/Long segmented control. */
+.ch-seg {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.ch-seg-btn {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.ch-seg-btn:hover {
+    border-color: var(--accent);
+}
+
+.ch-seg-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
 }

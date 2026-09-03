@@ -27,8 +27,9 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'multiSel', 'marquee', 'radiusGuide',
     'btnAlignLeft', 'btnAlignCentre', 'btnAlignRight', 'btnAlignTop', 'btnAlignMiddle', 'btnAlignBottom',
     'btnAlignText', 'btnSameWidth', 'btnSameHeight',
-    'btnCrosshairShort', 'btnCrosshairLong',
-    'crosshair', 'chH', 'chV'];
+    'crosshair', 'chH', 'chV', 'btnCrosshair',
+    'crosshairModal', 'chModeShort', 'chModeLong', 'chShortLength', 'chThickness', 'chOpacity',
+    'chColor', 'crosshairSave', 'crosshairCancel'];
 
 function setup() {
     const { JSDOM } = require('jsdom');
@@ -43,7 +44,10 @@ function setup() {
         if (id === 'itemsText') return 'textarea';
         if (id.startsWith('dotGridSpacing') || id === 'dotGridColor' || id === 'dotGridDotSize') return 'input';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
-            || id === 'dotGridSave' || id === 'dotGridCancel') return 'button';
+            || id === 'dotGridSave' || id === 'dotGridCancel'
+            || id === 'chModeShort' || id === 'chModeLong'
+            || id === 'crosshairSave' || id === 'crosshairCancel') return 'button';
+        if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
     };
@@ -462,37 +466,107 @@ module.exports = async (t) => {
         t.equal(mv2.dy, 3, 'dotgrid', 'raw dy when snap off');
     }
 
-    // --- crosshair overlay: Short/Long toolbar buttons + pointer tracking ---
+    // --- crosshair: one settings button + popup, styled lines, move/resize anchors ---
     {
-        // A frame can carry the persisted mode (Long here) and highlight the right button.
-        msg(Object.assign(frame([]), { crosshair: 'long' }));
-        t.equal($('btnCrosshairLong').classList.contains('tb-active'), true, 'crosshair', 'frame mode Long → Long button active');
-        t.equal($('btnCrosshairShort').classList.contains('tb-active'), false, 'crosshair', 'Short button inactive');
-        // Pointer over the canvas → LONG crosshair spans the full form, shown at the pointer.
+        // A frame carrying the saved settings applies them to the layer + lines.
+        msg(Object.assign(frame([]), { crosshair: { mode: 'short', shortLength: 50, thickness: 1, opacity: 100, color: '#ff4d4d' } }));
         $('crosshair').hidden = true;
         dispatch('pointermove', 'canvas', { clientX: 200, clientY: 150 });
-        t.equal($('crosshair').hidden, false, 'crosshair', 'long: shown while the pointer is inside the canvas');
-        t.equal($('chH').style.width, '800px', 'crosshair', 'long: horizontal line spans the canvas width');
-        t.equal($('chV').style.height, '450px', 'crosshair', 'long: vertical line spans the canvas height');
-        // Pointer leaves the canvas → crosshair hidden.
-        dispatch('pointerleave', 'canvas', {});
-        t.equal($('crosshair').hidden, true, 'crosshair', 'hidden when the pointer leaves the canvas');
-        // Toolbar buttons post setCrosshair with the right mode.
-        posted.length = 0;
-        $('btnCrosshairShort').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
-        t.equal(posted[posted.length - 1].type, 'setCrosshair', 'crosshair', 'Short button posts setCrosshair');
-        t.equal(posted[posted.length - 1].mode, 'short', 'crosshair', 'mode = short');
-        // A reply message switches to Short → 50 px cross centred on the pointer.
-        msg({ type: 'crosshair', mode: 'short' });
-        t.equal($('btnCrosshairShort').classList.contains('tb-active'), true, 'crosshair', 'Short active after message');
-        t.equal($('btnCrosshairLong').classList.contains('tb-active'), false, 'crosshair', 'Long inactive after message');
+        t.equal($('crosshair').hidden, false, 'ch', 'short: shown while hovering the canvas');
+        t.equal($('chH').style.width, '50px', 'ch', 'short length 50 -> horizontal arm 50 px');
+        t.equal($('chV').style.height, '50px', 'ch', 'short length 50 -> vertical arm 50 px');
+        t.equal($('chH').style.background, 'rgb(255, 77, 77)', 'ch', 'line colour applied');
+        // Crisp 1 px outline on EACH side (never wider), auto-contrast: red -> black outline.
+        t.equal($('chH').style.boxShadow, '0 0 0 1px #000000', 'ch', 'auto-contrast crisp outline (red -> black)');
+        // Long mode -> full-canvas lines.
+        msg({ type: 'crosshair', crosshair: { mode: 'long', shortLength: 50, thickness: 1, opacity: 100, color: '#ff4d4d' } });
         dispatch('pointermove', 'canvas', { clientX: 200, clientY: 150 });
-        t.equal($('chH').style.width, '50px', 'crosshair', 'short: horizontal line is 50 px');
-        t.equal($('chV').style.height, '50px', 'crosshair', 'short: vertical line is 50 px');
-        // Pointer outside the canvas bounds → hidden.
-        $('crosshair').hidden = false;
-        dispatch('pointermove', 'canvas', { clientX: 900, clientY: 150 });
-        t.equal($('crosshair').hidden, true, 'crosshair', 'hidden when the pointer is outside the canvas bounds');
+        t.equal($('chH').style.width, '800px', 'ch', 'long: horizontal arm spans the canvas');
+        t.equal($('chV').style.height, '450px', 'ch', 'long: vertical arm spans the canvas');
+        // Thickness / opacity / custom short length.
+        msg({ type: 'crosshair', crosshair: { mode: 'short', shortLength: 80, thickness: 3, opacity: 40, color: '#ffffff' } });
+        dispatch('pointermove', 'canvas', { clientX: 200, clientY: 150 });
+        t.equal($('chH').style.width, '80px', 'ch', 'custom short length applied');
+        t.equal($('chH').style.height, '3px', 'ch', 'thickness 3 applied to the horizontal arm');
+        t.equal($('chV').style.width, '3px', 'ch', 'thickness 3 applied to the vertical arm');
+        t.equal($('crosshair').style.opacity, '0.4', 'ch', 'opacity 40% applied');
+        t.equal($('chH').style.background, 'rgb(255, 255, 255)', 'ch', 'white line colour applied');
+        t.equal($('chH').style.boxShadow, '0 0 0 1px #000000', 'ch', 'white line keeps a dark outline');
+        msg({ type: 'crosshair', crosshair: { mode: 'short', shortLength: 50, thickness: 1, opacity: 100, color: '#000000' } });
+        dispatch('pointermove', 'canvas', { clientX: 200, clientY: 150 });
+        t.equal($('chH').style.boxShadow, '0 0 0 1px #ffffff', 'ch', 'dark line -> white outline (auto-contrast)');
+        dispatch('pointerleave', 'canvas', {});
+        t.equal($('crosshair').hidden, true, 'ch', 'hidden when the pointer leaves the canvas');
+
+        // --- settings popup: the single Crosshair button opens it prefilled; Save posts setCrosshair ---
+        posted.length = 0;
+        $('btnCrosshair').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('crosshairModal').hidden, false, 'ch', 'Crosshair button opens the settings popup');
+        t.equal($('chModeShort').classList.contains('active'), true, 'ch', 'mode prefilled Short');
+        t.equal($('chModeLong').classList.contains('active'), false, 'ch', 'Long not active');
+        t.equal($('chThickness').value, '1', 'ch', 'thickness prefilled');
+        t.equal($('chShortLength').value, '50', 'ch', 'short length prefilled');
+        t.equal($('chOpacity').value, '100', 'ch', 'opacity prefilled');
+        t.equal($('chColor').value, '#000000', 'ch', 'colour prefilled');
+        // Toggle Long + edit the fields, then Save.
+        $('chModeLong').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('chModeLong').classList.contains('active'), true, 'ch', 'Long toggled on');
+        t.equal($('chModeShort').classList.contains('active'), false, 'ch', 'Short toggled off');
+        $('chShortLength').value = '75';
+        $('chThickness').value = '2';
+        $('chOpacity').value = '60';
+        $('chColor').value = '#00ff88';
+        posted.length = 0;
+        $('crosshairSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('crosshairModal').hidden, true, 'ch', 'popup closes on save');
+        const sc = posted[posted.length - 1];
+        t.equal(sc.type, 'setCrosshair', 'ch', 'posts setCrosshair');
+        t.equal(sc.settings.mode, 'long', 'ch', 'mode saved');
+        t.equal(sc.settings.shortLength, 75, 'ch', 'short length saved');
+        t.equal(sc.settings.thickness, 2, 'ch', 'thickness saved');
+        t.equal(sc.settings.opacity, 60, 'ch', 'opacity saved');
+        t.equal(sc.settings.color, '#00ff88', 'ch', 'colour saved');
+        // Cancel just closes without posting.
+        posted.length = 0;
+        $('btnCrosshair').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        $('crosshairCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('crosshairModal').hidden, true, 'ch', 'Cancel closes the popup');
+        t.equal(posted.length, 0, 'ch', 'Cancel posts nothing');
+    }
+
+    // --- crosshair anchors while dragging: MOVE -> control top-left; RESIZE -> the drag handle ---
+    {
+        msg(frame([
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'btn1', type: 'Button', x: 100, y: 50, w: 120, h: 36, parent: 'Body' }
+        ]));
+        const cl = $('controlList');
+        cl.value = 'btn1';
+        cl.dispatchEvent(new s.window.Event('change'));
+        const sel = $('selection');
+        t.equal(sel.hidden, false, 'ch-drag', 'btn1 selected (handles shown)');
+        const nH = sel.querySelector('.handle.n');
+        t.ok(!!nH, 'ch-drag', 'top handle present');
+
+        // RESIZE from the TOP handle: grab at (160,50), drag up to (160,40) -> handle point = top-mid.
+        const pdN = new s.window.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: 160, clientY: 50 });
+        nH.dispatchEvent(pdN);
+        dispatch('pointermove', 'canvas', { clientX: 160, clientY: 40 });
+        t.equal(parseFloat($('chV').style.left), 160, 'ch-drag', 'resize n: crosshair on the handle x (edge midpoint)');
+        t.equal(parseFloat($('chH').style.top), 40, 'ch-drag', 'resize n: crosshair on the moved top edge');
+        dispatch('pointerup', 'canvas', { clientX: 160, clientY: 40 });
+
+        // MOVE: grab the button BODY and drag; the crosshair centres on the control's top-left corner.
+        posted.length = 0;
+        const pdM = new s.window.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: 130, clientY: 70 });
+        $('canvas').dispatchEvent(pdM); // inside btn1 -> mode move
+        dispatch('pointermove', 'canvas', { clientX: 180, clientY: 110 }); // +50,+40 design px
+        const mvX = parseFloat(sel.style.left); // 150
+        const mvY = parseFloat(sel.style.top);  // 90
+        t.ok(Math.abs(parseFloat($('chV').style.left) - mvX) < 0.01 && Math.abs(parseFloat($('chH').style.top) - mvY) < 0.01,
+            'ch-drag', 'move: crosshair centres on the control top-left corner', `${$('chV').style.left},${$('chH').style.top}`);
+        t.ok(Math.abs(parseFloat($('chV').style.left) - 180) > 1, 'ch-drag', 'move: crosshair does NOT follow the pointer x (180)');
+        dispatch('pointerup', 'canvas', { clientX: 180, clientY: 110 });
     }
 
     // --- multi-select: Ctrl+Click toggles, marquee box-selects, alignment tools post ---
