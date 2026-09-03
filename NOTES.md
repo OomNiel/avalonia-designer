@@ -157,7 +157,10 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   DataSet designer, C#/VB project + form scaffolding (net10 + Avalonia 12, F5-ready), ChromeWindow custom
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
-- Suite green: **1446 passed**; PROBLEMS clean after every change.
+- Suite green: **1450 passed**; PROBLEMS clean after every change.
+- §69b: "Align vertical/horizontal centres" buttons were swapped — `btnAlignMiddle` (↕, vertical
+  centres) now posts `centre` (centre-X → a vertical line of centres); `btnAlignCentre` (↔,
+  horizontal centres) posts `middle` (centre-Y → a horizontal line). Geometry was already correct.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 
 ## 7. Feature history
