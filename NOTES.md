@@ -161,7 +161,11 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   DataSet designer, C#/VB project + form scaffolding (net10 + Avalonia 12, F5-ready), ChromeWindow custom
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
-- Suite green: **1466 passed**; PROBLEMS clean after every change.
+- Suite green: **1475 passed**; PROBLEMS clean after every change.
+- Undo/Redo toolbar buttons (↶/↷, far left): extension owns the 5-level history and pushes
+  `historyState {canUndo,canRedo}` (on ready / after every notifyEdit / after undo-redo) so the
+  buttons enable/disable to match; clicking posts the same `undo`/`redo` message the Ctrl+Z /
+  Ctrl+Shift+Z / Ctrl+Y shortcuts send.
 - Equal spacing (§69e): two new alignment tools — Equal Vertical Spacing (⋮) and Equal Horizontal
   Spacing (⋯) — spread 3+ selected controls with EQUAL edge-to-edge gaps, keeping the two OUTERMOST
   controls fixed (topmost/bottommost or leftmost/rightmost); sorted by position; only changes the

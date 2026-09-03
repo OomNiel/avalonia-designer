@@ -492,6 +492,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             switch (msg.type) {
                 case 'ready': {
                     this.ensureHistory(doc);
+                    this.sendHistoryState(doc, panel);
                     await this.postStatus(panel, 'Starting previewer host...');
                     try {
                         await this.host.getClient();
@@ -1462,6 +1463,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 case 'undo':
                 case 'redo': {
                     await this.undoRedo(doc, panel, msg.type === 'redo', msg.name);
+                    this.sendHistoryState(doc, panel);
                     return;
                 }
                 default:
@@ -2115,6 +2117,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             void this.syncAccessors(doc).catch(() => { /* ignore */ });
         }
         this.pushHistory(doc, after);
+        this.sendHistoryState(doc, panel);
         this._onDidChangeCustomDocument.fire({
             document: doc,
             label: 'Avalonia Designer edit',
@@ -2180,6 +2183,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         await this.render(doc, panel);
         const name = selName && doc.model.findByName(selName) ? selName : null;
         await this.sendProperties(doc, panel, name);
+    }
+
+    /** Tells the webview whether Undo/Redo are currently possible (drives the toolbar buttons). */
+    private sendHistoryState(doc: DesignerDocument, panel: vscode.WebviewPanel): void {
+        const h = this.history.get(doc.uri.toString());
+        const canUndo = !!h && h.index > 0;
+        const canRedo = !!h && h.index < h.states.length - 1;
+        void panel.webview.postMessage({ type: 'historyState', canUndo, canRedo });
     }
 
     async saveCustomDocument(document: DesignerDocument): Promise<void> {
@@ -2371,6 +2382,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
 <body>
   <div id="app">
     <div id="toolbar">
+      <button id="btnUndo" title="Undo the last change (Ctrl+Z)" disabled>↶</button>
+      <button id="btnRedo" title="Redo the last undone change (Ctrl+Shift+Z / Ctrl+Y)" disabled>↷</button>
+      <span class="sep"></span>
       <button id="btnNewForm" title="Create a new Avalonia form">+ New Form</button>
       <span class="sep"></span>
       <button id="btnZoomOut" title="Zoom out">−</button>

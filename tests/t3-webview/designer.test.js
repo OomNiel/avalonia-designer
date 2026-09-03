@@ -15,7 +15,7 @@ const DESIGNER_JS = path.join(__dirname, '..', '..', 'media', 'designer.js');
 const DESIGNER_CSS = path.join(__dirname, '..', '..', 'media', 'designer.css');
 
 const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomValue', 'canvasWrap',
-    'propsBody', 'propsEmpty', 'controlList', 'btnNewForm', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
+    'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
     'contextMenu', 'ctxDelete', 'ctxCut', 'ctxCopy', 'ctxPaste', 'ctxMoveToContainer',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
@@ -727,6 +727,34 @@ module.exports = async (t) => {
         dispatch('click', 'canvas', { clientX: 220, clientY: 130, ctrlKey: true }); // Line2
         t.ok($('btnSameWidth').disabled && $('btnSameHeight').disabled, 'multisel', 'two Lines → same-size disabled (no Width/Height)');
         t.ok(alignBtns.every((id) => !$(id).disabled), 'multisel', 'two Lines → edge-align still enabled');
+    }
+
+    // --- Undo / Redo toolbar buttons (history lives in the extension) ---
+    // The extension sends historyState (canUndo/canRedo) whenever the undo history changes; the
+    // two buttons mirror it and post the SAME undo/redo message the Ctrl+Z / Ctrl+Shift+Z /
+    // Ctrl+Y shortcuts send (with the current selection, if any).
+    {
+        // No history → both disabled.
+        msg({ type: 'historyState', canUndo: false, canRedo: false });
+        t.equal($('btnUndo').disabled, true, 'undoredo', 'no history → Undo disabled');
+        t.equal($('btnRedo').disabled, true, 'undoredo', 'no history → Redo disabled');
+        // Something to undo, but no redo branch yet.
+        msg({ type: 'historyState', canUndo: true, canRedo: false });
+        t.equal($('btnUndo').disabled, false, 'undoredo', 'history → Undo enabled');
+        t.equal($('btnRedo').disabled, true, 'undoredo', 'no redo branch → Redo disabled');
+        // Undone once → both undo AND redo available.
+        msg({ type: 'historyState', canUndo: true, canRedo: true });
+        t.equal($('btnRedo').disabled, false, 'undoredo', 'redo branch → Redo enabled');
+        // Clicking posts undo/redo (no selection here → name null).
+        $('btnClearSel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        posted.length = 0;
+        $('btnUndo').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1].type, 'undo', 'undoredo', 'Undo button posts undo');
+        t.equal(posted[posted.length - 1].name, null, 'undoredo', 'Undo carries no selection → name null');
+        posted.length = 0;
+        $('btnRedo').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1].type, 'redo', 'undoredo', 'Redo button posts redo');
+        t.equal(posted[posted.length - 1].name, null, 'undoredo', 'Redo carries no selection → name null');
     }
 
     // --- shape drag-point handles: a Line shows its 2 ENDS; an Arc shows CENTRE + 2 ENDS ---

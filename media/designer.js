@@ -15,6 +15,8 @@
         propsBody: $('propsBody'),
         propsEmpty: $('propsEmpty'),
         controlList: $('controlList'),
+        btnUndo: $('btnUndo'),
+        btnRedo: $('btnRedo'),
         btnNewForm: $('btnNewForm'),
         btnZoomIn: $('btnZoomIn'),
         btnZoomOut: $('btnZoomOut'),
@@ -1798,12 +1800,24 @@
                 state.clipboard = !!msg.has;
                 break;
             }
+            case 'historyState': {
+                // The extension owns the undo/redo history (5 levels) and tells us whether there
+                // is anything to undo/redo, so the toolbar buttons reflect reality.
+                els.btnUndo.disabled = !msg.canUndo;
+                els.btnRedo.disabled = !msg.canRedo;
+                break;
+            }
             default:
                 break;
         }
     });
 
     // ---------------- toolbar ----------------
+    // Undo / Redo — the history (5 levels) lives in the extension; these post the SAME messages
+    // the Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y shortcuts send, and are enabled/disabled by the
+    // extension's historyState messages.
+    els.btnUndo.addEventListener('click', () => post({ type: 'undo', name: state.selected ? state.selected.name : null }));
+    els.btnRedo.addEventListener('click', () => post({ type: 'redo', name: state.selected ? state.selected.name : null }));
     els.btnNewForm.addEventListener('click', () => post({ type: 'openNewForm' }));
     els.btnZoomIn.addEventListener('click', () => {
         state.fitted = false;
