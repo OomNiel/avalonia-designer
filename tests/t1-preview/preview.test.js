@@ -336,6 +336,20 @@ module.exports = async (t) => {
                 }
             }
         }
+
+        // 11) Preview theme: the headless host can't see the OS colour scheme, so the render request
+        //     carries the FluentTheme variant ('light'/'dark') — a "System"-themed form that the OS
+        //     would show dark must NOT stay white in the designer. Empty canvas → theme background.
+        {
+            const empty = W('<Canvas Name="Body"/>');
+            const light = await renderPng(host, empty, 800, 450, undefined, 'light');
+            const dark = await renderPng(host, empty, 800, 450, undefined, 'dark');
+            t.ok(!light.frame.error && !dark.frame.error, 'theme', 'no render error', light.frame.error || dark.frame.error || '');
+            const lightBg = countIn(light.img, 0, 80, 0, 80, (r, g, b) => r > 200 && g > 200 && b > 200);
+            const darkBg = countIn(dark.img, 0, 80, 0, 80, (r, g, b) => r < 90 && g < 90 && b < 90);
+            t.ok(lightBg / 6400 > 0.85, 'theme', 'light theme renders a light design background', `light=${((lightBg / 6400) * 100).toFixed(0)}%`);
+            t.ok(darkBg / 6400 > 0.85, 'theme', 'dark theme renders a dark design background (OS-dark echo)', `dark=${((darkBg / 6400) * 100).toFixed(0)}%`);
+        }
     } finally {
         host.close();
     }

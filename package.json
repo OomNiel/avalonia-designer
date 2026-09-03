@@ -272,6 +272,16 @@
                     "type": "string",
                     "default": "#ff4d4d",
                     "description": "Colour of the crosshair lines. The outline is picked automatically for contrast."
+                },
+                "avaloniaDesigner.previewTheme": {
+                    "type": "string",
+                    "enum": [
+                        "auto",
+                        "light",
+                        "dark"
+                    ],
+                    "default": "auto",
+                    "description": "Theme the designer preview renders with: auto = follow the VS Code colour theme (a dark VS Code ≈ a dark OS, so 'System'-themed forms are previewed dark); light/dark force it regardless of an explicit RequestedThemeVariant on the form."
                 }
             }
         }

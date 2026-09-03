@@ -157,8 +157,11 @@ internal static class Program
                     if (root.TryGetProperty("width", out var wel) && wel.TryGetDouble(out var wv)) w = wv;
                     if (root.TryGetProperty("height", out var hel) && hel.TryGetDouble(out var hv)) h = hv;
                     var projectPath = root.TryGetProperty("projectPath", out var pp) ? pp.GetString() ?? "" : "";
+                    var theme = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "" : "";
 
-                    var frame = Renderer.Render(xaml, w, h, string.IsNullOrEmpty(projectPath) ? null : projectPath);
+                    var frame = Renderer.Render(xaml, w, h,
+                        string.IsNullOrEmpty(projectPath) ? null : projectPath,
+                        string.IsNullOrEmpty(theme) ? null : theme);
                     return Json(id, new
                     {
                         type = "frame",

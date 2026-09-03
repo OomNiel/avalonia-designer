@@ -140,8 +140,8 @@ export class HostClient {
         });
     }
 
-    async render(xaml: string, width: number, height: number, projectPath?: string): Promise<FrameResult> {
-        return (await this.request('render', { xaml, width, height, projectPath })) as unknown as FrameResult;
+    async render(xaml: string, width: number, height: number, projectPath?: string, theme?: string): Promise<FrameResult> {
+        return (await this.request('render', { xaml, width, height, projectPath, theme })) as unknown as FrameResult;
     }
 
     async snippet(tag: string): Promise<SnippetResult> {

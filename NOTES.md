@@ -157,7 +157,12 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   DataSet designer, C#/VB project + form scaffolding (net10 + Avalonia 12, F5-ready), ChromeWindow custom
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
-- Suite green: **1457 passed**; PROBLEMS clean after every change.
+- Suite green: **1460 passed**; PROBLEMS clean after every change.
+- Preview theme (§69d): the headless host can't see the OS colour scheme, so it always rendered
+  Light (white design) even for a "System" form on a dark OS. The designer now tells the host the
+  FluentTheme variant per render: an explicit `RequestedThemeVariant` on the form wins, then the new
+  `avaloniaDesigner.previewTheme` setting (auto/light/dark, default auto), else the **VS Code colour
+  theme** (dark VS Code ≈ dark OS). Host applies it via `Window.RequestedThemeVariant`.
 - Rulers (§69c): white-on-black strips hug the canvas top/left and scroll+zoom with it; scale in
   design px. Major grad every 5× grid spacing, minor = 10 divisions per major (= grid/2); numeric
   labels on majors; rulers re-render on frame/zoom/grid-spacing changes.

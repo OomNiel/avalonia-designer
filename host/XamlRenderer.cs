@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -14,6 +14,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Styling;
 using Avalonia.VisualTree;
 
 namespace PreviewerHost;
@@ -65,13 +66,19 @@ public class XamlRenderer
     /// <summary>User project root (for resolving avares://… image Sources) during the programmatic build.</summary>
     private static string? CurrentProjectPath;
 
-    public FrameResult Render(string xaml, double designW, double designH, string? projectPath = null)
+    public FrameResult Render(string xaml, double designW, double designH, string? projectPath = null, string? theme = null)
     {
         try
         {
             CurrentProjectPath = projectPath;
             var window = LoadWindow(xaml, (int)designW, (int)designH, projectPath)
                 ?? throw new InvalidOperationException("Failed to load XAML into a Window.");
+
+            // The headless platform can't detect the OS colour scheme, so the extension tells us
+            // which FluentTheme variant to render (so a "System" form that the user's OS would
+            // show dark is previewed dark, not always white/light). Applied before Show/Measure.
+            if (theme == "dark") window.RequestedThemeVariant = ThemeVariant.Dark;
+            else if (theme == "light") window.RequestedThemeVariant = ThemeVariant.Light;
 
             window.Width = designW;
             window.Height = designH;

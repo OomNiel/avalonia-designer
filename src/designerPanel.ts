@@ -1555,7 +1555,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const proj = findProject(doc.uri);
         const frame = await host.render(
             xaml, size.width, size.height,
-            proj ? path.dirname(proj.projectUri.fsPath) : undefined
+            proj ? path.dirname(proj.projectUri.fsPath) : undefined,
+            this.previewTheme(doc.model.root)
         );
         this.frames.set(doc.uri.toString(), frame);
         // Dynamic Image-in-Grid tracking: an Image placed in a Grid cell follows its cell's CURRENT
@@ -2039,6 +2040,19 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             width: Number.isFinite(w) && w > 0 ? w : DEFAULT_SIZE.width,
             height: Number.isFinite(h) && h > 0 ? h : DEFAULT_SIZE.height
         };
+    }
+
+    /** The FluentTheme variant to render the preview in ('light'|'dark'). The headless host can't
+     *  detect the OS colour scheme, so: an explicit RequestedThemeVariant on the form wins; then the
+     *  `avaloniaDesigner.previewTheme` setting; else the VS Code colour theme (a dark VS Code ≈ a
+     *  dark OS — so a "System" themed form is previewed the way the user's machine would show it). */
+    private previewTheme(root: Element): string {
+        const v = root.getAttribute('RequestedThemeVariant');
+        if (v === 'Dark' || v === 'Light') return v.toLowerCase();
+        const cfg = vscode.workspace.getConfiguration('avaloniaDesigner').get<string>('previewTheme', 'auto');
+        if (cfg === 'light' || cfg === 'dark') return cfg;
+        const kind = vscode.window.activeColorTheme?.kind;
+        return (kind === vscode.ColorThemeKind.Dark || kind === vscode.ColorThemeKind.HighContrast) ? 'dark' : 'light';
     }
 
     /** Keeps VB code-behind named-control accessors in sync with the XAML. */
