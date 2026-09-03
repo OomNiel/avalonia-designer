@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "1.0.0-beta.1",
+    "version": "1.0.0-beta.2",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",

@@ -5,6 +5,17 @@ All notable changes to the **Avalonia Designer for VS Code** extension.
 Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [1.0.0-beta.2] - 2026-09-03
+
+Second public **Beta**. ⚠️ Incomplete & buggy — development is on-going.
+
+### Added
+- **Undo / Redo toolbar buttons (↶ / ↷)** — step the 5-level undo history back/forward straight
+  from the toolbar (the Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y shortcuts still work). The buttons
+  enable/disable to match what can actually be undone or redone.
+
+[1.0.0-beta.2]: https://github.com/OomNiel/avalonia-designer/releases/tag/v1.0.0-beta.2
+
 ## [1.0.0-beta.1] - 2026-09-03
 
 First public **Beta**. ⚠️ Incomplete & buggy — development is on-going.
