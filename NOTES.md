@@ -309,6 +309,25 @@ lives in `designerPanel.ts` + `media/designer.js`).
 - **Point 8:** keywords/categories added and the extension **icon** is now set — user supplied `Grumpy.png` (98×106); converted with Pillow to a **256×256 RGBA PNG** (aspect-preserved, padded to square on transparent) and referenced as `"icon": "Grumpy.png"` (original backed up to `/tmp/Grumpy.png.orig`). vsix now 94 files / 421KB.
 - Tests: unchanged (metadata/docs only). Repackaged as **avalonia-designer-1.0.0-beta.1.vsix** (93 files, 376KB), installed. Committed + pushed to `origin/main`. Docs: NOTES §67.
 
+### Top-edge resize dropped the control down — window-vs-canvas offset (§68b, 2026-09-03)
+- **User report:** dragging a control's TOP handle grew it taller but on mouse-up the WHOLE control
+  shifted down; the dropped edge didn't stay put. Left/right/down handles were fine. All controls.
+- **Root cause:** `xamlModel.resize()`/`resizeLine()` wrote the moved edge as
+  `Canvas.Top/Left = bounds + delta`, where `bounds` are the HOST's **window-ABSOLUTE** coords, but
+  `Canvas.Top/Left` are **parent-relative** attributes. On a form whose content canvas isn't at
+  window (0,0) — a `chrome:ChromeWindow` puts `Body` at y=44 (title bar) — `bounds.y = 44 +
+  Canvas.Top`, so a top resize landed the control 44 px BELOW the dragged outline (="shifts down").
+  X-offset is 0 and down/right only change size, so left/down/right worked by luck.
+- **Fix:** the west/north edge now moves by the DELTA from the control's **current attribute**
+  (`parseNumAttr(el, 'Canvas.Top', bounds.y) + dy`), exactly like `move()` already does — the
+  attribute is parent-relative, so the dropped edge lands where the (absolute) outline was.
+  Margin branch was already attribute-based. Applied to `resize()` AND `resizeLine()`.
+- **Proof:** real-host ChromeWindow render: Button `Canvas.Top=20` in `Body(y=44)` → abs y=64;
+  top drag −12 now yields abs y=52 (=64−12, outline kept) instead of the old ~96.
+- Tests: T2 +6 (offset regression: n/w/Lines with a parent canvas offset, assert attribute-based
+  position). Full suite **1420 passed** (was 1414). tsc clean, PROBLEMS clean,
+  packaged+installed (422KB). Docs: NOTES §68b.
+
 ### Designer crosshair — Short / Long (§68, 2026-09-03)
 - **What:** while the pointer is inside the form canvas the native cursor is replaced by a custom
   crosshair whose crossing sits EXACTLY on the pointer. **Short** = a 50 px cross (25 px each side);
@@ -396,6 +415,7 @@ lives in `designerPanel.ts` + `media/designer.js`).
 | 66 | New projects are F5-ready (Linux-safe) | 2026-09-02 | scaffold now writes `.vscode/launch.json` (`type: coreclr`, program → `bin/Debug/net10.0/<name>.dll` — no Windows `.exe`; `preLaunchTask: build`) + `.vscode/tasks.json` (default `dotnet build`) for C# AND VB. vbnet-companion's "VB.NET: Launch" snippet is Windows-biased (.exe/net8.0) — don't use it; coreclr + the built dll is the cross-platform way. **Fix 1:** VB bridge DLL path resolved at generation time (no hardcoded path). **Fix 2:** `dotnet restore` runs before a new project opens so the language server isn't stale. |
 | 67 | Public GitHub Beta (release hygiene) | 2026-09-02 | git init `main` + hardened `.gitignore` + pushed to github.com/OomNiel/avalonia-designer (public); package.json `repository`/`homepage`/`bugs`/`keywords`/categories; version **1.0.0-beta.1**; `CHANGELOG.md`; README prereq + version-matrix clarity. **Icon:** `Grumpy.png` converted (Pillow) to a 256×256 square PNG. |
 | 68 | Designer crosshair (Short / Long) | 2026-09-03 | native cursor hidden over the canvas (CSS) + custom 1 px crosshair drawn at the pointer (`pointer-events:none`, z-index 200); Short = 50 px (25/side), Long = lines span the form; toolbar `Short`/`Long` toggle buttons post setCrosshair; mode persisted in `avaloniaDesigner.crosshair.mode` (default short) and carried in the frame message; crosshair wins over resize-handle cursors (user: "always"). `updatePendingTool` no longer sets a native crosshair. T3 +13 → **1414 passed**. |
+| 68b | Top-edge resize dropped the control down (fix) | 2026-09-03 | host reports window-ABSOLUTE bounds but `Canvas.Top/Left` are parent-relative; on a ChromeWindow (Body at y=44) a top/west resize wrote `Canvas.Top = bounds.y + dy` → landed 44 px below the dragged outline ("whole control shifts down"). Fix: move the edge by the delta from the control's CURRENT attribute (`parseNumAttr(attr)+delta`), like `move()`; applied in `resize()` + `resizeLine()`. Verified on a real host ChromeWindow (abs y 64 → top drag −12 → 52). T2 +6 → **1420 passed**. |
 
 ---
 

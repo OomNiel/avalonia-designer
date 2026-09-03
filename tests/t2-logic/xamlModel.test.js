@@ -58,6 +58,27 @@ module.exports = async (t) => {
   // minimum clamp: pulling beyond 5px
   resizeCase(500, 500, 'nw', { w: '5', h: '5', l: '510', t: '520' });
 
+  // --- resize of a control whose PARENT canvas is offset in the window (e.g. a Body canvas below
+  //     a ChromeWindow title bar): the host reports window-ABSOLUTE bounds, so a west/north edge
+  //     must move by the delta from the control's OWN Canvas.Left/Top attribute — never from the
+  //     absolute bounds (that would drop the whole control down by the parent's offset). ---
+  const mOff = new XamlModel(`<Window ${NS}><Canvas Name="Outer"><Canvas Name="Body" Canvas.Left="0" Canvas.Top="44"><Button x:Name="b" Canvas.Left="10" Canvas.Top="20" Width="100" Height="30"/></Canvas></Canvas></Window>`);
+  const offBtn = mOff.findByName('b');
+  mOff.resize(offBtn, 0, -12, { x: 10, y: 64, width: 100, height: 30 }, 'n'); // absolute y = 44 + 20
+  t.equal(offBtn.getAttribute('Canvas.Top'), '8', 'resize-offset', 'top edge = 20 + (-12) from the ATTRIBUTE (not absolute 64 + dy)');
+  t.equal(offBtn.getAttribute('Height'), '42', 'resize-offset', 'height still grows by the drag');
+  const mOff2 = new XamlModel(`<Window ${NS}><Canvas Name="Outer"><Canvas Name="Body" Canvas.Left="40" Canvas.Top="44"><Button x:Name="b" Canvas.Left="10" Canvas.Top="20" Width="100" Height="30"/></Canvas></Canvas></Window>`);
+  const offBtn2 = mOff2.findByName('b');
+  mOff2.resize(offBtn2, 6, 0, { x: 50, y: 64, width: 100, height: 30 }, 'w'); // absolute x = 40 + 10
+  t.equal(offBtn2.getAttribute('Canvas.Left'), '16', 'resize-offset', 'west edge = 10 + 6 from the ATTRIBUTE (not absolute 50 + dx)');
+  t.equal(offBtn2.getAttribute('Width'), '94', 'resize-offset', 'width shrinks by the drag');
+  // The same holds for a Line resized by its NW corner when its parent canvas is offset.
+  const mOffL = new XamlModel(`<Window ${NS}><Canvas Name="Outer"><Canvas Name="Body" Canvas.Left="0" Canvas.Top="44"><Line x:Name="ln" Canvas.Left="10" Canvas.Top="20" StartPoint="0,0" EndPoint="100,30"/></Canvas></Canvas></Window>`);
+  const offLn = mOffL.findByName('ln');
+  mOffL.resizeLine(offLn, 20, 10, { x: 10, y: 64, width: 100, height: 30 }, 'nw');
+  t.equal(offLn.getAttribute('Canvas.Left'), '30', 'resize-offset', 'Line NW: left = 10 + 20 (attr-relative)');
+  t.equal(offLn.getAttribute('Canvas.Top'), '30', 'resize-offset', 'Line NW: top = 20 + 10 (attr-relative)');
+
   // --- serialize: render mode strips events, save mode keeps them ---
   const ms = new XamlModel(WINDOW);
   t.ok(!ms.serialize(false).includes('btn1_Click'), 'serialize', 'render mode strips event attrs');

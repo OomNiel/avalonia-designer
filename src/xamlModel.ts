@@ -556,8 +556,12 @@ export class XamlModel {
         const parent = el.parentNode as Element | null;
         const inCanvas = !!parent && localName(parent.tagName) === 'Canvas';
         if (inCanvas) {
-            if (corner.includes('w')) el.setAttribute('Canvas.Left', String(Math.round(bounds.x + dx)));
-            if (corner.includes('n')) el.setAttribute('Canvas.Top', String(Math.round(bounds.y + dy)));
+            // Canvas.Left/Top are PARENT-relative, while bounds.x/y are the host's window-absolute
+            // coords (a body canvas below a ChromeWindow title bar sits offset in y). Move the edge
+            // by the DELTA from the control's CURRENT attribute (like move()) so the dragged edge
+            // lands exactly where it was dropped — never off by the parent's window offset.
+            if (corner.includes('w')) el.setAttribute('Canvas.Left', String(Math.round(parseNumAttr(el, 'Canvas.Left', bounds.x) + dx)));
+            if (corner.includes('n')) el.setAttribute('Canvas.Top', String(Math.round(parseNumAttr(el, 'Canvas.Top', bounds.y) + dy)));
         } else if (corner.includes('w') || corner.includes('n')) {
             const m = parseMargin(el.getAttribute('Margin'));
             const ml = corner.includes('w') ? Math.round(m.l + dx) : m.l;
@@ -588,8 +592,11 @@ export class XamlModel {
         const parent = el.parentNode as Element | null;
         const inCanvas = !!parent && localName(parent.tagName) === 'Canvas';
         if (inCanvas) {
-            if (corner.includes('w')) el.setAttribute('Canvas.Left', String(Math.round(bounds.x + dx)));
-            if (corner.includes('n')) el.setAttribute('Canvas.Top', String(Math.round(bounds.y + dy)));
+            // Canvas.Left/Top are PARENT-relative, while bounds.x/y are window-absolute (a body
+            // canvas below a ChromeWindow title bar is offset in y). Shift by the DELTA from the
+            // current attribute, exactly like resize(), so the dragged edge stays where dropped.
+            if (corner.includes('w')) el.setAttribute('Canvas.Left', String(Math.round(parseNumAttr(el, 'Canvas.Left', bounds.x) + dx)));
+            if (corner.includes('n')) el.setAttribute('Canvas.Top', String(Math.round(parseNumAttr(el, 'Canvas.Top', bounds.y) + dy)));
         } else if (corner.includes('w') || corner.includes('n')) {
             const m = parseMargin(el.getAttribute('Margin'));
             const ml = corner.includes('w') ? Math.round(m.l + dx) : m.l;
