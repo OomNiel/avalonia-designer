@@ -238,6 +238,15 @@
                     "default": 1.5,
                     "minimum": 0.5,
                     "description": "Diameter of each dot in pixels."
+                },
+                "avaloniaDesigner.crosshair.mode": {
+                    "type": "string",
+                    "enum": [
+                        "short",
+                        "long"
+                    ],
+                    "default": "short",
+                    "description": "Designer crosshair style: Short = a 50 px cross centred on the pointer; Long = lines reach the edges of the form."
                 }
             }
         }

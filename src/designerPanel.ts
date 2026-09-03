@@ -1014,6 +1014,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await panel.webview.postMessage({ type: 'dotGrid', dotGrid: this.dotGridConfig() });
                     return;
                 }
+                case 'setCrosshair': {
+                    // The toolbar Short/Long buttons set the (global) designer crosshair mode.
+                    const mode = msg.mode === 'long' ? 'long' : 'short';
+                    const ccfg = vscode.workspace.getConfiguration('avaloniaDesigner.crosshair');
+                    await ccfg.update('mode', mode, vscode.ConfigurationTarget.Global);
+                    await panel.webview.postMessage({ type: 'crosshair', mode });
+                    return;
+                }
                 case 'addTabItem': {
                     const el = msg.name ? doc.model.findByName(msg.name) : undefined;
                     if (!el || localName(el.tagName) !== 'TabControl') return;
@@ -1577,7 +1585,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // form itself and edit its size/title in the Properties panel.
         const rootEl = doc.model.root;
         const formTitle = (rootEl.getAttribute('Title') || rootEl.getAttribute('TitleBarTitle') || '').trim();
-        await panel.webview.postMessage({ type: 'frame', ...frame, controls, formTitle, dotGrid: this.dotGridConfig() });
+        await panel.webview.postMessage({
+            type: 'frame', ...frame, controls, formTitle,
+            dotGrid: this.dotGridConfig(), crosshair: this.crosshairConfig().mode
+        });
         await panel.webview.postMessage({ type: 'clipboard', has: !!clipboard });
         if (imageSyncChanged && !followUp) {
             await this.render(doc, panel, true);
@@ -1595,6 +1606,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             color: cfg.get<string>('color', '#9db4d0'),
             dotSize: cfg.get<number>('dotSize', 1.5)
         };
+    }
+
+    /** The crosshair mode ('short' = 50 px cross, 'long' = full-canvas lines) from the global VS Code config. */
+    private crosshairConfig(): { mode: string } {
+        const cfg = vscode.workspace.getConfiguration('avaloniaDesigner.crosshair');
+        return { mode: cfg.get<string>('mode', 'short') };
     }
 
     /** Updates one dot-grid setting in the global config (the grid is a global, cross-form feature). */
@@ -2302,6 +2319,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
       <button id="btnSnapGrid" title="Toggle snap-to-grid when moving/resizing">Snap</button>
       <button id="btnGridSettings" title="Dot grid settings (spacing, color, dot size)">Grid…</button>
       <span class="sep"></span>
+      <span class="tb-caption">Crosshair</span>
+      <button id="btnCrosshairShort" title="Crosshair: short — a 50 px cross centred on the pointer">Short</button>
+      <button id="btnCrosshairLong" title="Crosshair: long — lines reach the edges of the form">Long</button>
+      <span class="sep"></span>
       <button id="btnAlignLeft" title="Align left edges to the first-selected control" disabled>⇤</button>
       <button id="btnAlignCentre" title="Align horizontal centres to the first-selected control" disabled>↔</button>
       <button id="btnAlignRight" title="Align right edges to the first-selected control" disabled>⇥</button>
@@ -2324,6 +2345,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
           <div id="radiusGuide" hidden></div>
           <div id="selection" class="sel" hidden></div>
           <div id="cellHighlight" class="cell-highlight" hidden></div>
+          <div id="crosshair" hidden><i id="chH"></i><i id="chV"></i></div>
         </div>
       </div>
       <div id="props">

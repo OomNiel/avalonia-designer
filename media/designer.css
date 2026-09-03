@@ -938,6 +938,50 @@ body {
     display: none;
 }
 
+/* Toolbar group caption (e.g. "Crosshair" before the Short/Long toggle buttons). */
+.tb-caption {
+    color: var(--fg-dim);
+    font-size: 12px;
+    margin: 0 2px 0 6px;
+}
+
+/* ---------- crosshair overlay (Short / Long) ---------- */
+/* While the pointer is over the design surface the native cursor is hidden EVERYWHERE inside
+   #canvas (even over resize/shape handles — crosshairs always win) and a custom crosshair of
+   two 1 px lines is drawn with its crossing exactly at the pointer. 'short' = a 50 px cross
+   (25 px each side); 'long' = the lines span the whole form. Positioned from JS on pointermove. */
+#canvas,
+#canvas * {
+    cursor: none !important;
+}
+
+#crosshair {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 200;
+}
+
+#crosshair[hidden] {
+    display: none;
+}
+
+#crosshair i {
+    position: absolute;
+    display: block;
+    pointer-events: none;
+    background: #ff4d4d;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75), 0 0 2px rgba(0, 0, 0, 0.4);
+}
+
+#crosshair i#chH {
+    height: 1px;
+}
+
+#crosshair i#chV {
+    width: 1px;
+}
+
 /* ---------- multi-selection + marquee ---------- */
 /* Outlines for the NON-anchor selected controls (the anchor keeps the full selection box with
    resize handles). Non-interactive so clicks/drags still hit-test the canvas. */

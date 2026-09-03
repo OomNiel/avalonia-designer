@@ -309,7 +309,30 @@ lives in `designerPanel.ts` + `media/designer.js`).
 - **Point 8:** keywords/categories added and the extension **icon** is now set — user supplied `Grumpy.png` (98×106); converted with Pillow to a **256×256 RGBA PNG** (aspect-preserved, padded to square on transparent) and referenced as `"icon": "Grumpy.png"` (original backed up to `/tmp/Grumpy.png.orig`). vsix now 94 files / 421KB.
 - Tests: unchanged (metadata/docs only). Repackaged as **avalonia-designer-1.0.0-beta.1.vsix** (93 files, 376KB), installed. Committed + pushed to `origin/main`. Docs: NOTES §67.
 
-## 7. Feature history (one line per section — details in NOTES_ARCHIVE.md)
+### Designer crosshair — Short / Long (§68, 2026-09-03)
+- **What:** while the pointer is inside the form canvas the native cursor is replaced by a custom
+  crosshair whose crossing sits EXACTLY on the pointer. **Short** = a 50 px cross (25 px each side);
+  **Long** = two 1 px lines spanning the whole form (they reach the canvas edges).
+- **Why custom (not `cursor: crosshair`):** a CSS cursor glyph can't be made 50 px vs full-canvas and
+  its hotspot isn't guaranteed to be the pointer. `designer.js` draws two 1 px `<i>` lines
+  (`#crosshair > #chH/#chV`, `pointer-events:none`, `z-index:200`) and CSS hides the native cursor
+  inside the canvas — `#canvas, #canvas * { cursor: none !important }` — so the crosshair wins even
+  over the resize/shape-handle cursors (user chose: "always, even while moving/resizing").
+- **Tracking:** `pointermove`/`pointerleave` on `#canvas`; `updateCrosshair()` uses the canvas
+  bounding rect (accounts for zoom + wrap scrolling) and positions the lines under the pointer;
+  hidden when the pointer leaves the canvas bounds; keeps following during captured drags.
+- **Toolbar:** two toggle buttons `Short` / `Long` (after the Grid tools, with a small `.tb-caption`
+  label); the active one is highlighted like Grid/Snap (`tb-active`). Buttons post
+  `{type:'setCrosshair', mode}`.
+- **Persistence (remembered between sessions):** the extension stores the choice in global config
+  **`avaloniaDesigner.crosshair.mode`** (enum short/long, default **short**) — same pattern as
+  `dotGrid.*`. The `frame` message carries the saved mode; a `crosshair` reply updates the toolbar
+  after a click.
+- **Side-effect:** `updatePendingTool()` no longer sets the native `crosshair` cursor — the custom
+  crosshair overlay already marks the armed-tool spot.
+- Tests: T3 +13 (harness mounts `crosshair/chH/chV/btnCrosshairShort/btnCrosshairLong`; Long spans
+  800×450, Short = 50 px, hidden on leave/outside, buttons post + active states). Full suite
+  **1414 passed** (was 1401). tsc clean, PROBLEMS clean, packaged+installed (422KB). Docs: NOTES §68.
 
 | § | Feature | Date | Key lesson |
 |---|---|---|---|
@@ -372,6 +395,7 @@ lives in `designerPanel.ts` + `media/designer.js`).
 | 65 | Select the FORM to resize it | 2026-09-02 | form (Window root, name null) was unselectable → resize needed hand-editing `.axaml`. Now: frame carries `formTitle`; control drop-down's FIRST entry is **"Form - <Title>"** (value ''); clicking EMPTY design space (locked Body / gap) selects the form (`select` name null → Window props incl. Width/Height). Form selection shows no outline (no handles on the whole window). |
 | 66 | New projects are F5-ready (Linux-safe) | 2026-09-02 | scaffold now writes `.vscode/launch.json` (`type: coreclr`, program → `bin/Debug/net10.0/<name>.dll` — no Windows `.exe`; `preLaunchTask: build`) + `.vscode/tasks.json` (default `dotnet build`) for C# AND VB. vbnet-companion's "VB.NET: Launch" snippet is Windows-biased (.exe/net8.0) — don't use it; coreclr + the built dll is the cross-platform way. **Fix 1:** VB bridge DLL path resolved at generation time (no hardcoded path). **Fix 2:** `dotnet restore` runs before a new project opens so the language server isn't stale. |
 | 67 | Public GitHub Beta (release hygiene) | 2026-09-02 | git init `main` + hardened `.gitignore` + pushed to github.com/OomNiel/avalonia-designer (public); package.json `repository`/`homepage`/`bugs`/`keywords`/categories; version **1.0.0-beta.1**; `CHANGELOG.md`; README prereq + version-matrix clarity. **Icon:** `Grumpy.png` converted (Pillow) to a 256×256 square PNG. |
+| 68 | Designer crosshair (Short / Long) | 2026-09-03 | native cursor hidden over the canvas (CSS) + custom 1 px crosshair drawn at the pointer (`pointer-events:none`, z-index 200); Short = 50 px (25/side), Long = lines span the form; toolbar `Short`/`Long` toggle buttons post setCrosshair; mode persisted in `avaloniaDesigner.crosshair.mode` (default short) and carried in the frame message; crosshair wins over resize-handle cursors (user: "always"). `updatePendingTool` no longer sets a native crosshair. T3 +13 → **1414 passed**. |
 
 ---
 

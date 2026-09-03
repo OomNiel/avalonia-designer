@@ -66,7 +66,12 @@
         gridAddCol: $('gridAddCol'),
         gridSave: $('gridSave'),
         gridCancel: $('gridCancel'),
-        cellHighlight: $('cellHighlight')
+        cellHighlight: $('cellHighlight'),
+        crosshair: $('crosshair'),
+        chH: $('chH'),
+        chV: $('chV'),
+        btnCrosshairShort: $('btnCrosshairShort'),
+        btnCrosshairLong: $('btnCrosshairLong')
     };
 
     const state = {
@@ -85,6 +90,7 @@
         controlListKey: null,
         recell: null, // { gridName, cells: { v: [], h: [] } } when the selected control is a Grid child
         dotGrid: { enabled: true, snap: false, spacingX: 16, spacingY: 16, color: '#9db4d0', dotSize: 1.5 },
+        crosshair: 'short', // 'short' = 50 px cross at the pointer; 'long' = lines reach the canvas edges
         // All currently selected control names (multi-select). state.selected stays the ANCHOR
         // (the first-selected control that edge-alignment aligns everything else to).
         multi: new Set()
@@ -154,6 +160,10 @@
         if (msg.png) els.img.src = 'data:image/png;base64,' + msg.png;
         if (msg.dotGrid) state.dotGrid = msg.dotGrid;
         applyDotGrid();
+        if (msg.crosshair === 'short' || msg.crosshair === 'long') {
+            state.crosshair = msg.crosshair;
+            applyCrosshair();
+        }
         if (state.fitted && sizeChanged) {
             state.fitted = false;
             fit();
@@ -751,6 +761,46 @@
     els.canvas.addEventListener('pointermove', onPointerMove);
     els.canvas.addEventListener('pointerup', onPointerUp);
 
+    // ---------------- crosshair overlay (Short / Long) ----------------
+    // While the pointer is over the design surface the native cursor is hidden (CSS) and a
+    // custom crosshair is drawn crossing exactly at the pointer. 'short' = a 50 px cross (25 px
+    // each side); 'long' = the lines span the whole form. The mode is picked in the toolbar and
+    // persisted (globally) by the extension — the frame message carries the saved mode.
+    function applyCrosshair() {
+        const mode = state.crosshair === 'long' ? 'long' : 'short';
+        els.btnCrosshairShort.classList.toggle('tb-active', mode === 'short');
+        els.btnCrosshairLong.classList.toggle('tb-active', mode === 'long');
+    }
+    function hideCrosshair() {
+        els.crosshair.hidden = true;
+    }
+    function updateCrosshair(e) {
+        const r = els.canvas.getBoundingClientRect();
+        const x = e.clientX - r.left;
+        const y = e.clientY - r.top;
+        if (x < 0 || y < 0 || x > r.width || y > r.height) { hideCrosshair(); return; }
+        const cx = Math.round(x) - 0.5; // centre the 1 px lines on the pointer's pixel
+        const cy = Math.round(y) - 0.5;
+        if (state.crosshair === 'long') {
+            els.chH.style.left = '0px';
+            els.chH.style.width = r.width + 'px';
+            els.chH.style.top = cy + 'px';
+            els.chV.style.top = '0px';
+            els.chV.style.height = r.height + 'px';
+            els.chV.style.left = cx + 'px';
+        } else {
+            els.chH.style.left = (cx - 25) + 'px';
+            els.chH.style.width = '50px';
+            els.chH.style.top = cy + 'px';
+            els.chV.style.top = (cy - 25) + 'px';
+            els.chV.style.height = '50px';
+            els.chV.style.left = cx + 'px';
+        }
+        els.crosshair.hidden = false;
+    }
+    els.canvas.addEventListener('pointermove', updateCrosshair);
+    els.canvas.addEventListener('pointerleave', hideCrosshair);
+
     els.canvas.addEventListener('click', (e) => {
         if (suppressClick) {
             suppressClick = false;
@@ -836,11 +886,10 @@
 
     // ---------------- armed toolbox tool (click tool, then click canvas) ----------------
     function updatePendingTool() {
+        // The custom crosshair overlay is always shown over the design surface, so no native
+        // cursor is needed while a toolbox tool is armed (the crosshair overlay is the pointer).
         if (state.pendingTag) {
-            els.canvas.style.cursor = 'crosshair';
             els.status.textContent = 'Click the canvas to place a ' + state.pendingTag + ' (Esc to cancel).';
-        } else {
-            els.canvas.style.cursor = '';
         }
     }
 
@@ -1559,6 +1608,13 @@
                 applyDotGrid();
                 break;
             }
+            case 'crosshair': {
+                if (msg.mode === 'short' || msg.mode === 'long') {
+                    state.crosshair = msg.mode;
+                    applyCrosshair();
+                }
+                break;
+            }
             case 'properties':
                 renderProperties(msg);
                 break;
@@ -1631,6 +1687,8 @@
     // --- dot grid toolbar toggles + settings popup ---
     els.btnDotGrid.addEventListener('click', () => post({ type: 'toggleDotGrid' }));
     els.btnSnapGrid.addEventListener('click', () => post({ type: 'toggleSnapToGrid' }));
+    els.btnCrosshairShort.addEventListener('click', () => post({ type: 'setCrosshair', mode: 'short' }));
+    els.btnCrosshairLong.addEventListener('click', () => post({ type: 'setCrosshair', mode: 'long' }));
     els.btnGridSettings.addEventListener('click', () => {
         const g = state.dotGrid || {};
         els.dotGridSpacingX.value = g.spacingX || 16;
@@ -1757,6 +1815,7 @@
     });
 
     applyDotGrid(); // initial toolbar state (overlay follows the first frame message)
+    applyCrosshair(); // initial Short/Long toolbar state (the frame message may override it)
 
     // tell the extension the webview is ready (triggers the first render)
     post({ type: 'ready' });

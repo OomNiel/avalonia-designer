@@ -26,7 +26,9 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'dotGridSave', 'dotGridCancel',
     'multiSel', 'marquee', 'radiusGuide',
     'btnAlignLeft', 'btnAlignCentre', 'btnAlignRight', 'btnAlignTop', 'btnAlignMiddle', 'btnAlignBottom',
-    'btnAlignText', 'btnSameWidth', 'btnSameHeight'];
+    'btnAlignText', 'btnSameWidth', 'btnSameHeight',
+    'btnCrosshairShort', 'btnCrosshairLong',
+    'crosshair', 'chH', 'chV'];
 
 function setup() {
     const { JSDOM } = require('jsdom');
@@ -60,8 +62,11 @@ function setup() {
     canvas.appendChild(make('marquee'));
     canvas.appendChild(make('radiusGuide'));
     canvas.appendChild(make('selection'));
+    canvas.appendChild(make('crosshair'));
+    canvas.appendChild(make('chH'));
+    canvas.appendChild(make('chV'));
     window.document.body.appendChild(wrap);
-    for (const id of IDS.filter((i) => i !== 'canvasWrap' && i !== 'canvas' && i !== 'preview' && i !== 'overlayLayer' && i !== 'selection' && i !== 'dotGrid' && i !== 'multiSel' && i !== 'marquee' && i !== 'radiusGuide')) {
+    for (const id of IDS.filter((i) => i !== 'canvasWrap' && i !== 'canvas' && i !== 'preview' && i !== 'overlayLayer' && i !== 'selection' && i !== 'dotGrid' && i !== 'multiSel' && i !== 'marquee' && i !== 'radiusGuide' && i !== 'crosshair' && i !== 'chH' && i !== 'chV')) {
         window.document.body.appendChild(make(id));
     }
 
@@ -455,6 +460,39 @@ module.exports = async (t) => {
         t.ok(!!mv2, 'dotgrid', 'move posted (snap off)');
         t.equal(mv2.dx, 5, 'dotgrid', 'raw dx when snap off');
         t.equal(mv2.dy, 3, 'dotgrid', 'raw dy when snap off');
+    }
+
+    // --- crosshair overlay: Short/Long toolbar buttons + pointer tracking ---
+    {
+        // A frame can carry the persisted mode (Long here) and highlight the right button.
+        msg(Object.assign(frame([]), { crosshair: 'long' }));
+        t.equal($('btnCrosshairLong').classList.contains('tb-active'), true, 'crosshair', 'frame mode Long → Long button active');
+        t.equal($('btnCrosshairShort').classList.contains('tb-active'), false, 'crosshair', 'Short button inactive');
+        // Pointer over the canvas → LONG crosshair spans the full form, shown at the pointer.
+        $('crosshair').hidden = true;
+        dispatch('pointermove', 'canvas', { clientX: 200, clientY: 150 });
+        t.equal($('crosshair').hidden, false, 'crosshair', 'long: shown while the pointer is inside the canvas');
+        t.equal($('chH').style.width, '800px', 'crosshair', 'long: horizontal line spans the canvas width');
+        t.equal($('chV').style.height, '450px', 'crosshair', 'long: vertical line spans the canvas height');
+        // Pointer leaves the canvas → crosshair hidden.
+        dispatch('pointerleave', 'canvas', {});
+        t.equal($('crosshair').hidden, true, 'crosshair', 'hidden when the pointer leaves the canvas');
+        // Toolbar buttons post setCrosshair with the right mode.
+        posted.length = 0;
+        $('btnCrosshairShort').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1].type, 'setCrosshair', 'crosshair', 'Short button posts setCrosshair');
+        t.equal(posted[posted.length - 1].mode, 'short', 'crosshair', 'mode = short');
+        // A reply message switches to Short → 50 px cross centred on the pointer.
+        msg({ type: 'crosshair', mode: 'short' });
+        t.equal($('btnCrosshairShort').classList.contains('tb-active'), true, 'crosshair', 'Short active after message');
+        t.equal($('btnCrosshairLong').classList.contains('tb-active'), false, 'crosshair', 'Long inactive after message');
+        dispatch('pointermove', 'canvas', { clientX: 200, clientY: 150 });
+        t.equal($('chH').style.width, '50px', 'crosshair', 'short: horizontal line is 50 px');
+        t.equal($('chV').style.height, '50px', 'crosshair', 'short: vertical line is 50 px');
+        // Pointer outside the canvas bounds → hidden.
+        $('crosshair').hidden = false;
+        dispatch('pointermove', 'canvas', { clientX: 900, clientY: 150 });
+        t.equal($('crosshair').hidden, true, 'crosshair', 'hidden when the pointer is outside the canvas bounds');
     }
 
     // --- multi-select: Ctrl+Click toggles, marquee box-selects, alignment tools post ---
