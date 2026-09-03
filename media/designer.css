@@ -119,21 +119,21 @@ body {
 }
 
 #rulerCorner {
-    width: 18px;
-    height: 18px;
+    width: 26px;
+    height: 26px;
     background: #000;
     flex: 0 0 auto;
 }
 
 #rulerH {
-    height: 18px;
+    height: 26px;
     background: #000;
     position: relative;
     flex: 0 0 auto;
 }
 
 #rulerV {
-    width: 18px;
+    width: 26px;
     background: #000;
     position: relative;
     flex: 0 0 auto;
@@ -148,7 +148,7 @@ body {
 .rul-num {
     position: absolute;
     color: #fff;
-    font: 9px/1 ui-monospace, monospace;
+    font: 13px/1.15 ui-monospace, monospace;
     pointer-events: none;
     white-space: nowrap;
     user-select: none;

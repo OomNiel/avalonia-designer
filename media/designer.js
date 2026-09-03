@@ -144,9 +144,9 @@
     // DESIGN px. Major grads every 5 × the dot-grid spacing; minors are 10 equal divisions of a
     // major (= grid/2). A numeric label sits on every major. Tick LENGTH stays a fixed screen size;
     // only the SPACING scales with the zoom.
-    const RULER_STRIP = 18;      // css px strip thickness (matches designer.css)
-    const RULER_TICK_MINOR = 5;  // css px minor tick length
-    const RULER_TICK_MAJOR = 10; // css px major tick length
+    const RULER_STRIP = 26;      // css px strip thickness (matches designer.css)
+    const RULER_TICK_MINOR = 8;  // css px minor tick length
+    const RULER_TICK_MAJOR = 15; // css px major tick length
     const RULER_MAJORS = 5;      // major gradation = RULER_MAJORS × grid spacing
     function rulerTickLayer(vertical, tickLen, stepCss, color) {
         const d = document.createElement('div');
@@ -186,14 +186,14 @@
                 n.textContent = String(pos);
                 if (vertical) {
                     n.style.top = css + 'px';
-                    n.style.left = '9px';
+                    n.style.left = '14px';
                     n.style.transform = 'rotate(-90deg)';
                     n.style.transformOrigin = '0 0';
                 } else {
-                    n.style.top = '2px';
+                    n.style.top = '3px';
                     n.style.left = css + 'px';
                     n.style.transform = 'translateX(-50%)';
-                    if (i === 0) { n.style.transform = ''; n.style.left = '2px'; }
+                    if (i === 0) { n.style.transform = ''; n.style.left = '3px'; }
                 }
                 axisEl.appendChild(n);
             }
