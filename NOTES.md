@@ -164,6 +164,12 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
 - Suite green: **1502 passed**; PROBLEMS clean after every change.
+- Undo restores deleted-control CODE-BEHIND: the history's per-step code snapshot could be older
+  than the live file (handlers added via wiring, or code the user typed by hand between designer
+  edits), so Undo restored the control but not its code. Fix: `refreshHistoryCode(doc)` re-reads
+  the code-behind from disk into the CURRENT history step just before any code-rewriting action
+  (delete / cut / rename / clear canvas / remove tab or list item / paste), so Undo restores the
+  exact pre-edit code including manual edits.
 - Menu Items editor (Menu bars): the headless host renders an EMPTY Menu bar (Avalonia only
   realizes MenuItems when the menu opens — probed 2026-09-04). Now: `Menu Items` property on a
   Menu opens a tree editor (Item / CheckBox `ToggleType=CheckBox` / Radio `ToggleType=Radio` /

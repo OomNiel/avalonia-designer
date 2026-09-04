@@ -920,10 +920,12 @@ module.exports = async (t) => {
         ]), { menus }));
 
         // Two top-level items → two dummies + the trailing "+" affordance (still not real controls).
-        menuFrame({ mainMenu: [
-            { kind: 'Item', header: 'File', children: [{ kind: 'Item', header: 'Exit' }] },
-            { kind: 'Item', header: 'View' }
-        ] });
+        menuFrame({
+            mainMenu: [
+                { kind: 'Item', header: 'File', children: [{ kind: 'Item', header: 'Exit' }] },
+                { kind: 'Item', header: 'View' }
+            ]
+        });
         const dm = $('menuDummies');
         t.equal(dm.children.length, 3, 'menu-dummies', 'bar shows one chip per top-level item + a trailing "+"');
         t.equal(dm.children[0].textContent, 'File', 'menu-dummies', 'first dummy is the File item');
@@ -949,9 +951,11 @@ module.exports = async (t) => {
         t.equal($('menuModal').hidden, true, 'menu-editor', 'Save closes the editor');
 
         // The 'Menu Items' property (a button shown when the Menu is selected) opens the SAME editor.
-        msg({ type: 'properties', name: 'mainMenu', properties: [
-            { key: 'MenuItems', label: 'Menu Items', kind: 'button', value: 'Edit menu items…' }
-        ], info: null });
+        msg({
+            type: 'properties', name: 'mainMenu', properties: [
+                { key: 'MenuItems', label: 'Menu Items', kind: 'button', value: 'Edit menu items…' }
+            ], info: null
+        });
         const pbtn = $('propsBody').querySelector('.prop-button');
         t.ok(!!pbtn, 'menu-editor', 'Menu Items property renders as a button');
         pbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));

@@ -621,6 +621,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                                 return;
                             }
                             const oldName = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+                            // Code-behind is about to be refactored for the rename — snapshot the
+                            // current (possibly hand-edited) code first so Undo restores it fully.
+                            this.refreshHistoryCode(doc);
                             el.removeAttribute('Name');
                             el.setAttribute('x:Name', newName);
                             // Keep name-derived Content/Text in sync (e.g. Button1 -> Button2).
@@ -911,6 +914,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         return;
                     }
                     const before = doc.model.serialize(true);
+                    // Capture the code-behind AS IT IS NOW (incl. any manual edits) before the
+                    // delete rewrites it, so Undo can restore the control AND its code.
+                    this.refreshHistoryCode(doc);
                     // Collect event-handler attrs from the element AND all its descendants,
                     // so deleting a container also cleans up child controls' handlers.
                     const handlers = doc.model.eventHandlersOfSubtree(el);
@@ -936,6 +942,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         return;
                     }
                     const before = doc.model.serialize(true);
+                    this.refreshHistoryCode(doc);
                     clipboard = {
                         name: el.getAttribute('x:Name') || el.getAttribute('Name') || '',
                         xaml: doc.model.elementXaml(el)
@@ -974,6 +981,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         if (cb) { pos.x -= cb.x; pos.y -= cb.y; }
                     }
                     const before = doc.model.serialize(true);
+                    this.refreshHistoryCode(doc);
                     // If the original control still exists (Copy, not Cut), the pasted
                     // copy needs a fresh unique name so findByName stays unambiguous.
                     let xaml = clipboard.xaml;
@@ -1124,6 +1132,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     const ti = msg.itemName ? doc.model.findByName(msg.itemName) : undefined;
                     if (!tc || !ti || localName(tc.tagName) !== 'TabControl' || localName(ti.tagName) !== 'TabItem') return;
                     const before = doc.model.serialize(true);
+                    this.refreshHistoryCode(doc);
                     // Collect this TabItem's handlers and clean up the code-behind if orphaned.
                     const handlers = doc.model.eventHandlersOfSubtree(ti);
                     ti.parentNode?.removeChild(ti);
@@ -1180,6 +1189,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     const li = msg.itemName ? doc.model.findByName(msg.itemName) : undefined;
                     if (!lb || !li || localName(lb.tagName) !== 'ListBox' || localName(li.tagName) !== 'ListBoxItem') return;
                     const before = doc.model.serialize(true);
+                    this.refreshHistoryCode(doc);
                     // Collect this item's handlers and clean up the code-behind if orphaned.
                     const handlers = doc.model.eventHandlersOfSubtree(li);
                     li.parentNode?.removeChild(li);
@@ -2254,6 +2264,23 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         if (!this.history.has(key)) this.history.set(key, { states: [this.snapshotNow(doc)], index: 0 });
     }
 
+    /** The code-behind may have been edited MANUALLY (or gained handlers) since the last designer
+     *  snapshot, so before a designer action that will REWRITE the code-behind (delete / cut /
+     *  rename / clear canvas / remove a tab or list item), the CURRENT history step is refreshed
+     *  from disk. Undo then restores exactly what was on disk before the action — including code
+     *  the user typed by hand — instead of an older, stale snapshot (which otherwise restores the
+     *  control but not its code-behind contents). */
+    private refreshHistoryCode(doc: DesignerDocument): void {
+        const h = this.history.get(doc.uri.toString());
+        if (!h) return;
+        const step = h.states[h.index];
+        if (!step) return;
+        const cb = findCodeBehindFile(doc.uri);
+        if (!cb) return;
+        step.codeBehindPath = cb;
+        step.codeBehind = this.readText(cb);
+    }
+
     /** Records a new post-edit state (drops the redo branch, caps at UNDO_STATES). */
     private pushHistory(doc: DesignerDocument, xaml: string): void {
         const key = doc.uri.toString();
@@ -2353,6 +2380,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         }
         const { doc, panel } = active;
         const before = doc.model.serialize(true);
+        // Snapshot the live (possibly hand-edited) code-behind before clearing removes handlers.
+        this.refreshHistoryCode(doc);
         const removed = doc.model.clearControls();
         if (removed.length === 0) {
             await this.postStatus(panel, 'The canvas is already empty.');
