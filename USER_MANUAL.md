@@ -174,6 +174,13 @@ place:
 > the small timer code-behind for you, so no code is needed; put one in a Status Bar's `Border`
 > for a classic status-bar clock.
 
+> **⚠️ Menu items shown in the designer are DUMMY PLACEHOLDERS — they don't look like the real
+> thing.** Avalonia only draws the items of a menu when the menu is actually **opened at runtime**,
+> so a static design-time preview cannot show them. The designer therefore draws simple plain
+> labels over the bar as a guide so you can see where items will be and edit them (click a label,
+> or select the Menu and use **Menu Items** in the Properties panel). These labels are **not** what
+> the menu will look like. At runtime your real `<MenuItem>`s render exactly as you defined them.
+
 The Toolbox toolbar has three buttons: **New Form**, **Refresh Designer**, and **Clear Canvas**.
 
 ---

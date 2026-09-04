@@ -2,6 +2,11 @@
 
 A WYSIWYG form designer for the **Avalonia** framework with a drag-and-drop toolbox.
 
+> 🔧 **A VS Code extension — not an application.** This project is a **Visual Studio Code
+> extension**: a developer tool you install *into* VS Code (Extensions view or a `.vsix`) to
+> build Avalonia user interfaces. It is **not** a standalone application and does not run your
+> forms on its own — the forms you design run in your own .NET + Avalonia project.
+
 > ## ⚠️ BETA — incomplete & buggy
 >
 > This is an **early Beta** of a hobbyist extension. It is **incomplete and will be buggy**;
