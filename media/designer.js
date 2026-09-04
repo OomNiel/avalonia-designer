@@ -70,6 +70,13 @@
         gridAddCol: $('gridAddCol'),
         gridSave: $('gridSave'),
         gridCancel: $('gridCancel'),
+        menuDummies: $('menuDummies'),
+        menuModal: $('menuModal'),
+        menuTitle: $('menuTitle'),
+        menuBody: $('menuBody'),
+        menuAddTop: $('menuAddTop'),
+        menuSave: $('menuSave'),
+        menuCancel: $('menuCancel'),
         cellHighlight: $('cellHighlight'),
         rulerH: $('rulerH'),
         rulerV: $('rulerV'),
@@ -247,6 +254,10 @@
         if (msg.png) els.img.src = 'data:image/png;base64,' + msg.png;
         if (msg.dotGrid) state.dotGrid = msg.dotGrid;
         applyDotGrid();
+        // The preview theme drives the placeholder text colour on a Menu bar (the rendered bar is
+        // light or dark depending on the preview theme, not the extension's own theme).
+        document.body.classList.toggle('pv-dark', msg.previewTheme === 'dark');
+        document.body.classList.toggle('pv-light', msg.previewTheme !== 'dark');
         if (msg.crosshair && typeof msg.crosshair === 'object') setCrosshairConfig(msg.crosshair);
         if (state.fitted && sizeChanged) {
             state.fitted = false;
@@ -322,7 +333,7 @@
     // ---------------- overlays ----------------
     function renderOverlays() {
         els.overlay.innerHTML = '';
-        if (!state.frame) return;
+        if (!state.frame) { renderMenuDummies(); return; }
         for (const c of state.frame.controls) {
             if (!c.name) continue;
             const d = document.createElement('div');
@@ -334,6 +345,7 @@
             d.dataset.name = c.name;
             els.overlay.appendChild(d);
         }
+        renderMenuDummies();
     }
 
     // ---------------- selection (single + multi) ----------------
@@ -1525,6 +1537,8 @@
                         const d = msg.gridDefs || {};
                         openGridEditor({ rows: d.rows || ['*'], cols: d.cols || ['*'] }, msg.name);
                     }
+                    // 'Menu Items' opens the menu tree editor for the selected Menu bar.
+                    if (p.key === 'MenuItems') openMenuEditor(msg.name);
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -2014,8 +2028,253 @@
             if (!els.gridModal.hidden) els.gridModal.hidden = true;
             if (!els.dotGridModal.hidden) closeDotGridSettings();
             if (!els.crosshairModal.hidden) closeCrosshairSettings();
+            if (!els.menuModal.hidden) closeMenuEditor();
         }
     });
+
+    // ---------------- menu bar dummies + 'Menu Items' tree editor ----------------
+    // Avalonia only realizes MenuItem containers when a menu is OPENED, so the headless preview
+    // renders an EMPTY menu bar. The extension sends the real item tree (state.frame.menus[name]);
+    // we draw PLAIN placeholder labels (dummies) over the bar — they are NOT real controls, so
+    // clicking one never selects a control or opens its Properties. Clicking a dummy (or the
+    // 'Menu Items' property) opens the tree editor below; Save writes real <MenuItem> XAML.
+    let menuEdit = null;           // { name, tree } working copy while the modal is open
+    let menuExpanded = new Set();  // paths ("0", "0.1", …) expanded in the editor
+    const MENU_MAX_DEPTH_UI = 5;
+    const MENU_KIND_OPTIONS = ['Item', 'CheckBox', 'Radio', 'ComboBox', 'Separator'];
+    function menuKey(path) { return path.join('.'); }
+    function menuCopy(n) {
+        return {
+            kind: (n && n.kind) || 'Item',
+            header: n && n.header != null ? String(n.header) : '',
+            children: Array.isArray(n && n.children) ? n.children.map(menuCopy) : []
+        };
+    }
+    function menuNew(kind, header) { return { kind: kind || 'Item', header: header || '', children: [] }; }
+    function menuNodeAt(path) {
+        if (!menuEdit) return null;
+        let list = menuEdit.tree, node = null;
+        for (const i of path) {
+            if (!list) return null;
+            node = list[i]; if (!node) return null;
+            list = node.children;
+        }
+        return node;
+    }
+    function menuParent(path) {
+        if (!menuEdit) return null;
+        if (path.length === 1) return { list: menuEdit.tree, idx: path[0] };
+        const p = menuNodeAt(path.slice(0, -1));
+        if (!p) return null;
+        return { list: p.children, idx: path[path.length - 1] };
+    }
+    function menuFocus(path) {
+        const inp = els.menuBody.querySelector('.mn-row[data-path="' + menuKey(path) + '"] .mn-header');
+        if (inp) { inp.focus(); try { inp.select(); } catch (err) { /* ignore */ } }
+    }
+    function menuBtn(label, cls, title, fn, disabled) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'mn-act ' + cls;
+        b.textContent = label; b.title = title || '';
+        if (disabled) b.disabled = true;
+        else if (fn) b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+        return b;
+    }
+    function renderMenuTree() {
+        const body = els.menuBody;
+        body.innerHTML = '';
+        if (!menuEdit) return;
+        const draw = (node, depth, path) => {
+            const key = menuKey(path);
+            const row = document.createElement('div');
+            row.className = 'mn-row';
+            row.dataset.depth = String(depth);
+            row.dataset.path = key;
+            row.style.paddingLeft = (10 + (depth - 1) * 24) + 'px';
+            const isSep = node.kind === 'Separator';
+            const canHaveKids = !isSep && depth < MENU_MAX_DEPTH_UI;
+            const hasKids = !!node.children && node.children.length > 0;
+            const isOpen = menuExpanded.has(key);
+            // Expand/collapse caret (leaf items show a dot).
+            const caret = document.createElement('button');
+            caret.type = 'button'; caret.className = 'mn-caret';
+            if (canHaveKids) {
+                caret.textContent = isOpen ? '▾' : '▸';
+                caret.title = isOpen ? 'Collapse this submenu' : 'Expand this submenu';
+                caret.addEventListener('click', () => {
+                    if (isOpen) menuExpanded.delete(key); else menuExpanded.add(key);
+                    renderMenuTree();
+                });
+            } else { caret.textContent = '·'; caret.disabled = true; }
+            row.appendChild(caret);
+            // Kind (maps to real MenuItem semantics on save).
+            const sel = document.createElement('select');
+            sel.className = 'mn-kind';
+            for (const k of MENU_KIND_OPTIONS) {
+                const o = document.createElement('option'); o.value = k; o.textContent = k;
+                sel.appendChild(o);
+            }
+            sel.value = node.kind;
+            sel.title = 'Item kind (how it behaves at runtime)';
+            sel.addEventListener('change', () => {
+                if (sel.value === 'Separator') node.header = '';
+                if (node.kind === 'Separator' && sel.value !== 'Separator' && !node.header) node.header = 'New Item';
+                node.kind = sel.value;
+                renderMenuTree();
+                menuFocus(path);
+            });
+            row.appendChild(sel);
+            if (isSep) {
+                const lbl = document.createElement('span');
+                lbl.className = 'mn-sep-label';
+                lbl.textContent = '—— separator ——';
+                row.appendChild(lbl);
+            } else {
+                const inp = document.createElement('input');
+                inp.type = 'text'; inp.className = 'mn-header';
+                inp.value = node.header || ''; inp.placeholder = 'Item text';
+                inp.title = 'Item text (Header)';
+                inp.addEventListener('input', () => { node.header = inp.value; });
+                inp.addEventListener('keydown', (e) => { e.stopPropagation(); });
+                row.appendChild(inp);
+            }
+            row.appendChild(document.createElement('span')); // flex spacer
+            row.appendChild(menuBtn('+', 'mn-addc', canHaveKids ? 'Add a child item (its submenu)' : 'Maximum depth (5) reached', canHaveKids ? () => {
+                node.children.push(menuNew('Item', 'New Item'));
+                menuExpanded.add(key);
+                const ci = node.children.length - 1;
+                renderMenuTree();
+                menuFocus(path.concat(ci));
+            } : null, !canHaveKids));
+            const canSib = !isSep && depth <= MENU_MAX_DEPTH_UI;
+            row.appendChild(menuBtn('⇢', 'mn-adds', canSib ? 'Add a sibling item below' : 'Maximum depth (5) reached', canSib ? () => {
+                const par = menuParent(path);
+                if (!par) return;
+                par.list.splice(par.idx + 1, 0, menuNew('Item', 'New Item'));
+                renderMenuTree();
+                menuFocus(path.slice(0, -1).concat(par.idx + 1));
+            } : null, !canSib));
+            row.appendChild(menuBtn('↑', 'mn-up', 'Move up', () => {
+                const par = menuParent(path);
+                if (par && par.idx > 0) {
+                    const [it] = par.list.splice(par.idx, 1);
+                    par.list.splice(par.idx - 1, 0, it);
+                    renderMenuTree();
+                }
+            }));
+            row.appendChild(menuBtn('↓', 'mn-down', 'Move down', () => {
+                const par = menuParent(path);
+                if (par && par.idx < par.list.length - 1) {
+                    const [it] = par.list.splice(par.idx, 1);
+                    par.list.splice(par.idx + 1, 0, it);
+                    renderMenuTree();
+                }
+            }));
+            row.appendChild(menuBtn('✕', 'mn-del', 'Delete this item (and its submenu)', () => {
+                const par = menuParent(path);
+                if (par) { par.list.splice(par.idx, 1); renderMenuTree(); }
+            }));
+            body.appendChild(row);
+            if (isOpen && node.children) {
+                for (let i = 0; i < node.children.length; i++) draw(node.children[i], depth + 1, path.concat(i));
+            }
+        };
+        for (let i = 0; i < menuEdit.tree.length; i++) draw(menuEdit.tree[i], 1, [i]);
+        if (!menuEdit.tree.length) {
+            const empty = document.createElement('div');
+            empty.className = 'mn-empty';
+            empty.textContent = 'No items on the bar yet — click “+ Add menu item” above.';
+            body.appendChild(empty);
+        }
+    }
+    function addMenuTopRow() {
+        if (!menuEdit) return;
+        menuEdit.tree.push(menuNew('Item', 'New Item'));
+        renderMenuTree();
+        menuFocus([menuEdit.tree.length - 1]);
+    }
+    /** Opens the tree editor. A `topIdx` (from clicking a bar dummy) expands that item. */
+    function openMenuEditor(name, topIdx) {
+        const src = (state.frame && state.frame.menus && name) ? (state.frame.menus[name] || []) : [];
+        menuEdit = { name: name || null, tree: src.map(menuCopy) };
+        menuExpanded = new Set();
+        if (typeof topIdx === 'number' && menuEdit.tree[topIdx]) menuExpanded.add(String(topIdx));
+        els.menuTitle.textContent = 'Menu Items' + (menuEdit.name ? ' — ' + menuEdit.name : '');
+        els.menuModal.hidden = false;
+        renderMenuTree();
+    }
+    function closeMenuEditor() { els.menuModal.hidden = true; menuEdit = null; }
+    els.menuAddTop.addEventListener('click', addMenuTopRow);
+    els.menuSave.addEventListener('click', () => {
+        if (menuEdit) post({ type: 'saveMenuItems', name: menuEdit.name, items: menuEdit.tree });
+        closeMenuEditor();
+    });
+    els.menuCancel.addEventListener('click', closeMenuEditor);
+    els.menuModal.addEventListener('click', (e) => {
+        if (e.target === els.menuModal) closeMenuEditor(); // click outside the box
+    });
+
+    // Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay
+    // chips — NOT canvas controls — so clicks on them never hit control-selection/hit-testing.
+    function renderMenuDummies() {
+        const host = els.menuDummies;
+        if (!host) return;
+        host.innerHTML = '';
+        if (!state.frame || !state.frame.menus) return;
+        const scale = state.scale || 1;
+        const mk = (kind, menuName, label, xPx, wPx, topPx, hPx, idx) => {
+            const d = document.createElement('div');
+            d.className = 'menu-dummy ' + (kind === 'item' ? 'item' : 'hint');
+            d.textContent = label;
+            d.style.left = Math.round(xPx) + 'px';
+            d.style.top = Math.round(topPx) + 'px';
+            d.style.width = Math.round(wPx) + 'px';
+            d.style.height = Math.round(hPx) + 'px';
+            d.dataset.menu = menuName;
+            d.title = (kind === 'item')
+                ? "Edit the '" + label + "' menu items"
+                : 'Add a top-level menu item';
+            d.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); });
+            d.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (kind === 'item') { openMenuEditor(menuName, idx); return; }
+                openMenuEditor(menuName);
+                if (kind === 'empty') addMenuTopRow(); // empty bar: jump straight to adding the first item
+            });
+            host.appendChild(d);
+        };
+        for (const c of state.frame.controls) {
+            if (!c.name || c.type !== 'Menu') continue;
+            const items = state.frame.menus[c.name];
+            if (!Array.isArray(items)) continue;
+            const top = c.y * scale;
+            const h = Math.max(20, c.height * scale);
+            if (!items.length) {
+                mk('empty', c.name, '+ Add menu items…', (c.x + 3) * scale, 180 * scale, top, h);
+                continue;
+            }
+            const EST = 7.3; // approx px per header char at the bar's ~13px font
+            let cursor = c.x + 3;
+            items.forEach((it, i) => {
+                if (it.kind === 'Separator') {
+                    const s = document.createElement('div');
+                    s.className = 'menu-dummy-sep';
+                    s.style.left = Math.round((cursor + 5) * scale) + 'px';
+                    s.style.top = Math.round((c.y + c.height * 0.25) * scale) + 'px';
+                    s.style.height = Math.max(2, Math.round(c.height * 0.5 * scale)) + 'px';
+                    s.style.width = '1px';
+                    host.appendChild(s);
+                    cursor += 12;
+                    return;
+                }
+                const header = it.header || '';
+                const w = Math.max(34, header.length * EST + 28);
+                mk('item', c.name, header, cursor * scale, w * scale, top, h, i);
+                cursor += w;
+            });
+            mk('add', c.name, '+', (cursor + 3) * scale, 26 * scale, top, h);
+        }
+    }
 
     els.wrap.addEventListener('click', (e) => {
         if (e.target === els.wrap) deselect();

@@ -163,7 +163,14 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   DataSet designer, C#/VB project + form scaffolding (net10 + Avalonia 12, F5-ready), ChromeWindow custom
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
-- Suite green: **1475 passed**; PROBLEMS clean after every change.
+- Suite green: **1502 passed**; PROBLEMS clean after every change.
+- Menu Items editor (Menu bars): the headless host renders an EMPTY Menu bar (Avalonia only
+  realizes MenuItems when the menu opens — probed 2026-09-04). Now: `Menu Items` property on a
+  Menu opens a tree editor (Item / CheckBox `ToggleType=CheckBox` / Radio `ToggleType=Radio` /
+  ComboBox = submenu-of-options / Separator; depth ≤ 5; rename/add-child/add-sibling/reorder/
+  delete). Top-level items are drawn as PLAIN placeholder labels over the bar (never real
+  controls → no selection/Properties); clicking a dummy opens the editor; Save writes real
+  `<MenuItem>` XAML (undoable). ComboBox kind is editor-only (reloads as an Item submenu).
 - Undo/Redo toolbar buttons (↶/↷, far left): extension owns the 5-level history and pushes
   `historyState {canUndo,canRedo}` (on ready / after every notifyEdit / after undo-redo) so the
   buttons enable/disable to match; clicking posts the same `undo`/`redo` message the Ctrl+Z /

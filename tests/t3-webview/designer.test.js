@@ -20,6 +20,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
+    'menuModal', 'menuTitle', 'menuBody', 'menuAddTop', 'menuSave', 'menuCancel',
     'cellHighlight',
     'btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'dotGrid',
     'dotGridModal', 'dotGridSpacingX', 'dotGridSpacingY', 'dotGridColor', 'dotGridDotSize',
@@ -47,7 +48,8 @@ function setup() {
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
             || id === 'dotGridSave' || id === 'dotGridCancel'
             || id === 'chModeShort' || id === 'chModeLong'
-            || id === 'crosshairSave' || id === 'crosshairCancel') return 'button';
+            || id === 'crosshairSave' || id === 'crosshairCancel'
+            || id === 'menuSave' || id === 'menuCancel' || id === 'menuAddTop') return 'button';
         if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
@@ -63,6 +65,7 @@ function setup() {
     canvas.appendChild(make('preview'));
     canvas.appendChild(make('dotGrid'));
     canvas.appendChild(make('overlayLayer'));
+    canvas.appendChild(make('menuDummies'));
     canvas.appendChild(make('multiSel'));
     canvas.appendChild(make('marquee'));
     canvas.appendChild(make('radiusGuide'));
@@ -71,7 +74,7 @@ function setup() {
     canvas.appendChild(make('chH'));
     canvas.appendChild(make('chV'));
     window.document.body.appendChild(wrap);
-    for (const id of IDS.filter((i) => i !== 'canvasWrap' && i !== 'canvas' && i !== 'preview' && i !== 'overlayLayer' && i !== 'selection' && i !== 'dotGrid' && i !== 'multiSel' && i !== 'marquee' && i !== 'radiusGuide' && i !== 'crosshair' && i !== 'chH' && i !== 'chV')) {
+    for (const id of IDS.filter((i) => i !== 'canvasWrap' && i !== 'canvas' && i !== 'preview' && i !== 'overlayLayer' && i !== 'selection' && i !== 'dotGrid' && i !== 'multiSel' && i !== 'marquee' && i !== 'radiusGuide' && i !== 'crosshair' && i !== 'chH' && i !== 'chV' && i !== 'menuDummies')) {
         window.document.body.appendChild(make(id));
     }
 
@@ -903,6 +906,105 @@ module.exports = async (t) => {
         posted.length = 0;
         dispatch('click', 'canvas', { clientX: 160, clientY: 80 }); // ellipse exposed above the rect
         t.equal(posted[posted.length - 1].name, 'ellC', 'z-hit-ellipse', 'earlier shape selectable on its exposed area');
+    }
+    // --- Menu bar dummies + 'Menu Items' tree editor ---
+    // Avalonia never realizes MenuItems in the passive preview, so the extension sends the menu
+    // item tree (frame.menus) and we draw PLAIN placeholder labels over the empty bar. They are
+    // NOT real controls: clicking a dummy opens the tree editor (never selects a control / opens
+    // Properties), and Save posts the real item tree back so the extension writes <MenuItem> XAML.
+    {
+        const menuFrame = (menus) => msg(Object.assign(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'mainMenu', type: 'Menu', x: 0, y: 0, w: 800, h: 32, parent: 'Root' }
+        ]), { menus }));
+
+        // Two top-level items → two dummies + the trailing "+" affordance (still not real controls).
+        menuFrame({ mainMenu: [
+            { kind: 'Item', header: 'File', children: [{ kind: 'Item', header: 'Exit' }] },
+            { kind: 'Item', header: 'View' }
+        ] });
+        const dm = $('menuDummies');
+        t.equal(dm.children.length, 3, 'menu-dummies', 'bar shows one chip per top-level item + a trailing "+"');
+        t.equal(dm.children[0].textContent, 'File', 'menu-dummies', 'first dummy is the File item');
+        const ddLabels = [...$('controlList').options].map((o) => o.textContent);
+        t.ok(!ddLabels.some((x) => /File|Exit|View/.test(x)), 'menu-dummies', 'MenuItems are NOT in the control dropdown');
+
+        // Clicking the File dummy opens the tree editor (File expanded) WITHOUT posting a select.
+        posted.length = 0;
+        dm.children[0].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('menuModal').hidden, false, 'menu-editor', 'clicking a dummy opens the Menu Items editor');
+        t.ok(posted.every((m) => m.type !== 'select'), 'menu-editor', 'dummy click never selects a control');
+        t.equal($('menuBody').querySelectorAll('.mn-row').length, 3, 'menu-editor', 'File expanded shows Exit + View');
+
+        // Save posts the whole tree so the extension writes the real <MenuItem> XAML.
+        posted.length = 0;
+        $('menuSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const sav = posted[posted.length - 1];
+        t.equal(sav.type, 'saveMenuItems', 'menu-editor', 'Save posts saveMenuItems');
+        t.equal(sav.name, 'mainMenu', 'menu-editor', 'carries the menu control name');
+        t.equal(sav.items.length, 2, 'menu-editor', 'two top-level items');
+        t.equal(sav.items[0].header, 'File', 'menu-editor', 'File header preserved');
+        t.equal(sav.items[0].children[0].header, 'Exit', 'menu-editor', 'nested Exit preserved');
+        t.equal($('menuModal').hidden, true, 'menu-editor', 'Save closes the editor');
+
+        // The 'Menu Items' property (a button shown when the Menu is selected) opens the SAME editor.
+        msg({ type: 'properties', name: 'mainMenu', properties: [
+            { key: 'MenuItems', label: 'Menu Items', kind: 'button', value: 'Edit menu items…' }
+        ], info: null });
+        const pbtn = $('propsBody').querySelector('.prop-button');
+        t.ok(!!pbtn, 'menu-editor', 'Menu Items property renders as a button');
+        pbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('menuModal').hidden, false, 'menu-editor', 'Menu Items property opens the editor');
+
+        // Add a top-level item: rename it, then switch its kind to Radio → Save carries both.
+        $('menuAddTop').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        let rows = $('menuBody').querySelectorAll('.mn-row');
+        let top = rows[rows.length - 1];
+        t.equal(top.dataset.depth, '1', 'menu-editor', 'new row is a top-level item');
+        const headerInp = top.querySelector('.mn-header');
+        headerInp.value = 'Dark';
+        headerInp.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        const kindSel = top.querySelector('.mn-kind');
+        kindSel.value = 'Radio';
+        kindSel.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        posted.length = 0;
+        $('menuSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const added = posted[posted.length - 1].items;
+        t.equal(added[added.length - 1].kind, 'Radio', 'menu-editor', 'Radio kind carried to the extension');
+        t.equal(added[added.length - 1].header, 'Dark', 'menu-editor', 'renamed header carried to the extension');
+
+        // Depth is capped at 5: keep adding a child to the deepest row until the guard trips.
+        menuFrame({ mainMenu: [{ kind: 'Item', header: 'File', children: [] }] });
+        dm.children[0].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        let guard = 0;
+        for (; guard < 12; guard++) {
+            const rr = $('menuBody').querySelectorAll('.mn-row');
+            const deepest = rr[rr.length - 1];
+            if (!deepest) break;
+            const addc = deepest.querySelector('.mn-addc');
+            if (!addc || addc.disabled) break;
+            addc.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        }
+        rows = $('menuBody').querySelectorAll('.mn-row');
+        const deepest2 = rows[rows.length - 1];
+        t.equal(deepest2.dataset.depth, '5', 'menu-depth', 'deepest reachable row is depth 5');
+        t.equal(deepest2.querySelector('.mn-addc').disabled, true, 'menu-depth', 'depth 5 blocks adding a 6th level');
+        t.equal(deepest2.querySelector('.mn-adds').disabled, false, 'menu-depth', 'a sibling at depth 5 is still allowed');
+
+        // An EMPTY menu shows a "+ Add menu items…" hint that opens the editor and adds row 1;
+        // Escape closes without saving.
+        menuFrame({ mainMenu: [] });
+        t.equal($('menuDummies').children.length, 1, 'menu-empty', 'empty bar shows a single hint chip');
+        t.equal($('menuDummies').children[0].textContent, '+ Add menu items…', 'menu-empty', 'hint label');
+        $('menuDummies').children[0].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('menuModal').hidden, false, 'menu-empty', 'hint opens the editor');
+        t.equal($('menuBody').querySelectorAll('.mn-row').length, 1, 'menu-empty', 'hint immediately adds the first item');
+        posted.length = 0;
+        const esc = new s.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+        s.window.document.dispatchEvent(esc);
+        t.equal($('menuModal').hidden, true, 'menu-empty', 'Escape closes the editor');
+        t.ok(posted.every((m) => m.type !== 'saveMenuItems'), 'menu-empty', 'Escape does not save');
     }
     t.note('T3 done');
 };

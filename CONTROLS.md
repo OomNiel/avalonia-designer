@@ -360,7 +360,7 @@ second). The generated C#/VB code-behind is created for you. See *Code-behind* i
 ### Menu
 The **Menu** tool inserts a `Menu` docked to the top with one starter `MenuItem` ("File"). Add more
 `MenuItem`s as children, each with a `Header`. There is no separate `MenuBar` control in Avalonia —
-`Menu` is itself the bar.
+`Menu` is itself, the bar.
 
 ### DataSet (toolbox) — schema designer
 The **DataSet** item (under **Data & Grid**) is **not a form control** — clicking it opens the

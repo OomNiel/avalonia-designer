@@ -375,6 +375,83 @@ function tabItemXaml(tabControlName: string, page: number): string {
         `</TabItem>`;
 }
 
+// ---------------------------------------------------------------- menu items
+// Design-time model of a <Menu>'s item tree. Kinds map onto real Avalonia semantics:
+//   Item      → <MenuItem Header="…"> (children = its submenu)
+//   CheckBox  → <MenuItem Header="…" ToggleType="CheckBox">
+//   Radio     → <MenuItem Header="…" ToggleType="Radio">
+//   ComboBox  → a <MenuItem> whose submenu holds its option items
+//   Separator → <Separator/>
+// The same shape travels to/from the webview (the tree editor + the bar dummies). Nesting is
+// capped at MENU_MAX_DEPTH item levels below the Menu bar (top-level item = level 1).
+type MenuNodeKind = 'Item' | 'CheckBox' | 'Radio' | 'ComboBox' | 'Separator';
+interface MenuTreeNode { kind: MenuNodeKind; header?: string; children?: MenuTreeNode[]; }
+const MENU_MAX_DEPTH = 5;
+
+/** Direct child <MenuItem>/<Separator> elements of a Menu or of a MenuItem's submenu. */
+function menuItemEls(el: Element): Element[] {
+    return elementChildren(el).filter((k) => {
+        const t = localName(k.tagName);
+        return t === 'MenuItem' || t === 'Separator';
+    });
+}
+
+/** Converts one <MenuItem>/<Separator> DOM element into its design-time node. */
+function menuNodeOf(el: Element): MenuTreeNode | null {
+    const t = localName(el.tagName);
+    if (t === 'Separator') return { kind: 'Separator' };
+    if (t !== 'MenuItem') return null;
+    const tt = (el.getAttribute('ToggleType') || '').toLowerCase();
+    const kind: MenuNodeKind = tt === 'checkbox' ? 'CheckBox' : tt === 'radio' ? 'Radio' : 'Item';
+    const header = (el.getAttribute('Header') || '').trim();
+    const node: MenuTreeNode = { kind };
+    if (header !== '') node.header = header;
+    const kids = menuItemEls(el).map(menuNodeOf).filter((x): x is MenuTreeNode => x !== null);
+    if (kids.length > 0) node.children = kids;
+    return node;
+}
+
+/** The design-time tree (top-level items) of a Menu element. */
+function menuTreeOf(el: Element): MenuTreeNode[] {
+    return menuItemEls(el).map(menuNodeOf).filter((x): x is MenuTreeNode => x !== null);
+}
+
+/** Builds a <MenuItem>/<Separator> DOM element from a design-time node (`depth` guards nesting). */
+function menuElementFor(model: XamlModel, node: MenuTreeNode, depth: number): Element {
+    if (node.kind === 'Separator') return model.createElement('<Separator/>');
+    const el = model.createElement('<MenuItem/>');
+    const header = (node.header || '').trim();
+    if (header !== '') el.setAttribute('Header', header);
+    if (node.kind === 'CheckBox') el.setAttribute('ToggleType', 'CheckBox');
+    else if (node.kind === 'Radio') el.setAttribute('ToggleType', 'Radio');
+    if (depth < MENU_MAX_DEPTH) {
+        for (const c of node.children || []) el.appendChild(menuElementFor(model, c, depth + 1));
+    }
+    return el;
+}
+
+/** Validates a tree that came from the webview (structure only; never trusts its input). */
+function sanitizeMenuNodes(raw: unknown): MenuTreeNode[] {
+    if (!Array.isArray(raw)) return [];
+    const clean = (n: unknown, depth: number): MenuTreeNode | null => {
+        if (depth > MENU_MAX_DEPTH || !n || typeof n !== 'object') return null;
+        const o = n as Record<string, unknown>;
+        let kind: MenuNodeKind = 'Item';
+        const k = String(o.kind ?? 'Item');
+        if (k === 'CheckBox' || k === 'Radio' || k === 'ComboBox' || k === 'Separator') kind = k;
+        const node: MenuTreeNode = { kind };
+        if (kind !== 'Separator') {
+            const h = String(o.header ?? '').trim();
+            if (h !== '') node.header = h;
+        }
+        const cleaned = (Array.isArray(o.children) ? o.children : [])
+            .map((c) => clean(c, depth + 1)).filter((x): x is MenuTreeNode => x !== null);
+        if (cleaned.length > 0) node.children = cleaned;
+        return node;
+    };
+    return raw.map((r) => clean(r, 1)).filter((x): x is MenuTreeNode => x !== null);
+}
+
 /** In-memory document backed by an XamlModel. */
 export class DesignerDocument implements vscode.CustomDocument {
     model: XamlModel;
@@ -1160,6 +1237,20 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'saveMenuItems': {
+                    // 'Menu Items' tree editor on a <Menu>: replace its whole item tree with the
+                    // structure the user built (kinds map onto MenuItem/ToggleType/Separator).
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || localName(el.tagName) !== 'Menu') return;
+                    const nodes = sanitizeMenuNodes(msg.items);
+                    const before = doc.model.serialize(true);
+                    for (const kid of menuItemEls(el)) el.removeChild(kid);
+                    for (const n of nodes) el.appendChild(menuElementFor(doc.model, n, 1));
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
+                    return;
+                }
                 case 'saveGridDefs': {
                     // 'Rows & Columns' editor for a Grid: replace the RowDefinitions /
                     // ColumnDefinitions with the sizes typed in the popup.
@@ -1591,10 +1682,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         }
         const size = this.designSize(doc.model.root);
         const proj = findProject(doc.uri);
+        const previewTheme = this.previewTheme(doc.model.root);
         const frame = await host.render(
             xaml, size.width, size.height,
             proj ? path.dirname(proj.projectUri.fsPath) : undefined,
-            this.previewTheme(doc.model.root)
+            previewTheme
         );
         this.frames.set(doc.uri.toString(), frame);
         // Dynamic Image-in-Grid tracking: an Image placed in a Grid cell follows its cell's CURRENT
@@ -1630,8 +1722,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // form itself and edit its size/title in the Properties panel.
         const rootEl = doc.model.root;
         const formTitle = (rootEl.getAttribute('Title') || rootEl.getAttribute('TitleBarTitle') || '').trim();
+        // The design-time item tree of every named <Menu> (top-level items + nested submenus).
+        // Avalonia only realizes MenuItem containers when a menu is opened, so the preview can't
+        // draw them — the webview lays out placeholder labels on the (empty) menu bar from this.
+        const menus: Record<string, MenuTreeNode[]> = {};
+        for (const el of doc.model.controlElements()) {
+            if (localName(el.tagName) !== 'Menu') continue;
+            const nm = el.getAttribute('x:Name') || el.getAttribute('Name');
+            if (nm) menus[nm] = menuTreeOf(el);
+        }
         await panel.webview.postMessage({
-            type: 'frame', ...frame, controls, formTitle,
+            type: 'frame', ...frame, controls, menus, previewTheme, formTitle,
             dotGrid: this.dotGridConfig(), crosshair: this.crosshairConfig()
         });
         await panel.webview.postMessage({ type: 'clipboard', has: !!clipboard });
@@ -2424,6 +2525,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
           <img id="preview" alt="Design surface"/>
           <div id="dotGrid" class="dot-grid" hidden></div>
           <div id="overlayLayer"></div>
+          <div id="menuDummies"></div>
           <div id="multiSel"></div>
           <div id="marquee" hidden></div>
           <div id="radiusGuide" hidden></div>
@@ -2470,6 +2572,20 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         <div class="modal-buttons">
           <button id="itemsCancel" class="modal-btn">Cancel</button>
           <button id="itemsSave" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="menuModal" class="modal" hidden>
+      <div class="modal-box modal-wide">
+        <h3 id="menuTitle">Menu Items</h3>
+        <p class="modal-hint">Build the menu: the top row is the menu bar. Each item can hold a submenu up to 5 levels deep. Kinds: <b>Item</b> (submenu if it has children), <b>CheckBox</b>/<b>Radio</b> (checkable/radio items), <b>ComboBox</b> (its children are its options), <b>Separator</b>.</p>
+        <div id="menuBody" class="menu-tree"></div>
+        <div class="modal-buttons menu-toolbar">
+          <button id="menuAddTop" type="button" class="modal-btn">+ Add menu item</button>
+        </div>
+        <div class="modal-buttons">
+          <button id="menuCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="menuSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

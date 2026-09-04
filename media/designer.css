@@ -186,6 +186,143 @@ body {
     background: var(--sel);
 }
 
+/* ---------- menu bar dummies (design-time placeholders over the empty bar) ---------- */
+/* A Menu's items are popup-hosted and only realized by Avalonia when opened, so the preview
+   renders an empty bar. These PLAIN labels sit over the bar in the bar's text style; they are
+   NOT controls (no selection/Properties). Click one to edit the menu. */
+#menuDummies {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 12;
+}
+#menuDummies .menu-dummy {
+    position: absolute;
+    pointer-events: auto;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 13px/1 "Segoe UI", sans-serif;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #202020;
+    cursor: pointer;
+    border: 1px dashed transparent;
+    border-radius: 2px;
+}
+body.pv-dark #menuDummies .menu-dummy {
+    color: #ececec;
+}
+#menuDummies .menu-dummy.item:hover {
+    background: rgba(128, 128, 128, 0.22);
+    border-color: var(--accent);
+}
+#menuDummies .menu-dummy.hint {
+    justify-content: flex-start;
+    padding: 0 10px;
+    color: #909090;
+    font-style: italic;
+    border: 1px dashed transparent;
+}
+body.pv-dark #menuDummies .menu-dummy.hint {
+    color: #6f6f6f;
+}
+#menuDummies .menu-dummy.hint:hover {
+    color: var(--fg);
+    font-style: normal;
+    background: rgba(128, 128, 128, 0.22);
+    border-color: var(--accent);
+}
+#menuDummies .menu-dummy-sep {
+    position: absolute;
+    background: #b8b8b8;
+}
+body.pv-dark #menuDummies .menu-dummy-sep {
+    background: #555;
+}
+
+/* ---------- Menu Items tree editor (modal) ---------- */
+.menu-tree {
+    max-height: 46vh;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel);
+    margin: 6px 0 8px;
+}
+.mn-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+}
+.mn-row:last-child {
+    border-bottom: none;
+}
+.mn-caret {
+    width: 20px;
+    flex: 0 0 20px;
+    text-align: center;
+    border: none;
+    background: transparent;
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+}
+.mn-caret:disabled {
+    color: var(--fg-dim);
+    cursor: default;
+}
+.mn-kind {
+    flex: 0 0 auto;
+    width: 92px;
+}
+.mn-header {
+    flex: 1 1 auto;
+    min-width: 120px;
+}
+.mn-sep-label {
+    flex: 1 1 auto;
+    color: var(--fg-dim);
+    font-size: 11px;
+    letter-spacing: 0.5px;
+}
+.mn-act {
+    flex: 0 0 auto;
+    min-width: 24px;
+    height: 22px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--panel-2);
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 5px;
+}
+.mn-act:hover:not(:disabled) {
+    background: #3a3a3d;
+}
+.mn-act:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.mn-del {
+    color: #e06666;
+}
+.mn-empty {
+    padding: 10px 12px;
+    color: var(--fg-dim);
+    font-style: italic;
+}
+.menu-toolbar {
+    justify-content: flex-start;
+}
+
 /* ---------- selection + handles ---------- */
 /* The selection box is pointer-events:none so clicks pass through to hit-testing even when it
    covers the whole canvas (e.g. the locked Body). The resize handles stay pointer-events:auto,

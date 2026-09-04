@@ -998,6 +998,17 @@ export function propertyDefsFor(
             desc: 'Opens the grid editor: add or remove rows and columns and set each one\'s size (Auto = fit content, * = fill the leftover space, or a number like 100 for exact pixels).'
         });
     }
+    // 'Menu Items' — a Menu bar is empty until it has top-level items. Opens the menu tree editor
+    // where the bar's items are added/removed and each item's submenu is built (up to 5 levels).
+    if (tag === 'Menu') {
+        props.push({
+            key: 'MenuItems',
+            label: 'Menu Items',
+            kind: 'button',
+            value: 'Edit menu items…',
+            desc: 'Adds/removes the items on the menu bar and builds each one\'s submenu (up to 5 levels deep). Kinds: Item, CheckBox, Radio, ComboBox (options) and Separator.'
+        });
+    }
     // A control placed inside a Grid can be moved to a specific cell.
     if (!isRoot && el.parentNode && (el.parentNode as Element).nodeType === 1
         && localName((el.parentNode as Element).tagName) === 'Grid') {
