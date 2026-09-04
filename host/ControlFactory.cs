@@ -55,7 +55,12 @@ public class ControlFactory
             // LocalName, so it still renders.)
             ["DataGrid"] = n => $"<dg:DataGrid x:Name=\"{n}\" AutoGenerateColumns=\"True\" Width=\"240\" Height=\"160\"/>",
             ["Menu"] = n => $"<Menu x:Name=\"{n}\" DockPanel.Dock=\"Top\" Height=\"24\">\n    <MenuItem Header=\"File\"/>\n</Menu>",
-            ["StatusBar"] = n => $"<Border x:Name=\"{n}\" DockPanel.Dock=\"Bottom\" Height=\"24\" BorderThickness=\"0,1,0,0\" Padding=\"8,0\">\n    <TextBlock Text=\"Ready\" VerticalAlignment=\"Center\"/>\n</Border>",
+            // A real status bar pattern: a DOCKPANEL strip (docked Bottom) that holds status
+            // items (labels / buttons / a clock). Items are pinned LEFT or RIGHT via
+            // DockPanel.Dock and stretch to the bar's height automatically. Children are added/
+            // managed with the designer's 'Status Items' editor. LastChildFill=False so docked
+            // items keep their edge and the middle stays empty.
+            ["StatusBar"] = n => $"<DockPanel x:Name=\"{n}\" DockPanel.Dock=\"Bottom\" Height=\"24\" LastChildFill=\"False\">\n    <TextBlock Text=\"Ready\" VerticalAlignment=\"Center\" HorizontalAlignment=\"Left\"/>\n</DockPanel>",
             // StatusDate: a TextBlock turned into a live date/time display. The snippet embeds the
             // current time (so the preview shows a placeholder) and a Loaded event whose code-behind
             // handler starts a per-second timer that keeps the text current at runtime.

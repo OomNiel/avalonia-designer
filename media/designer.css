@@ -295,6 +295,11 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     width: 92px;
 }
 
+.mn-pos {
+    flex: 0 0 auto;
+    width: 100px;
+}
+
 .mn-header {
     flex: 1 1 auto;
     min-width: 120px;

@@ -21,6 +21,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
     'menuModal', 'menuTitle', 'menuBody', 'menuAddTop', 'menuSave', 'menuCancel',
+    'statusModal', 'statusTitle', 'statusBody', 'statusAdd', 'statusSave', 'statusCancel',
     'cellHighlight',
     'btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'dotGrid',
     'dotGridModal', 'dotGridSpacingX', 'dotGridSpacingY', 'dotGridColor', 'dotGridDotSize',
@@ -49,7 +50,8 @@ function setup() {
             || id === 'dotGridSave' || id === 'dotGridCancel'
             || id === 'chModeShort' || id === 'chModeLong'
             || id === 'crosshairSave' || id === 'crosshairCancel'
-            || id === 'menuSave' || id === 'menuCancel' || id === 'menuAddTop') return 'button';
+            || id === 'menuSave' || id === 'menuCancel' || id === 'menuAddTop'
+            || id === 'statusSave' || id === 'statusCancel' || id === 'statusAdd') return 'button';
         if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
@@ -1009,6 +1011,67 @@ module.exports = async (t) => {
         s.window.document.dispatchEvent(esc);
         t.equal($('menuModal').hidden, true, 'menu-empty', 'Escape closes the editor');
         t.ok(posted.every((m) => m.type !== 'saveMenuItems'), 'menu-empty', 'Escape does not save');
+    }
+
+    // --- Status Items editor (the Status Bar is a DockPanel; items are kind + text + Left/Right) ---
+    // The 'Status Items' property opens a FLAT item editor (no nesting). Save posts the list back
+    // and the extension writes the child controls; each item is anchored LEFT or RIGHT.
+    {
+        msg(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'StatusBar1', type: 'DockPanel', x: 0, y: 426, w: 800, h: 24, parent: 'Root' }
+        ]));
+        msg({ type: 'properties', name: 'StatusBar1', properties: [
+            { key: 'StatusItems', label: 'Status Items', kind: 'button', value: 'Edit status items…' }
+        ], statusItems: [
+            { kind: 'TextBlock', text: 'Ready', position: 'Left' },
+            { kind: 'StatusDate', text: '', position: 'Right' }
+        ], info: null });
+        const pbtn = $('propsBody').querySelector('.prop-button');
+        t.ok(!!pbtn, 'status-items', 'Status Items property renders as a button');
+        $('statusModal').hidden = true;
+        pbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('statusModal').hidden, false, 'status-items', 'Status Items opens the editor');
+        let rows = $('statusBody').querySelectorAll('.mn-row');
+        t.equal(rows.length, 2, 'status-items', 'editor lists the bar items');
+        t.equal(rows[0].querySelector('.mn-header').value, 'Ready', 'status-items', 'Ready text shown');
+        t.equal(rows[1].querySelector('.mn-sep-label').textContent, 'live clock', 'status-items', 'clock row labelled');
+
+        // Add an item, turn it into a RIGHT-anchored Button with text, then Save.
+        $('statusAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        rows = $('statusBody').querySelectorAll('.mn-row');
+        const kindSel = rows[rows.length - 1].querySelector('.mn-kind');
+        kindSel.value = 'Button';
+        kindSel.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        rows = $('statusBody').querySelectorAll('.mn-row');
+        t.equal(rows.length, 3, 'status-items', 'three rows after adding');
+        const rowB = rows[rows.length - 1];
+        const textInp = rowB.querySelector('.mn-header');
+        t.ok(!!textInp, 'status-items', 'Button row has a text field');
+        textInp.value = 'Save';
+        textInp.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        const posSel = rowB.querySelector('.mn-pos');
+        posSel.value = 'Right';
+        posSel.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        posted.length = 0;
+        $('statusSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const sav = posted[posted.length - 1];
+        t.equal(sav.type, 'saveStatusItems', 'status-items', 'Save posts saveStatusItems');
+        t.equal(sav.name, 'StatusBar1', 'status-items', 'carries the bar name');
+        t.equal(sav.items.length, 3, 'status-items', 'three items after add');
+        const added = sav.items[2];
+        t.equal(added.kind, 'Button', 'status-items', 'Button kind carried');
+        t.equal(added.text, 'Save', 'status-items', 'Button text carried');
+        t.equal(added.position, 'Right', 'status-items', 'Right anchor carried');
+
+        // Escape closes without saving.
+        pbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        posted.length = 0;
+        const esc2 = new s.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+        s.window.document.dispatchEvent(esc2);
+        t.equal($('statusModal').hidden, true, 'status-items', 'Escape closes the status editor');
+        t.ok(posted.every((m) => m.type !== 'saveStatusItems'), 'status-items', 'Escape does not save');
     }
     t.note('T3 done');
 };

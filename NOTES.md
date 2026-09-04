@@ -163,7 +163,14 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   DataSet designer, C#/VB project + form scaffolding (net10 + Avalonia 12, F5-ready), ChromeWindow custom
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
-- Suite green: **1502 passed**; PROBLEMS clean after every change.
+- Suite green: **1515 passed**; PROBLEMS clean after every change.
+- Status Bar is now a real **DockPanel** strip (docked Bottom, LastChildFill=False) with a default
+  "Ready" label on the left. A **Status Items** property opens a flat item editor (like the menu
+  one): kinds TextBlock/TextBox/Button/ProgressBar/Separator(gap)/StatusDate(live clock); each item
+  is anchored LEFT or RIGHT and stretches to the bar's height (DockPanel semantics). Editor order =
+  visual left→right (right group is emitted reversed & read back unwound). Children are named
+  `<Kind>ItemN` (reused on edits so names/clocks survive); StatusDate items get their clock
+  code-behind; removed children's handlers cleaned.
 - Undo restores deleted-control CODE-BEHIND: the history's per-step code snapshot could be older
   than the live file (handlers added via wiring, or code the user typed by hand between designer
   edits), so Undo restored the control but not its code. Fix: `refreshHistoryCode(doc)` re-reads

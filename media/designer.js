@@ -77,6 +77,12 @@
         menuAddTop: $('menuAddTop'),
         menuSave: $('menuSave'),
         menuCancel: $('menuCancel'),
+        statusModal: $('statusModal'),
+        statusTitle: $('statusTitle'),
+        statusBody: $('statusBody'),
+        statusAdd: $('statusAdd'),
+        statusSave: $('statusSave'),
+        statusCancel: $('statusCancel'),
         cellHighlight: $('cellHighlight'),
         rulerH: $('rulerH'),
         rulerV: $('rulerV'),
@@ -1539,6 +1545,8 @@
                     }
                     // 'Menu Items' opens the menu tree editor for the selected Menu bar.
                     if (p.key === 'MenuItems') openMenuEditor(msg.name);
+                    // 'Status Items' opens the flat item editor for the selected Status Bar.
+                    if (p.key === 'StatusItems') openStatusEditor(msg.name, msg.statusItems || []);
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -2029,6 +2037,7 @@
             if (!els.dotGridModal.hidden) closeDotGridSettings();
             if (!els.crosshairModal.hidden) closeCrosshairSettings();
             if (!els.menuModal.hidden) closeMenuEditor();
+            if (!els.statusModal.hidden) closeStatusEditor();
         }
     });
 
@@ -2212,6 +2221,116 @@
     els.menuCancel.addEventListener('click', closeMenuEditor);
     els.menuModal.addEventListener('click', (e) => {
         if (e.target === els.menuModal) closeMenuEditor(); // click outside the box
+    });
+
+    // ---------------- Status Items editor (flat list) ----------------
+    // A Status Bar is a DockPanel strip; this editor manages its child controls (kind + text +
+    // a LEFT/RIGHT anchor). Items are listed left→right; Save writes the real child controls.
+    const STATUS_KIND_OPTIONS = ['TextBlock', 'TextBox', 'Button', 'ProgressBar', 'Separator', 'StatusDate'];
+    let statusEdit = null; // { name, items: [{kind, text, position}] }
+    const statusBtn = (label, cls, title, fn) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'mn-act ' + cls;
+        b.textContent = label; b.title = title || '';
+        b.addEventListener('click', (e) => { e.stopPropagation(); fn && fn(); });
+        return b;
+    };
+    function renderStatusEditor() {
+        const body = els.statusBody;
+        body.innerHTML = '';
+        if (!statusEdit) return;
+        statusEdit.items.forEach((it, idx) => {
+            const row = document.createElement('div');
+            row.className = 'mn-row';
+            row.dataset.idx = String(idx);
+            row.dataset.kind = it.kind;
+            const kindSel = document.createElement('select');
+            kindSel.className = 'mn-kind';
+            for (const k of STATUS_KIND_OPTIONS) {
+                const o = document.createElement('option'); o.value = k; o.textContent = k;
+                kindSel.appendChild(o);
+            }
+            kindSel.value = it.kind;
+            kindSel.title = 'Item kind';
+            kindSel.addEventListener('change', () => { it.kind = kindSel.value; renderStatusEditor(); });
+            row.appendChild(kindSel);
+            if (it.kind === 'TextBlock' || it.kind === 'TextBox' || it.kind === 'Button') {
+                const inp = document.createElement('input');
+                inp.type = 'text'; inp.className = 'mn-header';
+                inp.value = it.text || ''; inp.placeholder = 'Text…'; inp.title = 'Item text';
+                inp.addEventListener('input', () => { it.text = inp.value; });
+                inp.addEventListener('keydown', (e) => e.stopPropagation());
+                row.appendChild(inp);
+            } else {
+                const lbl = document.createElement('span');
+                lbl.className = 'mn-sep-label';
+                lbl.textContent = it.kind === 'StatusDate' ? 'live clock' : it.kind === 'ProgressBar' ? '0–100%' : 'gap';
+                row.appendChild(lbl);
+            }
+            const posSel = document.createElement('select');
+            posSel.className = 'mn-pos';
+            for (const p of ['Left', 'Right']) {
+                const o = document.createElement('option'); o.value = p; o.textContent = 'Anchor ' + p;
+                posSel.appendChild(o);
+            }
+            posSel.value = it.position === 'Right' ? 'Right' : 'Left';
+            posSel.title = 'Anchor the item to the left or right side of the bar';
+            posSel.addEventListener('change', () => { it.position = posSel.value; });
+            row.appendChild(posSel);
+            row.appendChild(document.createElement('span')); // spacer
+            row.appendChild(statusBtn('↑', 'mn-up', 'Move left/up', () => {
+                if (idx > 0) {
+                    const [m] = statusEdit.items.splice(idx, 1);
+                    statusEdit.items.splice(idx - 1, 0, m);
+                    renderStatusEditor();
+                }
+            }));
+            row.appendChild(statusBtn('↓', 'mn-down', 'Move right/down', () => {
+                if (idx < statusEdit.items.length - 1) {
+                    const [m] = statusEdit.items.splice(idx, 1);
+                    statusEdit.items.splice(idx + 1, 0, m);
+                    renderStatusEditor();
+                }
+            }));
+            row.appendChild(statusBtn('✕', 'mn-del', 'Delete this item', () => {
+                statusEdit.items.splice(idx, 1);
+                renderStatusEditor();
+            }));
+            body.appendChild(row);
+        });
+        if (!statusEdit.items.length) {
+            const e = document.createElement('div');
+            e.className = 'mn-empty';
+            e.textContent = 'No items on the bar — click “+ Add item” to put a label, button or clock on it.';
+            body.appendChild(e);
+        }
+    }
+    function openStatusEditor(name, items) {
+        statusEdit = {
+            name: name || null,
+            items: (items || []).map((i) => ({
+                kind: (i && i.kind) || 'TextBlock',
+                text: i && i.text != null ? String(i.text) : '',
+                position: i && i.position === 'Right' ? 'Right' : 'Left'
+            }))
+        };
+        els.statusTitle.textContent = 'Status Items' + (statusEdit.name ? ' — ' + statusEdit.name : '');
+        els.statusModal.hidden = false;
+        renderStatusEditor();
+    }
+    function closeStatusEditor() { els.statusModal.hidden = true; statusEdit = null; }
+    els.statusAdd.addEventListener('click', () => {
+        if (!statusEdit) return;
+        statusEdit.items.push({ kind: 'TextBlock', text: 'New Item', position: 'Left' });
+        renderStatusEditor();
+    });
+    els.statusSave.addEventListener('click', () => {
+        if (statusEdit) post({ type: 'saveStatusItems', name: statusEdit.name, items: statusEdit.items });
+        closeStatusEditor();
+    });
+    els.statusCancel.addEventListener('click', closeStatusEditor);
+    els.statusModal.addEventListener('click', (e) => {
+        if (e.target === els.statusModal) closeStatusEditor(); // click outside the box
     });
 
     // Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay

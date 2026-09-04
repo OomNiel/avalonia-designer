@@ -111,8 +111,8 @@ const INFO: Record<string, ControlInfo> = {
     },
     StatusBar: {
         label: 'Status Bar',
-        desc: 'A bar along the bottom of the window that shows status text.',
-        use: 'Avalonia has no built-in StatusBar control, so this inserts the standard pattern (a Border with a TextBlock). Put it at the bottom of the window and edit the text.'
+        desc: 'A bar along the bottom of the window that shows status items (text, buttons, a clock).',
+        use: 'A DockPanel strip docked to the bottom. It comes with a "Ready" label on the left; add more items with the Status Items editor (Properties panel) — each item is pinned LEFT or RIGHT and stretches to the bar\'s height.'
     },
     StatusDate: {
         label: 'Status Date / Time',

@@ -452,6 +452,64 @@ function sanitizeMenuNodes(raw: unknown): MenuTreeNode[] {
     return raw.map((r) => clean(r, 1)).filter((x): x is MenuTreeNode => x !== null);
 }
 
+// ---------------------------------------------------------------- status bar items
+// The Status Bar tool is a DOCKPANEL strip (docked Bottom). Its 'Status Items' editor manages the
+// child controls of the bar; each child is pinned LEFT or RIGHT (DockPanel.Dock) and stretches to
+// the bar's height. Kinds map onto real Avalonia elements:
+//   TextBlock (label) / TextBox / Button / ProgressBar / Separator (a gap) / StatusDate (live clock)
+type StatusKind = 'TextBlock' | 'TextBox' | 'Button' | 'ProgressBar' | 'Separator' | 'StatusDate';
+interface StatusItem { kind: StatusKind; text: string; position: 'Left' | 'Right'; }
+const STATUS_KINDS = new Set<string>(['TextBlock', 'TextBox', 'Button', 'ProgressBar', 'Separator', 'StatusDate']);
+
+/** Maps an existing bar child element to its Status-kind (or null if it isn't one we manage). */
+function statusKindOf(el: Element): StatusKind | null {
+    const t = localName(el.tagName);
+    if (t === 'TextBlock') return el.hasAttribute('Loaded') ? 'StatusDate' : 'TextBlock';
+    if (t === 'TextBox') return 'TextBox';
+    if (t === 'Button') return 'Button';
+    if (t === 'ProgressBar') return 'ProgressBar';
+    if (t === 'Border' && elementChildren(el).length === 0 && !el.hasAttribute('Content')) return 'Separator';
+    return null;
+}
+function statusTextOf(el: Element, kind: StatusKind): string {
+    if (kind === 'Button') return (el.getAttribute('Content') || '').trim();
+    if (kind === 'TextBlock' || kind === 'TextBox') return (el.getAttribute('Text') || '').trim();
+    return '';
+}
+function statusPositionOf(el: Element): 'Left' | 'Right' {
+    return (el.getAttribute('DockPanel.Dock') || '').trim().toLowerCase() === 'right' ? 'Right' : 'Left';
+}
+/** The current status items of a bar, in VISUAL order (left group left→right, then the right
+ *  group right-to-left is unwound to left→right). The editor shows this order and apply() writes
+ *  it back (reversing the right group), so the saved file reads back to the same list. */
+function statusItemsOf(el: Element): StatusItem[] {
+    const raw: StatusItem[] = [];
+    for (const c of elementChildren(el)) {
+        const kind = statusKindOf(c);
+        if (!kind) continue;
+        raw.push({ kind, text: statusTextOf(c, kind), position: statusPositionOf(c) });
+    }
+    const lefts = raw.filter((i) => i.position !== 'Right');
+    const rights = raw.filter((i) => i.position === 'Right').reverse();
+    return [...lefts, ...rights];
+}
+/** Validates the item list coming back from the webview editor. */
+function sanitizeStatusItems(raw: unknown): StatusItem[] {
+    if (!Array.isArray(raw)) return [];
+    const out: StatusItem[] = [];
+    for (const r of raw) {
+        if (!r || typeof r !== 'object') continue;
+        const o = r as Record<string, unknown>;
+        const k = String(o.kind ?? 'TextBlock');
+        if (!STATUS_KINDS.has(k)) continue;
+        const kind = k as StatusKind;
+        const text = String(o.text ?? '').trim();
+        const position = String(o.position ?? 'Left').toLowerCase() === 'right' ? 'Right' : 'Left';
+        out.push({ kind, text, position });
+    }
+    return out;
+}
+
 /** In-memory document backed by an XamlModel. */
 export class DesignerDocument implements vscode.CustomDocument {
     model: XamlModel;
@@ -1261,6 +1319,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'saveStatusItems': {
+                    // 'Status Items' editor on a Status Bar (a DockPanel strip named StatusBarN).
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || localName(el.tagName) !== 'DockPanel') return;
+                    if (!/^StatusBar\d*$/.test(el.getAttribute('x:Name') || el.getAttribute('Name') || '')) return;
+                    await this.applyStatusItems(doc, panel, el, msg.items);
+                    return;
+                }
                 case 'saveGridDefs': {
                     // 'Rows & Columns' editor for a Grid: replace the RowDefinitions /
                     // ColumnDefinitions with the sizes typed in the popup.
@@ -2028,6 +2094,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 cols: doc.model.gridSizes(el, 'cols')
             };
         }
+        // A Status Bar (a DockPanel named StatusBarN) sends its child items so the 'Status Items'
+        // editor can show them (kind / text / LEFT or RIGHT position).
+        if (/^StatusBar\d*$/.test(ctrlName || '') && localName(el.tagName) === 'DockPanel') {
+            msg.statusItems = statusItemsOf(el).map((i) => ({ kind: i.kind, text: i.text, position: i.position }));
+        }
         await panel.webview.postMessage(msg);
     }
 
@@ -2279,6 +2350,106 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         if (!cb) return;
         step.codeBehindPath = cb;
         step.codeBehind = this.readText(cb);
+    }
+
+    /** Applies the 'Status Items' list to a status-bar DockPanel. Child identity is preserved
+     *  (a matching kind reuses the element, so its name — and a StatusDate live clock — survive
+     *  text or position edits). Removed children's event handlers are cleaned from code-behind. */
+    private async applyStatusItems(doc: DesignerDocument, panel: vscode.WebviewPanel, bar: Element, rawItems: unknown): Promise<void> {
+        const items = sanitizeStatusItems(rawItems);
+        // Editor order = visual left→right on the bar. A DockPanel lays later Right children to the
+        // LEFT of earlier ones, so the right group is emitted REVERSED to match the editor order.
+        const lefts = items.filter((i) => i.position !== 'Right');
+        const rights = items.filter((i) => i.position === 'Right').reverse();
+        const order = [...lefts, ...rights];
+        this.refreshHistoryCode(doc);
+        const before = doc.model.serialize(true);
+        const existing = elementChildren(bar);
+        const used = new Set<Element>();
+        const kept: Element[] = [];
+        const newClocks: string[] = [];
+        const make = (item: StatusItem): Element => {
+            const kind = item.kind;
+            // '<Kind>Item' (never the bare type name, which could collide in code-behind).
+            const name = doc.model.uniqueName(`${kind}Item`);
+            let el: Element;
+            if (kind === 'Separator') {
+                el = doc.model.createElement('<Border/>');
+                el.setAttribute('Width', '8');
+            } else if (kind === 'ProgressBar') {
+                el = doc.model.createElement('<ProgressBar Minimum="0" Maximum="100" Value="0"/>');
+                el.setAttribute('Width', '120');
+            } else if (kind === 'Button') {
+                el = doc.model.createElement('<Button/>');
+            } else if (kind === 'TextBox') {
+                el = doc.model.createElement('<TextBox/>');
+            } else if (kind === 'StatusDate') {
+                el = doc.model.createElement('<TextBlock/>');
+                el.setAttribute('Text', new Date().toLocaleString());
+                el.setAttribute('Loaded', `${name}_Loaded`);
+                newClocks.push(name);
+            } else {
+                el = doc.model.createElement('<TextBlock/>');
+            }
+            if (kind !== 'Separator') el.setAttribute('x:Name', name);
+            return el;
+        };
+        const tune = (el: Element, item: StatusItem): void => {
+            if (item.position === 'Right') el.setAttribute('DockPanel.Dock', 'Right');
+            else el.removeAttribute('DockPanel.Dock');
+            if (item.kind === 'Separator') {
+                el.removeAttribute('HorizontalAlignment');
+                el.removeAttribute('VerticalAlignment');
+                return;
+            }
+            el.setAttribute('HorizontalAlignment', item.position === 'Right' ? 'Right' : 'Left');
+            if (item.kind === 'TextBlock' || item.kind === 'StatusDate') el.setAttribute('VerticalAlignment', 'Center');
+            else el.removeAttribute('VerticalAlignment');
+            if (item.kind === 'Button') {
+                if (item.text) el.setAttribute('Content', item.text); else el.removeAttribute('Content');
+            } else if (item.kind === 'TextBlock' || item.kind === 'TextBox') {
+                if (item.text) el.setAttribute('Text', item.text); else el.removeAttribute('Text');
+            }
+        };
+        for (const item of order) {
+            let reuse: Element | undefined;
+            for (const c of existing) {
+                if (!used.has(c) && statusKindOf(c) === item.kind) { reuse = c; break; }
+            }
+            let el: Element;
+            if (reuse) {
+                used.add(reuse);
+                el = reuse;
+                if (item.kind !== 'Separator' && !el.hasAttribute('x:Name')) {
+                    el.setAttribute('x:Name', doc.model.uniqueName(`${item.kind}Item`));
+                }
+            } else {
+                el = make(item);
+                used.add(el);
+            }
+            tune(el, item);
+            kept.push(el);
+        }
+        const removed = existing.filter((c) => !used.has(c));
+        for (const c of elementChildren(bar)) bar.removeChild(c);
+        for (const el of kept) bar.appendChild(el);
+        bar.setAttribute('LastChildFill', 'False');
+        const stale = new Set<string>();
+        for (const r of removed) {
+            for (const h of doc.model.eventHandlersOfSubtree(r)) {
+                if (!doc.model.hasHandler(h)) stale.add(h);
+            }
+        }
+        if (stale.size > 0) {
+            try { await removeHandlersFromCodeBehind(doc.uri, [...stale]); } catch { /* best-effort */ }
+        }
+        for (const nm of newClocks) {
+            try { await insertStatusDateClock(doc.uri, nm); } catch { /* best-effort */ }
+        }
+        const barName = bar.getAttribute('x:Name') || bar.getAttribute('Name') || null;
+        this.notifyEdit(doc, panel, before);
+        await this.render(doc, panel);
+        await this.sendProperties(doc, panel, barName);
     }
 
     /** Records a new post-edit state (drops the redo branch, caps at UNDO_STATES). */
@@ -2615,6 +2786,20 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         <div class="modal-buttons">
           <button id="menuCancel" type="button" class="modal-btn">Cancel</button>
           <button id="menuSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="statusModal" class="modal" hidden>
+      <div class="modal-box modal-wide">
+        <h3 id="statusTitle">Status Items</h3>
+        <p class="modal-hint">Items shown on the status bar, listed left → right. Each is pinned to the <b>Left</b> or <b>Right</b> of the bar and stretches to its height.</p>
+        <div id="statusBody" class="menu-tree"></div>
+        <div class="modal-buttons">
+          <button id="statusAdd" type="button" class="modal-btn">+ Add item</button>
+        </div>
+        <div class="modal-buttons">
+          <button id="statusCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="statusSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

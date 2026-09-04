@@ -1009,6 +1009,17 @@ export function propertyDefsFor(
             desc: 'Adds/removes the items on the menu bar and builds each one\'s submenu (up to 5 levels deep). Kinds: Item, CheckBox, Radio, ComboBox (options) and Separator.'
         });
     }
+    // 'Status Items' — the Status Bar tool inserts a DockPanel bar; this opens the editor that
+    // adds/removes the items on the bar (each pinned LEFT or RIGHT, stretching to the bar height).
+    if (isStatusBar) {
+        props.push({
+            key: 'StatusItems',
+            label: 'Status Items',
+            kind: 'button',
+            value: 'Edit status items…',
+            desc: 'Adds/removes the items shown on the status bar. Each item is pinned to the LEFT or RIGHT side of the bar and stretches to fill the bar\'s height. Kinds: TextBlock (label), TextBox, Button, ProgressBar, Separator (gap) and StatusDate (live clock).'
+        });
+    }
     // A control placed inside a Grid can be moved to a specific cell.
     if (!isRoot && el.parentNode && (el.parentNode as Element).nodeType === 1
         && localName((el.parentNode as Element).tagName) === 'Grid') {
