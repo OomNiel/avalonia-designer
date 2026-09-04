@@ -163,7 +163,13 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   DataSet designer, C#/VB project + form scaffolding (net10 + Avalonia 12, F5-ready), ChromeWindow custom
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
-- Suite green: **1515 passed**; PROBLEMS clean after every change.
+- Suite green: **1555 passed**; PROBLEMS clean after every change.
+- SplitPanel tool (Avalonia-native): an Avalonia **Grid** (named SplitPanelN) whose panes are
+  Borders (settable pane border + an empty named Canvas body to drop controls into) separated by
+  runtime-draggable **GridSplitters** (Auto lanes); star panes resize with the form. Default 2
+  panes side-by-side. Properties: **Split Layout** (editor: Columns/Rows + 2..8 panes; keeps pane
+  contents, rebuilds splitters) and **Pane Border** (writes BorderThickness on every pane).
+  GridSplitter added to host TypeMap so the fallback builder renders it.
 - Docked strips (Menu/StatusBar) dropped onto free space now AUTO-DOCK into the form's root
   DockPanel (before the fill child) instead of floating on the Body canvas (their snippets carry
   DockPanel.Dock, which a Canvas ignores). Fixed via ensureDockPanelParent in the drop handler;

@@ -22,6 +22,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
     'menuModal', 'menuTitle', 'menuBody', 'menuAddTop', 'menuSave', 'menuCancel',
     'statusModal', 'statusTitle', 'statusBody', 'statusAdd', 'statusSave', 'statusCancel',
+    'splitModal', 'splitTitle', 'splitCols', 'splitRows', 'splitCount', 'splitMinus', 'splitPlus', 'splitSave', 'splitCancel',
     'cellHighlight',
     'btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'dotGrid',
     'dotGridModal', 'dotGridSpacingX', 'dotGridSpacingY', 'dotGridColor', 'dotGridDotSize',
@@ -51,7 +52,10 @@ function setup() {
             || id === 'chModeShort' || id === 'chModeLong'
             || id === 'crosshairSave' || id === 'crosshairCancel'
             || id === 'menuSave' || id === 'menuCancel' || id === 'menuAddTop'
-            || id === 'statusSave' || id === 'statusCancel' || id === 'statusAdd') return 'button';
+            || id === 'statusSave' || id === 'statusCancel' || id === 'statusAdd'
+            || id === 'splitCols' || id === 'splitRows' || id === 'splitMinus' || id === 'splitPlus'
+            || id === 'splitSave' || id === 'splitCancel') return 'button';
+        if (id === 'splitCount') return 'input';
         if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
@@ -1074,6 +1078,42 @@ module.exports = async (t) => {
         s.window.document.dispatchEvent(esc2);
         t.equal($('statusModal').hidden, true, 'status-items', 'Escape closes the status editor');
         t.ok(posted.every((m) => m.type !== 'saveStatusItems'), 'status-items', 'Escape does not save');
+    }
+
+    // --- Split Layout editor (SplitPanel = an Avalonia Grid + GridSplitters) ---
+    // The 'Split Layout' property opens a modal to switch Columns/Rows and set the pane count;
+    // Save posts the new layout (the extension rebuilds the Grid + splitters, keeping pane bodies).
+    {
+        msg(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'SplitPanel1', type: 'Grid', x: 60, y: 60, w: 360, h: 240, parent: 'Body' },
+            { name: 'SplitPanel1Pane0', type: 'Canvas', x: 60, y: 60, w: 180, h: 240, parent: 'SplitPanel1' },
+            { name: 'SplitPanel1Pane1', type: 'Canvas', x: 245, y: 60, w: 175, h: 240, parent: 'SplitPanel1' }
+        ]));
+        msg({ type: 'properties', name: 'SplitPanel1', properties: [
+            { key: 'SplitLayout', label: 'Split Layout', kind: 'button', value: 'Edit split…' }
+        ], splitInfo: { columns: true, count: 2 }, info: null });
+        const pbtn = $('propsBody').querySelector('.prop-button');
+        t.ok(!!pbtn, 'split-layout', 'Split Layout property renders as a button');
+        $('splitModal').hidden = true;
+        pbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('splitModal').hidden, false, 'split-layout', 'Split Layout opens the editor');
+        t.equal($('splitCount').value, '2', 'split-layout', 'count pre-filled from splitInfo');
+        t.equal($('splitCols').classList.contains('active'), true, 'split-layout', 'Columns active by default');
+        // Switch to Rows and add two panes (2 -> 4), then Save.
+        $('splitRows').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        $('splitPlus').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        $('splitPlus').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('splitCount').value, '4', 'split-layout', 'pane count increments');
+        posted.length = 0;
+        $('splitSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const sav = posted[posted.length - 1];
+        t.equal(sav.type, 'saveSplitLayout', 'split-layout', 'Save posts saveSplitLayout');
+        t.equal(sav.name, 'SplitPanel1', 'split-layout', 'carries the split name');
+        t.equal(sav.columns, false, 'split-layout', 'Rows orientation carried');
+        t.equal(sav.count, 4, 'split-layout', 'pane count carried');
+        t.equal($('splitModal').hidden, true, 'split-layout', 'Save closes the editor');
     }
     t.note('T3 done');
 };

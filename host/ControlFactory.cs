@@ -61,6 +61,11 @@ public class ControlFactory
             // managed with the designer's 'Status Items' editor. LastChildFill=False so docked
             // items keep their edge and the middle stays empty.
             ["StatusBar"] = n => $"<DockPanel x:Name=\"{n}\" DockPanel.Dock=\"Bottom\" Height=\"24\" LastChildFill=\"False\">\n    <TextBlock Text=\"Ready\" VerticalAlignment=\"Center\" HorizontalAlignment=\"Left\"/>\n</DockPanel>",
+            // SplitPanel: a resizable multi-pane container — an Avalonia Grid whose panes are
+            // Borders (each with a settable border + an empty Canvas body to drop controls into)
+            // separated by runtime-draggable GridSplitters (Auto columns). Star panes resize with
+            // the form. Default: 2 panes side-by-side.
+            ["SplitPanel"] = n => $"<Grid x:Name=\"{n}\" Width=\"360\" Height=\"240\" ColumnDefinitions=\"*,5,*\">\n    <Border Grid.Column=\"0\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n        <Canvas x:Name=\"{n}Pane0\"/>\n    </Border>\n    <GridSplitter Grid.Column=\"1\" Width=\"5\" ResizeDirection=\"Columns\" Background=\"#B0B0B0\"/>\n    <Border Grid.Column=\"2\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n        <Canvas x:Name=\"{n}Pane1\"/>\n    </Border>\n</Grid>",
             // StatusDate: a TextBlock turned into a live date/time display. The snippet embeds the
             // current time (so the preview shows a placeholder) and a Loaded event whose code-behind
             // handler starts a per-second timer that keeps the text current at runtime.
@@ -111,6 +116,7 @@ public class ControlFactory
         ["Image"] = typeof(Image),
         ["Panel"] = typeof(Panel),
         ["Grid"] = typeof(Grid),
+        ["GridSplitter"] = typeof(GridSplitter),
         ["UniformGrid"] = typeof(UniformGrid),
         ["StackPanel"] = typeof(StackPanel),
         ["DockPanel"] = typeof(DockPanel),

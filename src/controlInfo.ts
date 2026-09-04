@@ -114,6 +114,11 @@ const INFO: Record<string, ControlInfo> = {
         desc: 'A bar along the bottom of the window that shows status items (text, buttons, a clock).',
         use: 'A DockPanel strip docked to the bottom. It comes with a "Ready" label on the left; add more items with the Status Items editor (Properties panel) — each item is pinned LEFT or RIGHT and stretches to the bar\'s height.'
     },
+    SplitPanel: {
+        label: 'Split Panel',
+        desc: 'A resizable multi-pane container (an Avalonia Grid with GridSplitters).',
+        use: 'Drag the bar between panes at runtime to resize them; the panel resizes with the window. Add/remove panes and switch Columns/Rows under Split Layout in the Properties panel; each pane has a settable border and an empty body to drop controls into.'
+    },
     StatusDate: {
         label: 'Status Date / Time',
         desc: 'A live clock that shows the current system date and time (in the OS date/time format).',

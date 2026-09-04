@@ -32,7 +32,9 @@ const { insertStatusDateClock, bindControlToAsset } = require('../../out/codeBeh
 const NS = 'xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"';
 const META_KEYS = new Set(['__name__', '__type__', '__theme__']);
 // Properties that are NOT set via a plain XAML attribute (binding / editor / .adset-based).
-const NON_XAML_KEYS = new Set(['Command', 'CommandParameter', 'SelectedItem', 'Items', 'ItemsSource', 'UndoRedoDepth']);
+// Split Layout / Pane Border are designer-managed (no XAML attribute) — the designerPanel routes
+// them; the pane border is written onto the pane Borders, not the split Grid.
+const NON_XAML_KEYS = new Set(['Command', 'CommandParameter', 'SelectedItem', 'Items', 'ItemsSource', 'UndoRedoDepth', 'SplitLayout', 'SplitPanelPaneBorder']);
 // Properties the preview host reflects in frame.controls[].values.
 const REPORTABLE = new Set(['Width', 'Height', 'Margin', 'Padding', 'BorderThickness', 'CornerRadius',
     'FontSize', 'FontFamily', 'Background', 'Foreground', 'BorderBrush', 'CaretBrush', 'SelectionBrush']);
@@ -127,7 +129,7 @@ module.exports = async (t) => {
 
     // 0) toolbox enumeration sanity
     const controls = toolboxControls();
-    t.equal(controls.length, 23, 'toolbox', 'all placeable controls enumerated',
+    t.equal(controls.length, 24, 'toolbox', 'all placeable controls enumerated',
         `${controls.length}: ${controls.map((c) => c.tag).join(', ')}`);
     const tags = controls.map((c) => c.tag);
 

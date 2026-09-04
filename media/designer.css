@@ -349,6 +349,17 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     justify-content: flex-start;
 }
 
+/* ---------- Split Layout editor (modal) ---------- */
+.split-count-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.split-count-row #splitCount {
+    width: 44px;
+    text-align: center;
+}
+
 /* ---------- selection + handles ---------- */
 /* The selection box is pointer-events:none so clicks pass through to hit-testing even when it
    covers the whole canvas (e.g. the locked Body). The resize handles stay pointer-events:auto,

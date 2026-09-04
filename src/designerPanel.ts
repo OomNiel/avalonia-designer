@@ -510,6 +510,56 @@ function sanitizeStatusItems(raw: unknown): StatusItem[] {
     return out;
 }
 
+// ---------------------------------------------------------------- split panels
+// The 'SplitPanel' tool is an Avalonia Grid (named SplitPanelN): its panes are Borders (each with a
+// settable border + an empty named Canvas body) separated by runtime-draggable GridSplitters.
+// Star-sized panes make the whole panel resize with the form.
+function splitDefSizes(el: Element, kind: 'cols' | 'rows'): string[] {
+    const prop = kind === 'cols' ? 'Grid.ColumnDefinitions' : 'Grid.RowDefinitions';
+    const defs = elementChildren(el).find((k) => localName(k.tagName) === prop);
+    if (!defs) return [];
+    const attr = kind === 'cols' ? 'Width' : 'Height';
+    return elementChildren(defs).map((d) => d.getAttribute(attr) || '*');
+}
+/** The split direction + pane count of a SplitPanel grid (from its row/column definitions). */
+function splitStateOf(el: Element): { columns: boolean; count: number } {
+    const cols = splitDefSizes(el, 'cols');
+    const rows = splitDefSizes(el, 'rows');
+    const paneCount = (a: string[]) => a.filter((s) => !/auto/i.test(s)).length;
+    if (rows.some((s) => /auto/i.test(s))) return { columns: false, count: paneCount(rows) };
+    if (cols.some((s) => /auto/i.test(s))) return { columns: true, count: paneCount(cols) };
+    return { columns: true, count: Math.max(2, paneCount(cols) || 2) };
+}
+/** The Border wrapper of the pane whose body Canvas is named <splitName>Pane<index>, if any. */
+function splitPaneAt(grid: Element, index: number): Element | null {
+    const nm = grid.getAttribute('x:Name') || grid.getAttribute('Name') || '';
+    for (const c of elementChildren(grid)) {
+        if (localName(c.tagName) !== 'Border') continue;
+        for (const inner of elementChildren(c)) {
+            const iname = inner.getAttribute('x:Name') || inner.getAttribute('Name') || '';
+            if (localName(inner.tagName) === 'Canvas' && iname === `${nm}Pane${index}`) return c;
+        }
+    }
+    return null;
+}
+/** Every pane Border wrapper of a SplitPanel (for applying a shared border width). */
+function splitPanes(grid: Element): Element[] {
+    const nm = grid.getAttribute('x:Name') || grid.getAttribute('Name') || '';
+    const prefix = `${nm}Pane`;
+    const out: Element[] = [];
+    for (const c of elementChildren(grid)) {
+        if (localName(c.tagName) !== 'Border') continue;
+        for (const inner of elementChildren(c)) {
+            const iname = inner.getAttribute('x:Name') || inner.getAttribute('Name') || '';
+            if (localName(inner.tagName) === 'Canvas' && iname.startsWith(prefix) && /Pane\d+$/.test(iname)) {
+                out.push(c);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
 /** In-memory document backed by an XamlModel. */
 export class DesignerDocument implements vscode.CustomDocument {
     model: XamlModel;
@@ -731,6 +781,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         await this.render(doc, panel);
                         await this.sendProperties(doc, panel, ctrl || null);
                         return;
+                    } else if (msg.key === 'SplitPanelPaneBorder') {
+                        // 'Pane Border' on a SplitPanel isn't an attribute on the grid itself — it
+                        // is written onto every pane (Border child) so it shows at design/runtime.
+                        this.setSplitPaneBorder(el, String(msg.value ?? '').trim());
                     } else {
                         // 'None' removes DockPanel.Dock (no docking); 'Fill' is the friendly
                         // "fill remaining space" state that also removes the attribute
@@ -1336,6 +1390,15 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.applyStatusItems(doc, panel, el, msg.items);
                     return;
                 }
+                case 'saveSplitLayout': {
+                    // 'Split Layout' editor on a SplitPanel (a Grid named SplitPanelN): apply a
+                    // new orientation (Columns/Rows) and pane count, keeping the pane contents.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || localName(el.tagName) !== 'Grid') return;
+                    if (!/^SplitPanel\d*$/.test(el.getAttribute('x:Name') || el.getAttribute('Name') || '')) return;
+                    await this.applySplitLayout(doc, panel, el, { columns: !!msg.columns, count: Number(msg.count) });
+                    return;
+                }
                 case 'saveGridDefs': {
                     // 'Rows & Columns' editor for a Grid: replace the RowDefinitions /
                     // ColumnDefinitions with the sizes typed in the popup.
@@ -1864,6 +1927,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private infoTagFor(el: Element): string {
         const name = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
         if (/^StatusBar\d*$/.test(name)) return 'StatusBar';
+        if (/^SplitPanel\d*$/.test(name) && localName(el.tagName) === 'Grid') return 'SplitPanel';
         return localName(el.tagName);
     }
 
@@ -2107,6 +2171,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // editor can show them (kind / text / LEFT or RIGHT position).
         if (/^StatusBar\d*$/.test(ctrlName || '') && localName(el.tagName) === 'DockPanel') {
             msg.statusItems = statusItemsOf(el).map((i) => ({ kind: i.kind, text: i.text, position: i.position }));
+        }
+        // A SplitPanel (a Grid named SplitPanelN) sends its current split state so the 'Split Layout'
+        // editor can pre-fill (orientation Columns/Rows + pane count).
+        if (/^SplitPanel\d*$/.test(ctrlName || '') && localName(el.tagName) === 'Grid') {
+            const st = splitStateOf(el);
+            msg.splitInfo = { columns: st.columns, count: st.count };
         }
         await panel.webview.postMessage(msg);
     }
@@ -2461,6 +2531,87 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         await this.sendProperties(doc, panel, barName);
     }
 
+    /** Writes the shared 'Pane Border' width onto every pane Border of a SplitPanel. */
+    private setSplitPaneBorder(el: Element, value: string): void {
+        const w = String(value).trim();
+        for (const b of splitPanes(el)) {
+            if (w === '' || w === '0') b.removeAttribute('BorderThickness');
+            else b.setAttribute('BorderThickness', w);
+        }
+    }
+
+    /** Applies a new Split Layout (orientation + pane count) to a SplitPanel Grid, reusing the
+     *  existing pane Borders (and the controls inside them) by index and rebuilding the splitters. */
+    private async applySplitLayout(doc: DesignerDocument, panel: vscode.WebviewPanel, grid: Element, raw: unknown): Promise<void> {
+        const r = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+        const columns = r.columns !== false;
+        let count = Math.round(Number(r.count));
+        if (!Number.isFinite(count)) count = 2;
+        count = Math.max(2, Math.min(8, count));
+        const nm = grid.getAttribute('x:Name') || grid.getAttribute('Name') || localName(grid.tagName);
+        const slotAttr = columns ? 'Grid.Column' : 'Grid.Row';
+        const otherAttr = columns ? 'Grid.Row' : 'Grid.Column';
+        this.refreshHistoryCode(doc);
+        const before = doc.model.serialize(true);
+        const firstPane = splitPanes(grid)[0];
+        const paneBorder = (firstPane && firstPane.getAttribute('BorderThickness')) || '1';
+        const kept: Element[] = [];
+        const used = new Set<Element>();
+        const removed: Element[] = [];
+        for (let i = 0; i < count; i++) {
+            let pane = splitPaneAt(grid, i);
+            if (!pane) {
+                const canvasName = `${nm}Pane${i}`;
+                pane = doc.model.createElement(`<Border><Canvas x:Name="${canvasName}"/></Border>`);
+                pane.setAttribute('BorderThickness', paneBorder);
+                pane.setAttribute('BorderBrush', '#808080');
+            }
+            used.add(pane);
+            pane.setAttribute(slotAttr, String(i * 2));
+            pane.removeAttribute(otherAttr);
+            kept.push(pane);
+            if (i < count - 1) {
+                const splitter = doc.model.createElement('<GridSplitter/>');
+                splitter.setAttribute('ResizeDirection', columns ? 'Columns' : 'Rows');
+                if (columns) splitter.setAttribute('Width', '5'); else splitter.setAttribute('Height', '5');
+                splitter.setAttribute('Background', '#B0B0B0');
+                splitter.setAttribute(slotAttr, String(i * 2 + 1));
+                splitter.removeAttribute(otherAttr);
+                kept.push(splitter);
+            }
+        }
+        for (const c of elementChildren(grid)) {
+            if (localName(c.tagName).includes('.')) continue; // keep the row/column definitions
+            if (!used.has(c)) removed.push(c);
+        }
+        const stale = new Set<string>();
+        for (const rm of removed) {
+            for (const h of doc.model.eventHandlersOfSubtree(rm)) {
+                if (!doc.model.hasHandler(h)) stale.add(h);
+            }
+            grid.removeChild(rm);
+        }
+        for (const el of kept) grid.appendChild(el); // kept children end up in pane/splitter order
+        const sizes: string[] = [];
+        for (let i = 0; i < count; i++) {
+            if (i > 0) sizes.push('Auto');
+            sizes.push('*');
+        }
+        if (columns) {
+            doc.model.setGridDefinitions(grid, 'cols', sizes);
+            doc.model.setGridDefinitions(grid, 'rows', ['*']);
+        } else {
+            doc.model.setGridDefinitions(grid, 'rows', sizes);
+            doc.model.setGridDefinitions(grid, 'cols', ['*']);
+        }
+        if (stale.size > 0) {
+            try { await removeHandlersFromCodeBehind(doc.uri, [...stale]); } catch { /* best-effort */ }
+        }
+        this.notifyEdit(doc, panel, before);
+        await this.render(doc, panel);
+        await this.sendProperties(doc, panel, nm);
+    }
+
     /** Records a new post-edit state (drops the redo branch, caps at UNDO_STATES). */
     private pushHistory(doc: DesignerDocument, xaml: string): void {
         const key = doc.uri.toString();
@@ -2809,6 +2960,31 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         <div class="modal-buttons">
           <button id="statusCancel" type="button" class="modal-btn">Cancel</button>
           <button id="statusSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="splitModal" class="modal" hidden>
+      <div class="modal-box modal-narrow">
+        <h3 id="splitTitle">Split Layout</h3>
+        <p class="modal-hint">Panes are separated by bars you can drag at runtime to resize them; the panes resize with the window. Each pane keeps whatever is inside it.</p>
+        <div class="grid-settings">
+          <label>Orientation
+            <span class="ch-seg">
+              <button id="splitCols" type="button" class="ch-seg-btn active">Columns</button>
+              <button id="splitRows" type="button" class="ch-seg-btn">Rows</button>
+            </span>
+          </label>
+          <label>Panes
+            <span class="split-count-row">
+              <button id="splitMinus" type="button" class="modal-btn">−</button>
+              <input id="splitCount" readonly value="2"/>
+              <button id="splitPlus" type="button" class="modal-btn">+</button>
+            </span>
+          </label>
+        </div>
+        <div class="modal-buttons">
+          <button id="splitCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="splitSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

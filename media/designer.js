@@ -83,6 +83,15 @@
         statusAdd: $('statusAdd'),
         statusSave: $('statusSave'),
         statusCancel: $('statusCancel'),
+        splitModal: $('splitModal'),
+        splitTitle: $('splitTitle'),
+        splitCols: $('splitCols'),
+        splitRows: $('splitRows'),
+        splitCount: $('splitCount'),
+        splitMinus: $('splitMinus'),
+        splitPlus: $('splitPlus'),
+        splitSave: $('splitSave'),
+        splitCancel: $('splitCancel'),
         cellHighlight: $('cellHighlight'),
         rulerH: $('rulerH'),
         rulerV: $('rulerV'),
@@ -1547,6 +1556,8 @@
                     if (p.key === 'MenuItems') openMenuEditor(msg.name);
                     // 'Status Items' opens the flat item editor for the selected Status Bar.
                     if (p.key === 'StatusItems') openStatusEditor(msg.name, msg.statusItems || []);
+                    // 'Split Layout' opens the split editor for the selected Split Panel.
+                    if (p.key === 'SplitLayout') openSplitEditor(msg.name, msg.splitInfo || {});
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -2038,6 +2049,7 @@
             if (!els.crosshairModal.hidden) closeCrosshairSettings();
             if (!els.menuModal.hidden) closeMenuEditor();
             if (!els.statusModal.hidden) closeStatusEditor();
+            if (!els.splitModal.hidden) closeSplitEditor();
         }
     });
 
@@ -2331,6 +2343,41 @@
     els.statusCancel.addEventListener('click', closeStatusEditor);
     els.statusModal.addEventListener('click', (e) => {
         if (e.target === els.statusModal) closeStatusEditor(); // click outside the box
+    });
+
+    // ---------------- Split Layout editor (a SplitPanel = an Avalonia Grid + GridSplitters) ----
+    // Lets the user switch between Columns (side-by-side) and Rows (stacked) and add/remove the
+    // panes (2..8). Save posts the layout; the extension rebuilds the Grid + GridSplitter bars,
+    // keeping whatever is already inside each pane.
+    let splitEdit = null; // { name, columns, count }
+    function renderSplitEditor() {
+        els.splitCols.classList.toggle('active', splitEdit.columns);
+        els.splitRows.classList.toggle('active', !splitEdit.columns);
+        els.splitCount.value = String(splitEdit.count);
+    }
+    function openSplitEditor(name, info) {
+        const st = info || {};
+        splitEdit = {
+            name: name || null,
+            columns: st.columns !== false,
+            count: Math.max(2, Math.min(8, Number(st.count) || 2))
+        };
+        els.splitTitle.textContent = 'Split Layout' + (splitEdit.name ? ' — ' + splitEdit.name : '');
+        renderSplitEditor();
+        els.splitModal.hidden = false;
+    }
+    function closeSplitEditor() { els.splitModal.hidden = true; splitEdit = null; }
+    els.splitCols.addEventListener('click', () => { if (splitEdit) { splitEdit.columns = true; renderSplitEditor(); } });
+    els.splitRows.addEventListener('click', () => { if (splitEdit) { splitEdit.columns = false; renderSplitEditor(); } });
+    els.splitMinus.addEventListener('click', () => { if (splitEdit && splitEdit.count > 2) { splitEdit.count--; renderSplitEditor(); } });
+    els.splitPlus.addEventListener('click', () => { if (splitEdit && splitEdit.count < 8) { splitEdit.count++; renderSplitEditor(); } });
+    els.splitSave.addEventListener('click', () => {
+        if (splitEdit) post({ type: 'saveSplitLayout', name: splitEdit.name, columns: splitEdit.columns, count: splitEdit.count });
+        closeSplitEditor();
+    });
+    els.splitCancel.addEventListener('click', closeSplitEditor);
+    els.splitModal.addEventListener('click', (e) => {
+        if (e.target === els.splitModal) closeSplitEditor(); // click outside the box
     });
 
     // Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay

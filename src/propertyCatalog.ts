@@ -858,6 +858,19 @@ function gridDefinitionCount(el: Element, kind: 'rows' | 'cols'): number {
     return childElements(defs).length;
 }
 
+/** Reads the current pane-border width of a SplitPanel (its first pane's BorderThickness, or '1'). */
+function splitPaneBorderOf(el: Element): string {
+    for (let i = 0; i < el.childNodes.length; i++) {
+        const c = el.childNodes.item(i);
+        if (!c || c.nodeType !== 1) continue;
+        const b = c as Element;
+        if (localName(b.tagName) !== 'Border') continue;
+        const bt = b.getAttribute('BorderThickness');
+        if (bt) return bt.split(',')[0].trim();
+    }
+    return '1';
+}
+
 /**
  * Builds the property list for a control element: common layout/state props,
  * font props (where the type supports them), then type-specific props.
@@ -879,6 +892,9 @@ export function propertyDefsFor(
     // generated name (StatusBar1, ...) identifies it so the StatusBar properties
     // (including Dock) show instead of only the generic Border ones.
     const isStatusBar = /^StatusBar\d*$/.test(name);
+    // The Split Panel tool is an Avalonia Grid (named SplitPanelN): its Split Layout + Pane
+    // Border properties live here (the generic Grid 'Rows & Columns' editor is hidden for it).
+    const isSplitPanel = /^SplitPanel\d*$/.test(name) && tag === 'Grid';
     const isWindowLike = tag === 'Window' || /window$/i.test(tag);
 
     const typeTemplates: PropTemplate[] = isWindowLike
@@ -989,7 +1005,8 @@ export function propertyDefsFor(
     }
     // 'Rows & Columns' for a Grid — without row/column definitions a Grid is just a single
     // cell, so this editor is the key to actually using the control (novice-friendly).
-    if (tag === 'Grid') {
+    // Hidden for a SplitPanel (a Grid): its panes/splitters are managed by 'Split Layout'.
+    if (tag === 'Grid' && !isSplitPanel) {
         props.push({
             key: 'Grid.Defs',
             label: 'Rows & Columns',
@@ -1018,6 +1035,24 @@ export function propertyDefsFor(
             kind: 'button',
             value: 'Edit status items…',
             desc: 'Adds/removes the items shown on the status bar. Each item is pinned to the LEFT or RIGHT side of the bar and stretches to fill the bar\'s height. Kinds: TextBlock (label), TextBox, Button, ProgressBar, Separator (gap) and StatusDate (live clock).'
+        });
+    }
+    // A SplitPanel (a Grid named SplitPanelN) gets a 'Split Layout' editor + a settable pane border.
+    if (isSplitPanel) {
+        props.push({
+            key: 'SplitLayout',
+            label: 'Split Layout',
+            kind: 'button',
+            value: 'Edit split…',
+            desc: 'Switches the split between Columns (side-by-side) and Rows (stacked) and adds/removes the panes (2 or more). Runtime-draggable splitter bars are added automatically and existing pane contents are kept.'
+        });
+        props.push({
+            key: 'SplitPanelPaneBorder',
+            label: 'Pane Border',
+            kind: 'number',
+            unit: 'px',
+            value: splitPaneBorderOf(el),
+            desc: 'Width of the border drawn around each pane of the split panel.'
         });
     }
     // A control placed inside a Grid can be moved to a specific cell.

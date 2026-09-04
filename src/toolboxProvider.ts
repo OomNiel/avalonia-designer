@@ -39,6 +39,7 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'StackPanel', tag: 'StackPanel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'DockPanel', tag: 'DockPanel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'WrapPanel', tag: 'WrapPanel', group: TOOLBOX_CATEGORY_LAYOUT },
+    { label: 'SplitPanel', tag: 'SplitPanel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'TabControl', tag: 'TabControl', group: TOOLBOX_CATEGORY_ITEMS },
     // --- Shapes ---
     { label: 'Line', tag: 'Line', group: TOOLBOX_CATEGORY_SHAPES },
