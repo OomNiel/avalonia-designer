@@ -1022,12 +1022,14 @@ module.exports = async (t) => {
             { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
             { name: 'StatusBar1', type: 'DockPanel', x: 0, y: 426, w: 800, h: 24, parent: 'Root' }
         ]));
-        msg({ type: 'properties', name: 'StatusBar1', properties: [
-            { key: 'StatusItems', label: 'Status Items', kind: 'button', value: 'Edit status items…' }
-        ], statusItems: [
-            { kind: 'TextBlock', text: 'Ready', position: 'Left' },
-            { kind: 'StatusDate', text: '', position: 'Right' }
-        ], info: null });
+        msg({
+            type: 'properties', name: 'StatusBar1', properties: [
+                { key: 'StatusItems', label: 'Status Items', kind: 'button', value: 'Edit status items…' }
+            ], statusItems: [
+                { kind: 'TextBlock', text: 'Ready', position: 'Left' },
+                { kind: 'StatusDate', text: '', position: 'Right' }
+            ], info: null
+        });
         const pbtn = $('propsBody').querySelector('.prop-button');
         t.ok(!!pbtn, 'status-items', 'Status Items property renders as a button');
         $('statusModal').hidden = true;

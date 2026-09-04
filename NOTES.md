@@ -164,6 +164,10 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
 - Suite green: **1515 passed**; PROBLEMS clean after every change.
+- Docked strips (Menu/StatusBar) dropped onto free space now AUTO-DOCK into the form's root
+  DockPanel (before the fill child) instead of floating on the Body canvas (their snippets carry
+  DockPanel.Dock, which a Canvas ignores). Fixed via ensureDockPanelParent in the drop handler;
+  existing misplaced bars re-dock by re-picking Dock (or delete + re-drop).
 - Status Bar is now a real **DockPanel** strip (docked Bottom, LastChildFill=False) with a default
   "Ready" label on the left. A **Status Items** property opens a flat item editor (like the menu
   one): kinds TextBlock/TextBox/Button/ProgressBar/Separator(gap)/StatusDate(live clock); each item

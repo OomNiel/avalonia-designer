@@ -891,6 +891,15 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     }
                     const placedEl = doc.model.addControl(target, xaml, pos);
                     doc.model.removeDropHint();
+                    // Bar controls (Menu / Status Bar) carry DockPanel.Dock in their snippet and are
+                    // meant to pin to a form edge — NOT to float on the free Body canvas. If one was
+                    // dropped on free space (a Canvas or the window root), move it into the form's
+                    // root DockPanel (before the fill child) so its Dock actually takes effect. A
+                    // control dropped inside a Grid/StackPanel stays where its container put it.
+                    if (placedEl && placedEl.hasAttribute('DockPanel.Dock')) {
+                        try { ensureDockPanelParent(doc.model, placedEl); }
+                        catch { /* leave it where it was dropped */ }
+                    }
                     // Shapes render BEHIND other controls by default (Send to Back): a negative
                     // ZIndex puts them at the back of the paint order, in the preview and at
                     // runtime. The toolbox snippets already carry ZIndex="-1"; this guards any
