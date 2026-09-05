@@ -164,6 +164,10 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
 - Suite green: **1555 passed**; PROBLEMS clean after every change.
+- SplitPanel hit-test fix: the host loader IGNORES the `ColumnDefinitions="*,5,*"` attribute shorthand
+  (children all reported full-width & overlapping → clicking anywhere hit Pane1). The SplitPanel
+  snippet now writes EXPLICIT `<Grid.ColumnDefinitions>` property elements (like the Grid editor's
+  setGridDefinitions) so the panes confine to their cells and are individually clickable.
 - SplitPanel tool (Avalonia-native): an Avalonia **Grid** (named SplitPanelN) whose panes are
   Borders (settable pane border + an empty named Canvas body to drop controls into) separated by
   runtime-draggable **GridSplitters** (Auto lanes); star panes resize with the form. Default 2

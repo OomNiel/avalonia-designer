@@ -1091,9 +1091,11 @@ module.exports = async (t) => {
             { name: 'SplitPanel1Pane0', type: 'Canvas', x: 60, y: 60, w: 180, h: 240, parent: 'SplitPanel1' },
             { name: 'SplitPanel1Pane1', type: 'Canvas', x: 245, y: 60, w: 175, h: 240, parent: 'SplitPanel1' }
         ]));
-        msg({ type: 'properties', name: 'SplitPanel1', properties: [
-            { key: 'SplitLayout', label: 'Split Layout', kind: 'button', value: 'Edit split…' }
-        ], splitInfo: { columns: true, count: 2 }, info: null });
+        msg({
+            type: 'properties', name: 'SplitPanel1', properties: [
+                { key: 'SplitLayout', label: 'Split Layout', kind: 'button', value: 'Edit split…' }
+            ], splitInfo: { columns: true, count: 2 }, info: null
+        });
         const pbtn = $('propsBody').querySelector('.prop-button');
         t.ok(!!pbtn, 'split-layout', 'Split Layout property renders as a button');
         $('splitModal').hidden = true;

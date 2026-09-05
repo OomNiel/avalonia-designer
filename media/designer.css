@@ -355,6 +355,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     align-items: center;
     gap: 4px;
 }
+
 .split-count-row #splitCount {
     width: 44px;
     text-align: center;

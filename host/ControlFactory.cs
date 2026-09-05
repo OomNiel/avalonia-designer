@@ -65,7 +65,7 @@ public class ControlFactory
             // Borders (each with a settable border + an empty Canvas body to drop controls into)
             // separated by runtime-draggable GridSplitters (Auto columns). Star panes resize with
             // the form. Default: 2 panes side-by-side.
-            ["SplitPanel"] = n => $"<Grid x:Name=\"{n}\" Width=\"360\" Height=\"240\" ColumnDefinitions=\"*,5,*\">\n    <Border Grid.Column=\"0\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n        <Canvas x:Name=\"{n}Pane0\"/>\n    </Border>\n    <GridSplitter Grid.Column=\"1\" Width=\"5\" ResizeDirection=\"Columns\" Background=\"#B0B0B0\"/>\n    <Border Grid.Column=\"2\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n        <Canvas x:Name=\"{n}Pane1\"/>\n    </Border>\n</Grid>",
+            ["SplitPanel"] = n => $"<Grid x:Name=\"{n}\" Width=\"360\" Height=\"240\">\n    <Grid.ColumnDefinitions>\n        <ColumnDefinition Width=\"*\"/>\n        <ColumnDefinition Width=\"Auto\"/>\n        <ColumnDefinition Width=\"*\"/>\n    </Grid.ColumnDefinitions>\n    <Border Grid.Column=\"0\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n        <Canvas x:Name=\"{n}Pane0\"/>\n    </Border>\n    <GridSplitter Grid.Column=\"1\" Width=\"5\" ResizeDirection=\"Columns\" Background=\"#B0B0B0\"/>\n    <Border Grid.Column=\"2\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n        <Canvas x:Name=\"{n}Pane1\"/>\n    </Border>\n</Grid>",
             // StatusDate: a TextBlock turned into a live date/time display. The snippet embeds the
             // current time (so the preview shows a placeholder) and a Loaded event whose code-behind
             // handler starts a per-second timer that keeps the text current at runtime.
