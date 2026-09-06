@@ -75,6 +75,16 @@ module.exports = async (t) => {
   t.ok(vb.includes('Public Class Store'), 'generate', 'vb class declared');
   t.ok(vb.includes('Public Class CustomersRow'), 'generate', 'vb row class');
 
+  // Sorting / scrolling recycle DataGrid row containers: the "+ Add row…" pointer handler used to be
+  // attached per-container in LoadingRow and never removed, so a container later re-bound to a data
+  // row still popped the Add dialog after a header sort. The handler is now shared, attached only
+  // while a container shows the placeholder, detached on UnloadingRow, and it re-checks the row's
+  // CURRENT DataContext at press time — a reordered data row never opens the dialog.
+  t.ok(cs.includes('addRow.DataContext is CustomersRow d') && cs.includes('!d.IsPlaceholder'), 'generate', 'cs add-row handler re-checks DataContext');
+  t.ok(cs.includes('grid.UnloadingRow += (_, e) => e.Row.RemoveHandler(Avalonia.Input.InputElement.PointerPressedEvent, addRowPointer)'), 'generate', 'cs add-row handler removed on UnloadingRow');
+  t.ok(vb.includes('addData.IsPlaceholder'), 'generate', 'vb add-row handler re-checks DataContext');
+  t.ok(vb.includes('AddHandler grid.UnloadingRow, Sub(s, e) e.Row.RemoveHandler(Avalonia.Input.InputElement.PointerPressedEvent, addRowPointer)'), 'generate', 'vb add-row handler removed on UnloadingRow');
+
   const xsd = generateXsd(spec);
   t.ok(xsd.includes('<xs:schema'), 'generate', 'xsd schema root');
   t.ok(xsd.includes('Customers'), 'generate', 'xsd table element');
