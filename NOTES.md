@@ -317,6 +317,16 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   ApplyImageSources-after-arrange pass kept (harmless; realizes images only present post-measure).
   Verified: /tmp/simpleimg.js 240×300, /tmp/im2probe.js Image2 w=122 h=152 + DataGrid1 516×291; suite
   1605/0. Released as part of v1.0.0-beta.3 (host/*.cs auto-recompiles on next designer open).
+- **+Add row dialog fired on data rows after a header sort (FIXED 2026-09-06, post-beta.3):** sorting
+  / scrolling recycle DataGrid row containers. The generated grid code attached the "+ Add row…"
+  PointerPressed handler to a container in `LoadingRow` and never removed it, so a container later
+  re-bound to an ordinary data row still carried the stale handler → clicking that (reordered) row
+  opened the Add dialog even though data + image were correct. Fix in `dataSetGenerator` C#+VB Wire:
+  ONE shared handler attached only while a container shows the placeholder, removed in
+  `UnloadingRow`, and it re-checks the row's **current** DataContext (`!d.IsPlaceholder` /
+  `Not addData.IsPlaceholder`) at press time → recycled data rows never pop the dialog. t2 asserts
+  added (4); suite 1609/0; regenerated C#+VB probe projects build 0/0. Users must **regenerate the
+  DataSet** to get the fixed generated code (commit 1b84a1e, not yet in a GitHub release).
 - **RELEASED: `v1.0.0-beta.3` GitHub PRE-RELEASE (2026-09-06)** — tag `v1.0.0-beta.3`, commit c45b27e
   (release prep: CHANGELOG restructured — beta.2 restored to its true released content, all post-beta.2
   work under a fresh beta.3 section; package.json → 1.0.0-beta.3; vsix attached). NOTE: the published
