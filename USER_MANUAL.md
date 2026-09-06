@@ -5,10 +5,10 @@
 > generate the XAML **and** the code-behind for you.
 >
 > It is aimed at **beginners**, especially people new to Avalonia and Linux. Everything is
-> guided: every control has a plain-language explanation, every property has a helpful editor and
-> a hover description, and the code-behind is created for you.
+> guided: every control has a plain-language explanation, properties have a helpful editor and
+> a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-05)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-06)
 
 ---
 
