@@ -316,7 +316,15 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   `<project>/<path>` does (keeps the `/Assets/x.png` designer convention working). Second
   ApplyImageSources-after-arrange pass kept (harmless; realizes images only present post-measure).
   Verified: /tmp/simpleimg.js 240×300, /tmp/im2probe.js Image2 w=122 h=152 + DataGrid1 516×291; suite
-  1605/0. Packaged v1.0.0-beta.2 (rebuilt host/*.cs auto-recompiles on next designer open).
+  1605/0. Released as part of v1.0.0-beta.3 (host/*.cs auto-recompiles on next designer open).
+- **RELEASED: `v1.0.0-beta.3` GitHub PRE-RELEASE (2026-09-06)** — tag `v1.0.0-beta.3`, commit c45b27e
+  (release prep: CHANGELOG restructured — beta.2 restored to its true released content, all post-beta.2
+  work under a fresh beta.3 section; package.json → 1.0.0-beta.3; vsix attached). NOTE: the published
+  beta.1/beta.2 GitHub releases predate §73+ — this whole SQLite/DataSet/designer batch first shipped
+  in beta.3. Release flow: compile → npm test (1605/0) → vsce package → code --install-extension →
+  git add (tests/smoke/ + tests/compliance.json stay .gitignore'd/local-only) → commit → tag → push
+  → gh release create --prerelease --notes-file. USER_MANUAL revision date auto-tick landed as a
+  follow-up commit db8937b.
 - **RELEASED: `v1.0.0-beta.1` + `v1.0.0-beta.2` GitHub PRE-RELEASES**
 - **SQLite import auto-links + real table name (2026-09-06):** Import SQLite now stores the source
   `file` on each imported table AND `sqlite.tableName` = the DB's real table name. Without this an
