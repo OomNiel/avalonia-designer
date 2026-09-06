@@ -15,6 +15,8 @@ using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Themes.Fluent;
+using Microsoft.Data.Sqlite;
+using SQLitePCL;
 
 namespace PreviewerHost;
 
@@ -53,6 +55,9 @@ internal static class Program
             .UseHeadless(new AvaloniaHeadlessPlatformOptions())
             .UseSkia()
             .SetupWithoutStarting();
+
+        // SQLite (design-time preview / schema inspection of the user's .db files).
+        Batteries_V2.Init();
 
         var listener = new HttpListener();
         listener.Prefixes.Add($"http://127.0.0.1:{port}/");
@@ -159,9 +164,43 @@ internal static class Program
                     var projectPath = root.TryGetProperty("projectPath", out var pp) ? pp.GetString() ?? "" : "";
                     var theme = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "" : "";
 
+                    // Optional design-time data: DB rows for named DataGrids (bound DataSet tables),
+                    // so the designer canvas can show the grid's rows even though code-behind never runs.
+                    var grids = new List<XamlRenderer.GridPreviewData>();
+                    if (root.TryGetProperty("grids", out var ge) && ge.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var g in ge.EnumerateArray())
+                        {
+                            var gd = new XamlRenderer.GridPreviewData();
+                            if (g.TryGetProperty("control", out var ce)) gd.Control = ce.GetString() ?? "";
+                            if (g.TryGetProperty("columns", out var cole) && cole.ValueKind == JsonValueKind.Array)
+                            {
+                                var cols = new List<string>();
+                                foreach (var c in cole.EnumerateArray()) cols.Add(c.GetString() ?? "");
+                                gd.Columns = cols.ToArray();
+                            }
+                            if (g.TryGetProperty("rows", out var rowe) && rowe.ValueKind == JsonValueKind.Array)
+                            {
+                                var rows = new List<object?[]>();
+                                foreach (var r in rowe.EnumerateArray())
+                                {
+                                    var cells = new List<object?>();
+                                    if (r.ValueKind == JsonValueKind.Array)
+                                    {
+                                        foreach (var cell in r.EnumerateArray()) cells.Add(JsonCell(cell));
+                                    }
+                                    rows.Add(cells.ToArray());
+                                }
+                                gd.Rows = rows.ToArray();
+                            }
+                            grids.Add(gd);
+                        }
+                    }
+
                     var frame = Renderer.Render(xaml, w, h,
                         string.IsNullOrEmpty(projectPath) ? null : projectPath,
-                        string.IsNullOrEmpty(theme) ? null : theme);
+                        string.IsNullOrEmpty(theme) ? null : theme,
+                        grids);
                     return Json(id, new
                     {
                         type = "frame",
@@ -181,6 +220,42 @@ internal static class Program
                         foreach (var k in ke.EnumerateArray())
                             if (k.GetString() is { } ks) keys.Add(ks);
                     return Json(id, new { type = "auditResult", typeName, valid = AuditKeys(typeName, keys) });
+                }
+                case "fonts":
+                {
+                    // Enumerate the system font families Avalonia can actually see (same engine the
+                    // generated projects resolve fonts with) for the designer's font pickers.
+                    var names = new List<string>();
+                    try
+                    {
+                        foreach (var family in FontManager.Current.SystemFonts)
+                            if (!string.IsNullOrWhiteSpace(family.Name))
+                                names.Add(family.Name);
+                    }
+                    catch
+                    {
+                        // Keep whatever was collected (best effort).
+                    }
+                    var fonts = names
+                        .Distinct(StringComparer.CurrentCultureIgnoreCase)
+                        .OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+                    return Json(id, new { type = "fontsResult", fonts });
+                }
+                case "sqlite":
+                {
+                    // Design-time access to the user's SQLite database file. Read-only.
+                    //   op "tables" -> { type:"sqliteTables", tables:[{name, columns:[{name,type,notNull,isPk}]}] }
+                    //   op "query"  -> { type:"sqliteResult", columns:[..], rows:[[..]] }  (json-safe values)
+                    var file = root.TryGetProperty("file", out var fe) ? fe.GetString() ?? "" : "";
+                    var op = root.TryGetProperty("op", out var oe) ? oe.GetString() ?? "query" : "query";
+                    if (op == "tables")
+                        return Json(id, new { type = "sqliteTables", tables = SqliteTables(file) });
+                    var sql = root.TryGetProperty("sql", out var se) ? se.GetString() ?? "" : "";
+                    int limit = 200;
+                    if (root.TryGetProperty("limit", out var le) && le.TryGetInt32(out var lv)) limit = lv;
+                    var q = SqliteQuery(file, sql, limit);
+                    return Json(id, new { type = "sqliteResult", columns = q.Columns, rows = q.Rows });
                 }
                 default:
                     return Json(id, new { type = "error", error = $"Unknown message type '{type}'" });
@@ -229,5 +304,88 @@ internal static class Program
         foreach (var p in body.GetType().GetProperties())
             dict[p.Name] = p.GetValue(body);
         return JsonSerializer.Serialize(dict, JsonOpts);
+    }
+
+    // ---------------- SQLite (design-time data preview / schema inspection) ----------------
+
+    /// <summary>Lists the user tables in a SQLite file with their columns (name/type/notNull/isPk).</summary>
+    private static object[] SqliteTables(string file)
+    {
+        var list = new List<object>();
+        if (!File.Exists(file)) return list.ToArray();
+        using var con = new SqliteConnection($"Data Source={file};Mode=ReadOnly");
+        con.Open();
+        using (var names = new SqliteCommand("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name", con))
+        using (var rd = names.ExecuteReader())
+        {
+            var tableNames = new List<string>();
+            while (rd.Read()) tableNames.Add(rd.GetString(0));
+            foreach (var n in tableNames)
+            {
+                var cols = new List<object>();
+                using var pragma = new SqliteCommand($"PRAGMA table_info(\"{n.Replace("\"", "\"\"")}\")", con);
+                using var rd2 = pragma.ExecuteReader();
+                while (rd2.Read())
+                {
+                    cols.Add(new
+                    {
+                        name = rd2.GetString(1),
+                        type = rd2.IsDBNull(2) ? "" : rd2.GetString(2),
+                        notNull = rd2.GetInt64(3) != 0,
+                        isPk = rd2.GetInt64(5) != 0
+                    });
+                }
+                list.Add(new { name = n, columns = cols });
+            }
+        }
+        return list.ToArray();
+    }
+
+    /// <summary>Converts a JSON cell to a CLR value for the design-time grid preview.</summary>
+    private static object? JsonCell(JsonElement cell)
+    {
+        switch (cell.ValueKind)
+        {
+            case JsonValueKind.Null: return null;
+            case JsonValueKind.String: return cell.GetString();
+            case JsonValueKind.Number: return cell.GetRawText();
+            case JsonValueKind.True: return true;
+            case JsonValueKind.False: return false;
+            default: return cell.GetRawText();
+        }
+    }
+
+    /// <summary>Runs a read-only SELECT on a SQLite file and returns json-safe columns/rows (capped).</summary>
+    private static (string[] Columns, object?[][] Rows) SqliteQuery(string file, string sql, int limit)
+    {
+        if (string.IsNullOrWhiteSpace(sql)) throw new InvalidOperationException("No SQL given.");
+        if (!File.Exists(file)) throw new InvalidOperationException($"SQLite file not found: {file}");
+        using var con = new SqliteConnection($"Data Source={file};Mode=ReadOnly");
+        con.Open();
+        using var cmd = con.CreateCommand();
+        cmd.CommandText = sql;
+        using var rd = cmd.ExecuteReader();
+        var cols = new List<string>(rd.FieldCount);
+        for (int i = 0; i < rd.FieldCount; i++) cols.Add(rd.GetName(i));
+        var rows = new List<object?[]>();
+        int read = 0;
+        while (rd.Read() && (limit <= 0 || read < limit))
+        {
+            var row = new object?[rd.FieldCount];
+            for (int i = 0; i < rd.FieldCount; i++)
+                row[i] = SqliteJsonSafe(rd.IsDBNull(i) ? null : rd.GetValue(i));
+            rows.Add(row);
+            read++;
+        }
+        return (cols.ToArray(), rows.ToArray());
+    }
+
+    private static object? SqliteJsonSafe(object? v)
+    {
+        if (v is null) return null;
+        if (v is byte[] b) return Convert.ToBase64String(b);
+        if (v is DateTime dt) return dt.ToString("O");
+        if (v is DateTimeOffset dto) return dto.ToString("O");
+        return v;
     }
 }

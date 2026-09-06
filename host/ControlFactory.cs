@@ -61,11 +61,17 @@ public class ControlFactory
             // managed with the designer's 'Status Items' editor. LastChildFill=False so docked
             // items keep their edge and the middle stays empty.
             ["StatusBar"] = n => $"<DockPanel x:Name=\"{n}\" DockPanel.Dock=\"Bottom\" Height=\"24\" LastChildFill=\"False\">\n    <TextBlock Text=\"Ready\" VerticalAlignment=\"Center\" HorizontalAlignment=\"Left\"/>\n</DockPanel>",
-            // SplitPanel: a resizable multi-pane container — an Avalonia Grid whose panes are
-            // Borders (each with a settable border + an empty Canvas body to drop controls into)
-            // separated by runtime-draggable GridSplitters (Auto columns). Star panes resize with
-            // the form. Default: 2 panes side-by-side.
-            ["SplitPanel"] = n => $"<Grid x:Name=\"{n}\" Width=\"360\" Height=\"240\">\n    <Grid.ColumnDefinitions>\n        <ColumnDefinition Width=\"*\"/>\n        <ColumnDefinition Width=\"Auto\"/>\n        <ColumnDefinition Width=\"*\"/>\n    </Grid.ColumnDefinitions>\n    <Border Grid.Column=\"0\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n        <Canvas x:Name=\"{n}Pane0\"/>\n    </Border>\n    <GridSplitter Grid.Column=\"1\" Width=\"5\" ResizeDirection=\"Columns\" Background=\"#B0B0B0\"/>\n    <Border Grid.Column=\"2\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n        <Canvas x:Name=\"{n}Pane1\"/>\n    </Border>\n</Grid>",
+            // SplitPanel: a resizable multi-pane container. Default = the 3-zone layout: a Border
+            // (the SplitPanel's own frame/border — clicking it selects the whole panel) wrapping a
+            // Grid whose panes are Borders (each with a settable border + an empty Canvas body to
+            // drop controls into). Row 0 holds Pane0 | Pane1 side-by-side (split by a vertical
+            // GridSplitter in Auto column 1); row 2 is Pane2 spanning all columns below (split by
+            // a horizontal GridSplitter in Auto row 1). The 3*/2* rows default to a 60/40 top/bottom
+            // split; star panes flex so the whole panel auto-resizes with its container. GridSplitters
+            // are runtime-draggable; at design time a pane's Width/Height sets the divider position
+            // (0 collapses/hides the pane). The generic 'Split Layout' editor can convert this to a
+            // pure Columns/Rows arrangement.
+            ["SplitPanel"] = n => $"<Border x:Name=\"{n}\" Width=\"480\" Height=\"300\" BorderBrush=\"#909090\" BorderThickness=\"2\" Padding=\"1\" Background=\"#E6E6E6\">\n    <Grid>\n        <Grid.ColumnDefinitions>\n            <ColumnDefinition Width=\"*\"/>\n            <ColumnDefinition Width=\"Auto\"/>\n            <ColumnDefinition Width=\"*\"/>\n        </Grid.ColumnDefinitions>\n        <Grid.RowDefinitions>\n            <RowDefinition Height=\"3*\"/>\n            <RowDefinition Height=\"Auto\"/>\n            <RowDefinition Height=\"2*\"/>\n        </Grid.RowDefinitions>\n        <Border Grid.Row=\"0\" Grid.Column=\"0\" Background=\"White\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n            <Canvas x:Name=\"{n}Pane0\"/>\n        </Border>\n        <GridSplitter Grid.Row=\"0\" Grid.Column=\"1\" Width=\"5\" MinWidth=\"1\" MinHeight=\"1\" ResizeDirection=\"Columns\" Background=\"#C0C0C0\"/>\n        <Border Grid.Row=\"0\" Grid.Column=\"2\" Background=\"White\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n            <Canvas x:Name=\"{n}Pane1\"/>\n        </Border>\n        <GridSplitter Grid.Row=\"1\" Grid.Column=\"0\" Grid.ColumnSpan=\"3\" Height=\"5\" MinWidth=\"1\" MinHeight=\"1\" ResizeDirection=\"Rows\" Background=\"#C0C0C0\"/>\n        <Border Grid.Row=\"2\" Grid.Column=\"0\" Grid.ColumnSpan=\"3\" Background=\"White\" BorderBrush=\"#808080\" BorderThickness=\"1\">\n            <Canvas x:Name=\"{n}Pane2\"/>\n        </Border>\n    </Grid>\n</Border>",
             // StatusDate: a TextBlock turned into a live date/time display. The snippet embeds the
             // current time (so the preview shows a placeholder) and a Loaded event whose code-behind
             // handler starts a per-second timer that keeps the text current at runtime.

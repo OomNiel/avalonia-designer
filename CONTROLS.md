@@ -180,6 +180,18 @@ described by role instead.
 > placed **inside** it gets **Grid Row** and **Grid Column** dropdowns in its Properties, so you
 > can put it in any cell.
 
+> **SplitPanel:** a **designer pattern** (like Status Bar) — Avalonia has no `SplitPanel` control.
+> The toolbox **SplitPanel** tool inserts a **`Border` frame** (its own clickable border — clicking
+> it selects the whole panel) around a **`Grid`** whose panes are `Border`s (each with a named
+> `Canvas` body to drop controls into) separated by runtime-draggable **`GridSplitter`** bars
+> (`MinWidth`/`MinHeight=1` so they never shrink below 1 px). Its default **Zones** layout is a T:
+> two side-by-side panes over a full-width one. The Split Panel's Properties offer **Split Layout**
+> (switch Zones / Columns / Rows — the stepper picks the **top-band pane count** for Zones, e.g.
+> 3-up over 1, and the total count for Columns/Rows), **Splitters** (each divider bar's thickness,
+> colour and runtime visibility) and **Pane Border** (width of the border around each pane). A
+> pane's own **Width** (side-by-side panes) or **Height** (the full-width bottom pane) is its
+> divider position — **0** hides the pane, `*` lets it flex.
+
 ---
 
 ## Shapes
@@ -275,6 +287,15 @@ Drawing shapes that render as vector graphics on the design surface.
 > delete, up to a configurable depth. The depth is set with the **'Undo-Redo'** property on the
 > DataGrid in the form designer (default 5; 0 disables undo) — it's stored in the bound table's
 > `.adset` and regenerates the DataSet class.
+>
+> **Rows & Columns editors (designer):** selecting a DataGrid shows **Rows** and **Columns**
+> property buttons. **Rows** covers row background / text colour / row height / row-header width /
+> grid lines + their colours / header visibility. **Columns** covers default/min/max column width,
+> frozen columns, header height, and **column-header styling** (text alignment / colour / font /
+> size / background). Avalonia has **no direct header-styling attribute**, so the Columns editor
+> emits a `<dg:DataGrid.Styles><Style Selector="dg|DataGridColumnHeader">` block (root `xmlns:dg`
+> only — Avalonia rejects attributes on property elements). The **Header text font** picker lists
+> every installed system font (enumerated by the preview host).
 
 > **DataSet (toolbox):** not a framework control — it's a **designer tool**. Clicking it opens the
 > DataSet schema designer (`*.adset`) to design ADO.NET tables + columns and generate a runtime

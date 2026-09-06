@@ -5,12 +5,12 @@ import { XamlModel, localName, SINGLE_CONTENT_TAGS } from './xamlModel';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle } from './hostClient';
 import { createNewForm } from './newForm';
 import { propertyDefsFor, opacityToXaml, defaultFor, THEME_COLOR_KEYS } from './propertyCatalog';
-import { defaultEventFor, hasDefaultEvent, insertHandlerIntoCodeBehind, insertStatusDateClock, removeHandlersFromCodeBehind, renameControlInCodeBehind, syncVbAccessors, namedControlsInAxaml, findCodeBehindFile, convertCodeBehindToChrome, findItemsSourceBinding, bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet, removeItemsSourceBinding, DataSetBindingRef } from './codeBehind';
+import { defaultEventFor, hasDefaultEvent, insertHandlerIntoCodeBehind, insertStatusDateClock, removeHandlersFromCodeBehind, renameControlInCodeBehind, syncVbAccessors, namedControlsInAxaml, findCodeBehindFile, convertCodeBehindToChrome, findItemsSourceBinding, bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet, removeItemsSourceBinding, bindImageToGrid, unbindImageFromGrid, hasDataImageBinding, DataSetBindingRef, DataImageRef } from './codeBehind';
 import { controlInfoFor } from './controlInfo';
 import { findProject, ProjectInfo } from './projectParser';
 import { listAssets, Asset } from './assetCatalog';
-import { ensureDataGridAutoGenerateColumns } from './dataSetEditor';
-import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec } from './dataSetModel';
+import { ensureDataGridAutoGenerateColumns, ensureSqlitePackages, defaultDbFile, reloadDataSetPanel } from './dataSetEditor';
+import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTableName } from './dataSetModel';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
 
 const DEFAULT_SIZE = { width: 800, height: 450 };
@@ -61,17 +61,95 @@ function findBoundTable(projectFolder: string, controlName: string | null | unde
     return undefined;
 }
 
-function dataSetBindingFor(projectFolder: string, controlName: string | null | undefined): { value: string; readOnly: boolean; desc: string; undoRedoDepth: number; adsetPath: string; tableName: string } | undefined {
+function dataSetBindingFor(projectFolder: string, controlName: string | null | undefined): { value: string; readOnly: boolean; desc: string; undoRedoDepth: number; adsetPath: string; tableName: string; datasetName: string } | undefined {
     const b = findBoundTable(projectFolder, controlName);
     if (!b) return undefined;
     return {
         value: `${b.spec.name}.${b.table.name}`,
         readOnly: true,
-        desc: `Bound to ${b.spec.name}.${b.table.name} in code-behind (${controlName}.ItemsSource = ...). Use the DataSet designer to un-bind or change it.`,
+        desc: `Bound to ${b.spec.name}.${b.table.name} in code-behind (${controlName}.ItemsSource = ...). Click … to change it or clear the binding.`,
         undoRedoDepth: b.table.undoRedoDepth ?? 5,
         adsetPath: b.adsetPath,
-        tableName: b.table.name
+        tableName: b.table.name,
+        datasetName: b.spec.name
     };
+}
+
+/** A Data-Image binding: an Image control follows the selection of a DataGrid bound to a DataSet
+ *  table, showing the image file whose absolute path is in `column` (a String column of that table).
+ *  Stored on the table in its .adset (`boundImages`) so it survives reloads and Remove DataSet. */
+interface DataImageBindingInfo {
+    datasetName: string;
+    tableName: string;
+    gridName: string;
+    column: string;
+    adsetPath: string;
+}
+
+/** Every .adset in a project folder, as {path, spec} (skipping unreadable ones). */
+function readDataSetFiles(projectFolder: string): { adsetPath: string; spec: DataSetSpec }[] {
+    const out: { adsetPath: string; spec: DataSetSpec }[] = [];
+    const stack = [projectFolder];
+    while (stack.length) {
+        const dir = stack.pop()!;
+        let entries: fs.Dirent[] = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+        for (const e of entries) {
+            if (e.name === 'bin' || e.name === 'obj' || e.name === '.git' || e.name === 'node_modules') continue;
+            const p = path.join(dir, e.name);
+            if (e.isDirectory()) stack.push(p);
+            else if (e.name.toLowerCase().endsWith('.adset')) {
+                try { out.push({ adsetPath: p, spec: parseDataSet(fs.readFileSync(p, 'utf8')) }); } catch { /* skip */ }
+            }
+        }
+    }
+    return out;
+}
+
+/** The table (with its .adset) that a DataGrid is bound to, if any. */
+function tableForGrid(projectFolder: string, gridName: string): { adsetPath: string; spec: DataSetSpec; table: DataTableSpec } | undefined {
+    for (const f of readDataSetFiles(projectFolder)) {
+        const t = f.spec.tables.find((x) => x.boundTo === gridName && x.boundToType === 'DataGrid');
+        if (t) return { adsetPath: f.adsetPath, spec: f.spec, table: t };
+    }
+    return undefined;
+}
+
+/** The Data-Image binding (if any) whose Image control is `controlName`. */
+function findImageBinding(projectFolder: string, controlName: string | null | undefined): { info: DataImageBindingInfo; spec: DataSetSpec; table: DataTableSpec } | undefined {
+    if (!projectFolder || !controlName) return undefined;
+    for (const f of readDataSetFiles(projectFolder)) {
+        for (const t of f.spec.tables) {
+            const img = (t.boundImages || []).find((b) => b.control === controlName);
+            if (img && t.boundTo) {
+                return {
+                    info: { datasetName: f.spec.name, tableName: t.name, gridName: t.boundTo, column: img.column, adsetPath: f.adsetPath },
+                    spec: f.spec,
+                    table: t
+                };
+            }
+        }
+    }
+    return undefined;
+}
+
+/** Bind targets for the Data-Image picker: every DataGrid-bound table's String columns. */
+function dataImageTargets(projectFolder: string): { label: string; detail: string; datasetName: string; tableName: string; gridName: string; column: string }[] {
+    const out: { label: string; detail: string; datasetName: string; tableName: string; gridName: string; column: string }[] = [];
+    for (const f of readDataSetFiles(projectFolder)) {
+        for (const t of f.spec.tables) {
+            if (!t.boundTo || t.boundToType !== 'DataGrid') continue;
+            for (const c of t.columns) {
+                if (c.type !== 'String') continue;
+                out.push({
+                    label: `${t.boundTo}.${c.name}`,
+                    detail: `${f.spec.name}.${t.name} — shows this row's ${c.name} file in an Image`,
+                    datasetName: f.spec.name, tableName: t.name, gridName: t.boundTo, column: c.name
+                });
+            }
+        }
+    }
+    return out;
 }
 
 /** True if the control is the form's structural body Canvas (the design surface): a Canvas
@@ -230,9 +308,40 @@ function projectHasDataGridPackage(axamlUri: vscode.Uri): boolean {
  * being laid out by that container — moving it out to dock would destroy the
  * layout — so it is left in place (Dock simply has no effect there).
  */
+/** Converts a SplitPanel pane's free-placement Canvas body into a DockPanel (same name + plain
+ *  attributes, existing children moved across) so DockPanel.Dock has somewhere to act INSIDE that
+ *  pane. Returns the pane's content element (the DockPanel, or the original when not convertible). */
+function paneBodyAsDockPanel(model: XamlModel, paneBody: Element): Element {
+    if (localName(paneBody.tagName) === 'DockPanel') return paneBody;
+    if (localName(paneBody.tagName) !== 'Canvas') return paneBody;
+    const nm = paneBody.getAttribute('x:Name') || paneBody.getAttribute('Name') || '';
+    const dock = model.createElement('<DockPanel/>');
+    if (nm) dock.setAttribute('x:Name', nm);
+    for (let a = 0; a < paneBody.attributes.length; a++) {
+        const at = paneBody.attributes.item(a);
+        if (!at) continue;
+        if (at.name === 'x:Name' || at.name === 'Name') continue;
+        if (/^Canvas\./.test(at.name)) continue; // free-placement coords are meaningless in a DockPanel
+        dock.setAttribute(at.name, at.value);
+    }
+    while (paneBody.firstChild) dock.appendChild(paneBody.firstChild);
+    if (paneBody.parentNode) paneBody.parentNode.replaceChild(dock, paneBody);
+    return dock;
+}
+
 function ensureDockPanelParent(model: XamlModel, el: Element): Element {
     const parent = el.parentNode as Element | null;
     if (parent && localName(parent.tagName) === 'DockPanel') return parent;
+
+    // A control dropped inside a SplitPanel pane docks WITHIN that pane (a pane is a region of the
+    // split, not the form) — convert the pane's free-placement Canvas body into a DockPanel so the
+    // Dock takes effect there and the control never leaves the split panel.
+    if (parent && parent.nodeType === 1) {
+        const pnm = localName(parent.tagName);
+        if (pnm === 'Canvas' && isSplitPaneName(parent.getAttribute('x:Name') || parent.getAttribute('Name') || '')) {
+            return paneBodyAsDockPanel(model, parent);
+        }
+    }
 
     // Only free-positioning contexts (a Canvas or the window root itself) get wrapped/
     // docked. A control inside a Grid/StackPanel/… must stay where its container put it.
@@ -511,9 +620,11 @@ function sanitizeStatusItems(raw: unknown): StatusItem[] {
 }
 
 // ---------------------------------------------------------------- split panels
-// The 'SplitPanel' tool is an Avalonia Grid (named SplitPanelN): its panes are Borders (each with a
-// settable border + an empty named Canvas body) separated by runtime-draggable GridSplitters.
-// Star-sized panes make the whole panel resize with the form.
+// The 'SplitPanel' tool is either a Border wrapper — the default 3-zone T-layout: the Border is the
+// panel's own clickable frame around an inner Grid — or, for older documents, the Grid itself.
+// Its panes are Borders (each with a settable border + an empty named Canvas body) separated by
+// runtime-draggable GridSplitters (Auto rows/columns are the splitter gutters). Star sizes make the
+// whole panel auto-resize with the form; a pane's Width/Height IS its divider position (0 hides it).
 function splitDefSizes(el: Element, kind: 'cols' | 'rows'): string[] {
     const prop = kind === 'cols' ? 'Grid.ColumnDefinitions' : 'Grid.RowDefinitions';
     const defs = elementChildren(el).find((k) => localName(k.tagName) === prop);
@@ -521,31 +632,258 @@ function splitDefSizes(el: Element, kind: 'cols' | 'rows'): string[] {
     const attr = kind === 'cols' ? 'Width' : 'Height';
     return elementChildren(defs).map((d) => d.getAttribute(attr) || '*');
 }
-/** The split direction + pane count of a SplitPanel grid (from its row/column definitions). */
-function splitStateOf(el: Element): { columns: boolean; count: number } {
-    const cols = splitDefSizes(el, 'cols');
-    const rows = splitDefSizes(el, 'rows');
-    const paneCount = (a: string[]) => a.filter((s) => !/auto/i.test(s)).length;
-    if (rows.some((s) => /auto/i.test(s))) return { columns: false, count: paneCount(rows) };
-    if (cols.some((s) => /auto/i.test(s))) return { columns: true, count: paneCount(cols) };
-    return { columns: true, count: Math.max(2, paneCount(cols) || 2) };
+/** A SplitPanel container name (SplitPanel1, ...) — its element is a Border (new) or a Grid (old). */
+function isSplitName(name: string | null | undefined): boolean {
+    return /^SplitPanel\d+$/.test(name || '');
 }
-/** The Border wrapper of the pane whose body Canvas is named <splitName>Pane<index>, if any. */
-function splitPaneAt(grid: Element, index: number): Element | null {
-    const nm = grid.getAttribute('x:Name') || grid.getAttribute('Name') || '';
-    for (const c of elementChildren(grid)) {
-        if (localName(c.tagName) !== 'Border') continue;
-        for (const inner of elementChildren(c)) {
-            const iname = inner.getAttribute('x:Name') || inner.getAttribute('Name') || '';
-            if (localName(inner.tagName) === 'Canvas' && iname === `${nm}Pane${index}`) return c;
+/** A SplitPanel pane-body name (SplitPanel1Pane0, ...). */
+function isSplitPaneName(name: string | null | undefined): boolean {
+    return /^SplitPanel\d+Pane\d+$/.test(name || '');
+}
+/** The inner Grid that owns a SplitPanel's row/column definitions + panes: the element itself when
+ *  it's a Grid, else the direct Grid child of a Border wrapper. */
+function splitGridOf(el: Element): Element | null {
+    const tag = localName(el.tagName);
+    if (tag === 'Grid') return el;
+    if (tag === 'Border') {
+        for (const c of elementChildren(el)) {
+            if (localName(c.tagName) === 'Grid') return c;
         }
     }
     return null;
 }
-/** Every pane Border wrapper of a SplitPanel (for applying a shared border width). */
-function splitPanes(grid: Element): Element[] {
-    const nm = grid.getAttribute('x:Name') || grid.getAttribute('Name') || '';
-    const prefix = `${nm}Pane`;
+/** Indices of the CONTENT (non-Auto) row/column definitions of a Grid — the Auto ones are the
+ *  splitter gutters, so panes live in the content rows/columns. */
+function contentDefs(el: Element, kind: 'cols' | 'rows'): number[] {
+    const sizes = splitDefSizes(el, kind);
+    const out: number[] = [];
+    for (let i = 0; i < sizes.length; i++) {
+        if (!/auto/i.test(sizes[i])) out.push(i);
+    }
+    return out;
+}
+type SplitShape = 'zones' | 'columns' | 'rows';
+/** The current layout shape of a SplitPanel grid. 'zones' is the T layout: `top` panes side-by-side
+ *  in the top band over a full-width bottom pane (count = top + 1); 'columns'/'rows' are a plain
+ *  run of N panes. */
+function splitShapeOf(el: Element): { shape: SplitShape; count: number; top: number } {
+    const cols = contentDefs(el, 'cols');
+    const rows = contentDefs(el, 'rows');
+    if (cols.length >= 2 && rows.length >= 2) {
+        return { shape: 'zones', top: cols.length, count: cols.length + 1 };
+    }
+    if (rows.length >= 2) return { shape: 'rows', count: rows.length, top: 0 };
+    return { shape: 'columns', count: Math.max(cols.length, 2), top: 0 };
+}
+/** Walks up from a pane body to its SplitPanel container (Border or Grid), if named SplitPanelN. */
+function splitRootOf(el: Element): Element | null {
+    let cur: Element | null = el;
+    for (let d = 0; cur && d < 6; d++, cur = cur.parentNode as Element | null) {
+        if (!cur || cur.nodeType !== 1) return null;
+        const nm = cur.getAttribute('x:Name') || cur.getAttribute('Name') || '';
+        if (isSplitName(nm)) return cur;
+    }
+    return null;
+}
+/** The pane Border wrapper of `paneBody` inside its grid + which row/column it occupies and whether
+ *  each axis really is a split (2+ content definitions) that the pane's size can drive. */
+function paneGeometry(grid: Element, paneBody: Element): {
+    border: Element; row: number; col: number; rowSpan: number; colSpan: number;
+    rowSplit: boolean; colSplit: boolean;
+} | null {
+    const border = paneBody.parentNode as Element | null;
+    if (!border || border.nodeType !== 1 || localName(border.tagName) !== 'Border') return null;
+    return {
+        border,
+        row: parseInt(border.getAttribute('Grid.Row') || '0', 10),
+        col: parseInt(border.getAttribute('Grid.Column') || '0', 10),
+        rowSpan: parseInt(border.getAttribute('Grid.RowSpan') || '1', 10),
+        colSpan: parseInt(border.getAttribute('Grid.ColumnSpan') || '1', 10),
+        rowSplit: contentDefs(grid, 'rows').length >= 2,
+        colSplit: contentDefs(grid, 'cols').length >= 2
+    };
+}
+/** A pane body's grid-definition size as a plain pixel number when fixed, else the measured pixels. */
+function paneSizeDisplay(grid: Element, kind: 'cols' | 'rows', index: number, measured: number): string {
+    const sizes = splitDefSizes(grid, kind);
+    const s = sizes[index] ?? '';
+    if (/^\d+(\.\d+)?$/.test(s)) return s;
+    return String(Math.max(0, Math.round(measured)));
+}
+/** A pane's (row,col) placement in a target split shape, with spans (null when the pane doesn't
+ *  exist in that shape). Zones: panes 0..top-1 fill the top band (even columns), pane `top` spans
+ *  the whole bottom row. Columns/rows use even indexes so odd indexes are the Auto splitter gutters. */
+function panePlacement(shape: SplitShape, i: number, top = 2): { row: number; col: number; rowSpan?: number; colSpan?: number } | null {
+    if (shape === 'zones') {
+        const t = Math.max(2, Math.min(8, Math.round(top) || 2));
+        if (i < t) return { row: 0, col: i * 2 };
+        if (i === t) return { row: 2, col: 0, colSpan: t * 2 - 1 };
+        return null;
+    }
+    if (shape === 'columns') return { row: 0, col: i * 2 };
+    return { row: i * 2, col: 0 };
+}
+/** Row/column definition sizes for a target split shape (`top` = how many panes fill the top band
+ *  of a Zones layout). */
+function splitDefsFor(shape: SplitShape, count: number, top = 2): { cols: string[]; rows: string[] } {
+    if (shape === 'zones') {
+        const t = Math.max(2, Math.min(8, Math.round(top) || 2));
+        const cols = ['*'];
+        for (let j = 1; j < t; j++) cols.push('Auto', '*');
+        return { cols, rows: ['3*', 'Auto', '2*'] };
+    }
+    if (shape === 'columns') {
+        const cols = ['*'];
+        for (let j = 1; j < count; j++) { cols.push('Auto', '*'); }
+        return { cols, rows: ['*'] };
+    }
+    const rows = ['*'];
+    for (let j = 1; j < count; j++) { rows.push('Auto', '*'); }
+    return { cols: ['*'], rows };
+}
+/** One runtime GridSplitter of a SplitPanel's grid, in visual order, with its editable styling. */
+interface SplitterRow {
+    el: Element;
+    /** 'vertical' = a column divider (its Width is the bar thickness); 'horizontal' = a row divider
+     *  (its Height is the bar thickness). */
+    direction: 'vertical' | 'horizontal';
+    thickness: string;
+    color: string;
+    visible: boolean;
+}
+/** Every runtime GridSplitter of a SplitPanel's grid (in order), with its current styling. */
+function splitterRowsOf(grid: Element): SplitterRow[] {
+    const rows: SplitterRow[] = [];
+    for (const c of elementChildren(grid)) {
+        if (localName(c.tagName) !== 'GridSplitter') continue;
+        const direction: 'vertical' | 'horizontal' =
+            /^rows$/i.test(c.getAttribute('ResizeDirection') || '') ? 'horizontal' : 'vertical';
+        const barAttr = direction === 'vertical' ? 'Width' : 'Height';
+        rows.push({
+            el: c,
+            direction,
+            thickness: c.getAttribute(barAttr) || '5',
+            color: c.getAttribute('Background') || '#B0B0B0',
+            visible: !/^false$/i.test(c.getAttribute('IsVisible') || '')
+        });
+    }
+    return rows;
+}
+/** Normalizes a colour string to '#rrggbb', or null when it isn't a plain hex colour. */
+function normalizeHexColor(color: string): string | null {
+    let c = String(color).trim();
+    if (/^#?[0-9a-fA-F]{6}$/.test(c)) {
+        if (!c.startsWith('#')) c = '#' + c;
+        return c.toLowerCase();
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------- DataGrid decoration
+// The DataGrid's 'Rows'/'Columns' popup editors group the row/column decoration properties that
+// Avalonia's DataGrid exposes directly (attributes written on the control). Alternating row
+// colours are intentionally NOT offered — Avalonia 12.1.1 DataGrid has no alternation support.
+function dgAttr(el: Element, key: string, def: string): string {
+    const v = el.getAttribute(key);
+    return v == null || v === '' ? def : v;
+}
+/** Current row-decoration values of a DataGrid (for the 'Rows' editor pre-fill). */
+function dgRowsOf(el: Element): Record<string, string> {
+    return {
+        rowBackground: dgAttr(el, 'RowBackground', ''),
+        foreground: dgAttr(el, 'Foreground', ''),
+        rowHeight: dgAttr(el, 'RowHeight', ''),
+        rowHeaderWidth: dgAttr(el, 'RowHeaderWidth', '0'),
+        gridLines: dgAttr(el, 'GridLinesVisibility', 'None'),
+        hLine: dgAttr(el, 'HorizontalGridLinesBrush', ''),
+        vLine: dgAttr(el, 'VerticalGridLinesBrush', ''),
+        headers: dgAttr(el, 'HeadersVisibility', 'All')
+    };
+}
+/** Current column/header-decoration values of a DataGrid (for the 'Columns' editor pre-fill),
+ *  including the header text style (read from its DataGridColumnHeader Style). */
+function dgColsOf(el: Element): Record<string, string> {
+    return {
+        columnWidth: dgAttr(el, 'ColumnWidth', 'Auto'),
+        minColumnWidth: dgAttr(el, 'MinColumnWidth', '20'),
+        maxColumnWidth: dgAttr(el, 'MaxColumnWidth', ''),
+        frozenCount: dgAttr(el, 'FrozenColumnCount', '0'),
+        headerHeight: dgAttr(el, 'ColumnHeaderHeight', ''),
+        ...dgHeaderOf(el)
+    };
+}
+/** Row-decoration fields (key = message/UI name, attr = XAML attribute, def = omitted default). */
+const DG_ROW_FIELDS: { key: string; attr: string; def: string }[] = [
+    { key: 'rowBackground', attr: 'RowBackground', def: '' },
+    { key: 'foreground', attr: 'Foreground', def: '' },
+    { key: 'rowHeight', attr: 'RowHeight', def: '' },
+    { key: 'rowHeaderWidth', attr: 'RowHeaderWidth', def: '0' },
+    { key: 'gridLines', attr: 'GridLinesVisibility', def: 'None' },
+    { key: 'hLine', attr: 'HorizontalGridLinesBrush', def: '' },
+    { key: 'vLine', attr: 'VerticalGridLinesBrush', def: '' },
+    { key: 'headers', attr: 'HeadersVisibility', def: 'All' }
+];
+/** Column/header-decoration fields (plain attributes on the DataGrid). */
+const DG_COL_FIELDS: { key: string; attr: string; def: string }[] = [
+    { key: 'columnWidth', attr: 'ColumnWidth', def: 'Auto' },
+    { key: 'minColumnWidth', attr: 'MinColumnWidth', def: '20' },
+    { key: 'maxColumnWidth', attr: 'MaxColumnWidth', def: '' },
+    { key: 'frozenCount', attr: 'FrozenColumnCount', def: '0' },
+    { key: 'headerHeight', attr: 'ColumnHeaderHeight', def: '' }
+];
+// Header TEXT styling has no direct DataGrid attribute — Avalonia styles the column headers via a
+// Style on `dg:DataGridColumnHeader` (inside <dg:DataGrid.Styles>). Each field maps to a Setter.
+const DG_HEADER_FIELDS: { key: string; setter: string; def: string }[] = [
+    { key: 'headerAlign', setter: 'HorizontalContentAlignment', def: 'Left' },
+    { key: 'headerColor', setter: 'Foreground', def: '' },
+    { key: 'headerFont', setter: 'FontFamily', def: '' },
+    { key: 'headerFontSize', setter: 'FontSize', def: '' },
+    { key: 'headerBg', setter: 'Background', def: '' }
+];
+/** The `<dg:DataGrid.Styles>` property element of a DataGrid, if present. */
+function dgStylesBlock(el: Element): Element | null {
+    return elementChildren(el).find((c) => localName(c.tagName) === 'DataGrid.Styles') || null;
+}
+/** The header Style (`dg|DataGridColumnHeader`) inside a DataGrid's Styles, if present. */
+function dgHeaderStyle(el: Element): Element | null {
+    const block = dgStylesBlock(el);
+    if (!block) return null;
+    return elementChildren(block).find((s) => localName(s.tagName) === 'Style'
+        && /DataGridColumnHeader/.test(s.getAttribute('Selector') || '')) || null;
+}
+/** Reads the DataGrid's current header-style values (defaults when no Style / no Setter). */
+function dgHeaderOf(el: Element): Record<string, string> {
+    const out: Record<string, string> = {};
+    const style = dgHeaderStyle(el);
+    for (const f of DG_HEADER_FIELDS) {
+        let val = f.def;
+        if (style) {
+            const setter = elementChildren(style).find((s) => localName(s.tagName) === 'Setter'
+                && s.getAttribute('Property') === f.setter);
+            if (setter) val = setter.getAttribute('Value') ?? f.def;
+        }
+        out[f.key] = val;
+    }
+    return out;
+}
+
+/** The Border wrapper of the pane whose body Canvas is named <containerName>Pane<index>, if any.
+ *  `containerName` is the SplitPanel's own name (its panes are named after the container, which for
+ *  Border-wrapped splits is the Border — the inner Grid itself is unnamed). */
+function splitPaneAt(grid: Element, containerName: string, index: number): Element | null {
+    for (const c of elementChildren(grid)) {
+        if (localName(c.tagName) !== 'Border') continue;
+        for (const inner of elementChildren(c)) {
+            const iname = inner.getAttribute('x:Name') || inner.getAttribute('Name') || '';
+            if (localName(inner.tagName) === 'Canvas' && iname === `${containerName}Pane${index}`) return c;
+        }
+    }
+    return null;
+}
+/** Every pane Border wrapper of a SplitPanel (for applying a shared border width). `containerName`
+ *  is the SplitPanel's own name (the panes are named after it). */
+function splitPanes(grid: Element, containerName: string): Element[] {
+    const prefix = `${containerName}Pane`;
     const out: Element[] = [];
     for (const c of elementChildren(grid)) {
         if (localName(c.tagName) !== 'Border') continue;
@@ -617,6 +955,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      */
     private autoSizeOff = new Set<string>();
     private autoSizeOffLoaded = false;
+    /** System font family names (from the Avalonia host), fetched once and shared with the webviews'
+     *  font pickers. Empty until the first fetch (webviews fall back to a compact default list). */
+    private systemFonts: string[] = [];
 
     constructor(private readonly context: vscode.ExtensionContext, private readonly host: PreviewerHostManager) {
         // Reload the designer when the .axaml changes on disk (e.g. edited in the
@@ -683,6 +1024,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         await this.host.getClient();
                         await this.render(doc, panel);
                         await this.syncAccessors(doc);
+                        void this.pushFonts(panel);
                     } catch (e) {
                         await this.postStatus(panel, `Previewer host error: ${e instanceof Error ? e.message : String(e)}`);
                     }
@@ -700,6 +1042,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'requestFonts': {
+                    // The webview asked for the system font list (its picker opened before the
+                    // host was ready) — fetch (once) and push it.
+                    await this.pushFonts(panel);
+                    return;
+                }
                 case 'deselect': {
                     await panel.webview.postMessage({ type: 'properties', properties: null });
                     return;
@@ -712,6 +1060,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     if (msg.key === '__name__' && isLockedStructure(doc.model, el.getAttribute('x:Name') || el.getAttribute('Name') || '')) {
                         void vscode.window.showInformationMessage(`The ${lockedLabel(doc.model, el.getAttribute('x:Name') || el.getAttribute('Name') || '')} is locked — it can\'t be renamed.`);
                         await this.sendProperties(doc, panel, msg.name ?? null);
+                        return;
+                    }
+                    // A SplitPanel pane's Width/Height ARE its divider positions (the pane fills its
+                    // grid cell, so it never carries its own size) — a number moves the divider to
+                    // that many pixels (0 collapses/hides the pane); the neighbouring pane stretches.
+                    const splitPaneName = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+                    if (isSplitPaneName(splitPaneName) && (msg.key === 'Width' || msg.key === 'Height')) {
+                        await this.setSplitPaneSize(doc, panel, el, msg.key === 'Width' ? 'cols' : 'rows', String(msg.value ?? ''));
                         return;
                     }
                     const before = doc.model.serialize(true);
@@ -953,6 +1309,23 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     if (placedEl && placedEl.hasAttribute('DockPanel.Dock')) {
                         try { ensureDockPanelParent(doc.model, placedEl); }
                         catch { /* leave it where it was dropped */ }
+                    }
+                    // A freshly placed control with NO explicit Dock must not silently become
+                    // DockPanel 'Fill' just because it lands as the DockPanel's last child (a plain
+                    // DockPanel defaults LastChildFill to True). Normalise it to 'None' the same way
+                    // choosing Dock = None does — drop LastChildFill so the control keeps its placed
+                    // size instead of auto-filling, and the Properties panel shows None, not Fill.
+                    if (placedEl && !placedEl.hasAttribute('DockPanel.Dock')) {
+                        const dockParent = placedEl.parentNode as Element | null;
+                        if (dockParent && dockParent.nodeType === 1
+                            && localName(dockParent.tagName) === 'DockPanel'
+                            && dockParent.getAttribute('LastChildFill') !== 'False') {
+                            let isLast = true;
+                            for (let sib = placedEl.nextSibling; sib; sib = sib.nextSibling) {
+                                if (sib.nodeType === 1) { isLast = false; break; }
+                            }
+                            if (isLast) dockParent.setAttribute('LastChildFill', 'False');
+                        }
                     }
                     // Shapes render BEHIND other controls by default (Send to Back): a negative
                     // ZIndex puts them at the back of the paint order, in the preview and at
@@ -1391,12 +1764,47 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     return;
                 }
                 case 'saveSplitLayout': {
-                    // 'Split Layout' editor on a SplitPanel (a Grid named SplitPanelN): apply a
-                    // new orientation (Columns/Rows) and pane count, keeping the pane contents.
+                    // 'Split Layout' editor on a SplitPanel (a Border frame or, for older docs, the
+                    // Grid itself): apply a new shape (Zones default T / Columns / Rows) and pane
+                    // count, keeping each pane's contents.
                     const el = msg.name ? doc.model.findByName(msg.name) : undefined;
-                    if (!el || localName(el.tagName) !== 'Grid') return;
-                    if (!/^SplitPanel\d*$/.test(el.getAttribute('x:Name') || el.getAttribute('Name') || '')) return;
-                    await this.applySplitLayout(doc, panel, el, { columns: !!msg.columns, count: Number(msg.count) });
+                    if (!el) return;
+                    if (!isSplitName(el.getAttribute('x:Name') || el.getAttribute('Name') || '')) return;
+                    const grid = splitGridOf(el);
+                    if (!grid) return;
+                    await this.applySplitShape(doc, panel, el, grid, {
+                        shape: msg.shape === 'zones' ? 'zones' : (msg.shape === 'rows' || msg.columns === false ? 'rows' : 'columns'),
+                        count: Number(msg.count),
+                        top: Number(msg.top)
+                    });
+                    return;
+                }
+                case 'saveSplitters': {
+                    // 'Splitters' editor on a SplitPanel: restyle each runtime divider bar (its
+                    // thickness, colour and visibility), matched to the grid's GridSplitters in order.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el) return;
+                    if (!isSplitName(el.getAttribute('x:Name') || el.getAttribute('Name') || '')) return;
+                    const grid = splitGridOf(el);
+                    if (!grid) return;
+                    await this.applySplitterSettings(doc, panel, grid, el.getAttribute('x:Name') || el.getAttribute('Name') || '', msg.items);
+                    return;
+                }
+                case 'saveDataGridRows': {
+                    // 'Rows' editor on a DataGrid: write its row-decoration attributes (row
+                    // background, text colour, row height, row-header width, grid lines, headers).
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || localName(el.tagName) !== 'DataGrid') return;
+                    await this.applyDataGridDecorations(doc, panel, el, DG_ROW_FIELDS, msg.values);
+                    return;
+                }
+                case 'saveDataGridCols': {
+                    // 'Columns' editor on a DataGrid: write its column/header-decoration attributes
+                    // (default/min/max column width, frozen columns, header height) plus the column
+                    // header text style (alignment, colour, font, background) as a header Style.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || localName(el.tagName) !== 'DataGrid') return;
+                    await this.applyDataGridCols(doc, panel, el, msg.values);
                     return;
                 }
                 case 'saveGridDefs': {
@@ -1638,9 +2046,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     return;
                 }
                 case 'pickItemsSource': {
-                    // Items Source asset picker: list the project's bindable assets (arrays /
-                    // collections in code + DataSet tables), then write the binding into code-behind
-                    // (or route to the DataSet bind path for a table).
+                    // Items Source asset picker: manages EVERY way a control's items can be bound —
+                    // a DataSet table (the same binding the DataSet designer's "Bind to control"
+                    // dropdown creates) or a code collection. From here you can bind, switch, or
+                    // clear, and each action stays in sync with the owning .adset (and repaints any
+                    // DataSet designer panel that has that file open), so the two entry points to
+                    // the feature can't drift apart.
                     const el = msg.name ? doc.model.findByName(msg.name) : doc.model.root;
                     if (!el) return;
                     const proj = findProject(doc.uri);
@@ -1654,48 +2065,143 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         void vscode.window.showWarningMessage('Give the control a name first (Properties → Name) so it can be bound.');
                         return;
                     }
+                    const controlType = localName(el.tagName);
                     const formClass = (doc.model.root.getAttribute('x:Class') || '').split('.').pop() || '';
+                    // The control's CURRENT binding, whichever side created it (DataSet table or code asset).
+                    const dsBinding = dataSetBindingFor(projectFolder, ctrlName);
+                    const codeBinding = dsBinding ? undefined : findItemsSourceBinding(doc.uri, ctrlName);
                     const assets = listAssets(projectFolder, formClass);
-                    const current = findItemsSourceBinding(doc.uri, ctrlName);
-                    const items: vscode.QuickPickItem[] = [];
-                    if (current) {
+                    type PickEntry = vscode.QuickPickItem & { clear?: 'dataset' | 'code'; asset?: number };
+                    const items: PickEntry[] = [];
+                    if (dsBinding) {
                         items.push({
-                            label: '$(close) Clear Items Source binding',
-                            description: `currently ${ctrlName}.ItemsSource = ${current}`,
-                            alwaysShow: true
+                            label: '$(close) Un-bind DataSet table', alwaysShow: true, clear: 'dataset',
+                            description: `stop showing ${dsBinding.value} on ${ctrlName} — the table keeps its schema/data`
+                        });
+                    } else if (codeBinding) {
+                        items.push({
+                            label: '$(close) Clear Items Source binding', alwaysShow: true, clear: 'code',
+                            description: `currently ${ctrlName}.ItemsSource = ${codeBinding}`
                         });
                     }
-                    for (const a of assets) {
+                    if (dsBinding) {
+                        items.push({ label: dsBinding.value, description: 'current binding (unchanged)', alwaysShow: true, picked: true });
+                    }
+                    assets.forEach((a, i) => {
+                        // The table already bound to this control is shown above as the current entry.
+                        if (dsBinding && a.kind === 'dataset' && a.datasetName === dsBinding.datasetName && a.tableName === dsBinding.tableName) return;
                         items.push({
                             label: a.label,
                             description: a.detail,
-                            detail: a.kind === 'code' ? `writes ${ctrlName}.ItemsSource = ${a.value}` : `binds ${ctrlName}.ItemsSource to this table`
+                            detail: a.kind === 'code'
+                                ? `writes ${ctrlName}.ItemsSource = ${a.value}`
+                                : (this.isDatasetTableClaimed(a, ctrlName)
+                                    ? 'bound to another control — un-bind it there first'
+                                    : `binds ${ctrlName}.ItemsSource to this table (SQLite)`),
+                            asset: i
                         });
-                    }
+                    });
                     const picked = await vscode.window.showQuickPick(items, {
                         title: `Items Source for ${ctrlName}`,
                         placeHolder: 'Pick a collection or DataSet table to bind (escape to cancel)'
                     });
                     if (!picked) return;
-                    const idx = items.indexOf(picked);
-                    if (idx === 0 && current) {
+                    if (picked.clear === 'dataset' && dsBinding) {
+                        const label = await this.unbindCurrentDataSetBinding(doc, proj, ctrlName, controlType);
+                        void vscode.window.showInformationMessage(`Un-bound ${ctrlName} from ${label ?? dsBinding.value}.`);
+                        await this.sendProperties(doc, panel, msg.name ?? null);
+                        return;
+                    }
+                    if (picked.clear === 'code') {
                         await removeItemsSourceBinding(doc.uri, ctrlName);
                         void vscode.window.showInformationMessage(`Cleared the Items Source binding on ${ctrlName}.`);
                         await this.sendProperties(doc, panel, msg.name ?? null);
                         return;
                     }
-                    const asset = assets[idx - (current ? 1 : 0)];
-                    if (!asset) return;
-                    if (asset.kind === 'code') {
+                    const asset = (typeof picked.asset === 'number') ? assets[picked.asset] : undefined;
+                    if (!asset) {
+                        // Selected the "current binding" entry — nothing to do.
+                        await this.sendProperties(doc, panel, msg.name ?? null);
+                        return;
+                    }
+                    if (asset.kind === 'dataset') {
+                        // Never steal a table another control owns — check BEFORE dropping the current binding.
+                        if (this.isDatasetTableClaimed(asset, ctrlName)) {
+                            void vscode.window.showWarningMessage(`"${asset.tableName}" is already bound to another control — un-bind it there first.`);
+                            return;
+                        }
+                        // Switching away from a current DataSet binding (to a different table) or a leftover
+                        // code binding: drop it first so only ONE ItemsSource binding survives.
+                        if (dsBinding && !(dsBinding.datasetName === asset.datasetName && dsBinding.tableName === asset.tableName)) {
+                            await this.unbindCurrentDataSetBinding(doc, proj, ctrlName, controlType);
+                        } else if (!dsBinding && codeBinding) {
+                            await removeItemsSourceBinding(doc.uri, ctrlName);
+                        }
+                        await this.bindDataSetAsset(doc, proj, ctrlName, controlType, asset);
+                    } else {
+                        if (dsBinding) {
+                            await this.unbindCurrentDataSetBinding(doc, proj, ctrlName, controlType);
+                        } else if (codeBinding && codeBinding !== asset.value) {
+                            await removeItemsSourceBinding(doc.uri, ctrlName);
+                        }
                         const filePath = await bindControlToAsset(doc.uri, ctrlName, asset.value);
                         if (filePath) {
                             void vscode.window.showInformationMessage(`Bound ${ctrlName}.ItemsSource = ${asset.value} (${path.basename(filePath)}).`);
                         } else {
                             void vscode.window.showErrorMessage(`Could not write the code-behind for ${ctrlName}.`);
                         }
-                    } else {
-                        await this.bindDataSetAsset(doc, proj, ctrlName, localName(el.tagName), asset);
                     }
+                    await this.sendProperties(doc, panel, msg.name ?? null);
+                    return;
+                }
+                case 'pickImageData': {
+                    // Image.Source can also show the image file (absolute path) stored in a DataGrid's
+                    // selected row (a String column of the grid's bound DataSet table) instead of a
+                    // fixed bundled file. Bind/clear here; the runtime selection handler lives in the
+                    // form's code-behind, the metadata on the owning table's .adset (boundImages).
+                    const el = msg.name ? doc.model.findByName(msg.name) : doc.model.root;
+                    if (!el || localName(el.tagName) !== 'Image') return;
+                    const projImg = findProject(doc.uri);
+                    if (!projImg) {
+                        void vscode.window.showWarningMessage('No .csproj/.vbproj found near this form — cannot scan DataSet grids.');
+                        return;
+                    }
+                    const imgFolder = path.dirname(projImg.projectUri.fsPath);
+                    const ctrlName = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+                    if (!ctrlName) {
+                        void vscode.window.showWarningMessage('Give the Image a name first (Properties → Name) so it can be bound.');
+                        return;
+                    }
+                    const currentImg = findImageBinding(imgFolder, ctrlName);
+                    type ImgPick = vscode.QuickPickItem & { clear?: boolean; target?: { datasetName: string; tableName: string; gridName: string; column: string } };
+                    const items: ImgPick[] = [];
+                    if (currentImg) {
+                        items.push({
+                            label: '$(close) Clear Data Image binding', alwaysShow: true, clear: true,
+                            description: `Image shows the ${currentImg.info.gridName}.${currentImg.info.column} file of the selected row`
+                        });
+                        items.push({ label: `${currentImg.info.gridName}.${currentImg.info.column}`, description: 'current binding (unchanged)', alwaysShow: true });
+                    }
+                    for (const tgt of dataImageTargets(imgFolder)) {
+                        items.push({ label: tgt.label, description: tgt.detail, target: tgt });
+                    }
+                    const picked = await vscode.window.showQuickPick(items, {
+                        title: `Data image for ${ctrlName}`,
+                        placeHolder: 'Pick a grid column whose image file this Image shows (escape to cancel)'
+                    });
+                    if (!picked) return;
+                    if (currentImg && picked.clear) {
+                        await this.unbindDataImage(doc, projImg, panel, ctrlName, currentImg.info.adsetPath, currentImg.info.tableName);
+                        await this.sendProperties(doc, panel, msg.name ?? null);
+                        return;
+                    }
+                    const tgt = picked.target;
+                    if (!tgt) { await this.sendProperties(doc, panel, msg.name ?? null); return; }
+                    // Switching: drop the current binding first (only one image binding per Image).
+                    if (currentImg && !(currentImg.info.gridName === tgt.gridName && currentImg.info.column === tgt.column)) {
+                        await this.unbindDataImage(doc, projImg, panel, ctrlName, currentImg.info.adsetPath, currentImg.info.tableName);
+                    }
+                    await this.bindDataImage(doc, projImg, panel, ctrlName, tgt);
                     await this.sendProperties(doc, panel, msg.name ?? null);
                     return;
                 }
@@ -1805,6 +2311,90 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         }
     }
 
+    /**
+     * Design-time preview for Data-Image bound Images: a Data-Image Image has no XAML Source (the
+     * runtime shows the selected row's file), so the designer would render it blank. This resolves
+     * the FIRST row's image file from the owning table's .db and injects it as a render-only Source
+     * (never saved) so the designer shows roughly what the Image will display.
+     */
+    private async applyDataImagePreview(xaml: string, projectFolder: string | undefined): Promise<string> {
+        if (!projectFolder || !xaml.includes('<Image')) return xaml;
+        try {
+            for (const f of readDataSetFiles(projectFolder)) {
+                for (const t of f.spec.tables) {
+                    if (!t.boundTo || t.boundToType !== 'DataGrid' || !t.sqlite || !t.sqlite.file) continue;
+                    const imgs = t.boundImages || [];
+                    if (!imgs.length) continue;
+                    // Resolve the table's .db like the DataSet designer's preview does.
+                    const file = t.sqlite.file;
+                    const candidates = [file];
+                    if (!path.isAbsolute(file)) {
+                        candidates.unshift(path.join(projectFolder, file));
+                        for (const cfg of ['Debug', 'Release']) {
+                            for (const tfm of ['net8.0', 'net9.0', 'net10.0']) candidates.push(path.join(projectFolder, 'bin', cfg, tfm, file));
+                        }
+                    }
+                    const dbPath = candidates.find((p) => fs.existsSync(p));
+                    if (!dbPath) continue;
+                    let firstPath: string | null = null;
+                    try {
+                        const client = await this.host.getClient();
+                        const res = await client.sqliteQuery(dbPath, `SELECT "${imgs[0].column}" FROM "${sqliteTableName(t)}" ORDER BY rowid LIMIT 1`, 1);
+                        const v = res.rows && res.rows[0] && res.rows[0][0];
+                        if (typeof v === 'string' && v && fs.existsSync(v)) firstPath = v;
+                    } catch { /* no preview — keep blank */ }
+                    if (!firstPath) continue;
+                    const escPath = firstPath.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+                    for (const bi of imgs) {
+                        const tagRe = new RegExp(`(<Image\\b[^>]*?x:Name="${bi.control}"[^>]*?)(/?)>`, 'i');
+                        const m = tagRe.exec(xaml);
+                        if (m) {
+                            const clean = m[1].replace(/\s+Source="[^"]*"/gi, '');
+                            const replacement = clean + ` Source="${escPath}"` + (m[2] ? '/>' : '>');
+                            xaml = xaml.slice(0, m.index) + replacement + xaml.slice(m.index + m[0].length);
+                        }
+                    }
+                }
+            }
+        } catch { /* preview is best-effort */ }
+        return xaml;
+    }
+
+    /** Absolute path to a table's .db if it exists (design-time resolution, mirrors the runtime
+     *  "next to the app" rule by also probing bin/...). */
+    private resolvePreviewDb(projectFolder: string, file: string): string | undefined {
+        const candidates = [file];
+        if (!path.isAbsolute(file)) {
+            candidates.unshift(path.join(projectFolder, file));
+            for (const cfg of ['Debug', 'Release']) {
+                for (const tfm of ['net8.0', 'net9.0', 'net10.0']) candidates.push(path.join(projectFolder, 'bin', cfg, tfm, file));
+            }
+        }
+        return candidates.find((p) => fs.existsSync(p));
+    }
+
+    /** Rows for every DataGrid-bound DataSet table in the project, for the design-time canvas preview. */
+    private async designGridData(
+        projectFolder: string,
+        client: { sqliteQuery(file: string, sql: string, limit?: number): Promise<{ columns: string[]; rows: unknown[][] }> }
+    ): Promise<{ control: string; columns: string[]; rows: (string | number | boolean | null)[][] }[]> {
+        const out: { control: string; columns: string[]; rows: (string | number | boolean | null)[][] }[] = [];
+        try {
+            for (const f of readDataSetFiles(projectFolder)) {
+                for (const t of f.spec.tables) {
+                    if (!t.boundTo || t.boundToType !== 'DataGrid' || !t.sqlite || !t.sqlite.file) continue;
+                    const dbPath = this.resolvePreviewDb(projectFolder, t.sqlite.file);
+                    if (!dbPath) continue;
+                    const res = await client.sqliteQuery(dbPath, `SELECT * FROM "${sqliteTableName(t)}" ORDER BY rowid LIMIT 8`, 8);
+                    if (res && res.columns && res.columns.length) {
+                        out.push({ control: t.boundTo, columns: res.columns, rows: res.rows as (string | number | boolean | null)[][] });
+                    }
+                }
+            }
+        } catch { /* design-time data is best-effort */ }
+        return out;
+    }
+
     private async render(doc: DesignerDocument, panel: vscode.WebviewPanel, followUp = false): Promise<void> {
         const host = await this.host.getClient();
         // Render the tab the user last selected as the ACTIVE tab (so its body Canvas is laid
@@ -1828,13 +2418,25 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         } finally {
             if (tabControl) tabControl.removeAttribute('SelectedIndex');
         }
+        // Design-time preview of Data-Image bound Images: inject the first row's image file into the
+        // render-only XAML (never saved) so the Image isn't blank in the designer.
+        const previewProj = findProject(doc.uri);
+        let grids: { control: string; columns: string[]; rows: (string | number | boolean | null)[][] }[] = [];
+        if (previewProj) {
+            const folder = path.dirname(previewProj.projectUri.fsPath);
+            xaml = await this.applyDataImagePreview(xaml, folder);
+            // Design-time data: feed each DataGrid-bound DataSet table's rows to the host so the grid
+            // shows its data on the canvas (read-only) even though code-behind never runs.
+            grids = await this.designGridData(folder, host);
+        }
         const size = this.designSize(doc.model.root);
         const proj = findProject(doc.uri);
         const previewTheme = this.previewTheme(doc.model.root);
         const frame = await host.render(
             xaml, size.width, size.height,
             proj ? path.dirname(proj.projectUri.fsPath) : undefined,
-            previewTheme
+            previewTheme,
+            grids
         );
         this.frames.set(doc.uri.toString(), frame);
         // Dynamic Image-in-Grid tracking: an Image placed in a Grid cell follows its cell's CURRENT
@@ -1927,7 +2529,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private infoTagFor(el: Element): string {
         const name = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
         if (/^StatusBar\d*$/.test(name)) return 'StatusBar';
-        if (/^SplitPanel\d*$/.test(name) && localName(el.tagName) === 'Grid') return 'SplitPanel';
+        // Split Panels are a Border (new 3-zone frame) or a Grid (older docs) named SplitPanelN.
+        if (/^SplitPanel\d*$/.test(name)) return 'SplitPanel';
         return localName(el.tagName);
     }
 
@@ -1963,8 +2566,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         } catch { /* best-effort */ }
     }
 
-    /** Binds a DataSet table asset picked in the form designer (reuses the DataSet bind path:
-     *  code-behind ItemsSource + .adset boundTo marker + regenerate the generated class). */
+    /** Binds a DataSet table asset picked in the form designer. Records the EXACT same state the
+     *  DataSet designer's "Bind to control" dropdown records (boundTo/boundToType + the shared
+     *  per-DataSet SQLite default for a no-storage table), writes the code-behind ItemsSource,
+     *  regenerates the DataSet class + .xsd, ensures the SQLite packages, and repaints any open
+     *  DataSet designer panel for the .adset — so binding here is indistinguishable from binding
+     *  in the DataSet designer (and vice versa). */
     private async bindDataSetAsset(
         doc: DesignerDocument,
         proj: ProjectInfo,
@@ -1983,6 +2590,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 void vscode.window.showWarningMessage(`"${asset.tableName}" is already bound to "${t.boundTo}" — un-bind it there first.`);
                 return;
             }
+            const wasBound = t.boundTo === ctrlName;
+            // Record the canonical binding state BEFORE generating, exactly like the DataSet side:
+            // every bound table is SQLite-backed, defaulting to the shared per-DataSet .db.
+            t.boundTo = ctrlName;
+            t.boundToType = controlType as DataTableSpec['boundToType'];
+            if (!t.sqlite) t.sqlite = { file: defaultDbFile(spec) };
             const b: DataSetBindingRef = {
                 datasetName: asset.datasetName, tableName: asset.tableName, controlName: ctrlName,
                 controlType: controlType as DataSetBindingRef['controlType']
@@ -1993,17 +2606,134 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             // VB: named controls are not auto-generated fields — ensure the FindControl accessor
             // exists (defensive; the form designer normally syncs these when a control is placed).
             if (proj.language === 'vb') await syncVbAccessors(doc.uri, namedControlsInAxaml(doc.uri));
-            if (t.boundTo !== ctrlName) {
-                t.boundTo = ctrlName;
-                t.boundToType = controlType as DataTableSpec['boundToType'];
-                fs.writeFileSync(asset.adsetPath, serializeDataSet(spec), 'utf8');
-                const gen = this.writeGeneratedFilesFor(proj, asset.adsetPath, spec);
-                void vscode.window.showInformationMessage(`Bound ${asset.tableName} to ${ctrlName} (${path.basename(filePath)})${gen ? `; regenerated ${gen}.` : ''}.`);
-            } else {
-                void vscode.window.showInformationMessage(`Re-wrote the binding of ${asset.tableName} to ${ctrlName}.`);
-            }
+            try { fs.writeFileSync(asset.adsetPath, serializeDataSet(spec), 'utf8'); } catch { /* handled below */ }
+            // Regenerate the DataSet class + .xsd, make sure the SQLite packages are present (as
+            // the DataSet designer's Generate Code does), then repaint any open .adset panel so
+            // the DataSet screen shows the binding immediately — "both ways" stays in sync.
+            const gen = this.writeGeneratedFilesFor(proj, asset.adsetPath, spec);
+            ensureSqlitePackages(proj, spec);
+            await reloadDataSetPanel(vscode.Uri.file(asset.adsetPath));
+            void vscode.window.showInformationMessage(
+                (wasBound
+                    ? `Re-wrote the binding of ${asset.tableName} to ${ctrlName}`
+                    : `Bound ${asset.tableName} to ${ctrlName} (${path.basename(filePath)})`)
+                + (gen ? `; regenerated ${gen}.` : '.')
+            );
         } catch (e) {
             void vscode.window.showErrorMessage(`Could not bind ${asset.tableName}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
+    /** Un-binds a control from the DataSet table that currently claims it: strips the code-behind
+     *  ItemsSource/property/Wire wiring, clears the .adset boundTo marker, regenerates the DataSet
+     *  class + .xsd, and repaints any open DataSet designer panel for the .adset (so the DataSet
+     *  screen shows the table un-bound immediately). The table keeps its schema + SQLite file —
+     *  exactly like the DataSet designer's Un-bind action. Returns the `<DataSet>.<Table>` label
+     *  that was unbound, or undefined when the control wasn't DataSet-bound. */
+    private async unbindCurrentDataSetBinding(
+        doc: DesignerDocument,
+        proj: ProjectInfo,
+        ctrlName: string,
+        fallbackType?: string
+    ): Promise<string | undefined> {
+        const projectFolder = path.dirname(proj.projectUri.fsPath);
+        const b = findBoundTable(projectFolder, ctrlName);
+        if (!b) return undefined;
+        const label = `${b.spec.name}.${b.table.name}`;
+        try {
+            await unbindControlFromDataSet(doc.uri, {
+                datasetName: b.spec.name, tableName: b.table.name, controlName: ctrlName,
+                controlType: (b.table.boundToType as DataSetBindingRef['controlType']) || (fallbackType as DataSetBindingRef['controlType'] | undefined)
+            });
+        } catch { /* keep going — still clear the marker */ }
+        try {
+            const spec = parseDataSet(fs.readFileSync(b.adsetPath, 'utf8'));
+            const t = spec.tables.find((tt) => tt.name === b.table.name);
+            if (t) {
+                t.boundTo = null;
+                t.boundToType = null;
+                fs.writeFileSync(b.adsetPath, serializeDataSet(spec), 'utf8');
+                this.writeGeneratedFilesFor(proj, b.adsetPath, spec);
+            }
+        } catch { /* best-effort */ }
+        await reloadDataSetPanel(vscode.Uri.file(b.adsetPath));
+        return label;
+    }
+
+    /** True when a .adset table (dataset asset) is already bound to a DIFFERENT control. */
+    private isDatasetTableClaimed(asset: Extract<Asset, { kind: 'dataset' }>, ctrlName: string): boolean {
+        try {
+            const spec = parseDataSet(fs.readFileSync(asset.adsetPath, 'utf8'));
+            const t = spec.tables.find((tt) => tt.name === asset.tableName);
+            return !!t && !!t.boundTo && t.boundTo !== ctrlName;
+        } catch { return false; }
+    }
+
+    /** Binds an Image to follow a DataGrid's selected-row image column. Exclusive with a static
+     *  Image.Source: any Source attribute is cleared (the data path wins). Writes the code-behind
+     *  selection handlers + records the binding on the owning table's .adset (boundImages). */
+    private async bindDataImage(
+        doc: DesignerDocument,
+        proj: ProjectInfo,
+        panel: vscode.WebviewPanel,
+        controlName: string,
+        tgt: { datasetName: string; tableName: string; gridName: string; column: string }
+    ): Promise<void> {
+        try {
+            const projectFolder = path.dirname(proj.projectUri.fsPath);
+            // Exclusive: clear any static Source (an undoable form edit).
+            const before = doc.model.serialize(true);
+            const el = doc.model.findByName(controlName);
+            if (el && el.hasAttribute('Source')) {
+                el.removeAttribute('Source');
+                this.notifyEdit(doc, panel, before);
+            }
+            const ref: DataImageRef = {
+                datasetName: tgt.datasetName, tableName: tgt.tableName,
+                controlName, gridName: tgt.gridName, column: tgt.column
+            };
+            const filePath = await bindImageToGrid(doc.uri, ref);
+            if (!filePath) { void vscode.window.showErrorMessage(`Could not write the code-behind for ${controlName}.`); return; }
+            const owner = tableForGrid(projectFolder, tgt.gridName);
+            if (owner) {
+                if (!owner.table.boundImages) owner.table.boundImages = [];
+                if (!owner.table.boundImages.some((b) => b.control === controlName)) {
+                    owner.table.boundImages.push({ control: controlName, column: tgt.column });
+                }
+                fs.writeFileSync(owner.adsetPath, serializeDataSet(owner.spec), 'utf8');
+            }
+            // VB: named controls are not auto fields — ensure Image/DataGrid accessors exist.
+            if (proj.language === 'vb') await syncVbAccessors(doc.uri, namedControlsInAxaml(doc.uri));
+            void vscode.window.showInformationMessage(
+                `Image ${controlName} now shows ${tgt.gridName}.${tgt.column} for the selected row (${path.basename(filePath)}).`
+            );
+        } catch (e) {
+            void vscode.window.showErrorMessage('Data Image bind failed: ' + (e instanceof Error ? e.message : String(e)));
+        }
+    }
+
+    /** Removes an Image's Data-Image binding: code-behind handlers + the .adset boundImages entry. */
+    private async unbindDataImage(
+        doc: DesignerDocument,
+        proj: ProjectInfo,
+        panel: vscode.WebviewPanel,
+        controlName: string,
+        adsetPath: string,
+        tableName: string
+    ): Promise<void> {
+        try {
+            await unbindImageFromGrid(doc.uri, controlName);
+            try {
+                const spec = parseDataSet(fs.readFileSync(adsetPath, 'utf8'));
+                const t = spec.tables.find((x) => x.name === tableName);
+                if (t && t.boundImages) {
+                    t.boundImages = t.boundImages.filter((b) => b.control !== controlName);
+                    fs.writeFileSync(adsetPath, serializeDataSet(spec), 'utf8');
+                }
+            } catch { /* best-effort */ }
+            void vscode.window.showInformationMessage(`Cleared the Data Image binding on ${controlName}.`);
+        } catch (e) {
+            void vscode.window.showErrorMessage('Data Image unbind failed: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -2016,30 +2746,24 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         if (!ctrlName) return;
         const proj = findProject(doc.uri);
         if (!proj) return;
-        const projectFolder = path.dirname(proj.projectUri.fsPath);
-        const b = findBoundTable(projectFolder, ctrlName);
-        if (b) {
-            // DataSet-bound control: strip the code-behind binding + typed property (and the
-            // DataGrid's Wire/field), clear the .adset boundTo marker, and regenerate MyData
-            // so the now-unbound table loses its sample-row / binding support.
-            await unbindControlFromDataSet(doc.uri, {
-                datasetName: b.spec.name, tableName: b.table.name, controlName: ctrlName,
-                controlType: localName(el.tagName) as DataSetBindingRef['controlType']
-            });
-            try {
-                const spec = parseDataSet(fs.readFileSync(b.adsetPath, 'utf8'));
-                const t = spec.tables.find((tt) => tt.name === b.table.name);
-                if (t) {
-                    t.boundTo = null;
-                    t.boundToType = null;
-                    fs.writeFileSync(b.adsetPath, serializeDataSet(spec), 'utf8');
-                    this.writeGeneratedFilesFor(proj, b.adsetPath, spec);
-                }
-            } catch { /* best-effort */ }
-            return;
-        }
-        if (findItemsSourceBinding(doc.uri, ctrlName)) {
+        const dsLabel = await this.unbindCurrentDataSetBinding(doc, proj, ctrlName, localName(el.tagName));
+        if (!dsLabel && findItemsSourceBinding(doc.uri, ctrlName)) {
             await removeItemsSourceBinding(doc.uri, ctrlName);
+        }
+        // An Image that follows a DataGrid's selected row: strip its wiring + .adset entry.
+        if (localName(el.tagName) === 'Image') {
+            const bind = findImageBinding(path.dirname(proj.projectUri.fsPath), ctrlName);
+            if (bind) {
+                await unbindImageFromGrid(doc.uri, ctrlName);
+                try {
+                    const spec = parseDataSet(fs.readFileSync(bind.info.adsetPath, 'utf8'));
+                    const t = spec.tables.find((x) => x.name === bind.info.tableName);
+                    if (t && t.boundImages) {
+                        t.boundImages = t.boundImages.filter((b) => b.control !== ctrlName);
+                        fs.writeFileSync(bind.info.adsetPath, serializeDataSet(spec), 'utf8');
+                    }
+                } catch { /* best-effort */ }
+            }
         }
     }
 
@@ -2131,10 +2855,28 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             ? { value: String(dsBinding.undoRedoDepth ?? 5) }
             : undefined;
         await this.ensureAutoSizeOff();
+        const props = propertyDefsFor(el, this.effectiveFor(doc, name), itemSourceOverride, undoRedoOverride, this.isAutoSizeOff(doc, ctrlName));
+        // A SplitPanel pane body's Width/Height are its divider positions (the pane fills its grid
+        // cell) — re-present them as the grid size and drop the axis that isn't a real divider.
+        this.adjustSplitPaneProps(doc, el, ctrlName, props);
+        // An Image whose Source is a Data-Image binding (follows a DataGrid's selected row): show it
+        // read-only and let the picker change/clear it instead of the file browser.
+        if (localName(el.tagName) === 'Image' && ctrlName && proj) {
+            const src = props.find((p) => p.key === 'Source');
+            if (src) {
+                src.dataImage = true; // the webview adds a 'Data…' button on the Source row
+                const bind = findImageBinding(path.dirname(proj.projectUri.fsPath), ctrlName);
+                if (bind) {
+                    src.value = `Data: ${bind.info.gridName}.${bind.info.column}`;
+                    src.readOnly = true;
+                    src.desc = `Shows the ${bind.info.gridName}.${bind.info.column} image of the selected row. Click … to change it or clear the binding.`;
+                }
+            }
+        }
         const msg: any = {
             type: 'properties',
             name: ctrlName,
-            properties: propertyDefsFor(el, this.effectiveFor(doc, name), itemSourceOverride, undoRedoOverride, this.isAutoSizeOff(doc, ctrlName)),
+            properties: props,
             info: controlInfoFor(this.infoTagFor(el))
         };
         // When a TabControl is selected, also send its TabItem children so the
@@ -2172,13 +2914,74 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         if (/^StatusBar\d*$/.test(ctrlName || '') && localName(el.tagName) === 'DockPanel') {
             msg.statusItems = statusItemsOf(el).map((i) => ({ kind: i.kind, text: i.text, position: i.position }));
         }
-        // A SplitPanel (a Grid named SplitPanelN) sends its current split state so the 'Split Layout'
-        // editor can pre-fill (orientation Columns/Rows + pane count).
-        if (/^SplitPanel\d*$/.test(ctrlName || '') && localName(el.tagName) === 'Grid') {
-            const st = splitStateOf(el);
-            msg.splitInfo = { columns: st.columns, count: st.count };
+        // A SplitPanel (a Border frame or, for older docs, the Grid) sends its current shape so the
+        // 'Split Layout' editor can pre-fill (Zones default T / Columns / Rows + pane count) and its
+        // runtime GridSplitters so the 'Splitters' editor can style each divider bar.
+        if (isSplitName(ctrlName)) {
+            const grid = splitGridOf(el);
+            if (grid) {
+                const sh = splitShapeOf(grid);
+                msg.splitInfo = { shape: sh.shape, count: sh.count, top: sh.top };
+                msg.splitters = splitterRowsOf(grid).map((r) => ({
+                    direction: r.direction,
+                    thickness: r.thickness,
+                    color: r.color,
+                    visible: r.visible
+                }));
+            }
+        }
+        // A DataGrid sends its current row/column decoration values so the 'Rows'/'Columns' editors
+        // can pre-fill (every value is a direct DataGrid attribute).
+        if (localName(el.tagName) === 'DataGrid') {
+            msg.dgRows = dgRowsOf(el);
+            msg.dgCols = dgColsOf(el);
         }
         await panel.webview.postMessage(msg);
+    }
+
+    /** Fetches the system font list from the host once and pushes it to a webview panel, so its
+     *  font pickers can offer every installed family. Never throws (best effort — the webview has
+     *  a compact default list to fall back on). */
+    private async pushFonts(panel: vscode.WebviewPanel): Promise<void> {
+        try {
+            if (this.systemFonts.length === 0) {
+                const host = await this.host.getClient();
+                this.systemFonts = await host.fonts();
+            }
+        } catch (e) {
+            // Keep whatever we already have (empty list = webview falls back to defaults).
+        }
+        void panel.webview.postMessage({ type: 'fonts', fonts: this.systemFonts });
+    }
+
+    /** A SplitPanel pane body fills its grid cell, so its Width/Height ARE the divider positions
+     *  (the neighbouring pane flexes). Show the current size from the grid definitions (the
+     *  host-measured pixels when the definition is star-sized) and drop the dimension that isn't a
+     *  real divider on that axis (e.g. Width on the full-width bottom pane). */
+    private adjustSplitPaneProps(doc: DesignerDocument, el: Element, ctrlName: string | null, props: any[]): void {
+        const root = splitRootOf(el);
+        if (!root) return;
+        const grid = splitGridOf(root);
+        if (!grid) return;
+        const geo = paneGeometry(grid, el);
+        if (!geo) return;
+        const b = this.boundsOf(doc, ctrlName);
+        const showOrDrop = (kind: 'cols' | 'rows', split: boolean, span: number, index: number, measured: number | undefined): void => {
+            const key = kind === 'cols' ? 'Width' : 'Height';
+            const p = props.find((x) => x && x.key === key);
+            if (!p) return;
+            if (!(split && span === 1)) {
+                const i = props.indexOf(p);
+                if (i >= 0) props.splice(i, 1);
+                return;
+            }
+            p.value = paneSizeDisplay(grid, kind, index, measured ?? 0);
+            p.desc = kind === 'cols'
+                ? 'Width of this pane (its neighbour stretches to fill the rest). 0 hides the pane; the splitter can be dragged at runtime.'
+                : 'Height of this pane (the rest of the split stretches to fill). 0 hides the pane; the splitter can be dragged at runtime.';
+        };
+        showOrDrop('cols', geo.colSplit, geo.colSpan, geo.col, b ? b.width : undefined);
+        showOrDrop('rows', geo.rowSplit, geo.rowSpan, geo.row, b ? b.height : undefined);
     }
 
     private boundsOf(doc: DesignerDocument, name: string | null): HostControlInfo | undefined {
@@ -2531,85 +3334,325 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         await this.sendProperties(doc, panel, barName);
     }
 
-    /** Writes the shared 'Pane Border' width onto every pane Border of a SplitPanel. */
+    /** Writes the shared 'Pane Border' width onto every pane Border of a SplitPanel (through its
+     *  inner Grid when the split is Border-wrapped). */
     private setSplitPaneBorder(el: Element, value: string): void {
+        const grid = splitGridOf(el);
+        if (!grid) return;
+        const nm = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
         const w = String(value).trim();
-        for (const b of splitPanes(el)) {
+        for (const b of splitPanes(grid, nm)) {
             if (w === '' || w === '0') b.removeAttribute('BorderThickness');
             else b.setAttribute('BorderThickness', w);
         }
     }
 
-    /** Applies a new Split Layout (orientation + pane count) to a SplitPanel Grid, reusing the
-     *  existing pane Borders (and the controls inside them) by index and rebuilding the splitters. */
-    private async applySplitLayout(doc: DesignerDocument, panel: vscode.WebviewPanel, grid: Element, raw: unknown): Promise<void> {
-        const r = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
-        const columns = r.columns !== false;
-        let count = Math.round(Number(r.count));
-        if (!Number.isFinite(count)) count = 2;
-        count = Math.max(2, Math.min(8, count));
-        const nm = grid.getAttribute('x:Name') || grid.getAttribute('Name') || localName(grid.tagName);
-        const slotAttr = columns ? 'Grid.Column' : 'Grid.Row';
-        const otherAttr = columns ? 'Grid.Row' : 'Grid.Column';
+    /** A SplitPanel pane's Width/Height set the DIVIDER, not a size on the pane itself (the pane
+     *  fills its grid cell). A number pins that row/column to that many pixels; 0 collapses/hides
+     *  the pane; '*' or empty makes it flex again. The neighbouring content row/column keeps a star
+     *  so the split still auto-resizes with the form and the splitters have something to drag. */
+    private async setSplitPaneSize(doc: DesignerDocument, panel: vscode.WebviewPanel, paneBody: Element, kind: 'cols' | 'rows', rawValue: string): Promise<void> {
+        const root = splitRootOf(paneBody);
+        const grid = root ? splitGridOf(root) : null;
+        if (!root || !grid) return;
+        const geo = paneGeometry(grid, paneBody);
+        if (!geo) return;
+        const split = kind === 'cols' ? geo.colSplit : geo.rowSplit;
+        const span = kind === 'cols' ? geo.colSpan : geo.rowSpan;
+        const index = kind === 'cols' ? geo.col : geo.row;
+        const name = paneBody.getAttribute('x:Name') || paneBody.getAttribute('Name') || null;
+        if (!split || span !== 1) {
+            const other = kind === 'cols' ? 'Height' : 'Width';
+            void vscode.window.showInformationMessage(
+                `This pane fills the whole ${kind === 'cols' ? 'width' : 'height'} of the split — its ${kind === 'cols' ? 'width' : 'height'} isn't a divider. Resize it with ${other} instead.`
+            );
+            await this.sendProperties(doc, panel, name);
+            return;
+        }
+        let newSize = String(rawValue).trim();
+        if (newSize === '') newSize = '*';
+        if (!/^(\d+(\.\d+)?|\d+(\.\d+)?\*|\*)$/.test(newSize)) {
+            void vscode.window.showInformationMessage('Enter a pixel size (e.g. 200), 0 to hide this pane, or * to let it flex with the window.');
+            await this.sendProperties(doc, panel, name);
+            return;
+        }
+        const sizes = splitDefSizes(grid, kind);
+        if (index < 0 || index >= sizes.length) return;
         this.refreshHistoryCode(doc);
         const before = doc.model.serialize(true);
-        const firstPane = splitPanes(grid)[0];
-        const paneBorder = (firstPane && firstPane.getAttribute('BorderThickness')) || '1';
-        const kept: Element[] = [];
-        const used = new Set<Element>();
-        const removed: Element[] = [];
-        for (let i = 0; i < count; i++) {
-            let pane = splitPaneAt(grid, i);
-            if (!pane) {
-                const canvasName = `${nm}Pane${i}`;
-                pane = doc.model.createElement(`<Border><Canvas x:Name="${canvasName}"/></Border>`);
-                pane.setAttribute('BorderThickness', paneBorder);
-                pane.setAttribute('BorderBrush', '#808080');
-            }
-            used.add(pane);
-            pane.setAttribute(slotAttr, String(i * 2));
-            pane.removeAttribute(otherAttr);
-            kept.push(pane);
-            if (i < count - 1) {
-                const splitter = doc.model.createElement('<GridSplitter/>');
-                splitter.setAttribute('ResizeDirection', columns ? 'Columns' : 'Rows');
-                if (columns) splitter.setAttribute('Width', '5'); else splitter.setAttribute('Height', '5');
-                splitter.setAttribute('Background', '#B0B0B0');
-                splitter.setAttribute(slotAttr, String(i * 2 + 1));
-                splitter.removeAttribute(otherAttr);
-                kept.push(splitter);
-            }
+        sizes[index] = newSize;
+        // Keep a star on this axis so the split still auto-resizes with the form — but never take
+        // it from the pane the user just sized (they asked for a fixed/zero size).
+        const content = contentDefs(grid, kind);
+        if (content.length >= 2 && !sizes.some((s) => /[*]/.test(s))) {
+            const sibling = content.find((i) => i !== index);
+            if (sibling !== undefined) sizes[sibling] = '*';
         }
-        for (const c of elementChildren(grid)) {
-            if (localName(c.tagName).includes('.')) continue; // keep the row/column definitions
-            if (!used.has(c)) removed.push(c);
+        doc.model.setGridDefinitions(grid, kind, sizes);
+        this.notifyEdit(doc, panel, before);
+        await this.render(doc, panel);
+        await this.sendProperties(doc, panel, name);
+    }
+
+    /** Applies a new Split Layout (shape + pane count) to a SplitPanel, keeping each pane's
+     *  contents by index. `shape` is 'zones' (default T: two panes over a full-width one),
+     *  'columns' (N side-by-side) or 'rows' (N stacked). Older documents root the split on the Grid
+     *  itself — converting those to 'zones' wraps the Grid in the clickable Border frame. */
+    private async applySplitShape(doc: DesignerDocument, panel: vscode.WebviewPanel, root: Element, grid: Element, raw: unknown): Promise<void> {
+        const r = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+        const shapeRaw = String(r.shape ?? (r.columns === false ? 'rows' : 'columns'));
+        const shape: SplitShape = shapeRaw === 'zones' ? 'zones' : (shapeRaw === 'rows' ? 'rows' : 'columns');
+        let count = Math.round(Number(r.count));
+        if (!Number.isFinite(count)) count = 0;
+        let top = Math.round(Number(r.top));
+        if (!Number.isFinite(top)) {
+            // Older editors sent only shape+count; for Zones their count WAS the total panes
+            // (top band + bottom), so map count-1 -> top for compatibility.
+            top = shape === 'zones' && count > 0 ? count - 1 : 2;
         }
+        top = Math.max(2, Math.min(8, top));
+        count = shape === 'zones' ? top + 1 : Math.max(2, Math.min(8, count || 2));
+        const cur = splitShapeOf(grid);
+        const wantsWrap = shape === 'zones' && root === grid;
+        const already = shape === 'zones' ? cur.top === top : cur.count === count;
+        if (cur.shape === shape && already && !wantsWrap) {
+            await this.sendProperties(doc, panel, root.getAttribute('x:Name') || root.getAttribute('Name') || null);
+            return; // already that layout — nothing to do
+        }
+        let gridEl = grid;
+        if (wantsWrap) {
+            const inner = this.wrapSplitGrid(doc, grid);
+            if (!inner) return;
+            gridEl = inner;
+        }
+        const nm = root.getAttribute('x:Name') || root.getAttribute('Name') || localName(root.tagName);
+        await this.rebuildSplitGrid(doc, panel, gridEl, nm, shape, count, shape === 'zones' ? top : 2);
+    }
+
+    /** Wraps a Grid-rooted SplitPanel in the new Border frame: the Grid's children + its placement
+     *  attributes (size, Dock, Canvas position, margins…) move into an unnamed inner Grid inside a
+     *  Border named like the old Grid. Returns the new inner Grid, or null if it can't wrap. */
+    private wrapSplitGrid(doc: DesignerDocument, grid: Element): Element | null {
+        const parent = grid.parentNode as Element | null;
+        if (!parent || parent.nodeType !== 1) return null;
+        const nm = grid.getAttribute('x:Name') || grid.getAttribute('Name') || '';
+        const inner = doc.model.createElement('<Grid/>');
+        while (grid.firstChild) inner.appendChild(grid.firstChild);
+        const border = doc.model.createElement('<Border BorderBrush="#909090" BorderThickness="2" Padding="1" Background="#E6E6E6"/>');
+        for (let a = 0; a < grid.attributes.length; a++) {
+            const attr = grid.attributes.item(a);
+            if (!attr) continue;
+            if (attr.name === 'x:Name' || attr.name === 'Name') continue;
+            border.setAttribute(attr.name, attr.value);
+        }
+        if (nm) border.setAttribute('x:Name', nm);
+        border.appendChild(inner);
+        parent.replaceChild(border, grid);
+        return inner;
+    }
+
+    /** Rebuilds a SplitPanel's grid into the target shape, moving each existing pane's contents
+     *  across by pane index. Panes that don't exist in the new shape are removed (their event
+     *  handlers are cleaned up from the code-behind). For Zones, `count` = top + 1 (top panes over
+     *  the full-width bottom pane) and `top` = how many panes fill the top band. */
+    private async rebuildSplitGrid(doc: DesignerDocument, panel: vscode.WebviewPanel, grid: Element, nm: string, shape: SplitShape, count: number, top = 2): Promise<void> {
+        this.refreshHistoryCode(doc);
+        const before = doc.model.serialize(true);
+        // Collect the existing pane bodies (the named Canvas inside each pane Border) by index.
+        const oldBodies = new Map<number, Element>();
+        for (let idx = 0; ; idx++) {
+            const b = splitPaneAt(grid, nm, idx);
+            if (!b) break;
+            const canvas = elementChildren(b).find((c) => {
+                const cn = c.getAttribute('x:Name') || c.getAttribute('Name') || '';
+                return localName(c.tagName) === 'Canvas' && cn === `${nm}Pane${idx}`;
+            });
+            if (canvas) oldBodies.set(idx, canvas);
+        }
+        const firstOld = oldBodies.get(0);
+        const paneBorder = (firstOld && firstOld.parentNode && (firstOld.parentNode as Element).getAttribute('BorderThickness')) || '1';
+        const paneCount = shape === 'zones' ? top + 1 : count;
+        // Existing panes whose index won't exist in the new shape are dropped (their contents too).
         const stale = new Set<string>();
-        for (const rm of removed) {
-            for (const h of doc.model.eventHandlersOfSubtree(rm)) {
-                if (!doc.model.hasHandler(h)) stale.add(h);
+        for (const [idx, body] of oldBodies) {
+            if (idx >= paneCount) {
+                const b = body.parentNode as Element | null;
+                if (b && b.nodeType === 1) {
+                    for (const h of doc.model.eventHandlersOfSubtree(b)) {
+                        if (!doc.model.hasHandler(h)) stale.add(h);
+                    }
+                }
             }
-            grid.removeChild(rm);
         }
-        for (const el of kept) grid.appendChild(el); // kept children end up in pane/splitter order
-        const sizes: string[] = [];
-        for (let i = 0; i < count; i++) {
-            if (i > 0) sizes.push('Auto');
-            sizes.push('*');
+        // Wipe the grid's children (definitions + panes + splitters) and rebuild.
+        while (grid.firstChild) grid.removeChild(grid.firstChild);
+        for (let p = 0; p < paneCount; p++) {
+            const placement = panePlacement(shape, p, top);
+            if (!placement) continue;
+            const bodyName = `${nm}Pane${p}`;
+            const body = oldBodies.get(p) ?? doc.model.createElement(`<Canvas x:Name="${bodyName}"/>`);
+            if (!body.getAttribute('x:Name') && !body.getAttribute('Name')) body.setAttribute('x:Name', bodyName);
+            const b = doc.model.createElement('<Border/>');
+            b.setAttribute('BorderThickness', paneBorder);
+            b.setAttribute('BorderBrush', '#808080');
+            b.setAttribute('Background', 'White'); // panes are always white content areas
+            if (placement.row) b.setAttribute('Grid.Row', String(placement.row));
+            if (placement.col) b.setAttribute('Grid.Column', String(placement.col));
+            if (placement.rowSpan) b.setAttribute('Grid.RowSpan', String(placement.rowSpan));
+            if (placement.colSpan) b.setAttribute('Grid.ColumnSpan', String(placement.colSpan));
+            b.appendChild(body);
+            grid.appendChild(b);
+            // A splitter follows each pane that has a neighbour on that axis. In a Zones layout a
+            // vertical bar follows every top-band pane except the last; the horizontal bar (under
+            // the top band, spanning all its columns) follows the LAST top pane.
+            if (shape === 'zones') {
+                if (p < top - 1) grid.appendChild(this.splitterEl(doc.model, { row: 0, col: p * 2 + 1, dir: 'Columns' }));
+                else if (p === top - 1) grid.appendChild(this.splitterEl(doc.model, { row: 1, col: 0, colSpan: top * 2 - 1, dir: 'Rows' }));
+            } else if (p < paneCount - 1) {
+                const horizontal = shape === 'rows';
+                grid.appendChild(this.splitterEl(doc.model, horizontal
+                    ? { row: p * 2 + 1, col: 0, dir: 'Rows' }
+                    : { row: 0, col: p * 2 + 1, dir: 'Columns' }));
+            }
         }
-        if (columns) {
-            doc.model.setGridDefinitions(grid, 'cols', sizes);
-            doc.model.setGridDefinitions(grid, 'rows', ['*']);
-        } else {
-            doc.model.setGridDefinitions(grid, 'rows', sizes);
-            doc.model.setGridDefinitions(grid, 'cols', ['*']);
-        }
+        const defs = splitDefsFor(shape, paneCount, top);
+        doc.model.setGridDefinitions(grid, 'cols', defs.cols);
+        doc.model.setGridDefinitions(grid, 'rows', defs.rows);
         if (stale.size > 0) {
             try { await removeHandlersFromCodeBehind(doc.uri, [...stale]); } catch { /* best-effort */ }
         }
         this.notifyEdit(doc, panel, before);
         await this.render(doc, panel);
         await this.sendProperties(doc, panel, nm);
+    }
+
+    /** Builds a GridSplitter element for a splitter gutter (dir is the ResizeDirection: Columns for
+     *  a vertical bar between side-by-side panes, Rows for a horizontal bar). */
+    private splitterEl(model: XamlModel, g: { row: number; col: number; rowSpan?: number; colSpan?: number; dir: 'Columns' | 'Rows' }): Element {
+        const sp = model.createElement('<GridSplitter/>');
+        sp.setAttribute('ResizeDirection', g.dir);
+        sp.setAttribute('Background', '#B0B0B0');
+        // The splitter bar must never shrink below 1px (min 1, not 0) so a thin divider stays
+        // grabbable/draggable and can't vanish when the surrounding layout is resized.
+        sp.setAttribute('MinWidth', '1');
+        sp.setAttribute('MinHeight', '1');
+        if (g.dir === 'Columns') sp.setAttribute('Width', '5'); else sp.setAttribute('Height', '5');
+        if (g.row) sp.setAttribute('Grid.Row', String(g.row));
+        if (g.col) sp.setAttribute('Grid.Column', String(g.col));
+        if (g.rowSpan) sp.setAttribute('Grid.RowSpan', String(g.rowSpan));
+        if (g.colSpan) sp.setAttribute('Grid.ColumnSpan', String(g.colSpan));
+        return sp;
+    }
+
+    /** Styles each runtime GridSplitter of a SplitPanel from the 'Splitters' editor. `items` match
+     *  the grid's GridSplitters in order (direction is structural and can't change). Only writes
+     *  attributes that actually changed, so an unchanged Save leaves the XAML tidy. */
+    private async applySplitterSettings(doc: DesignerDocument, panel: vscode.WebviewPanel, grid: Element, nm: string, rawItems: unknown): Promise<void> {
+        const rows = splitterRowsOf(grid);
+        const items = Array.isArray(rawItems) ? rawItems : [];
+        if (rows.length === 0 || items.length === 0) return;
+        this.refreshHistoryCode(doc);
+        const before = doc.model.serialize(true);
+        rows.forEach((r, i) => {
+            const it = items[i] as Record<string, unknown> | undefined;
+            if (!it || typeof it !== 'object') return;
+            const barAttr = r.direction === 'vertical' ? 'Width' : 'Height';
+            // Thickness: a number > 0 sets the bar size on its axis; blank/invalid restores the default.
+            const rawT = String(it.thickness ?? '').trim();
+            const t = parseFloat(rawT);
+            const curT = r.el.getAttribute(barAttr) || '';
+            if (Number.isFinite(t) && t > 0) {
+                const ts = String(Math.round(t));
+                if (ts !== curT) r.el.setAttribute(barAttr, ts);
+            } else if (rawT === '' && curT) {
+                r.el.removeAttribute(barAttr);
+            }
+            // Colour: an explicit #rrggbb writes Background (changed colours only); blank restores the default.
+            const hex = normalizeHexColor(String(it.color ?? ''));
+            const curC = r.el.getAttribute('Background') || '';
+            if (hex && hex !== curC) r.el.setAttribute('Background', hex);
+            else if (!hex && curC) r.el.removeAttribute('Background');
+            // Visibility: hidden bars disappear at runtime.
+            const vis = it.visible !== false;
+            const curV = r.el.getAttribute('IsVisible') || '';
+            if (vis && /^false$/i.test(curV)) r.el.removeAttribute('IsVisible');
+            else if (!vis && !/^false$/i.test(curV)) r.el.setAttribute('IsVisible', 'False');
+        });
+        this.notifyEdit(doc, panel, before);
+        await this.render(doc, panel);
+        await this.sendProperties(doc, panel, nm);
+    }
+
+    /** Writes a DataGrid decoration editor's values as attributes on the DataGrid. Only writes
+     *  values that differ from the current attribute / the framework default (default → attribute
+     *  removed), so an unchanged Save leaves the XAML tidy. */
+    private async applyDataGridDecorations(doc: DesignerDocument, panel: vscode.WebviewPanel, el: Element, fields: { key: string; attr: string; def: string }[], raw: unknown): Promise<void> {
+        const r = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+        this.refreshHistoryCode(doc);
+        const before = doc.model.serialize(true);
+        for (const f of fields) {
+            const val = String(r[f.key] ?? '').trim();
+            if (val === '' || val === f.def) el.removeAttribute(f.attr);
+            else el.setAttribute(f.attr, val);
+        }
+        this.notifyEdit(doc, panel, before);
+        await this.render(doc, panel);
+        await this.sendProperties(doc, panel, el.getAttribute('x:Name') || el.getAttribute('Name') || null);
+    }
+
+    /** 'Columns' editor save: writes the scalar column/header attributes AND rebuilds the column
+     *  header text Style (alignment / colour / font / background) inside `<dg:DataGrid.Styles>`. */
+    private async applyDataGridCols(doc: DesignerDocument, panel: vscode.WebviewPanel, el: Element, raw: unknown): Promise<void> {
+        const r = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+        this.refreshHistoryCode(doc);
+        const before = doc.model.serialize(true);
+        for (const f of DG_COL_FIELDS) {
+            const val = String(r[f.key] ?? '').trim();
+            if (val === '' || val === f.def) el.removeAttribute(f.attr);
+            else el.setAttribute(f.attr, val);
+        }
+        this.writeDgHeaderStyle(doc, el, r);
+        this.notifyEdit(doc, panel, before);
+        await this.render(doc, panel);
+        await this.sendProperties(doc, panel, el.getAttribute('x:Name') || el.getAttribute('Name') || null);
+    }
+
+    /** Rebuilds the DataGrid's column-header Style from the Columns editor's header fields. Only
+     *  non-default fields become Setters; when nothing is set the header Style (and an empty
+     *  Styles block) is removed, keeping the XAML tidy. */
+    private writeDgHeaderStyle(doc: DesignerDocument, el: Element, r: Record<string, unknown>): void {
+        // DataGrid lives in its own assembly, so the header Style's Selector (dg|DataGridColumnHeader)
+        // needs the `dg` prefix declared at the ROOT. Avalonia rejects attributes on property
+        // elements, so we never redeclare xmlns:dg on <dg:DataGrid.Styles> — it must come from root.
+        doc.model.ensureXmlns('dg', 'using:Avalonia.Controls');
+        const block = dgStylesBlock(el);
+        const old = dgHeaderStyle(el);
+        if (old && block) block.removeChild(old);
+        // Collect the non-default header setters.
+        const setters: string[] = [];
+        for (const f of DG_HEADER_FIELDS) {
+            const val = String(r[f.key] ?? '').trim();
+            if (val === '' || val === f.def) continue;
+            setters.push(`<Setter Property="${f.setter}" Value="${String(val).replace(/"/g, '&quot;')}"/>`);
+        }
+        if (setters.length === 0) {
+            if (block && elementChildren(block).length === 0) el.removeChild(block);
+            return;
+        }
+        // Parse with a temporary local dg binding (so the XML parser accepts the prefix), then
+        // drop it — serialisation relies on the root's xmlns:dg instead.
+        const style = doc.model.createElement(
+            `<Style xmlns:dg="using:Avalonia.Controls" Selector="dg|DataGridColumnHeader">${setters.join('')}</Style>`
+        );
+        style.removeAttribute('xmlns:dg');
+        if (block) {
+            block.appendChild(style);
+        } else {
+            const nb = doc.model.createElement('<dg:DataGrid.Styles xmlns:dg="using:Avalonia.Controls"/>');
+            nb.removeAttribute('xmlns:dg');
+            nb.appendChild(style);
+            el.appendChild(nb);
+        }
     }
 
     /** Records a new post-edit state (drops the redo branch, caps at UNDO_STATES). */
@@ -2968,16 +4011,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         <h3 id="splitTitle">Split Layout</h3>
         <p class="modal-hint">Panes are separated by bars you can drag at runtime to resize them; the panes resize with the window. Each pane keeps whatever is inside it.</p>
         <div class="grid-settings">
-          <label>Orientation
+          <label>Layout
             <span class="ch-seg">
-              <button id="splitCols" type="button" class="ch-seg-btn active">Columns</button>
+              <button id="splitZones" type="button" class="ch-seg-btn">Zones</button>
+              <button id="splitCols" type="button" class="ch-seg-btn">Columns</button>
               <button id="splitRows" type="button" class="ch-seg-btn">Rows</button>
             </span>
           </label>
-          <label>Panes
+          <label id="splitPanesRow"><span id="splitPanesLabel">Panes</span>
             <span class="split-count-row">
               <button id="splitMinus" type="button" class="modal-btn">−</button>
-              <input id="splitCount" readonly value="2"/>
+              <input id="splitCount" readonly value="3"/>
               <button id="splitPlus" type="button" class="modal-btn">+</button>
             </span>
           </label>
@@ -2985,6 +4029,28 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         <div class="modal-buttons">
           <button id="splitCancel" type="button" class="modal-btn">Cancel</button>
           <button id="splitSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="splitterModal" class="modal" hidden>
+      <div class="modal-box modal-narrow">
+        <h3 id="splitterTitle">Splitters</h3>
+        <p class="modal-hint">The draggable divider bars between the panes. <b>Thickness</b> is the bar's width (a vertical divider) or height (a horizontal one); a <b>hidden</b> bar can't be dragged at runtime.</p>
+        <div id="splitterBody" class="splitter-list"></div>
+        <div class="modal-buttons">
+          <button id="splitterCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="splitterSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="dgModal" class="modal" hidden>
+      <div class="modal-box modal-narrow">
+        <h3 id="dgTitle">Rows</h3>
+        <p class="modal-hint" id="dgHint"></p>
+        <div id="dgBody" class="splitter-list"></div>
+        <div class="modal-buttons">
+          <button id="dgCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="dgSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

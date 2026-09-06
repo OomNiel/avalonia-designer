@@ -83,6 +83,15 @@ export interface DataColumnSpec {
     sampleValue: string | null;
 }
 
+/** A form Image control that shows the image file stored in one of this table's TEXT columns for the
+ *  currently-selected row of the table's bound DataGrid. `gridName` is the bound DataGrid control
+ *  (normally this table's boundTo); the binding lives here (not as a XAML Image.Source) because the
+ *  value is a per-row file path loaded at runtime. `column` must be a String column of this table. */
+export interface BoundImageRef {
+    control: string; // the Image control's x:Name (in the same form as the DataGrid)
+    column: string;  // this table's TEXT column holding the absolute image-file path
+}
+
 export interface DataTableSpec {
     name: string;
     x: number;
@@ -94,12 +103,28 @@ export interface DataTableSpec {
     boundToType?: 'DataGrid' | 'ListBox' | 'ComboBox' | 'ItemsControl' | null;
     /** Undo/redo depth for the bound grid's live editing (default 5; 0 disables undo). */
     undoRedoDepth?: number;
+    /** Name of the column used as the table's primary key (single-key identity; null = none,
+     *  SQLite then falls back to its internal rowid). */
+    keyColumn?: string | null;
+    /** SQLite storage for this table. When set, the table's rows live in a SQLite database file
+     *  instead of the sample/XML store (per-table data source). null = current behaviour.
+     *  `tableName` is the real table name INSIDE that .db (imports that were renamed, e.g.
+     *  Customers → Customers2, still read/write the original Customers table). */
+    sqlite?: { file: string; connectionString?: string; tableName?: string } | null;
+    /** Image controls (elsewhere on the same form) that follow this table's bound DataGrid selection
+     *  and show the image file referenced by one of this table's String columns. */
+    boundImages?: BoundImageRef[];
 }
 
 export interface DataSetSpec {
     version: number;
     name: string;        // dataset name (also the generated class name)
     tables: DataTableSpec[];
+}
+
+/** The table's image (Image follows the bound DataGrid selection) bindings. */
+export function boundImagesOf(t: DataTableSpec): BoundImageRef[] {
+    return t.boundImages ?? [];
 }
 
 /** True if `s` is a usable code identifier (letters/digits/underscore, not starting with a digit). */
@@ -113,13 +138,13 @@ export function sanitizeName(s: string): string {
     return cleaned || 'DataSet';
 }
 
-/** A fresh table (not yet added) with a unique name + a starter Id column. */
+/** A fresh table (not yet added) with a unique name + a starter Id column (flagged as the key). */
 export function newTableSpec(spec: DataSetSpec): DataTableSpec {
     const names = new Set(spec.tables.map((t) => t.name.toLowerCase()));
     let i = spec.tables.length + 1;
     let name = `Table${i}`;
     while (names.has(name.toLowerCase())) { i++; name = `Table${i}`; }
-    return { name, x: 40, y: 40, columns: [{ name: 'Id', type: 'Int32', caption: 'ID', allowNull: false, sampleValue: null }], boundTo: null, boundToType: null, undoRedoDepth: 5 };
+    return { name, x: 40, y: 40, columns: [{ name: 'Id', type: 'Int32', caption: 'ID', allowNull: false, sampleValue: null }], keyColumn: 'Id', boundTo: null, boundToType: null, undoRedoDepth: 5 };
 }
 
 /** A fresh column (not yet added) with a unique name inside `table`. */
@@ -129,6 +154,23 @@ export function newColumnSpec(table: DataTableSpec): DataColumnSpec {
     let name = `Column${i}`;
     while (names.has(name.toLowerCase())) { i++; name = `Column${i}`; }
     return { name, type: 'String', caption: name, allowNull: true, sampleValue: null };
+}
+
+/** True when the table's data source is a SQLite database file (opt-in per table). */
+export function isSqliteTable(t: DataTableSpec): boolean {
+    return !!t.sqlite && !!t.sqlite.file;
+}
+
+/** The name of the table INSIDE the SQLite file (an import may have renamed the .adset table to
+ *  avoid a clash, but the database table keeps its original name). Defaults to the spec name. */
+export function sqliteTableName(t: DataTableSpec): string {
+    return (t.sqlite && t.sqlite.tableName) || t.name;
+}
+
+/** The table's primary-key column spec (flagged via `keyColumn`), if one exists and is a column. */
+export function keyColumnOf(t: DataTableSpec): DataColumnSpec | undefined {
+    if (!t.keyColumn) return undefined;
+    return t.columns.find((c) => c.name === t.keyColumn);
 }
 
 /** Finds a table by name (case-insensitive). */
@@ -160,7 +202,8 @@ export function parseDataSet(text: string): DataSetSpec {
                 columns: [],
                 boundTo: typeof t.boundTo === 'string' && t.boundTo ? t.boundTo : null,
                 boundToType: typeof t.boundToType === 'string' && t.boundToType ? t.boundToType as DataTableSpec['boundToType'] : null,
-                undoRedoDepth: typeof t.undoRedoDepth === 'number' && t.undoRedoDepth > 0 ? t.undoRedoDepth : (t.undoRedoDepth === 0 ? 0 : 5)
+                undoRedoDepth: typeof t.undoRedoDepth === 'number' && t.undoRedoDepth > 0 ? t.undoRedoDepth : (t.undoRedoDepth === 0 ? 0 : 5),
+                keyColumn: typeof t.keyColumn === 'string' && t.keyColumn ? t.keyColumn : null
             };
             if (Array.isArray(t.columns)) {
                 for (const c of t.columns) {
@@ -175,6 +218,29 @@ export function parseDataSet(text: string): DataSetSpec {
                         sampleValue: typeof c.sampleValue === 'string' && c.sampleValue ? c.sampleValue : null
                     });
                 }
+            }
+            // The key column must actually exist (guard against hand-edited files).
+            if (!table.columns.some((c) => c.name === table.keyColumn)) table.keyColumn = null;
+            if (t.sqlite && typeof t.sqlite === 'object' && typeof t.sqlite.file === 'string' && t.sqlite.file) {
+                table.sqlite = {
+                    file: t.sqlite.file,
+                    connectionString: typeof t.sqlite.connectionString === 'string' && t.sqlite.connectionString ? t.sqlite.connectionString : undefined,
+                    tableName: typeof t.sqlite.tableName === 'string' && t.sqlite.tableName ? t.sqlite.tableName : undefined
+                };
+            } else {
+                table.sqlite = null;
+            }
+            // Image controls that follow this grid's selection and show a file path from a String column.
+            if (Array.isArray(t.boundImages)) {
+                const imgs: BoundImageRef[] = [];
+                for (const b of t.boundImages) {
+                    if (b && typeof b === 'object'
+                        && typeof b.control === 'string' && b.control
+                        && typeof b.column === 'string' && b.column) {
+                        imgs.push({ control: b.control, column: b.column });
+                    }
+                }
+                if (imgs.length) table.boundImages = imgs;
             }
             if (table.columns.length === 0) {
                 table.columns.push({ name: 'Id', type: 'Int32', caption: 'ID', allowNull: false, sampleValue: null });
@@ -206,7 +272,10 @@ export function serializeDataSet(spec: DataSetSpec): string {
             })),
             ...(t.boundTo ? { boundTo: t.boundTo } : {}),
             ...(t.boundTo && t.boundToType ? { boundToType: t.boundToType } : {}),
-            ...(t.undoRedoDepth !== undefined && t.undoRedoDepth !== 5 ? { undoRedoDepth: t.undoRedoDepth } : {})
+            ...(t.undoRedoDepth !== undefined && t.undoRedoDepth !== 5 ? { undoRedoDepth: t.undoRedoDepth } : {}),
+            ...(t.keyColumn ? { keyColumn: t.keyColumn } : {}),
+            ...(t.sqlite && t.sqlite.file ? { sqlite: { file: t.sqlite.file, ...(t.sqlite.connectionString ? { connectionString: t.sqlite.connectionString } : {}), ...(t.sqlite.tableName ? { tableName: t.sqlite.tableName } : {}) } } : {}),
+            ...(t.boundImages && t.boundImages.length ? { boundImages: t.boundImages } : {})
         }))
     };
     return JSON.stringify(plain, null, 2) + '\n';
@@ -224,6 +293,7 @@ export function defaultDataSetSpec(name: string): DataSetSpec {
                 y: 40,
                 boundTo: null,
                 undoRedoDepth: 5,
+                keyColumn: 'Id',
                 columns: [
                     { name: 'Id', type: 'Int32', caption: 'ID', allowNull: false, sampleValue: null },
                     { name: 'Name', type: 'String', caption: 'Customer', allowNull: false, sampleValue: null },

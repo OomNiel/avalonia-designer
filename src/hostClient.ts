@@ -53,6 +53,26 @@ export interface SnippetResult {
     xaml: string;
 }
 
+/** A column of a user SQLite table (design-time schema inspection). */
+export interface SqliteColumnInfo {
+    name: string;
+    type: string;
+    notNull: boolean;
+    isPk: boolean;
+}
+
+/** A user SQLite table (design-time schema inspection). */
+export interface SqliteTableInfo {
+    name: string;
+    columns: SqliteColumnInfo[];
+}
+
+/** Results of a design-time SELECT preview against the user's SQLite file. */
+export interface SqliteResult {
+    columns: string[];
+    rows: (string | number | boolean | null)[][];
+}
+
 interface Pending {
     resolve: (v: Record<string, unknown>) => void;
     reject: (e: Error) => void;
@@ -140,12 +160,36 @@ export class HostClient {
         });
     }
 
-    async render(xaml: string, width: number, height: number, projectPath?: string, theme?: string): Promise<FrameResult> {
-        return (await this.request('render', { xaml, width, height, projectPath, theme })) as unknown as FrameResult;
+    async render(xaml: string, width: number, height: number, projectPath?: string, theme?: string, grids?: { control: string; columns: string[]; rows: (string | number | boolean | null)[][] }[]): Promise<FrameResult> {
+        const payload: Record<string, unknown> = { xaml, width, height, projectPath, theme };
+        if (grids && grids.length) payload.grids = grids;
+        return (await this.request('render', payload)) as unknown as FrameResult;
     }
 
     async snippet(tag: string): Promise<SnippetResult> {
         return (await this.request('snippet', { tag })) as unknown as SnippetResult;
+    }
+
+    /** System font family names seen by Avalonia in the host (for the font pickers). */
+    async fonts(): Promise<string[]> {
+        const r = await this.request('fonts');
+        const f = r.fonts;
+        return Array.isArray(f) ? f.map((x) => String(x)).sort((a, b) => a.localeCompare(b)) : [];
+    }
+
+    /** Design-time SQLite schema inspection (tables + their columns) for "Import from SQLite…". */
+    async sqliteTables(file: string): Promise<SqliteTableInfo[]> {
+        const r = await this.request('sqlite', { file, op: 'tables' });
+        return Array.isArray(r.tables) ? (r.tables as unknown as SqliteTableInfo[]) : [];
+    }
+
+    /** Runs a read-only SELECT against the user's SQLite file for the design-time data preview. */
+    async sqliteQuery(file: string, sql: string, limit = 200): Promise<SqliteResult> {
+        const r = await this.request('sqlite', { file, op: 'query', sql, limit });
+        return {
+            columns: Array.isArray(r.columns) ? r.columns.map(String) : [],
+            rows: Array.isArray(r.rows) ? (r.rows as unknown as (string | number | boolean | null)[][]) : []
+        };
     }
 
     dispose(): void {

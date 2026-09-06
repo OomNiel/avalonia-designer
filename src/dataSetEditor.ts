@@ -3,13 +3,14 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { DOMParser } from '@xmldom/xmldom';
 import { localName } from './xamlModel';
-import { bindControlToDataSet, unbindControlFromDataSet, hasDataSetBinding, DataSetBindingRef } from './codeBehind';
+import { bindControlToDataSet, unbindControlFromDataSet, unbindImageFromGrid, hasDataSetBinding, DataSetBindingRef } from './codeBehind';
 import {
-    DataSetSpec, DataTableSpec, parseDataSet, serializeDataSet, defaultDataSetSpec,
-    isValidIdentifier, findTable, newTableSpec, newColumnSpec, COLUMN_TYPES
+    DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, parseDataSet, serializeDataSet, defaultDataSetSpec,
+    isValidIdentifier, findTable, newTableSpec, newColumnSpec, COLUMN_TYPES, isSqliteTable, sanitizeName, sqliteTableName
 } from './dataSetModel';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
-import { findProject } from './projectParser';
+import { findProject, ProjectInfo } from './projectParser';
+import { PreviewerHostManager } from './hostClient';
 
 /** Control types that can display a DataSet table (they take an ItemsSource). */
 const BINDABLE_TAGS = new Set(['DataGrid', 'ListBox', 'ComboBox', 'ItemsControl']);
@@ -28,7 +29,96 @@ function walkProject(dir: string, out: string[]): void {
     }
 }
 
+/** The SQLite packages a generated project needs when a .adset table stores data in SQLite.
+ *  Kept in sync with the host's PreviewerHost.csproj. The SQLitePCLRaw bundle is referenced
+ *  directly so NuGet uses the patched native library (NU1903) regardless of the transitive pin. */
+const SQLITE_PACKAGES = [
+    '<PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.1" />',
+    '<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />'
+];
+
+/** Adds the SQLite package references to the project file (idempotent), if a table uses SQLite.
+ *  (Existing .db files are used in place — the app edits the absolute path — so no data files are
+ *  copied to the output folder.) Exported so the form designer's Items Source picker can apply the
+ *  same package injection the DataSet designer does when it binds a table. */
+export function ensureSqlitePackages(proj: ProjectInfo | undefined, spec: DataSetSpec): void {
+    if (!proj || !spec.tables.some((t) => isSqliteTable(t) || !!t.boundTo)) return;
+    const file = proj.projectUri.fsPath;
+    let text: string;
+    try { text = fs.readFileSync(file, 'utf8'); } catch { return; }
+    const items: string[] = [];
+    for (const r of SQLITE_PACKAGES) {
+        const name = r.split(' ')[1].replace('Include=', '').replace(/["/]/g, '');
+        if (!text.includes(name)) items.push('    ' + r);
+    }
+    if (items.length === 0) return;
+    const insert = items.join('\n');
+    const ig = text.lastIndexOf('</ItemGroup>');
+    if (ig >= 0) text = text.slice(0, ig) + insert + '\n' + text.slice(ig);
+    else {
+        const pj = text.lastIndexOf('</Project>');
+        if (pj < 0) return;
+        text = text.slice(0, pj) + '  <ItemGroup>\n' + insert + '\n  </ItemGroup>\n' + text.slice(pj);
+    }
+    fs.writeFileSync(file, text, 'utf8');
+}
+
 interface ScannedControl { name: string; type: string; axamlPath: string; }
+
+/** Maps a SQLite column-affinity to the closest designer column type (used by Import). */
+function sqliteAffinityToType(affinity: string): ColumnType {
+    const a = (affinity || '').toUpperCase();
+    if (a.startsWith('INT')) return 'Int32';
+    if (a === 'REAL' || a === 'FLOAT' || a === 'DOUBLE') return 'Double';
+    if (a.startsWith('NUM') || a === 'DECIMAL' || a === 'MONEY') return 'Decimal';
+    if (a === 'BOOLEAN' || a === 'BOOL') return 'Boolean';
+    if (a.startsWith('DATE') || a === 'TIME' || a === 'DATETIME') return 'DateTime';
+    if (a === 'BLOB') return 'Byte[]';
+    return 'String'; // TEXT and anything unknown
+}
+
+/** A unique table name for a table being imported into the spec. */
+function uniqueTableName(spec: DataSetSpec, base: string): string {
+    const clean = sanitizeName(base) || 'Table';
+    const used = new Set(spec.tables.map((t) => t.name.toLowerCase()));
+    let name = clean;
+    let i = 1;
+    while (used.has(name.toLowerCase())) { i += 1; name = `${clean}${i}`; }
+    return name;
+}
+
+/** Default SQLite file for a DataSet (a shared per-dataset .db next to the app). Exported so the
+ *  form designer's Items Source picker defaults a newly-bound no-storage table to the same file the
+ *  DataSet designer would use. */
+export function defaultDbFile(spec: DataSetSpec): string {
+    return `${spec.name}.db`;
+}
+
+/** True when `<name>.db` already exists under `folder` (project root). A new or renamed DataSet with
+ *  that name would silently read/write an EXISTING database, so the caller warns before proceeding. */
+function defaultDbExists(folder: string, name: string): boolean {
+    return fs.existsSync(path.join(folder, `${name}.db`));
+}
+
+/** Resolves a (possibly relative) sqlite.file to an existing path for design-time preview.
+ *  The generated app resolves relative files next to the EXE (bin/...), so try the project
+ *  folder first, then the bin folders. Falls back to the project-folder path. */
+function resolveDbPath(projectDir: string | undefined, file: string): string {
+    if (path.isAbsolute(file)) return file;
+    const candidates: string[] = [];
+    if (projectDir) {
+        candidates.push(path.join(projectDir, file));
+        for (const cfg of ['Debug', 'Release']) {
+            for (const tfm of ['net10.0', 'net8.0']) {
+                candidates.push(path.join(projectDir, 'bin', cfg, tfm, file));
+            }
+        }
+    }
+    candidates.push(file);
+    for (const c of candidates) { if (fs.existsSync(c)) return c; }
+    return candidates[0] ?? file;
+}
+
 
 /**
  * Avalonia's DataGrid defaults AutoGenerateColumns to FALSE, so a bound DataGrid would show no
@@ -45,6 +135,21 @@ export function ensureDataGridAutoGenerateColumns(axamlPath: string, controlName
     if (updated === text) return false;
     fs.writeFileSync(axamlPath, updated, 'utf8');
     return true;
+}
+
+/** Returns the .axaml file (if any) that contains a control with the given x:Name. */
+function findFormWithControl(projectFolder: string, controlName: string): string | undefined {
+    const files: string[] = [];
+    walkProject(projectFolder, files);
+    for (const f of files) {
+        if (!/\.axaml$/i.test(f)) continue;
+        try {
+            const text = fs.readFileSync(f, 'utf8');
+            const re = new RegExp(`x:Name\\s*=\\s*\"${controlName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\"`);
+            if (re.test(text)) return f;
+        } catch { /* keep scanning */ }
+    }
+    return undefined;
 }
 
 /** Finds every named bindable control in the project's .axaml files. */
@@ -119,6 +224,28 @@ export class DataSetDocument implements vscode.CustomDocument {
 }
 
 /**
+ * Live DataSet designer panels (keyed by document URI). The DataSet editor keeps its schema
+ * in memory; when the FORM designer binds/unbinds a table through the Items Source picker it
+ * writes the .adset straight to disk, so any DataSet panel already open for that file would
+ * otherwise keep showing the stale (unbound) schema. Each open panel registers a reloader
+ * closure here that re-reads the file, swaps the in-memory spec, resets the undo history and
+ * repaints the panel.
+ */
+const liveReloaders = new Map<string, () => Promise<void>>();
+
+/**
+ * If the .adset at `uri` is currently open in a DataSet designer panel, reloads it from disk
+ * and repaints the panel (and resets its undo history, since an external change can't be
+ * meaningfully undone). Returns true when a panel was refreshed.
+ */
+export async function reloadDataSetPanel(uri: vscode.Uri): Promise<boolean> {
+    const reload = liveReloaders.get(uri.toString());
+    if (!reload) return false;
+    await reload();
+    return true;
+}
+
+/**
  * Custom editor for `*.adset` files — a visual DataSet schema designer
  * (runtime-construction DataSets, not strongly-typed codegen).
  */
@@ -132,8 +259,13 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
     private readonly docs = new Map<string, DataSetDocument>();
     /** Undo/redo history: 5 levels deep = up to 6 serialized-spec snapshots (current + 5 prior). */
     private readonly history = new Map<string, { states: string[]; index: number }>();
+    /** Previewer host — runs the design-time SQLite queries against the user's .db file. */
+    private readonly host: PreviewerHostManager;
 
-    constructor(private readonly context: vscode.ExtensionContext) { }
+    constructor(private readonly context: vscode.ExtensionContext) {
+        this.host = new PreviewerHostManager(context);
+        context.subscriptions.push(this.host);
+    }
 
     async openCustomDocument(uri: vscode.Uri): Promise<DataSetDocument> {
         const doc = await DataSetDocument.create(uri);
@@ -151,7 +283,21 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
         };
         webviewPanel.webview.html = this.webviewHtml(webviewPanel.webview);
 
+        // Register this panel's reloader so a binding change made from the form designer's
+        // Items Source picker is reflected here live (see reloadDataSetPanel above).
+        liveReloaders.set(key, async () => {
+            try {
+                const text = fs.readFileSync(document.uri.fsPath, 'utf8');
+                document.spec = parseDataSet(text);
+                document.markSaved();
+                // An external edit can't be undone meaningfully — start a fresh history.
+                this.history.set(key, { states: [serializeDataSet(document.spec)], index: 0 });
+                await this.postState(document, webviewPanel);
+            } catch { /* keep the current in-memory state on failure */ }
+        });
+
         webviewPanel.onDidDispose(() => {
+            liveReloaders.delete(key);
             this.panels.delete(key);
             this.docs.delete(key);
             this.history.delete(key);
@@ -177,12 +323,13 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                     return;
 
                 case 'setName': {
-                    const v = typeof msg.name === 'string' ? msg.name.trim() : '';
-                    if (v && v !== doc.spec.name) {
-                        if (isValidIdentifier(v)) { doc.spec.name = v; this.notifyEdit(doc, panel, before); }
-                        else await this.postStatus(panel, 'The DataSet name must be a single word (letters/numbers/underscore).');
-                    }
-                    await this.postState(doc, panel);
+                    // The DataSet name is fixed when the .adset is created. Renaming it here would
+                    // leave the OLD generated class/.xsd (and any code-behind bindings under the old
+                    // class name) behind while Generate writes a NEW file — duplicating the shared
+                    // helper types (DatabaseAdapter/CustomersRow/dialogs → BC30179) and stranding
+                    // references. Supported rename path: Remove DataSet, then create a new one.
+                    await this.postStatus(panel, 'The DataSet name is fixed when created. To rename, use Remove DataSet… then create a new DataSet.');
+                    await this.postState(doc, panel); // revert the name field
                     return;
                 }
 
@@ -236,6 +383,14 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                             const v = String(msg.value ?? '');
                             c.sampleValue = v ? v : null;
                             this.notifyEdit(doc, panel, before);
+                        } else if (prop === 'key') {
+                            // Primary key flag — only one key column per table.
+                            if (msg.value === true) {
+                                if (t.keyColumn !== c.name) { t.keyColumn = c.name; this.notifyEdit(doc, panel, before); }
+                            } else if (t.keyColumn === c.name) {
+                                t.keyColumn = null;
+                                this.notifyEdit(doc, panel, before);
+                            }
                         }
                     }
                     await this.postState(doc, panel);
@@ -333,6 +488,10 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                                 if (filePath) {
                                     t.boundTo = control;
                                     t.boundToType = ctrl.type as DataTableSpec['boundToType'];
+                                    // Every bound table is SQLite-backed: a table with no storage of its
+                                    // own defaults to the shared per-DataSet database file (created on the
+                                    // app's first run, named after the DataSet).
+                                    if (!t.sqlite) t.sqlite = { file: defaultDbFile(doc.spec) };
                                     // DataGrid: AutoGenerateColumns defaults to False in Avalonia, so make
                                     // sure the XAML carries it, or the bound grid shows no columns/rows.
                                     if (ctrl.type === 'DataGrid') ensureDataGridAutoGenerateColumns(axaml, control);
@@ -374,8 +533,163 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                     return;
                 }
 
+                case 'setTableProp': {
+                    const t = findTable(doc.spec, String(msg.table ?? ''));
+                    const prop = String(msg.prop ?? '');
+                    if (t && prop === 'storage') {
+                        const v = String(msg.value ?? '');
+                        if (v === 'sqlite') {
+                            if (!isSqliteTable(t)) {
+                                t.sqlite = { file: (t.sqlite && t.sqlite.file) || defaultDbFile(doc.spec) };
+                                this.notifyEdit(doc, panel, before);
+                            }
+                        } else if (t.sqlite) {
+                            t.sqlite = null;
+                            this.notifyEdit(doc, panel, before);
+                        }
+                    } else if (t && prop === 'dbFile') {
+                        const v = String(msg.value ?? '').trim();
+                        if (v) {
+                            t.sqlite = { ...((t.sqlite && { file: t.sqlite.file }) || { file: '' }), file: v };
+                            this.notifyEdit(doc, panel, before);
+                        }
+                    } else if (t && prop === 'connectionString') {
+                        const v = String(msg.value ?? '').trim();
+                        t.sqlite = { file: (t.sqlite && t.sqlite.file) || defaultDbFile(doc.spec), connectionString: v || undefined };
+                        this.notifyEdit(doc, panel, before);
+                    }
+                    await this.postState(doc, panel);
+                    return;
+                }
+
+                case 'sqliteBrowse': {
+                    const t = findTable(doc.spec, String(msg.table ?? ''));
+                    const proj = findProject(doc.uri);
+                    const projectDir = proj ? path.dirname(proj.projectUri.fsPath) : undefined;
+                    const picked = await vscode.window.showOpenDialog({
+                        canSelectMany: false, canSelectFolders: false, openLabel: 'Use this SQLite file',
+                        filters: { 'SQLite database': ['db', 'sqlite', 'sqlite3'] },
+                        defaultUri: projectDir ? vscode.Uri.file(projectDir) : undefined,
+                        title: t ? `SQLite file for ${t.name}` : 'SQLite database file'
+                    });
+                    if (t && picked && picked[0]) {
+                        // Rule: an existing .db is used IN PLACE — store the full absolute path so the
+                        // app opens/edits exactly that file (never a copy next to the exe).
+                        const p = picked[0].fsPath;
+                        let tableName: string | undefined;
+                        try {
+                            const client = await this.host.getClient();
+                            const tabs = await client.sqliteTables(p);
+                            const nameLower = t.name.toLowerCase();
+                            if (!tabs.some((x) => x.name.toLowerCase() === nameLower) && tabs.length === 1) {
+                                tableName = tabs[0].name; // single-table file: map to that real table
+                            }
+                        } catch { /* the file is stored regardless */ }
+                        t.sqlite = tableName ? { file: p, tableName } : { file: p };
+                        this.notifyEdit(doc, panel, before);
+                        await this.postState(doc, panel);
+                        await this.postStatus(panel, `Using SQLite file for ${t.name}: ${p}`);
+                    }
+                    return;
+                }
+
+                case 'sqliteQuery': {
+                    // Design-time preview: run a read-only SELECT against the table's .db via the host.
+                    const t = findTable(doc.spec, String(msg.table ?? ''));
+                    if (t && isSqliteTable(t)) {
+                        const proj = findProject(doc.uri);
+                        const projectDir = proj ? path.dirname(proj.projectUri.fsPath) : undefined;
+                        const dbPath = resolveDbPath(projectDir, t.sqlite!.file);
+                        if (!fs.existsSync(dbPath)) {
+                            await panel.webview.postMessage({ type: 'sqliteResult', table: t.name, ok: false, error: `Database file not found: ${dbPath}` });
+                            return;
+                        }
+                        try {
+                            const client = await this.host.getClient();
+                            const sql = (typeof msg.sql === 'string' && msg.sql.trim()) ? msg.sql : `SELECT * FROM "${sqliteTableName(t)}" ORDER BY rowid`;
+                            const res = await client.sqliteQuery(dbPath, sql, 500);
+                            await panel.webview.postMessage({ type: 'sqliteResult', table: t.name, ok: true, columns: res.columns, rows: res.rows, sql, dbFile: path.basename(dbPath) });
+                        } catch (e) {
+                            await panel.webview.postMessage({ type: 'sqliteResult', table: t.name, ok: false, error: e instanceof Error ? e.message : String(e) });
+                        }
+                    }
+                    return;
+                }
+
+                case 'sqliteImport': {
+                    // Reverse path: create .adset tables from an existing .db.
+                    const proj = findProject(doc.uri);
+                    const projectDir = proj ? path.dirname(proj.projectUri.fsPath) : undefined;
+                    const picked = await vscode.window.showOpenDialog({
+                        canSelectMany: false, canSelectFolders: false, openLabel: 'Import tables',
+                        filters: { 'SQLite database': ['db', 'sqlite', 'sqlite3'] },
+                        defaultUri: projectDir ? vscode.Uri.file(projectDir) : undefined,
+                        title: 'Import tables from a SQLite database'
+                    });
+                    if (!picked || !picked[0]) return;
+                    try {
+                        const client = await this.host.getClient();
+                        const tables = await client.sqliteTables(picked[0].fsPath);
+                        if (!tables.length) { await this.postStatus(panel, 'No tables found in that database.'); return; }
+                        // Imported tables stay connected to the source .db: store the file (project-
+                        // relative when possible) so binding one reads/writes the REAL rows, not the
+                        // sample/XML demo store.
+                        let srcFile = picked[0].fsPath;
+                        if (projectDir) {
+                            const rootPrefix = projectDir + path.sep;
+                            if (srcFile.startsWith(rootPrefix)) srcFile = path.relative(projectDir, srcFile);
+                        }
+                        let added = 0;
+                        for (const st of tables) {
+                            const cols: DataColumnSpec[] = st.columns.map((cc) => ({
+                                name: sanitizeName(cc.name || 'Column'),
+                                type: sqliteAffinityToType(cc.type),
+                                caption: cc.name || '',
+                                allowNull: !cc.notNull,
+                                sampleValue: null
+                            }));
+                            // De-duplicate column names inside the imported table.
+                            const used = new Set<string>();
+                            for (const col of cols) {
+                                let n = col.name;
+                                let i = 1;
+                                while (used.has(n.toLowerCase())) { i += 1; n = `${col.name}${i}`; }
+                                used.add(n.toLowerCase());
+                                col.name = n;
+                            }
+                            const pks = st.columns.filter((cc) => cc.isPk).map((cc) => sanitizeName(cc.name || ''));
+                            const keyColumn = (pks.length === 1 && cols.some((c) => c.name === pks[0])) ? pks[0] : null;
+                            doc.spec.tables.push({
+                                name: uniqueTableName(doc.spec, st.name),
+                                x: 60 + added * 26, y: 60 + added * 26,
+                                columns: cols, keyColumn, boundTo: null, boundToType: null, undoRedoDepth: 5,
+                                sqlite: { file: srcFile, tableName: st.name }
+                            });
+                            added += 1;
+                        }
+                        this.notifyEdit(doc, panel, before);
+                        await this.postState(doc, panel);
+                        await this.postStatus(panel, `Imported ${added} table${added === 1 ? '' : 's'} from ${path.basename(picked[0].fsPath)} (SQLite-backed).`);
+                    } catch (e) {
+                        await this.postStatus(panel, 'SQLite import failed: ' + (e instanceof Error ? e.message : String(e)));
+                    }
+                    return;
+                }
+
+                case 'getControls': {
+                    // Refresh the bindable-controls list (e.g. a control was placed/saved since
+                    // the designer last pushed state) without changing the schema.
+                    await panel.webview.postMessage({ type: 'controls', controls: this.controlsList(doc) });
+                    return;
+                }
+
                 case 'generate': {
                     await this.generateCode(doc, panel);
+                    return;
+                }
+
+                case 'removeDataSet': {
+                    await this.removeDataSet(doc, panel);
                     return;
                 }
             }
@@ -452,6 +766,8 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
         try {
             await vscode.workspace.fs.writeFile(codeUri, Buffer.from(code, 'utf8'));
             await vscode.workspace.fs.writeFile(xsdUri, Buffer.from(xsd, 'utf8'));
+            // A SQLite-bound table needs the SQLite packages in the project to build/run.
+            ensureSqlitePackages(proj ?? undefined, doc.spec);
             return [path.basename(codeUri.fsPath), path.basename(xsdUri.fsPath)].join(' + ');
         } catch {
             return null;
@@ -466,13 +782,138 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
             void vscode.window.showErrorMessage('Could not write the generated files.');
             return;
         }
+        // Persist the schema too — the generated class is derived from it, so the .adset on disk
+        // must match (otherwise the regenerated code can reference columns the saved schema lacks
+        // and, worse, an existing .db is left out of step with the code until the next save).
+        try {
+            await vscode.workspace.fs.writeFile(doc.uri, Buffer.from(serializeDataSet(doc.spec), 'utf8'));
+            doc.markSaved();
+        } catch { /* the generated files still exist */ }
         await this.postStatus(panel, `Generated ${names}.`);
         const lang = language === 'vb' ? 'VB.NET' : 'C#';
         void vscode.window.showInformationMessage(
             proj
-                ? `Generated ${names} (${lang}) next to ${path.basename(doc.uri.fsPath)}.`
+                ? `Generated ${names} (${lang}) and saved ${path.basename(doc.uri.fsPath)}.`
                 : `Generated ${names} as ${lang} — no .csproj/.vbproj found nearby, so it isn't part of a build yet.`
         );
+    }
+
+    /** 'Remove DataSet': after a modal warning, strips every code-behind binding this DataSet's
+     *  tables created, deletes the .adset + generated class/.xsd, deletes the DataSet's OWN
+     *  auto-created default .db (project + bin/Debug + bin/Release copies — never a user-browsed /
+     *  per-table / external .db, those are only listed for the user to delete by hand), then closes
+     *  the designer panel. */
+    private async removeDataSet(doc: DataSetDocument, panel: vscode.WebviewPanel): Promise<void> {
+        try {
+            const folder = path.dirname(doc.uri.fsPath);
+            const base = doc.spec.name;
+            const proj = findProject(doc.uri);
+            const projectFolder = proj ? path.dirname(proj.projectUri.fsPath) : folder;
+
+            // --- what the removal will delete ---
+            const filesToDelete: string[] = [doc.uri.fsPath]; // the .adset itself
+            const generated: string[] = [];
+            for (const ext of ['cs', 'vb']) {
+                const p = path.join(folder, `${base}.${ext}`);
+                if (fs.existsSync(p)) { generated.push(p); filesToDelete.push(p); }
+            }
+            const xsd = path.join(folder, `${base}.xsd`);
+            if (fs.existsSync(xsd)) filesToDelete.push(xsd);
+
+            // The DataSet's OWN auto-created default db (<DataSet>.db): delete existing copies in the
+            // project folder and under bin/... (the app creates the file next to the exe on first run).
+            const defaultDb = `${base}.db`;
+            const defaultDbCopies: string[] = [];
+            const addIfExists = (dir: string): void => {
+                if (!dir) return;
+                const p = path.join(dir, defaultDb);
+                if (fs.existsSync(p)) { defaultDbCopies.push(p); filesToDelete.push(p); }
+            };
+            addIfExists(projectFolder);
+            for (const cfg of ['Debug', 'Release']) {
+                for (const tfm of ['net8.0', 'net9.0', 'net10.0']) addIfExists(path.join(projectFolder, 'bin', cfg, tfm));
+            }
+
+            // User-browsed / per-table .db files are NEVER auto-deleted (they may be shared with
+            // other apps or datasets) — list them so the user can delete them manually if they want.
+            const keptDbs = new Set<string>();
+            for (const t of doc.spec.tables) {
+                const f = t.sqlite && t.sqlite.file;
+                if (f && path.basename(f) !== defaultDb) keptDbs.add(f);
+            }
+
+            // --- bindings this DataSet's tables created in form code-behind ---
+            const scanned = scanBindableControls(projectFolder);
+            const bindings: { table: string; control: string; type: string; axamlPath: string }[] = [];
+            for (const t of doc.spec.tables) {
+                if (!t.boundTo) continue;
+                const c = scanned.find((x) => x.name === t.boundTo);
+                if (c) bindings.push({ table: t.name, control: c.name, type: c.type, axamlPath: c.axamlPath });
+            }
+
+            // --- modal warning listing exactly what will happen ---
+            const lines: string[] = [];
+            lines.push(`**Remove DataSet "${doc.spec.name}"?**`);
+            lines.push('');
+            lines.push(`This deletes:`);
+            lines.push(`  • schema  ${path.basename(doc.uri.fsPath)}`);
+            if (generated.length) lines.push(`  • code    ${generated.map((p) => path.basename(p)).join(', ')}`);
+            if (defaultDbCopies.length) {
+                const rel = defaultDbCopies.map((p) => path.relative(projectFolder, p) || p).join(', ');
+                lines.push(`  • database ${defaultDb}  (${rel})`);
+            } else {
+                lines.push(`  • database ${defaultDb}  (none found on disk)`);
+            }
+            if (bindings.length) lines.push(`  • un-binds ${bindings.length} control${bindings.length === 1 ? '' : 's'}: ${bindings.map((b) => `${b.control} (${b.table})`).join(', ')}`);
+            if (keptDbs.size) {
+                lines.push('');
+                lines.push(`Database files NOT deleted (delete them yourself if no longer used):`);
+                for (const f of keptDbs) lines.push(`  • ${f}`);
+            }
+            lines.push('');
+            lines.push('This cannot be undone.');
+            const answer = await vscode.window.showWarningMessage(lines.join('\n'), { modal: true }, 'Remove DataSet', 'Cancel');
+            if (answer !== 'Remove DataSet') return;
+
+            // --- strip code-behind bindings first, so the project still compiles once the class is gone ---
+            for (const b of bindings) {
+                try {
+                    await unbindControlFromDataSet(vscode.Uri.file(b.axamlPath), {
+                        datasetName: doc.spec.name, tableName: b.table, controlName: b.control,
+                        controlType: b.type as DataSetBindingRef['controlType']
+                    });
+                } catch { /* best-effort — keep removing */ }
+            }
+            // Also strip any Data-Image bindings (Images that followed these grids' selections).
+            for (const t of doc.spec.tables) {
+                for (const bi of t.boundImages || []) {
+                    const ax = findFormWithControl(projectFolder, bi.control);
+                    if (ax) {
+                        try { await unbindImageFromGrid(vscode.Uri.file(ax), bi.control); }
+                        catch { /* best-effort */ }
+                    }
+                }
+            }
+
+            // --- delete the files ---
+            let deleted = 0;
+            const failed: string[] = [];
+            for (const p of filesToDelete) {
+                try { await vscode.workspace.fs.delete(vscode.Uri.file(p)); deleted += 1; }
+                catch { failed.push(path.basename(p)); }
+            }
+
+            // --- close the DataSet designer ---
+            panel.dispose();
+
+            void vscode.window.showInformationMessage(
+                `Removed DataSet "${doc.spec.name}" — deleted ${deleted} file${deleted === 1 ? '' : 's'}`
+                + (bindings.length ? ` and un-bound ${bindings.length} control${bindings.length === 1 ? '' : 's'}` : '')
+                + (failed.length ? `. Could not delete: ${failed.join(', ')}` : '') + '.'
+            );
+        } catch (e) {
+            void vscode.window.showErrorMessage('Remove DataSet failed: ' + (e instanceof Error ? e.message : String(e)));
+        }
     }
 
     // ---------------------------------------------------------------- save etc.
@@ -526,9 +967,11 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
   <div class="toolbar">
     <span class="brand">DataSet</span>
     <label for="ds-name-input">Name</label>
-    <input id="ds-name-input" type="text" spellcheck="false" title="DataSet / generated class name"/>
+    <input id="ds-name-input" type="text" spellcheck="false" readonly title="The DataSet name is fixed when the .adset is created. To rename: Remove DataSet… then create a new one."/>
     <button id="btnAddTable" title="Add a table">+ Table</button>
     <button id="btnGenerate" title="Generate the runtime DataSet class (.cs/.vb) + .xsd">Generate Code</button>
+    <button id="btnImportSqlite" title="Create tables from an existing SQLite database file (.db)">Import SQLite…</button>
+    <button id="btnRemoveDataSet" class="remove" title="Remove this DataSet entirely: deletes the .adset + generated class/.xsd, un-binds its controls, and deletes its auto-created .db (project + bin copies).">Remove DataSet…</button>
     <span id="status" class="status"></span>
   </div>
   <div class="main">
@@ -536,6 +979,19 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
       <div class="empty-hint">Right-click the canvas to add a table.</div>
     </div>
     <div id="props"></div>
+  </div>
+  <div id="dsSqliteModal" class="modal" hidden>
+    <div class="modal-box">
+      <h3 id="dsSqliteTitle">SQLite data</h3>
+      <div id="dsSqliteFile" class="sqlite-file-label"></div>
+      <div id="dsSqliteStatus" class="sqlite-status"></div>
+      <textarea id="dsSqliteSql" rows="2" spellcheck="false" title="Read-only SELECT to preview (max 500 rows)"></textarea>
+      <div class="modal-buttons">
+        <button id="dsSqliteRun">Run</button>
+        <button id="dsSqliteClose">Close</button>
+      </div>
+      <div id="dsSqliteBody"></div>
+    </div>
   </div>
   <div id="ctxmenu"></div>
   <script src="${jsUri}"></script>
@@ -562,6 +1018,14 @@ export async function newDataSet(context: vscode.ExtensionContext): Promise<void
         folder = picked && picked[0];
     }
     if (!folder) return;
+
+    // If a database file with this name already exists, warn that bound tables will write to it.
+    if (defaultDbExists(folder.fsPath, clean)) {
+        const go = await vscode.window.showWarningMessage(
+            `A database file "${clean}.db" already exists in this folder. Tables you bind to this DataSet will read/write that EXISTING file. Continue?`,
+            { modal: true }, 'Continue', 'Cancel');
+        if (go !== 'Continue') return;
+    }
 
     const uri = vscode.Uri.joinPath(folder, `${clean}.adset`);
     let exists = false;

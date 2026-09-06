@@ -22,7 +22,9 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
     'menuModal', 'menuTitle', 'menuBody', 'menuAddTop', 'menuSave', 'menuCancel',
     'statusModal', 'statusTitle', 'statusBody', 'statusAdd', 'statusSave', 'statusCancel',
-    'splitModal', 'splitTitle', 'splitCols', 'splitRows', 'splitCount', 'splitMinus', 'splitPlus', 'splitSave', 'splitCancel',
+    'splitModal', 'splitTitle', 'splitZones', 'splitCols', 'splitRows', 'splitPanesRow', 'splitPanesLabel', 'splitCount', 'splitMinus', 'splitPlus', 'splitSave', 'splitCancel',
+    'splitterModal', 'splitterTitle', 'splitterBody', 'splitterSave', 'splitterCancel',
+    'dgModal', 'dgTitle', 'dgHint', 'dgBody', 'dgSave', 'dgCancel',
     'cellHighlight',
     'btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'dotGrid',
     'dotGridModal', 'dotGridSpacingX', 'dotGridSpacingY', 'dotGridColor', 'dotGridDotSize',
@@ -53,8 +55,10 @@ function setup() {
             || id === 'crosshairSave' || id === 'crosshairCancel'
             || id === 'menuSave' || id === 'menuCancel' || id === 'menuAddTop'
             || id === 'statusSave' || id === 'statusCancel' || id === 'statusAdd'
-            || id === 'splitCols' || id === 'splitRows' || id === 'splitMinus' || id === 'splitPlus'
-            || id === 'splitSave' || id === 'splitCancel') return 'button';
+            || id === 'splitZones' || id === 'splitCols' || id === 'splitRows' || id === 'splitMinus' || id === 'splitPlus'
+            || id === 'splitSave' || id === 'splitCancel'
+            || id === 'splitterSave' || id === 'splitterCancel'
+            || id === 'dgSave' || id === 'dgCancel') return 'button';
         if (id === 'splitCount') return 'input';
         if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
@@ -1080,31 +1084,52 @@ module.exports = async (t) => {
         t.ok(posted.every((m) => m.type !== 'saveStatusItems'), 'status-items', 'Escape does not save');
     }
 
-    // --- Split Layout editor (SplitPanel = an Avalonia Grid + GridSplitters) ---
-    // The 'Split Layout' property opens a modal to switch Columns/Rows and set the pane count;
-    // Save posts the new layout (the extension rebuilds the Grid + splitters, keeping pane bodies).
+    // --- Split Layout editor (SplitPanel = a Border frame around a Grid of panes + GridSplitters) ---
+    // The 'Split Layout' property opens a modal to switch Zones (the default T) / Columns / Rows
+    // and set the pane count; Save posts the new layout (the extension rebuilds the Grid + splitters,
+    // keeping pane bodies).
     {
         msg(frame([
             { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
             { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
-            { name: 'SplitPanel1', type: 'Grid', x: 60, y: 60, w: 360, h: 240, parent: 'Body' },
-            { name: 'SplitPanel1Pane0', type: 'Canvas', x: 60, y: 60, w: 180, h: 240, parent: 'SplitPanel1' },
-            { name: 'SplitPanel1Pane1', type: 'Canvas', x: 245, y: 60, w: 175, h: 240, parent: 'SplitPanel1' }
+            { name: 'SplitPanel1', type: 'Border', x: 60, y: 60, w: 480, h: 300, parent: 'Body' },
+            { name: 'SplitPanel1Pane0', type: 'Canvas', x: 60, y: 60, w: 180, h: 240, parent: null },
+            { name: 'SplitPanel1Pane1', type: 'Canvas', x: 245, y: 60, w: 175, h: 240, parent: null }
         ]));
         msg({
             type: 'properties', name: 'SplitPanel1', properties: [
                 { key: 'SplitLayout', label: 'Split Layout', kind: 'button', value: 'Edit split…' }
-            ], splitInfo: { columns: true, count: 2 }, info: null
+            ], splitInfo: { shape: 'zones', count: 3, top: 2 }, info: null
         });
         const pbtn = $('propsBody').querySelector('.prop-button');
         t.ok(!!pbtn, 'split-layout', 'Split Layout property renders as a button');
         $('splitModal').hidden = true;
         pbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal($('splitModal').hidden, false, 'split-layout', 'Split Layout opens the editor');
-        t.equal($('splitCount').value, '2', 'split-layout', 'count pre-filled from splitInfo');
-        t.equal($('splitCols').classList.contains('active'), true, 'split-layout', 'Columns active by default');
-        // Switch to Rows and add two panes (2 -> 4), then Save.
+        t.equal($('splitZones').classList.contains('active'), true, 'split-layout', 'Zones active for the default T');
+        t.equal($('splitPanesRow').hidden, false, 'split-layout', 'stepper shown for Zones (top-pane count)');
+        t.equal($('splitPanesLabel').textContent, 'Top panes', 'split-layout', 'Zones stepper labelled Top panes');
+        t.equal($('splitCount').value, '2', 'split-layout', 'top-pane count prefilled (2-up default)');
+        // Bump Zones to 3 panes up top (3 + 1 below), then check the posted layout.
+        $('splitPlus').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('splitCount').value, '3', 'split-layout', 'top-pane count increments');
+        posted.length = 0;
+        $('splitSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const savZ = posted[posted.length - 1];
+        t.equal(savZ.type, 'saveSplitLayout', 'split-layout', 'Save posts saveSplitLayout');
+        t.equal(savZ.name, 'SplitPanel1', 'split-layout', 'carries the split name');
+        t.equal(savZ.shape, 'zones', 'split-layout', 'Zones shape carried');
+        t.equal(savZ.top, 3, 'split-layout', 'top-pane count carried');
+        t.equal(savZ.count, 3, 'split-layout', 'count carried');
+        // Re-open, switch to Rows: the stepper becomes the pane count (defaults to the old total).
+        $('splitModal').hidden = true;
+        pbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         $('splitRows').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('splitRows').classList.contains('active'), true, 'split-layout', 'Rows active after click');
+        t.equal($('splitPanesLabel').textContent, 'Panes', 'split-layout', 'Columns/Rows stepper labelled Panes');
+        t.equal($('splitCount').value, '3', 'split-layout', 'pane count defaults from splitInfo');
+        $('splitMinus').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('splitCount').value, '2', 'split-layout', 'pane count decrements');
         $('splitPlus').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         $('splitPlus').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal($('splitCount').value, '4', 'split-layout', 'pane count increments');
@@ -1113,9 +1138,125 @@ module.exports = async (t) => {
         const sav = posted[posted.length - 1];
         t.equal(sav.type, 'saveSplitLayout', 'split-layout', 'Save posts saveSplitLayout');
         t.equal(sav.name, 'SplitPanel1', 'split-layout', 'carries the split name');
-        t.equal(sav.columns, false, 'split-layout', 'Rows orientation carried');
+        t.equal(sav.shape, 'rows', 'split-layout', 'Rows shape carried');
         t.equal(sav.count, 4, 'split-layout', 'pane count carried');
         t.equal($('splitModal').hidden, true, 'split-layout', 'Save closes the editor');
+    }
+
+    // --- Splitters editor (the runtime divider bars of a SplitPanel) ---
+    // The 'Splitters' property opens a modal with one row per GridSplitter; each row has a
+    // thickness, a colour and a Visible toggle; Save posts saveSplitters with the rows in order.
+    {
+        msg(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'SplitPanel1', type: 'Border', x: 60, y: 60, w: 480, h: 300, parent: 'Body' }
+        ]));
+        msg({
+            type: 'properties', name: 'SplitPanel1', properties: [
+                { key: 'Splitters', label: 'Splitters', kind: 'button', value: 'Edit splitters…' }
+            ], splitInfo: { shape: 'zones', count: 3 }, splitters: [
+                { direction: 'vertical', thickness: '5', color: '#C0C0C0', visible: true },
+                { direction: 'horizontal', thickness: '5', color: '#C0C0C0', visible: true }
+            ], info: null
+        });
+        const pbtn2 = $('propsBody').querySelector('.prop-button');
+        t.ok(!!pbtn2, 'splitters', 'Splitters property renders as a button');
+        $('splitterModal').hidden = true;
+        pbtn2.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('splitterModal').hidden, false, 'splitters', 'Splitters opens the editor');
+        const rows = $('splitterBody').querySelectorAll('.splitter-row');
+        t.equal(rows.length, 2, 'splitters', 'one row per divider bar');
+        t.ok(/Vertical divider/.test(rows[0].textContent), 'splitters', 'first row labelled Vertical divider');
+        t.ok(/Horizontal divider/.test(rows[1].textContent), 'splitters', 'second row labelled Horizontal divider');
+        // Change the first (vertical) splitter: thickness 9, hide it.
+        const first = rows[0];
+        const thickIn = first.querySelector('input[type=number]');
+        thickIn.value = '9';
+        thickIn.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        const visIn = first.querySelector('input[type=checkbox]');
+        visIn.checked = false;
+        visIn.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        posted.length = 0;
+        $('splitterSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const spv = posted[posted.length - 1];
+        t.equal(spv.type, 'saveSplitters', 'splitters', 'Save posts saveSplitters');
+        t.equal(spv.name, 'SplitPanel1', 'splitters', 'carries the split name');
+        t.equal(spv.items[0].direction, 'vertical', 'splitters', 'row order preserved');
+        t.equal(spv.items[0].thickness, '9', 'splitters', 'thickness change carried');
+        t.equal(spv.items[0].visible, false, 'splitters', 'visibility change carried');
+        t.equal(spv.items[1].direction, 'horizontal', 'splitters', 'second row preserved');
+        t.equal($('splitterModal').hidden, true, 'splitters', 'Save closes the editor');
+    }
+
+    // --- 'Rows' / 'Columns' editors (DataGrid decoration) ---
+    // A selected DataGrid shows a Rows and a Columns property button; each opens the decoration
+    // modal pre-filled from the sent values; Save posts saveDataGridRows / saveDataGridCols.
+    {
+        msg(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'Grid1', type: 'DataGrid', x: 60, y: 60, w: 240, h: 160, parent: 'Body' }
+        ]));
+        msg({
+            type: 'properties', name: 'Grid1', properties: [
+                { key: 'Rows', label: 'Rows', kind: 'button', value: 'Edit rows…' },
+                { key: 'Columns', label: 'Columns', kind: 'button', value: 'Edit columns…' }
+            ], dgRows: { rowBackground: '', foreground: '', rowHeight: '', rowHeaderWidth: '0', gridLines: 'None', hLine: '', vLine: '', headers: 'All' },
+            dgCols: { columnWidth: 'Auto', minColumnWidth: '20', maxColumnWidth: '', frozenCount: '0', headerHeight: '' },
+            info: null
+        });
+        const btns = $('propsBody').querySelectorAll('.prop-button');
+        t.equal(btns.length, 2, 'dg-editor', 'Rows and Columns buttons render');
+        // Open Rows: pre-filled fields, change row background + row height, Save.
+        $('dgModal').hidden = true;
+        btns[0].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('dgModal').hidden, false, 'dg-editor', 'Rows opens the editor');
+        t.equal($('dgTitle').textContent, 'Rows', 'dg-editor', 'title Rows');
+        const rowEls = $('dgBody').querySelectorAll('.splitter-row');
+        t.equal(rowEls.length, 8, 'dg-editor', 'eight row fields');
+        const colors = rowEls[0].querySelectorAll('input');
+        t.ok(colors.length >= 2, 'dg-editor', 'row background has a colour field');
+        const rowHeightInput = rowEls[2].querySelector('input');
+        rowHeightInput.value = '28';
+        rowHeightInput.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        posted.length = 0;
+        $('dgSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const rowMsg = posted[posted.length - 1];
+        t.equal(rowMsg.type, 'saveDataGridRows', 'dg-editor', 'Save posts saveDataGridRows');
+        t.equal(rowMsg.name, 'Grid1', 'dg-editor', 'carries the grid name');
+        t.equal(rowMsg.values.rowHeight, '28', 'dg-editor', 'row height change carried');
+        t.equal($('dgModal').hidden, true, 'dg-editor', 'Rows Save closes the editor');
+        // Open Columns: change column width + frozen count + header text font, Save.
+        btns[1].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('dgTitle').textContent, 'Columns', 'dg-editor', 'title Columns');
+        const colEls = $('dgBody').querySelectorAll('.splitter-row');
+        t.equal(colEls.length, 10, 'dg-editor', 'ten column/header fields');
+        t.ok(/Header text alignment/.test(colEls[5].textContent), 'dg-editor', 'header alignment field present');
+        t.ok(/Header background/.test(colEls[9].textContent), 'dg-editor', 'header background field present');
+        const widthInput = colEls[0].querySelector('input');
+        widthInput.value = '2*';
+        widthInput.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        const frozenInput = colEls[3].querySelector('input');
+        frozenInput.value = '1';
+        frozenInput.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        const fontSel = colEls[7].querySelector('select');
+        t.ok(fontSel, 'dg-editor', 'header font is a dropdown');
+        t.ok(fontSel.options.length > 5, 'dg-editor', 'font dropdown is populated (fallback fonts)');
+        fontSel.value = 'Arial';
+        fontSel.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        const alignSel = colEls[5].querySelector('select');
+        alignSel.value = 'Center';
+        alignSel.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        posted.length = 0;
+        $('dgSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const colMsg = posted[posted.length - 1];
+        t.equal(colMsg.type, 'saveDataGridCols', 'dg-editor', 'Save posts saveDataGridCols');
+        t.equal(colMsg.values.columnWidth, '2*', 'dg-editor', 'column width carried');
+        t.equal(colMsg.values.frozenCount, '1', 'dg-editor', 'frozen columns carried');
+        t.equal(colMsg.values.headerFont, 'Arial', 'dg-editor', 'header font carried');
+        t.equal(colMsg.values.headerAlign, 'Center', 'dg-editor', 'header alignment carried');
+        t.equal($('dgModal').hidden, true, 'dg-editor', 'Columns Save closes the editor');
     }
     t.note('T3 done');
 };

@@ -59,6 +59,17 @@ body {
     background: var(--vscode-button-hoverBackground);
 }
 
+.toolbar button.remove {
+    background: transparent;
+    color: var(--vscode-errorForeground, #f48771);
+    border: 1px solid currentColor;
+    margin-left: 2px;
+}
+
+.toolbar button.remove:hover {
+    background: rgba(244, 135, 113, 0.15);
+}
+
 .toolbar .status {
     margin-left: auto;
     opacity: 0.8;
@@ -257,4 +268,145 @@ body {
 #ctxmenu .sep {
     border-top: 1px solid var(--vscode-menu-separatorBackground, #444);
     margin: 4px 0;
+}
+
+/* ---------- SQLite: storage picker + preview modal ---------- */
+.sqlite-file-row {
+    display: flex;
+    gap: 4px;
+}
+
+.sqlite-file-row input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.sqlite-file-row button {
+    flex: 0 0 auto;
+}
+
+.sec-btn {
+    width: 100%;
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: none;
+    border-radius: 3px;
+    padding: 5px 10px;
+    cursor: pointer;
+}
+
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+}
+
+.modal[hidden] {
+    display: none;
+}
+
+.modal-box {
+    background: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 6px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    width: min(92vw, 720px);
+    max-height: 84vh;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 14px;
+    gap: 8px;
+}
+
+.modal-box h3 {
+    margin: 0;
+    font-size: 14px;
+}
+
+.modal-box textarea {
+    width: 100%;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, #444);
+    border-radius: 3px;
+    padding: 4px 6px;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.sqlite-file-label {
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.sqlite-status {
+    font-size: 12px;
+    min-height: 14px;
+}
+
+.sqlite-status.ok {
+    color: var(--vscode-charts-green, #89d185);
+}
+
+.sqlite-status.err {
+    color: var(--vscode-errorForeground, #f48771);
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.modal-buttons button {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    border-radius: 3px;
+    padding: 5px 14px;
+    cursor: pointer;
+}
+
+.sqlite-table-wrap {
+    overflow: auto;
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 4px;
+    max-height: 45vh;
+}
+
+.sqlite-table {
+    border-collapse: collapse;
+    font-size: 12px;
+    width: 100%;
+}
+
+.sqlite-table th {
+    position: sticky;
+    top: 0;
+    background: var(--vscode-sideBarSectionHeader-background, #2d2d30);
+    color: var(--vscode-editor-foreground);
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--vscode-widget-border, #444);
+    white-space: nowrap;
+}
+
+.sqlite-table td {
+    padding: 3px 8px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+    white-space: nowrap;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sqlite-table tbody tr:hover {
+    background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
 }

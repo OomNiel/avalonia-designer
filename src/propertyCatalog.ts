@@ -17,6 +17,9 @@ export interface PropDef {
     advanced?: boolean;
     /** Read-only field (e.g. a DataSet binding managed in code-behind). */
     readOnly?: boolean;
+    /** An Image.Source row: also offers a 'Data…' button that binds the Image to a DataGrid's
+     *  selected-row image column (in addition to the file browser). */
+    dataImage?: boolean;
 }
 
 interface PropTemplate {
@@ -47,8 +50,6 @@ const CLICK_MODE = ['Release', 'Press', 'Hover'];
 const LINE_CAPS = ['Flat', 'Round', 'Square'];
 const SCROLLBAR = ['Disabled', 'Auto', 'Hidden', 'Visible'];
 const SELECTION_MODE = ['Single', 'Multiple', 'Extended', 'Toggle'];
-const HEADERS_VIS = ['All', 'Column', 'Row', 'None'];
-const GRIDLINES = ['All', 'Horizontal', 'Vertical', 'None'];
 const TAB_PLACEMENT = ['Top', 'Bottom', 'Left', 'Right'];
 const STARTUP_LOC = ['Manual', 'CenterScreen', 'CenterOwner'];
 const WINDOW_STATE = ['Normal', 'Maximized', 'Minimized', 'FullScreen'];
@@ -363,13 +364,6 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'CanUserReorderColumns', label: 'Reorder Columns', kind: 'dropdown', options: BOOL },
         { key: 'CanUserResizeColumns', label: 'Resize Columns', kind: 'dropdown', options: BOOL },
         { key: 'CanUserSortColumns', label: 'Sort Columns', kind: 'dropdown', options: BOOL },
-        { key: 'HeadersVisibility', label: 'Headers', kind: 'dropdown', options: HEADERS_VIS },
-        { key: 'GridLinesVisibility', label: 'Grid Lines', kind: 'dropdown', options: GRIDLINES },
-        { key: 'FrozenColumnCount', label: 'Frozen Columns', kind: 'number' },
-        { key: 'RowHeight', label: 'Row Height', kind: 'number' },
-        { key: 'RowHeaderWidth', label: 'Row Header Width', kind: 'number' },
-        { key: 'ColumnWidth', label: 'Column Width', kind: 'text' },
-        { key: 'SelectedIndex', label: 'Selected Index', kind: 'number' },
         { key: 'Padding', label: 'Padding', kind: 'text' },
         { key: 'Background', label: 'Background', kind: 'text' },
         { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
@@ -722,9 +716,12 @@ export const DEFAULTS: Record<string, string> = {
     SelectedItem: '',
 
     // --- DataGrid ---
-    AutoGenerateColumns: 'True',
-    CanUserReorderColumns: 'True',
-    CanUserResizeColumns: 'True',
+    // Defaults mirror the REAL Avalonia.DataGrid (12.1.1): column reorder/resize default to FALSE,
+    // so setting them to True must WRITE the attribute (a previous 'True' default here silently
+    // stripped it — the property looked set in the panel but nothing worked at runtime).
+    AutoGenerateColumns: 'False',
+    CanUserReorderColumns: 'False',
+    CanUserResizeColumns: 'False',
     CanUserSortColumns: 'True',
     HeadersVisibility: 'All',
     GridLinesVisibility: 'None',
@@ -858,17 +855,33 @@ function gridDefinitionCount(el: Element, kind: 'rows' | 'cols'): number {
     return childElements(defs).length;
 }
 
+/** The first pane Border of a SplitPanel (given its root element — a Grid, or a Border wrapping a
+ *  Grid) whose body Canvas is named SplitPanelNPaneM, if any. */
+function firstPaneBorderOf(el: Element): Element | null {
+    let grid: Element | null = null;
+    if (localName(el.tagName) === 'Grid') grid = el;
+    else if (localName(el.tagName) === 'Border') {
+        for (const c of childElements(el)) {
+            if (localName(c.tagName) === 'Grid') { grid = c; break; }
+        }
+    }
+    if (!grid) return null;
+    for (const c of childElements(grid)) {
+        if (localName(c.tagName) !== 'Border') continue;
+        for (const inner of childElements(c)) {
+            const n = inner.getAttribute('x:Name') || inner.getAttribute('Name') || '';
+            if (localName(inner.tagName) === 'Canvas' && /^SplitPanel\d+Pane\d+$/.test(n)) return c;
+        }
+    }
+    return null;
+}
+
 /** Reads the current pane-border width of a SplitPanel (its first pane's BorderThickness, or '1'). */
 function splitPaneBorderOf(el: Element): string {
-    for (let i = 0; i < el.childNodes.length; i++) {
-        const c = el.childNodes.item(i);
-        if (!c || c.nodeType !== 1) continue;
-        const b = c as Element;
-        if (localName(b.tagName) !== 'Border') continue;
-        const bt = b.getAttribute('BorderThickness');
-        if (bt) return bt.split(',')[0].trim();
-    }
-    return '1';
+    const b = firstPaneBorderOf(el);
+    if (!b) return '1';
+    const bt = b.getAttribute('BorderThickness');
+    return bt ? bt.split(',')[0].trim() : '1';
 }
 
 /**
@@ -892,9 +905,11 @@ export function propertyDefsFor(
     // generated name (StatusBar1, ...) identifies it so the StatusBar properties
     // (including Dock) show instead of only the generic Border ones.
     const isStatusBar = /^StatusBar\d*$/.test(name);
-    // The Split Panel tool is an Avalonia Grid (named SplitPanelN): its Split Layout + Pane
-    // Border properties live here (the generic Grid 'Rows & Columns' editor is hidden for it).
-    const isSplitPanel = /^SplitPanel\d*$/.test(name) && tag === 'Grid';
+    // The Split Panel tool is named SplitPanelN. New 3-zone splits are a Border wrapper
+    // (its own clickable frame) around a Grid; older splits are the Grid itself. Its Split
+    // Layout + Pane Border properties live here (the generic Grid 'Rows & Columns' editor is
+    // hidden for Grid-rooted splits).
+    const isSplitPanel = /^SplitPanel\d*$/.test(name);
     const isWindowLike = tag === 'Window' || /window$/i.test(tag);
 
     const typeTemplates: PropTemplate[] = isWindowLike
@@ -904,7 +919,17 @@ export function propertyDefsFor(
         ]
         : [
             ...(isStatusBar ? (CONTROL_PROPS['StatusBar'] || []) : []),
-            ...(CONTROL_PROPS[tag] || [])
+            // A Border-rooted SplitPanel (the 3-zone frame) gets Dock + border/background
+            // props; there is no generic 'Border' CONTROL_PROPS entry. Grid-rooted splits
+            // fall through to the normal Grid template (Dock + Background + ShowGridLines).
+            ...(isSplitPanel && tag === 'Border'
+                ? [
+                    { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown' as const, options: DOCK_OPTIONS },
+                    { key: 'Background', label: 'Background', kind: 'text' as const },
+                    { key: 'BorderBrush', label: 'Border Brush', kind: 'text' as const },
+                    { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' as const }
+                ]
+                : (CONTROL_PROPS[tag] || []))
         ];
 
     // Only non-root elements can anchor to a container (the root element is the
@@ -930,6 +955,10 @@ export function propertyDefsFor(
         !(tag === 'Line' && (t.key === 'Width' || t.key === 'Height'))
     );
     const seen = new Set<string>();
+    // Editor 'action' buttons the user reaches for most often (DataGrid Rows/Columns, SplitPanel
+    // Split Layout/Splitters) are promoted to the TOP of the Properties list — above Name/Type and
+    // the styling rows — so they're visible without scrolling.
+    const topActions: PropDef[] = [];
     const props: PropDef[] = [
         { key: '__name__', label: 'Name', kind: 'text', value: el.getAttribute('x:Name') || el.getAttribute('Name') || '' },
         { key: '__type__', label: 'Type', kind: 'text', value: el.tagName },
@@ -987,6 +1016,26 @@ export function propertyDefsFor(
             desc: 'Undo/redo depth for this grid\'s live row editing (Ctrl+U = undo, Ctrl+R = redo). 0 disables undo.'
         });
     }
+    // 'Rows' + 'Columns' group a DataGrid's row/column decoration properties (row colour, text
+    // colour, row height, grid lines, headers; column width, frozen columns, header height) into
+    // two popup editors. These are direct Avalonia DataGrid attributes — no alternating row
+    // colours (Avalonia's DataGrid has no alternation support). Shown at the TOP of the list.
+    if (tag === 'DataGrid') {
+        topActions.push({
+            key: 'Rows',
+            label: 'Rows',
+            kind: 'button',
+            value: 'Edit rows…',
+            desc: 'Styles the data rows and the grid around them: row background, text colour, row height, row-header width, grid lines and their colours, and header visibility.'
+        });
+        topActions.push({
+            key: 'Columns',
+            label: 'Columns',
+            kind: 'button',
+            value: 'Edit columns…',
+            desc: 'Styles the columns and headers: the default column width, minimum/maximum column width, frozen (pinned) columns and the header height.'
+        });
+    }
     // 'Items' (batch editor) for combo/list/items controls — opens a popup where you type
     // one item per line. Disabled when the items come from elsewhere (DataSet binding or an
     // ItemsSource attribute), since static item children would be ignored/conflict then.
@@ -1038,13 +1087,21 @@ export function propertyDefsFor(
         });
     }
     // A SplitPanel (a Grid named SplitPanelN) gets a 'Split Layout' editor + a settable pane border.
+    // Split Layout + Splitters are shown at the TOP of the list; Pane Border stays with the rows.
     if (isSplitPanel) {
-        props.push({
+        topActions.push({
             key: 'SplitLayout',
             label: 'Split Layout',
             kind: 'button',
             value: 'Edit split…',
-            desc: 'Switches the split between Columns (side-by-side) and Rows (stacked) and adds/removes the panes (2 or more). Runtime-draggable splitter bars are added automatically and existing pane contents are kept.'
+            desc: 'Switches the split between Zones (two panes over a full-width one), Columns (side-by-side) and Rows (stacked) and adds/removes the panes. Runtime-draggable splitter bars are added automatically and existing pane contents are kept.'
+        });
+        topActions.push({
+            key: 'Splitters',
+            label: 'Splitters',
+            kind: 'button',
+            value: 'Edit splitters…',
+            desc: 'Styles the draggable divider bars between the panes: each one\'s thickness, colour and whether it is visible at runtime.'
         });
         props.push({
             key: 'SplitPanelPaneBorder',
@@ -1086,5 +1143,5 @@ export function propertyDefsFor(
             desc: 'Keep this Image sized to its Grid cell (follows the cell when it changes). Off = the Image keeps the size you set; the cell no longer resizes it.'
         });
     }
-    return props;
+    return topActions.concat(props);
 }

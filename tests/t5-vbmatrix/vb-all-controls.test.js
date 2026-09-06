@@ -187,6 +187,10 @@ module.exports = async (t) => {
             const props = propertyDefsFor(el).filter((p) => !META_KEYS.has(p.key));
             const tested = [];
             for (const p of props) {
+                // Button-kind properties are DESIGNER EDITORS (Items / Grid.Defs / Menu Items /
+                // Split Layout / Splitters / Rows / Columns ...) — never XAML attributes, so they
+                // must not be serialised onto the element (e.g. a stray Rows="2" on a DataGrid).
+                if (p.kind === 'button') { tested.push({ key: p.key, kind: p.kind, value: null, note: 'editor (button)' }); continue; }
                 if (NON_XAML_KEYS.has(p.key)) { tested.push({ key: p.key, kind: p.kind, value: null, note: 'non-XAML (binding/editor)' }); continue; }
                 if (p.key === 'chrome:AnchorHelper.Anchor') { tested.push({ key: p.key, kind: p.kind, value: null, note: 'compile-only' }); continue; }
                 const val = valueFor(p);

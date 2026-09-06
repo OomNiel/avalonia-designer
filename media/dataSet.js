@@ -12,11 +12,30 @@
     let controls = [];          // bindable controls in the project: {name,type,bound}
     let selection = null;       // {table} or {table, column} (null = dataset)
     let ctx = { x: 0, y: 0 };   // right-click coordinates
+    let lastControlsJson = '';  // last controls snapshot (avoids pointless re-renders)
+    let requestingControls = false;
 
     const $ = (id) => document.getElementById(id);
 
     // ---------- Post helpers ----------
     function post(msg) { vscode.postMessage(msg); }
+
+    // Asks the extension for a fresh bindable-controls list (so a control placed/saved after the
+    // designer opened still appears). One outstanding request at a time; re-render only on change.
+    function requestControls() {
+        if (requestingControls) return;
+        requestingControls = true;
+        post({ type: 'getControls' });
+    }
+    function applyControls(list) {
+        requestingControls = false;
+        const j = JSON.stringify(list || []);
+        if (j !== lastControlsJson) {
+            lastControlsJson = j;
+            controls = list || [];
+            if (selection) renderProps();
+        }
+    }
 
     // ---------- Rendering ----------
     function renderCanvas() {
@@ -142,16 +161,15 @@
         h.textContent = 'DATASET';
         box.appendChild(h);
 
-        // DataSet / generated class name
-        const f = field('Name', 'ds-name', 'The DataSet / generated class name.');
+        // DataSet / generated class name — FIXED when the .adset is created. Renaming would strand
+        // the old generated file + code-behind bindings and duplicate the shared helper types, so the
+        // supported path is Remove DataSet… then create a new one (see the Remove button / toolbar).
+        const f = field('Name', 'ds-name', 'Fixed when created — to rename, use Remove DataSet… then create a new one.');
         const input = document.createElement('input');
         input.type = 'text';
+        input.readOnly = true;
         input.value = spec.name;
-        input.addEventListener('change', () => {
-            const v = input.value.trim();
-            if (v && v !== spec.name) post({ type: 'setName', name: v });
-            else input.value = spec.name;
-        });
+        input.title = 'DataSet / generated class name (rename = Remove DataSet, then create a new one)';
         f.querySelector('#ds-name').appendChild(input);
         box.appendChild(f);
 
@@ -160,6 +178,7 @@
             ? spec.tables.find((x) => x.name === selection.table)
             : undefined;
         const enabled = !!activeTable;
+        if (enabled) requestControls(); // keep the list current as controls are added to forms
         const bf = field('Bind to control', 'ds-bind',
             enabled
                 ? 'Pick a control to bind the selected table to. A * marks a control already bound to a dataset.'
@@ -221,6 +240,57 @@
         });
         f.querySelector('#tbl-name').appendChild(input);
         box.appendChild(f);
+
+        // Data source: sample/XML (default) or a SQLite database file (per-table storage).
+        const srcf = field('Data source', 'tbl-dsrc', 'Where the table keeps its rows. "SQLite file" stores rows in a database file (a bound DataGrid reads/writes it); otherwise the table uses the sample/XML data store.');
+        const srcSel = document.createElement('select');
+        const oX = document.createElement('option');
+        oX.value = ''; oX.textContent = 'Sample / XML file (default)';
+        const oS = document.createElement('option');
+        oS.value = 'sqlite'; oS.textContent = 'SQLite database file';
+        const useSqlite = !!(t.sqlite && t.sqlite.file);
+        if (useSqlite) oS.selected = true; else oX.selected = true;
+        srcSel.appendChild(oX); srcSel.appendChild(oS);
+        srcSel.addEventListener('change', () => post({ type: 'setTableProp', table: t.name, prop: 'storage', value: srcSel.value }));
+        srcf.querySelector('#tbl-dsrc').appendChild(srcSel);
+        box.appendChild(srcf);
+
+        if (useSqlite) {
+            const dbf = field('SQLite file', 'tbl-dbfile', 'The database file. A relative path resolves next to the app at runtime and against the project folder in the designer preview.');
+            const row = document.createElement('div');
+            row.className = 'sqlite-file-row';
+            const fileInput = document.createElement('input');
+            fileInput.type = 'text';
+            fileInput.value = t.sqlite.file;
+            fileInput.addEventListener('change', () => {
+                const v = fileInput.value.trim();
+                if (v) post({ type: 'setTableProp', table: t.name, prop: 'dbFile', value: v });
+                else fileInput.value = t.sqlite.file;
+            });
+            const browse = document.createElement('button');
+            browse.textContent = '…';
+            browse.title = 'Pick a .db file';
+            browse.addEventListener('click', () => post({ type: 'sqliteBrowse', table: t.name }));
+            row.appendChild(fileInput);
+            row.appendChild(browse);
+            dbf.querySelector('#tbl-dbfile').appendChild(row);
+            box.appendChild(dbf);
+
+            const pvf = field('Preview', 'tbl-preview', 'Show the rows currently in the database (read-only, design-time).');
+            const pbtn = document.createElement('button');
+            pbtn.textContent = 'Preview SQLite data…';
+            pbtn.className = 'sec-btn';
+            pbtn.addEventListener('click', () => openSqlitePreview(t));
+            pvf.querySelector('#tbl-preview').appendChild(pbtn);
+            box.appendChild(pvf);
+
+            const tip = document.createElement('div');
+            tip.className = 'desc';
+            tip.textContent = t.keyColumn
+                ? 'Grid editing keys rows on "' + t.keyColumn + '".'
+                : 'Tip: mark a column as the Primary key for stable row ids when editing a bound grid.';
+            box.appendChild(tip);
+        }
 
         const btns = document.createElement('div');
         btns.className = 'field';
@@ -286,6 +356,20 @@
         sel.addEventListener('change', () => post({ type: 'setColumnProp', table: t.name, column: c.name, prop: 'type', value: sel.value }));
         tf.querySelector('#col-type').appendChild(sel);
         box.appendChild(tf);
+
+        const kf = field('Primary key', 'col-key', 'Marks this column as the row identity (one per table). SQLite storage uses it to keep row ids stable.');
+        const kw = document.createElement('div');
+        kw.className = 'check';
+        const kcb = document.createElement('input');
+        kcb.type = 'checkbox';
+        kcb.checked = t.keyColumn === c.name;
+        kcb.addEventListener('change', () => post({ type: 'setColumnProp', table: t.name, column: c.name, prop: 'key', value: kcb.checked }));
+        const klab = document.createElement('span');
+        klab.textContent = 'This column is the key';
+        kw.appendChild(kcb);
+        kw.appendChild(klab);
+        kf.querySelector('#col-key').appendChild(kw);
+        box.appendChild(kf);
 
         const af = field('Allow null', 'col-null', 'Whether this column may be empty (null).');
         const checkWrap = document.createElement('div');
@@ -374,6 +458,80 @@
     }
     function hideMenu() { $('ctxmenu').style.display = 'none'; }
 
+    // ---------- SQLite preview modal ----------
+    let sqlitePreviewTable = null; // table whose .db is being previewed
+    function openSqlitePreview(t) {
+        sqlitePreviewTable = t.name;
+        const dbTable = (t.sqlite && t.sqlite.tableName) || t.name;
+        $('dsSqliteTitle').textContent = 'SQLite data — ' + t.name;
+        $('dsSqliteFile').textContent = t.sqlite && t.sqlite.file ? 'File: ' + t.sqlite.file : '';
+        $('dsSqliteStatus').textContent = '';
+        $('dsSqliteStatus').className = 'sqlite-status';
+        $('dsSqliteBody').innerHTML = '';
+        $('dsSqliteSql').value = 'SELECT * FROM "' + dbTable + '" ORDER BY rowid';
+        $('dsSqliteModal').hidden = false;
+        runSqlitePreview();
+    }
+    function closeSqlitePreview() {
+        $('dsSqliteModal').hidden = true;
+        sqlitePreviewTable = null;
+    }
+    function runSqlitePreview() {
+        if (!sqlitePreviewTable) return;
+        const st = $('dsSqliteStatus');
+        st.textContent = 'Running…';
+        st.className = 'sqlite-status';
+        post({ type: 'sqliteQuery', table: sqlitePreviewTable, sql: $('dsSqliteSql').value });
+    }
+    function renderSqliteResult(msg) {
+        if (msg.table !== sqlitePreviewTable) return;
+        const st = $('dsSqliteStatus');
+        if (!msg.ok) {
+            st.textContent = 'Error: ' + (msg.error || 'unknown');
+            st.className = 'sqlite-status err';
+            $('dsSqliteBody').innerHTML = '';
+            return;
+        }
+        const cols = msg.columns || [];
+        const rows = msg.rows || [];
+        st.textContent = rows.length + ' row' + (rows.length === 1 ? '' : 's') + (msg.dbFile ? ' — ' + msg.dbFile : '');
+        st.className = 'sqlite-status ok';
+        const host = $('dsSqliteBody');
+        host.innerHTML = '';
+        const wrap = document.createElement('div');
+        wrap.className = 'sqlite-table-wrap';
+        if (!cols.length) {
+            wrap.appendChild(document.createTextNode('(no columns)'));
+            host.appendChild(wrap);
+            return;
+        }
+        const table = document.createElement('table');
+        table.className = 'sqlite-table';
+        const thead = document.createElement('thead');
+        const hr = document.createElement('tr');
+        for (const c of cols) {
+            const th = document.createElement('th');
+            th.textContent = c;
+            hr.appendChild(th);
+        }
+        thead.appendChild(hr);
+        table.appendChild(thead);
+        const tb = document.createElement('tbody');
+        for (const row of rows) {
+            const tr = document.createElement('tr');
+            for (let i = 0; i < cols.length; i++) {
+                const td = document.createElement('td');
+                const v = row[i];
+                td.textContent = (v === null || v === undefined) ? '' : String(v);
+                tr.appendChild(td);
+            }
+            tb.appendChild(tr);
+        }
+        table.appendChild(tb);
+        wrap.appendChild(table);
+        host.appendChild(wrap);
+    }
+
     // ---------- Events ----------
     window.addEventListener('message', (ev) => {
         const msg = ev.data;
@@ -391,6 +549,10 @@
             renderProps();
         } else if (msg.type === 'status') {
             $('status').textContent = msg.message || '';
+        } else if (msg.type === 'sqliteResult') {
+            renderSqliteResult(msg);
+        } else if (msg.type === 'controls') {
+            applyControls(msg.controls);
         }
     });
 
@@ -470,7 +632,11 @@
             if (!$('ctxmenu').contains(e.target)) hideMenu();
         });
         window.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') hideMenu();
+            if (e.key === 'Escape') {
+                hideMenu();
+                if (!$('dsSqliteModal').hidden) closeSqlitePreview();
+                return;
+            }
             // Undo / Redo (5 levels, handled by the extension): Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y.
             if ((e.ctrlKey || e.metaKey) && !e.altKey) {
                 const k = e.key.toLowerCase();
@@ -491,13 +657,17 @@
             post({ type: 'addTable', x: 40 + (spec ? spec.tables.length * 12 : 0), y: 40 + (spec ? spec.tables.length * 12 : 0) });
         });
         $('btnGenerate').addEventListener('click', () => post({ type: 'generate' }));
-
-        // Toolbar dataset-name field: change the DataSet / generated class name.
-        $('ds-name-input').addEventListener('change', () => {
-            const v = $('ds-name-input').value.trim();
-            if (v && v !== spec.name) post({ type: 'setName', name: v });
-            else $('ds-name-input').value = spec.name;
+        $('btnImportSqlite').addEventListener('click', () => post({ type: 'sqliteImport' }));
+        const rmBtn = $('btnRemoveDataSet');
+        if (rmBtn) rmBtn.addEventListener('click', () => post({ type: 'removeDataSet' }));
+        $('dsSqliteRun').addEventListener('click', runSqlitePreview);
+        $('dsSqliteClose').addEventListener('click', closeSqlitePreview);
+        $('dsSqliteModal').addEventListener('click', (e) => {
+            if (e.target === $('dsSqliteModal')) closeSqlitePreview(); // click outside the box
         });
+
+        // The toolbar DataSet-name field is READ-ONLY (fixed at creation) — see the HTML input's
+        // readonly attribute; renaming is done by Remove DataSet… then creating a new one.
 
         vscode.postMessage({ type: 'ready' });
     });

@@ -851,3 +851,240 @@ async function createCodeBehind(axamlUri: vscode.Uri): Promise<boolean> {
     fs.writeFileSync(filePath, content, 'utf8');
     return true;
 }
+
+// ---------------- Image follows the bound DataGrid's selection (Data Image) ----------------
+
+/** An Image control that shows the image file (absolute path) held in one String column of the
+ *  row currently selected in a DataGrid bound to a DataSet table. The Image.Source is driven from
+ *  code-behind on grid selection (blank when nothing is selected / the path is empty / the file is
+ *  missing). Auto-selects the first row on load so an image shows immediately. */
+export interface DataImageRef {
+    datasetName: string; // e.g. SmokeData (only used to locate the row type's namespace = project ns)
+    tableName: string;   // e.g. Customers  -> typed row class CustomersRow
+    controlName: string; // Image control x:Name
+    gridName: string;    // DataGrid x:Name whose selection drives the Image
+    column: string;      // String column of the row that holds the absolute image-file path
+}
+
+function imgMarker(language: 'cs' | 'vb', control: string, grid: string, column: string): string {
+    const body = `DataImage: ${control} <- ${grid}.${column}`;
+    return language === 'cs' ? `// ${body}` : `' ${body}`;
+}
+
+/** Marker line text used to detect/remove the binding (both languages). */
+function imgMarkerRe(control: string): RegExp {
+    return new RegExp(`^\\s*(?://|')\\s*DataImage:\\s*${escapeRe(control)}\\s*<-\\s*[\\w.]+\\.[\\w.]+`, 'm');
+}
+
+function csDataImageBlock(indent: string, r: DataImageRef): string {
+    const row = `${r.tableName}Row`;
+    return [
+        `${indent}${imgMarker('cs', r.controlName, r.gridName, r.column)}`,
+        `${indent}private void BindImage_${r.controlName}()`,
+        `${indent}{`,
+        `${indent}    ${r.gridName}.SelectionChanged += DataImage_${r.controlName}_OnSelection;`,
+        `${indent}    ${r.gridName}.Loaded += DataImage_${r.controlName}_OnLoaded;`,
+        `${indent}}`,
+        ``,
+        `${indent}private void DataImage_${r.controlName}_OnSelection(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)`,
+        `${indent}{`,
+        `${indent}    DataImage_${r.controlName}_Show(${r.gridName}.SelectedItem as ${row});`,
+        `${indent}}`,
+        ``,
+        `${indent}private void DataImage_${r.controlName}_OnLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)`,
+        `${indent}{`,
+        `${indent}    if (${r.gridName}.ItemsSource is System.Collections.ObjectModel.ObservableCollection<${row}> src && src.Count > 0 && ${r.gridName}.SelectedItem == null) ${r.gridName}.SelectedIndex = 0;`,
+        `${indent}}`,
+        ``,
+        `${indent}private void DataImage_${r.controlName}_Show(${row}? row)`,
+        `${indent}{`,
+        `${indent}    ${r.controlName}.Source = null;`,
+        `${indent}    if (row != null && !row.IsPlaceholder && !string.IsNullOrEmpty(row.${r.column}))`,
+        `${indent}    {`,
+        `${indent}        try { ${r.controlName}.Source = new Avalonia.Media.Imaging.Bitmap(row.${r.column}); }`,
+        `${indent}        catch { /* file missing or unreadable — leave the image blank */ }`,
+        `${indent}    }`,
+        `${indent}}`,
+        ``
+    ].join('\n');
+}
+
+function vbDataImageBlock(indent: string, r: DataImageRef): string {
+    const row = `${r.tableName}Row`;
+    return [
+        `${indent}${imgMarker('vb', r.controlName, r.gridName, r.column)}`,
+        `${indent}Private Sub BindImage_${r.controlName}()`,
+        `${indent}    AddHandler ${r.gridName}.SelectionChanged, AddressOf DataImage_${r.controlName}_OnSelection`,
+        `${indent}    AddHandler ${r.gridName}.Loaded, AddressOf DataImage_${r.controlName}_OnLoaded`,
+        `${indent}End Sub`,
+        ``,
+        `${indent}Private Sub DataImage_${r.controlName}_OnSelection(sender As Object, e As Avalonia.Controls.SelectionChangedEventArgs)`,
+        `${indent}    DataImage_${r.controlName}_Show(TryCast(${r.gridName}.SelectedItem, ${row}))`,
+        `${indent}End Sub`,
+        ``,
+        `${indent}Private Sub DataImage_${r.controlName}_OnLoaded(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)`,
+        `${indent}    Dim src As System.Collections.ObjectModel.ObservableCollection(Of ${row}) = TryCast(${r.gridName}.ItemsSource, System.Collections.ObjectModel.ObservableCollection(Of ${row}))`,
+        `${indent}    If src IsNot Nothing AndAlso src.Count > 0 AndAlso ${r.gridName}.SelectedItem Is Nothing Then ${r.gridName}.SelectedIndex = 0`,
+        `${indent}End Sub`,
+        ``,
+        `${indent}Private Sub DataImage_${r.controlName}_Show(row As ${row})`,
+        `${indent}    ${r.controlName}.Source = Nothing`,
+        `${indent}    If row IsNot Nothing AndAlso Not row.IsPlaceholder AndAlso Not String.IsNullOrEmpty(row.${r.column}) Then`,
+        `${indent}        Try`,
+        `${indent}            ${r.controlName}.Source = New Avalonia.Media.Imaging.Bitmap(row.${r.column})`,
+        `${indent}        Catch`,
+        `${indent}        End Try`,
+        `${indent}    End If`,
+        `${indent}End Sub`,
+        ``
+    ].join('\n');
+}
+
+/**
+ * Writes the Data-Image binding into the form's code-behind (creating it first if needed):
+ * a marker comment + the selection handlers + a constructor call. Idempotent — returns the
+ * code-behind path (or undefined on failure). `rowType` must exist in the project namespace.
+ */
+export async function bindImageToGrid(axamlUri: vscode.Uri, r: DataImageRef): Promise<string | undefined> {
+    let filePath = findCodeBehindFile(axamlUri);
+    if (!filePath) {
+        if (!(await createCodeBehind(axamlUri))) return undefined;
+        filePath = findCodeBehindFile(axamlUri);
+        if (!filePath) return undefined;
+    }
+    const language: 'cs' | 'vb' = filePath.toLowerCase().endsWith('.vb') ? 'vb' : 'cs';
+    const base = path.basename(axamlUri.fsPath, '.axaml');
+    const original = fs.readFileSync(filePath, 'utf8');
+    const updated = language === 'cs'
+        ? csInsertDataImage(original, r, base)
+        : vbInsertDataImage(original, r, base);
+    if (!updated || updated === original) return filePath;
+    fs.writeFileSync(filePath, updated, 'utf8');
+    return filePath;
+}
+
+function csInsertDataImage(text: string, r: DataImageRef, className?: string): string | undefined {
+    let t = text;
+    const clsRe = className
+        ? new RegExp(`\\b(?:partial\\s+)?class\\s+${escapeRe(className)}\\b`, 'i')
+        : /\bpartial\s+class\s+(\w+)/;
+    const m = clsRe.exec(t);
+    if (!m) return undefined;
+    const brace = t.indexOf('{', m.index);
+    if (brace < 0) return undefined;
+    const close = matchingBrace(t, brace);
+    if (close < 0) return undefined;
+    const lineStart = t.lastIndexOf('\n', m.index) + 1;
+    const indent = t.slice(lineStart, m.index).match(/^\s*/)?.[0] ?? '';
+    const bodyIndent = indent + '    ';
+
+    // Idempotent: skip if this control's marker is already present.
+    if (imgMarkerRe(r.controlName).test(t)) return t;
+
+    const block = csDataImageBlock(bodyIndent, r);
+    // Insert the method block just before the class's closing brace.
+    t = t.slice(0, close) + '\n' + block + t.slice(close);
+
+    // Constructor call right after InitializeComponent();
+    const ic = /InitializeComponent\s*\(\)\s*;/.exec(t);
+    if (ic) {
+        const lineEnd = t.indexOf('\n', ic.index);
+        const icLineStart = t.lastIndexOf('\n', ic.index) + 1;
+        const icIndent = t.slice(icLineStart, ic.index).match(/^\s*/)?.[0] ?? bodyIndent;
+        const call = `${icIndent}BindImage_${r.controlName}();`;
+        if (!t.includes(call)) {
+            const at = lineEnd < 0 ? t.length : lineEnd;
+            t = t.slice(0, at) + '\n' + call + t.slice(at);
+        }
+    }
+    return t;
+}
+
+function vbInsertDataImage(text: string, r: DataImageRef, className?: string): string | undefined {
+    let t = text;
+    const clsRe = className
+        ? new RegExp(`\\bClass\\s+${escapeRe(className)}\\b`, 'i')
+        : /\bClass\s+(\w+)/i;
+    const m = clsRe.exec(t);
+    if (!m) return undefined;
+    // End Class is at an ABSOLUTE index in `t` — do NOT add m.index to it again.
+    const em = /End\s+Class/i.exec(t);
+    if (!em) return undefined;
+    const endIndex = em.index;
+    const lineStart = t.lastIndexOf('\n', m.index) + 1;
+    const indent = t.slice(lineStart, m.index).match(/^\s*/)?.[0] ?? '';
+    const bodyIndent = indent + '    ';
+
+    if (imgMarkerRe(r.controlName).test(t)) return t;
+
+    const block = vbDataImageBlock(bodyIndent, r);
+    // Insert the methods just before End Class.
+    t = t.slice(0, endIndex) + '\n' + block + t.slice(endIndex);
+
+    // Constructor call right after InitializeComponent()
+    const ic = /InitializeComponent\s*\(\)/i.exec(t);
+    if (ic) {
+        const lineEnd = t.indexOf('\n', ic.index);
+        const icLineStart = t.lastIndexOf('\n', ic.index) + 1;
+        const icIndent = t.slice(icLineStart, ic.index).match(/^\s*/)?.[0] ?? bodyIndent;
+        const call = `${icIndent}BindImage_${r.controlName}()`;
+        if (!t.includes(call)) {
+            const at = lineEnd < 0 ? t.length : lineEnd;
+            t = t.slice(0, at) + '\n' + call + t.slice(at);
+        }
+    }
+    return t;
+}
+
+/** True if the form's code-behind already carries a Data-Image binding for the control. */
+export function hasDataImageBinding(axamlUri: vscode.Uri, controlName: string): boolean {
+    const filePath = findCodeBehindFile(axamlUri);
+    if (!filePath) return false;
+    try {
+        return imgMarkerRe(controlName).test(fs.readFileSync(filePath, 'utf8'));
+    } catch { return false; }
+}
+
+/** Removes the Data-Image binding (marker + handlers + constructor call) for the control. */
+export async function unbindImageFromGrid(axamlUri: vscode.Uri, controlName: string): Promise<void> {
+    const filePath = findCodeBehindFile(axamlUri);
+    if (!filePath) return;
+    const language: 'cs' | 'vb' = filePath.toLowerCase().endsWith('.vb') ? 'vb' : 'cs';
+    let t = fs.readFileSync(filePath, 'utf8');
+
+    // Remove the whole contiguous block: from the marker line to the end of the Show method.
+    const markerM = imgMarkerRe(controlName).exec(t);
+    let changed = false;
+    if (markerM) {
+        const blockStart = t.lastIndexOf('\n', markerM.index) + 1; // start of the marker line
+        const showSig = language === 'cs'
+            ? new RegExp(`private void DataImage_${escapeRe(controlName)}_Show\\s*\\(`)
+            : new RegExp(`Private Sub DataImage_${escapeRe(controlName)}_Show\\s*\\(`);
+        const sig = showSig.exec(t.slice(blockStart));
+        if (sig) {
+            const sigIndex = blockStart + sig.index;
+            let end = -1;
+            if (language === 'cs') {
+                const ob = t.indexOf('{', sigIndex);
+                if (ob >= 0) { const cb = matchingBrace(t, ob); if (cb >= 0) end = cb + 1; }
+            } else {
+                // VB: first End Sub line after the Show signature closes it (Show has no nesting).
+                const es = /^\s*End Sub[ \t]*$/gm.exec(t.slice(sigIndex));
+                if (es) end = sigIndex + es.index + es[0].length;
+            }
+            if (end >= 0) {
+                t = t.slice(0, blockStart) + t.slice(end);
+                changed = true;
+            }
+        }
+    }
+
+    // Remove the constructor call line.
+    const callRe = language === 'cs'
+        ? new RegExp(`^[ \\t]*BindImage_${escapeRe(controlName)}\\(\\);?[ \\t]*\\r?\\n`, 'gm')
+        : new RegExp(`^[ \\t]*BindImage_${escapeRe(controlName)}\\(\\)[ \\t]*\\r?\\n`, 'gm');
+    const t2 = t.replace(callRe, '');
+    if (t2 !== t) changed = true;
+
+    if (changed) fs.writeFileSync(filePath, t2, 'utf8');
+}

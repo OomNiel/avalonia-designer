@@ -27,6 +27,11 @@ A WYSIWYG form designer for the **Avalonia** framework with a drag-and-drop tool
 - Properties panel edits common properties with instant re-render.
 - **DataSet designer** — design ADO.NET `DataSet` tables + columns visually (`*.adset`), then
   generate a runtime class (C#/VB) + `.xsd`.
+- **Split panels** — a resizable multi-pane container (Zones T / Columns / Rows layouts) whose
+  panes and runtime divider bars you can style (Split Layout, Splitters, Pane Border properties).
+- **DataGrid Rows & Columns editors** — style rows, columns and **column headers** (text alignment,
+  colour, font, size, background) from the Properties panel; the header-font picker lists every
+  font installed on the machine.
 
 ## Architecture
 

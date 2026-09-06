@@ -2,11 +2,65 @@
  * Code generation for the DataSet designer: a runtime-construction class
  * (C# or VB.NET) that builds the DataSet, plus a standard .xsd schema file.
  */
-import { DataSetSpec, DataTableSpec, DataColumnSpec, csType, vbType, xsType } from './dataSetModel';
+import { DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, csType, vbType, xsType, isSqliteTable, keyColumnOf, sqliteTableName } from './dataSetModel';
 
 function escCs(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
 function escVb(s: string): string { return s.replace(/"/g, '""'); }
 function escXml(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+/** Generated C# DatabaseAdapter.EnsureColumns — brings an existing .db table in line with the
+ *  designer schema by ALTER TABLE ADD COLUMN-ing any columns the DataSet has but the DB lacks
+ *  (new columns added nullable, so existing rows are kept). \" (escaped via \\") stays as-is. */
+const CS_ENSURECOLUMNS = `        /// <summary>Brings an existing table in line with the designer schema: adds any columns
+        /// the DataSet has but the DB table lacks (so 'add column → Generate Code' works on an
+        /// existing file without losing its rows). New columns are added nullable.</summary>
+        public static void EnsureColumns(Microsoft.Data.Sqlite.SqliteConnection con, string table, string[] cols)
+        {
+            var existing = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+            using (var c = con.CreateCommand())
+            {
+                c.CommandText = $\"PRAGMA table_info(\\\"{table}\\\")\";
+                using var rd = c.ExecuteReader();
+                while (rd.Read()) existing.Add(rd.GetString(1));
+            }
+            foreach (var col in cols)
+            {
+                var name = col.Split(' ')[0];
+                var affinity = col.Substring(name.Length).Trim();
+                if (existing.Contains(name)) continue;
+                using var a = con.CreateCommand();
+                a.CommandText = $\"ALTER TABLE \\\"{table}\\\" ADD COLUMN \\\"{name}\\\" {affinity}\";
+                a.ExecuteNonQuery();
+            }
+        }`;
+
+/** Generated VB DatabaseAdapter.EnsureColumns — brings an existing .db table in line with the
+ *  designer schema by ALTER TABLE ADD COLUMN-ing any columns the DataSet has but the DB lacks
+ *  (new columns added nullable, so existing rows are kept). */
+const VB_ENSURECOLUMNS = `        ''' <summary>Brings an existing table in line with the designer schema: adds any columns
+        ''' the DataSet has but the DB table lacks (so 'add column → Generate Code' works on an
+        ''' existing file without losing its rows). New columns are added nullable.</summary>
+        Public Shared Sub EnsureColumns(con As Microsoft.Data.Sqlite.SqliteConnection, table As String, cols As String())
+            Dim existing As New System.Collections.Generic.HashSet(Of String)(System.StringComparer.OrdinalIgnoreCase)
+            Using c As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()
+                c.CommandText = "PRAGMA table_info(""" & table & """)"
+                Using rd As Microsoft.Data.Sqlite.SqliteDataReader = c.ExecuteReader()
+                    While rd.Read()
+                        existing.Add(rd.GetString(1))
+                    End While
+                End Using
+            End Using
+            For Each col As String In cols
+                Dim name As String = col.Split(" "c)(0)
+                Dim affinity As String = col.Substring(name.Length).Trim()
+                If Not existing.Contains(name) Then
+                    Using a As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()
+                        a.CommandText = "ALTER TABLE """ & table & """ ADD COLUMN """ & name & """ " & affinity
+                        a.ExecuteNonQuery()
+                    End Using
+                End If
+            Next
+        End Sub`;
 
 /** C# literal for a column's sample value (falls back to a sensible type default). */
 function csSampleValue(c: DataColumnSpec): string {
@@ -70,18 +124,28 @@ function csRowClass(t: DataTableSpec): string {
     return lines.join('\n');
 }
 
-/** C# Get<T>() method: builds a List<Row> from the DataTable (keeps the sample row). */
-function csGetMethod(t: DataTableSpec): string[] {
+/** C# Get<T>() method for a BOUND table — reads the rows from its SQLite file (bound tables are
+ *  always SQLite-backed; the shared per-DataSet .db is used unless the table has its own file). */
+function csGetMethod(spec: DataSetSpec, t: DataTableSpec): string[] {
+    const R = `${t.name}Row`;
+    const dbFile = (t.sqlite && t.sqlite.file) || `${spec.name}.db`;
+    const tbl = sqliteTableName(t);
+    const create = csSqliteCreateSql(t);
+    const sel = `SELECT ${t.columns.map((c) => `"${c.name}"`).join(', ')} FROM "${tbl}" ORDER BY rowid`;
     const lines: string[] = [];
-    lines.push(`        public static System.Collections.Generic.List<${t.name}Row> Get${t.name}()`);
+    lines.push(`        public static System.Collections.Generic.List<${R}> Get${t.name}()`);
     lines.push('        {');
-    lines.push(`            var list = new System.Collections.Generic.List<${t.name}Row>();`);
-    lines.push(`            var dt = CreateDataSet().Tables["${t.name}"]!;`);
-    lines.push('            foreach (System.Data.DataRow r in dt.Rows)');
+    lines.push(`            var list = new System.Collections.Generic.List<${R}>();`);
+    lines.push(`            using var con = DatabaseAdapter.Open("${escCs(dbFile)}", "${escCs(create)}");`);
+    lines.push(`            DatabaseAdapter.EnsureColumns(con, "${escCs(tbl)}", ${csSyncColDefs(t)});`);
+    lines.push('            using var cmd = con.CreateCommand();');
+    lines.push(`            cmd.CommandText = "${escCs(sel)}";`);
+    lines.push('            using var rd = cmd.ExecuteReader();');
+    lines.push('            while (rd.Read())');
     lines.push('            {');
-    lines.push(`                list.Add(new ${t.name}Row`);
+    lines.push(`                list.Add(new ${R}`);
     lines.push('                {');
-    for (const c of t.columns) lines.push(`                    ${c.name} = ${csRowValue(c)},`);
+    t.columns.forEach((c, ci) => lines.push(`                    ${c.name} = ${csDbReadExpr(c, ci)},`));
     lines.push('                });');
     lines.push('            }');
     lines.push('            return list;');
@@ -121,22 +185,33 @@ function vbRowClass(t: DataTableSpec): string {
     return lines.join('\n');
 }
 
-/** VB Get<T>() method: builds a List(Of Row) from the DataTable (keeps the sample row). */
-function vbGetMethod(t: DataTableSpec): string[] {
+/** VB Get<T>() method for a BOUND table — reads the rows from its SQLite file. */
+function vbGetMethod(spec: DataSetSpec, t: DataTableSpec): string[] {
+    const R = `${t.name}Row`;
+    const dbFile = (t.sqlite && t.sqlite.file) || `${spec.name}.db`;
+    const tbl = sqliteTableName(t);
+    const create = vbSqliteCreateSql(t);
+    const sel = `SELECT ${t.columns.map((c) => `"${c.name}"`).join(', ')} FROM "${tbl}" ORDER BY rowid`;
     const lines: string[] = [];
-    lines.push(`        Public Shared Function Get${t.name}() As List(Of ${t.name}Row)`);
+    lines.push(`        Public Shared Function Get${t.name}() As List(Of ${R})`);
     lines.push('');
-    lines.push(`            Dim list As New List(Of ${t.name}Row)()`);
-    lines.push(`            Dim dt As DataTable = CreateDataSet().Tables("${t.name}")`);
-    lines.push('            For Each r As DataRow In dt.Rows');
-    lines.push(`                list.Add(New ${t.name}Row With {`);
+    lines.push(`            Dim list As New List(Of ${R})()`);
+    lines.push(`            Using con As Microsoft.Data.Sqlite.SqliteConnection = DatabaseAdapter.Open("${escVb(dbFile)}", "${escVb(create)}")`);
+    lines.push(`                DatabaseAdapter.EnsureColumns(con, "${escVb(tbl)}", ${vbSyncColDefs(t)})`);
+    lines.push('                Using cmd As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()');
+    lines.push(`                    cmd.CommandText = "${escVb(sel)}"`);
+    lines.push('                    Using rd As Microsoft.Data.Sqlite.SqliteDataReader = cmd.ExecuteReader()');
+    lines.push('                        While rd.Read()');
+    lines.push(`                            list.Add(New ${R} With {`);
     t.columns.forEach((c, ci) => {
-        // VB object-initializer members are comma-separated (no trailing comma allowed).
         const comma = ci < t.columns.length - 1 ? ',' : '';
-        lines.push(`                    .${c.name} = ${vbRowValue(c)}${comma}`);
+        lines.push(`                                .${c.name} = ${vbDbReadExpr(c, ci)}${comma}`);
     });
-    lines.push('                })');
-    lines.push('            Next');
+    lines.push('                            })');
+    lines.push('                        End While');
+    lines.push('                    End Using');
+    lines.push('                End Using');
+    lines.push('            End Using');
     lines.push('            Return list');
     lines.push('        End Function');
     return lines;
@@ -224,6 +299,215 @@ function csSeedLiteral(c: DataColumnSpec): string {
     return csSampleValue(c);
 }
 
+// ---------------- SQLite-backed persistence (C#) ----------------
+// A DataGrid-bound table whose .adset storage is SQLite reads/writes a SQLite database file (next
+// to the app, like the XML files) instead of a DataTable XML file. Save = DELETE + INSERT inside a
+// transaction — SQLite does NOT reset the AUTOINCREMENT sequence on DELETE, so integer keys stay
+// stable. A one-time migration copies rows from a legacy XML file when the DB table is empty.
+// The DB helper lives in a small shared `DatabaseAdapter` class (emitted once per generated file).
+
+/** SQLite type affinity for a column (DateTime/Guid/Decimal stored as TEXT, booleans as 0/1). */
+function csSqliteAffinity(type: ColumnType): string {
+    switch (type) {
+        case 'Int32': case 'Int64': case 'Boolean': return 'INTEGER';
+        case 'Double': return 'REAL';
+        case 'String': case 'DateTime': case 'Guid': case 'Decimal': return 'TEXT';
+        case 'Byte[]': return 'BLOB';
+    }
+}
+
+/** C# array literal of "<col> <AFFINITY>" definitions for a table's SQLite columns (names are NOT
+ *  quoted here — EnsureColumns quotes them itself when it builds the ALTER). Passed to
+ *  DatabaseAdapter.EnsureColumns so an existing .db table is ALTERed to match the designer schema
+ *  (add column in the designer → Generate Code → app runs without 'no such column'). */
+function csSyncColDefs(t: DataTableSpec): string {
+    const defs = t.columns.map((c) => `${c.name} ${csSqliteAffinity(c.type)}`);
+    return `new[] { ${defs.map((d) => `"${escCs(d)}"`).join(', ')} }`;
+}
+
+/** CREATE TABLE IF NOT EXISTS for a table (the key column becomes the SQLite PRIMARY KEY). */
+function csSqliteCreateSql(t: DataTableSpec): string {
+    const key = keyColumnOf(t);
+    const defs = t.columns.map((c) => {
+        const q = `"${c.name}"`;
+        if (c === key) {
+            const aff = (c.type === 'Int32' || c.type === 'Int64')
+                ? 'INTEGER PRIMARY KEY AUTOINCREMENT'
+                : c.type === 'Boolean'
+                    ? 'INTEGER PRIMARY KEY'
+                    : `${csSqliteAffinity(c.type)} PRIMARY KEY`;
+            return `${q} ${aff}`;
+        }
+        return `${q} ${csSqliteAffinity(c.type)}${c.allowNull ? '' : ' NOT NULL'}`;
+    });
+    return `CREATE TABLE IF NOT EXISTS "${sqliteTableName(t)}" (${defs.join(', ')})`;
+}
+
+/** C# expression that stores a typed row value as a SQLite-friendly parameter object. */
+function csDbStoreExpr(c: DataColumnSpec): string {
+    const n = `r.${c.name}`;
+    switch (c.type) {
+        case 'String': case 'Byte[]': case 'Int32': case 'Int64': case 'Double': return n;
+        case 'Decimal': return `${n}.ToString(System.Globalization.CultureInfo.InvariantCulture)`;
+        case 'Boolean': return `${n} ? 1L : 0L`;
+        case 'DateTime': return `${n} == DateTime.MinValue ? (object?)null : ${n}.ToString("O")`;
+        case 'Guid': return `${n} == Guid.Empty ? (object?)null : ${n}.ToString("D")`;
+    }
+}
+
+/** C# expression that reads a column value back into the typed row. */
+function csDbReadExpr(c: DataColumnSpec, idx: number): string {
+    switch (c.type) {
+        case 'String': return `rd.IsDBNull(${idx}) ? null : rd.GetString(${idx})`;
+        case 'Byte[]': return `rd.IsDBNull(${idx}) ? null : (byte[])rd.GetValue(${idx})`;
+        case 'Int32': return `rd.IsDBNull(${idx}) ? 0 : rd.GetInt32(${idx})`;
+        case 'Int64': return `rd.IsDBNull(${idx}) ? 0L : rd.GetInt64(${idx})`;
+        case 'Double': return `rd.IsDBNull(${idx}) ? 0.0 : rd.GetDouble(${idx})`;
+        case 'Decimal': return `rd.IsDBNull(${idx}) ? 0m : decimal.Parse(rd.GetString(${idx}), System.Globalization.CultureInfo.InvariantCulture)`;
+        case 'Boolean': return `rd.IsDBNull(${idx}) ? false : rd.GetInt64(${idx}) != 0`;
+        case 'DateTime': return `rd.IsDBNull(${idx}) ? DateTime.MinValue : DateTime.Parse(rd.GetString(${idx}), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)`;
+        case 'Guid': return `rd.IsDBNull(${idx}) ? Guid.Empty : Guid.Parse(rd.GetString(${idx}))`;
+    }
+}
+
+/** C# expression testing whether a row's key column holds a real (persistable) value. */
+function csKeyValidExpr(c: DataColumnSpec): string {
+    switch (c.type) {
+        case 'Int32': return `r.${c.name} != 0`;
+        case 'Int64': return `r.${c.name} != 0L`;
+        case 'String': return `!string.IsNullOrEmpty(r.${c.name})`;
+        case 'Guid': return `r.${c.name} != Guid.Empty`;
+        case 'Double': return `r.${c.name} != 0.0`;
+        case 'Decimal': return `r.${c.name} != 0m`;
+        case 'DateTime': return `r.${c.name} != DateTime.MinValue`;
+        case 'Boolean': return `true`;
+        case 'Byte[]': return `r.${c.name} != null`;
+    }
+}
+
+/** C# placeholder row (the blank "+ Add row…" row) — same defaults as the XML path. */
+function csDbPlaceholderInit(t: DataTableSpec): string {
+    const ph = t.columns.map((c) => `${c.name} = ${csPlaceholderValue(c, c === (t.columns.find((x) => x.type === 'String') ?? t.columns[0]))}`);
+    return `${ph.join(', ')}, IsPlaceholder = true`;
+}
+
+/** C# SQLite Load / Save / migration methods for a DataGrid-bound table. */
+function csSqliteMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
+    const R = `${t.name}Row`;
+    const L = `System.Collections.ObjectModel.ObservableCollection<${R}>`;
+    const dbFile = (t.sqlite && t.sqlite.file) || `${spec.name}.db`;
+    const tbl = sqliteTableName(t);
+    const create = csSqliteCreateSql(t);
+    const key = keyColumnOf(t);
+    const autoKey = !!key && (key.type === 'Int32' || key.type === 'Int64');
+    const nonKey = t.columns.filter((c) => c !== key);
+    const sel = `SELECT ${t.columns.map((c) => `"${c.name}"`).join(', ')} FROM "${tbl}" ORDER BY rowid`;
+    const insNoKey = `INSERT INTO "${tbl}" (${nonKey.map((c) => `"${c.name}"`).join(', ')}) VALUES (${nonKey.map((_, i) => `@c${i}`).join(', ')})`;
+    const insKey = `INSERT INTO "${tbl}" (${[key, ...nonKey].filter(Boolean).map((c) => `"${c!.name}"`).join(', ')}) VALUES (${[key, ...nonKey].filter(Boolean).map((_, i) => `@p${i}`).join(', ')})`;
+    const del = `DELETE FROM "${tbl}"`;
+
+    const lines: string[] = [];
+    lines.push('');
+    lines.push(`        // --- ${t.name}: SQLite-backed live grid support ---`);
+    lines.push(`        private const string _${t.name}Db = "${escCs(dbFile)}";`);
+    lines.push('');
+    // Load rows from the SQLite file (the DB file is created on first use if it doesn't exist).
+    lines.push(`        public static ${L} Load${t.name}()`);
+    lines.push('        {');
+    lines.push(`            var rows = new ${L}();`);
+    lines.push(`            using var con = DatabaseAdapter.Open(_${t.name}Db, "${escCs(create)}");`);
+    lines.push(`            DatabaseAdapter.EnsureColumns(con, "${escCs(tbl)}", ${csSyncColDefs(t)});`);
+    lines.push('            using var cmd = con.CreateCommand();');
+    lines.push(`            cmd.CommandText = "${escCs(sel)}";`);
+    lines.push('            using var rd = cmd.ExecuteReader();');
+    lines.push('            while (rd.Read())');
+    lines.push('            {');
+    lines.push(`                rows.Add(new ${R}`);
+    lines.push('                {');
+    t.columns.forEach((c, ci) => lines.push(`                    ${c.name} = ${csDbReadExpr(c, ci)},`));
+    lines.push('                });');
+    lines.push('            }');
+    lines.push(`            rows.Add(new ${R} { ${csDbPlaceholderInit(t)} });`);
+    lines.push('            return rows;');
+    lines.push('        }');
+    lines.push('');
+    // Save the collection back to the SQLite file (DELETE keeps the AUTOINCREMENT sequence).
+    lines.push(`        public static void Save${t.name}(${L} rows)`);
+    lines.push('        {');
+    lines.push(`            using var con = DatabaseAdapter.Open(_${t.name}Db, "${escCs(create)}");`);
+    lines.push(`            DatabaseAdapter.EnsureColumns(con, "${escCs(tbl)}", ${csSyncColDefs(t)});`);
+    lines.push('            using var tx = con.BeginTransaction();');
+    lines.push('            using (var del = con.CreateCommand())');
+    lines.push('            {');
+    lines.push('                del.Transaction = tx;');
+    lines.push(`                del.CommandText = "${escCs(del)}";`);
+    lines.push('                del.ExecuteNonQuery();');
+    lines.push('            }');
+    lines.push('            foreach (var r in rows)');
+    lines.push('            {');
+    lines.push('                if (r.IsPlaceholder) continue;');
+    if (key) {
+        lines.push(`                if (${csKeyValidExpr(key)})`);
+        lines.push('                {');
+        lines.push(`                    using var ck = con.CreateCommand();`);
+        lines.push('                    ck.Transaction = tx;');
+        lines.push(`                    ck.CommandText = "${escCs(insKey)}";`);
+        ([key, ...nonKey].filter(Boolean) as DataColumnSpec[]).forEach((c, i) => {
+            lines.push(`                    ck.Parameters.AddWithValue("@p${i}", ${csDbStoreExpr(c!)});`);
+        });
+        lines.push('                    ck.ExecuteNonQuery();');
+        lines.push('                }');
+        if (autoKey) {
+            lines.push('                else');
+            lines.push('                {');
+            lines.push(`                    using var cn = con.CreateCommand();`);
+            lines.push('                    cn.Transaction = tx;');
+            lines.push(`                    cn.CommandText = "${escCs(insNoKey)}";`);
+            nonKey.forEach((c, i) => {
+                lines.push(`                    cn.Parameters.AddWithValue("@c${i}", ${csDbStoreExpr(c)});`);
+            });
+            lines.push('                    cn.ExecuteNonQuery();');
+            lines.push('                    using (var rid = con.CreateCommand())');
+            lines.push('                    {');
+            lines.push('                        rid.Transaction = tx;');
+            lines.push('                        rid.CommandText = "SELECT last_insert_rowid();";');
+            lines.push(`                        r.${key.name} = (${csType(key.type)})Convert.ToInt64(rid.ExecuteScalar()!);`);
+            lines.push('                    }');
+            lines.push('                }');
+        } else if (key.type === 'Guid') {
+            lines.push('                else');
+            lines.push('                {');
+            lines.push(`                    r.${key.name} = Guid.NewGuid();`);
+            lines.push(`                    using var ck = con.CreateCommand();`);
+            lines.push('                    ck.Transaction = tx;');
+            lines.push(`                    ck.CommandText = "${escCs(insKey)}";`);
+            ([key, ...nonKey].filter(Boolean) as DataColumnSpec[]).forEach((c, i) => {
+                lines.push(`                    ck.Parameters.AddWithValue("@p${i}", ${csDbStoreExpr(c!)});`);
+            });
+            lines.push('                    ck.ExecuteNonQuery();');
+            lines.push('                }');
+        } else {
+            lines.push('                else');
+            lines.push('                {');
+            lines.push(`                    throw new InvalidOperationException("${t.name}: the key column '${key.name}' must have a value before a row can be added.");`);
+            lines.push('                }');
+        }
+    } else {
+        // No key column: rewrite rows (no identity to preserve).
+        lines.push(`                using var ck = con.CreateCommand();`);
+        lines.push('                ck.Transaction = tx;');
+        lines.push(`                ck.CommandText = "${escCs(insNoKey)}";`);
+        nonKey.forEach((c, i) => {
+            lines.push(`                ck.Parameters.AddWithValue("@c${i}", ${csDbStoreExpr(c)});`);
+        });
+        lines.push('                ck.ExecuteNonQuery();');
+    }
+    lines.push('            }');
+    lines.push('            tx.Commit();');
+    lines.push('        }');
+    return lines;
+}
+
 /** C# top-level snapshot class for one grid-bound table (undo/redo). */
 function csSnapshotClass(t: DataTableSpec): string {
     return `    public class ${t.name}Snapshot
@@ -238,49 +522,56 @@ function csPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     const R = `${t.name}Row`;
     const L = `System.Collections.ObjectModel.ObservableCollection<${R}>`;
     const lines: string[] = [];
-    lines.push('');
-    lines.push(`        // --- ${t.name}: persistent live grid support ---`);
-    lines.push(`        public static string ${t.name}File() => Path.Combine(AppContext.BaseDirectory, "${escCs(spec.name)}.${escCs(t.name)}.xml");`);
-    lines.push('');
-    lines.push(`        public static ${L} Load${t.name}()`);
-    lines.push('        {');
-    lines.push(`            var rows = new ${L}();`);
-    lines.push('            try');
-    lines.push('            {');
-    lines.push('                var ds = new System.Data.DataSet();');
-    lines.push(`                ds.ReadXml(${t.name}File());`);
-    lines.push(`                foreach (System.Data.DataRow r in ds.Tables["${escCs(t.name)}"]!.Rows)`);
-    lines.push('                {');
-    lines.push(`                    rows.Add(new ${R}`);
-    lines.push('                    {');
-    for (const c of t.columns) lines.push(`                        ${c.name} = ${csLoadValue(c)},`);
-    lines.push('                    });');
-    lines.push('                }');
-    lines.push('            }');
-    lines.push('            catch');
-    lines.push('            {');
-    lines.push(`                rows.Add(new ${R} { ${t.columns.map((c) => `${c.name} = ${csSeedLiteral(c)}`).join(', ')} });`);
-    lines.push('            }');
-    const ph = t.columns.map((c) => `${c.name} = ${csPlaceholderValue(c, c === (t.columns.find((x) => x.type === 'String') ?? t.columns[0]))}`);
-    lines.push(`            rows.Add(new ${R} { ${ph.join(', ')}, IsPlaceholder = true });`);
-    lines.push('            return rows;');
-    lines.push('        }');
-    lines.push('');
-    lines.push(`        public static void Save${t.name}(${L} rows)`);
-    lines.push('        {');
-    lines.push('            var ds = CreateDataSet();');
-    lines.push(`            var t = ds.Tables["${escCs(t.name)}"]!;`);
-    lines.push('            t.Clear(); // drop CreateDataSet\'s seed row(s); only the collection is saved');
-    lines.push('            t.BeginLoadData();');
-    lines.push('            foreach (var r in rows)');
-    lines.push('            {');
-    lines.push('                if (!r.IsPlaceholder)');
-    lines.push(`                    t.Rows.Add(${t.columns.map((c) => csSaveArg(c)).join(', ')});`);
-    lines.push('            }');
-    lines.push('            t.EndLoadData();');
-    lines.push(`            ds.WriteXml(${t.name}File());`);
-    lines.push('        }');
-    lines.push('');
+    if (isSqliteTable(t) || !!t.boundTo) {
+        // Every DataGrid-bound table is SQLite-backed: Load/Save talk to the .db (the shared
+        // Wire/undo code below is identical and calls these same Load/Save methods). The per-DataSet
+        // .db is used unless the table points at its own file.
+        for (const l of csSqliteMethods(spec, t)) lines.push(l);
+    } else {
+        lines.push('');
+        lines.push(`        // --- ${t.name}: persistent live grid support ---`);
+        lines.push(`        public static string ${t.name}File() => Path.Combine(AppContext.BaseDirectory, "${escCs(spec.name)}.${escCs(t.name)}.xml");`);
+        lines.push('');
+        lines.push(`        public static ${L} Load${t.name}()`);
+        lines.push('        {');
+        lines.push(`            var rows = new ${L}();`);
+        lines.push('            try');
+        lines.push('            {');
+        lines.push('                var ds = new System.Data.DataSet();');
+        lines.push(`                ds.ReadXml(${t.name}File());`);
+        lines.push(`                foreach (System.Data.DataRow r in ds.Tables["${escCs(t.name)}"]!.Rows)`);
+        lines.push('                {');
+        lines.push(`                    rows.Add(new ${R}`);
+        lines.push('                    {');
+        for (const c of t.columns) lines.push(`                        ${c.name} = ${csLoadValue(c)},`);
+        lines.push('                    });');
+        lines.push('                }');
+        lines.push('            }');
+        lines.push('            catch');
+        lines.push('            {');
+        lines.push(`                rows.Add(new ${R} { ${t.columns.map((c) => `${c.name} = ${csSeedLiteral(c)}`).join(', ')} });`);
+        lines.push('            }');
+        const ph = t.columns.map((c) => `${c.name} = ${csPlaceholderValue(c, c === (t.columns.find((x) => x.type === 'String') ?? t.columns[0]))}`);
+        lines.push(`            rows.Add(new ${R} { ${ph.join(', ')}, IsPlaceholder = true });`);
+        lines.push('            return rows;');
+        lines.push('        }');
+        lines.push('');
+        lines.push(`        public static void Save${t.name}(${L} rows)`);
+        lines.push('        {');
+        lines.push('            var ds = CreateDataSet();');
+        lines.push(`            var t = ds.Tables["${escCs(t.name)}"]!;`);
+        lines.push('            t.Clear(); // drop CreateDataSet\'s seed row(s); only the collection is saved');
+        lines.push('            t.BeginLoadData();');
+        lines.push('            foreach (var r in rows)');
+        lines.push('            {');
+        lines.push('                if (!r.IsPlaceholder)');
+        lines.push(`                    t.Rows.Add(${t.columns.map((c) => csSaveArg(c)).join(', ')});`);
+        lines.push('            }');
+        lines.push('            t.EndLoadData();');
+        lines.push(`            ds.WriteXml(${t.name}File());`);
+        lines.push('        }');
+        lines.push('');
+    }
     // --- Undo/redo (depth = the table's 'Undo-Redo' property; default 5, 0 disables) ---
     lines.push(`        private static readonly System.Collections.Generic.List<${t.name}Snapshot> _${t.name}Undo = new();`);
     lines.push(`        private static readonly System.Collections.Generic.List<${t.name}Snapshot> _${t.name}Redo = new();`);
@@ -514,7 +805,7 @@ function csInputConstruct(c: DataColumnSpec): string[] {
     const label = c.caption || c.name;
     const out = [`        root.Children.Add(new TextBlock { Text = "${escCs(label)}" });`];
     if (['Int32', 'Int64', 'Double', 'Decimal'].includes(c.type)) {
-        const inc = (c.type === 'Int32' || c.type === 'Int64') ? '1' : '0.1';
+        const inc = (c.type === 'Int32' || c.type === 'Int64') ? '1' : '0.1m'; // NumericUpDown.Increment is decimal
         out.push(`        ${fn} = new NumericUpDown { Minimum = 0, Increment = ${inc} };`);
     } else if (c.type === 'Boolean') {
         out.push(`        ${fn} = new CheckBox();`);
@@ -682,53 +973,264 @@ function vbSnapshotClass(t: DataTableSpec): string {
 }
 
 /** VB persistence + grid-wiring methods for a DataGrid-bound table (inside the class). */
+// ---------------- SQLite-backed persistence (VB) ----------------
+
+/** VB SQLite type affinity for a column (DateTime/Guid/Decimal stored as TEXT, booleans as 0/1). */
+function vbSqliteAffinity(type: ColumnType): string {
+    switch (type) {
+        case 'Int32': case 'Int64': case 'Boolean': return 'INTEGER';
+        case 'Double': return 'REAL';
+        case 'String': case 'DateTime': case 'Guid': case 'Decimal': return 'TEXT';
+        case 'Byte[]': return 'BLOB';
+    }
+}
+
+/** VB array literal of "<col> <AFFINITY>" definitions for a table's SQLite columns (names are NOT
+ *  quoted here — EnsureColumns quotes them itself when it builds the ALTER). Passed to
+ *  DatabaseAdapter.EnsureColumns so an existing .db table is ALTERed to match the designer schema
+ *  (add column in the designer → Generate Code → app runs without 'no such column'). */
+function vbSyncColDefs(t: DataTableSpec): string {
+    const defs = t.columns.map((c) => `${c.name} ${vbSqliteAffinity(c.type)}`);
+    return `New String() { ${defs.map((d) => `"${escVb(d)}"`).join(', ')} }`;
+}
+
+/** VB CREATE TABLE IF NOT EXISTS for a table (the key column becomes the SQLite PRIMARY KEY). */
+function vbSqliteCreateSql(t: DataTableSpec): string {
+    const key = keyColumnOf(t);
+    const defs = t.columns.map((c) => {
+        const q = `"${c.name}"`;
+        if (c === key) {
+            const aff = (c.type === 'Int32' || c.type === 'Int64')
+                ? 'INTEGER PRIMARY KEY AUTOINCREMENT'
+                : c.type === 'Boolean'
+                    ? 'INTEGER PRIMARY KEY'
+                    : `${vbSqliteAffinity(c.type)} PRIMARY KEY`;
+            return `${q} ${aff}`;
+        }
+        return `${q} ${vbSqliteAffinity(c.type)}${c.allowNull ? '' : ' NOT NULL'}`;
+    });
+    return `CREATE TABLE IF NOT EXISTS "${sqliteTableName(t)}" (${defs.join(', ')})`;
+}
+
+/** VB expression that stores a typed row value as a SQLite-friendly parameter object. */
+function vbDbStoreExpr(c: DataColumnSpec): string {
+    const n = `r.${c.name}`;
+    switch (c.type) {
+        case 'String': case 'Byte[]': case 'Int32': case 'Int64': case 'Double': return n;
+        case 'Decimal': return `${n}.ToString(System.Globalization.CultureInfo.InvariantCulture)`;
+        case 'Boolean': return `If(${n}, 1L, 0L)`;
+        case 'DateTime': return `If(${n} = DateTime.MinValue, Nothing, ${n}.ToString("O"))`;
+        case 'Guid': return `If(${n} = Guid.Empty, Nothing, ${n}.ToString("D"))`;
+    }
+}
+
+/** VB expression that reads a column value back into the typed row. */
+function vbDbReadExpr(c: DataColumnSpec, idx: number): string {
+    switch (c.type) {
+        case 'String': return `If(rd.IsDBNull(${idx}), Nothing, rd.GetString(${idx}))`;
+        case 'Byte[]': return `If(rd.IsDBNull(${idx}), Nothing, CType(rd.GetValue(${idx}), Byte()))`;
+        case 'Int32': return `If(rd.IsDBNull(${idx}), 0, rd.GetInt32(${idx}))`;
+        case 'Int64': return `If(rd.IsDBNull(${idx}), 0L, rd.GetInt64(${idx}))`;
+        case 'Double': return `If(rd.IsDBNull(${idx}), 0.0, rd.GetDouble(${idx}))`;
+        case 'Decimal': return `If(rd.IsDBNull(${idx}), 0D, Decimal.Parse(rd.GetString(${idx}), System.Globalization.CultureInfo.InvariantCulture))`;
+        case 'Boolean': return `If(rd.IsDBNull(${idx}), False, rd.GetInt64(${idx}) <> 0L)`;
+        case 'DateTime': return `If(rd.IsDBNull(${idx}), DateTime.MinValue, DateTime.Parse(rd.GetString(${idx}), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind))`;
+        case 'Guid': return `If(rd.IsDBNull(${idx}), Guid.Empty, Guid.Parse(rd.GetString(${idx})))`;
+    }
+}
+
+/** VB expression testing whether a row's key column holds a real (persistable) value. */
+function vbKeyValidExpr(c: DataColumnSpec): string {
+    switch (c.type) {
+        case 'Int32': return `r.${c.name} <> 0`;
+        case 'Int64': return `r.${c.name} <> 0L`;
+        case 'String': return `Not String.IsNullOrEmpty(r.${c.name})`;
+        case 'Guid': return `r.${c.name} <> Guid.Empty`;
+        case 'Double': return `r.${c.name} <> 0.0`;
+        case 'Decimal': return `r.${c.name} <> 0D`;
+        case 'DateTime': return `r.${c.name} <> DateTime.MinValue`;
+        case 'Boolean': return `True`;
+        case 'Byte[]': return `r.${c.name} IsNot Nothing`;
+    }
+}
+
+/** VB placeholder row (the blank "+ Add row…" row) — same defaults as the XML path. */
+function vbDbPlaceholderInit(t: DataTableSpec): string {
+    const ph = t.columns.map((c) => `.${c.name} = ${vbPlaceholderValue(c, c === (t.columns.find((x) => x.type === 'String') ?? t.columns[0]))}`);
+    return `${ph.join(', ')}, .IsPlaceholder = True`;
+}
+
+/** VB SQLite Load / Save / migration methods for a DataGrid-bound table. */
+function vbSqliteMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
+    const R = `${t.name}Row`;
+    const OC = `System.Collections.ObjectModel.ObservableCollection(Of ${R})`;
+    const dbFile = (t.sqlite && t.sqlite.file) || `${spec.name}.db`;
+    const tbl = sqliteTableName(t);
+    const create = vbSqliteCreateSql(t);
+    const key = keyColumnOf(t);
+    const autoKey = !!key && (key.type === 'Int32' || key.type === 'Int64');
+    const nonKey = t.columns.filter((c) => c !== key);
+    const sel = `SELECT ${t.columns.map((c) => `"${c.name}"`).join(', ')} FROM "${tbl}" ORDER BY rowid`;
+    const insNoKey = `INSERT INTO "${tbl}" (${nonKey.map((c) => `"${c.name}"`).join(', ')}) VALUES (${nonKey.map((_, i) => `@c${i}`).join(', ')})`;
+    const insKey = `INSERT INTO "${tbl}" (${[key, ...nonKey].filter(Boolean).map((c) => `"${c!.name}"`).join(', ')}) VALUES (${[key, ...nonKey].filter(Boolean).map((_, i) => `@p${i}`).join(', ')})`;
+    const del = `DELETE FROM "${tbl}"`;
+
+    const lines: string[] = [];
+    lines.push('');
+    lines.push(`        ' --- ${t.name}: SQLite-backed live grid support ---`);
+    lines.push(`        Private Const _${t.name}Db As String = "${escVb(dbFile)}"`);
+    lines.push('');
+    // Load rows from the SQLite file (the DB file is created on first use if it doesn't exist).
+    lines.push(`        Public Shared Function Load${t.name}() As ${OC}`);
+    lines.push('');
+    lines.push(`            Dim rows As New ${OC}()`);
+    lines.push(`            Using con As Microsoft.Data.Sqlite.SqliteConnection = DatabaseAdapter.Open(_${t.name}Db, "${escVb(create)}")`);
+    lines.push(`                DatabaseAdapter.EnsureColumns(con, "${escVb(tbl)}", ${vbSyncColDefs(t)})`);
+    lines.push('                Using cmd As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()');
+    lines.push(`                    cmd.CommandText = "${escVb(sel)}"`);
+    lines.push('                    Using rd As Microsoft.Data.Sqlite.SqliteDataReader = cmd.ExecuteReader()');
+    lines.push('                        While rd.Read()');
+    lines.push(`                            rows.Add(New ${R} With {`);
+    t.columns.forEach((c, ci) => {
+        const comma = ci < t.columns.length - 1 ? ',' : '';
+        lines.push(`                                .${c.name} = ${vbDbReadExpr(c, ci)}${comma}`);
+    });
+    lines.push('                            })');
+    lines.push('                        End While');
+    lines.push('                    End Using');
+    lines.push('                End Using');
+    lines.push('            End Using');
+    lines.push(`            rows.Add(New ${R} With { ${vbDbPlaceholderInit(t)} })`);
+    lines.push('            Return rows');
+    lines.push('        End Function');
+    lines.push('');
+    // Save the collection back to the SQLite file (DELETE keeps the AUTOINCREMENT sequence).
+    lines.push(`        Public Shared Sub Save${t.name}(rows As ${OC})`);
+    lines.push('');
+    lines.push(`            Using con As Microsoft.Data.Sqlite.SqliteConnection = DatabaseAdapter.Open(_${t.name}Db, "${escVb(create)}")`);
+    lines.push(`                DatabaseAdapter.EnsureColumns(con, "${escVb(tbl)}", ${vbSyncColDefs(t)})`);
+    lines.push('                Using tx As Microsoft.Data.Sqlite.SqliteTransaction = con.BeginTransaction()');
+    lines.push('                    Using del As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()');
+    lines.push('                        del.Transaction = tx');
+    lines.push(`                        del.CommandText = "${escVb(del)}"`);
+    lines.push('                        del.ExecuteNonQuery()');
+    lines.push('                    End Using');
+    lines.push('                    For Each r As ' + R + ' In rows');
+    lines.push('                        If r.IsPlaceholder Then Continue For');
+    if (key) {
+        lines.push(`                        If ${vbKeyValidExpr(key)} Then`);
+        lines.push('                            Using ck As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()');
+        lines.push('                                ck.Transaction = tx');
+        lines.push(`                                ck.CommandText = "${escVb(insKey)}"`);
+        ([key, ...nonKey].filter(Boolean) as DataColumnSpec[]).forEach((c, i) => {
+            lines.push(`                                ck.Parameters.AddWithValue("@p${i}", ${vbDbStoreExpr(c!)})`);
+        });
+        lines.push('                                ck.ExecuteNonQuery()');
+        lines.push('                            End Using');
+        if (autoKey) {
+            lines.push('                        Else');
+            lines.push('                            Using cn As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()');
+            lines.push('                                cn.Transaction = tx');
+            lines.push(`                                cn.CommandText = "${escVb(insNoKey)}"`);
+            nonKey.forEach((c, i) => {
+                lines.push(`                                cn.Parameters.AddWithValue("@c${i}", ${vbDbStoreExpr(c)})`);
+            });
+            lines.push('                                cn.ExecuteNonQuery()');
+            lines.push('                                Using rid As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()');
+            lines.push('                                    rid.Transaction = tx');
+            lines.push('                                    rid.CommandText = "SELECT last_insert_rowid();"');
+            lines.push(`                                    r.${key.name} = CType(Convert.ToInt64(rid.ExecuteScalar()), ${vbType(key.type)})`);
+            lines.push('                                End Using');
+            lines.push('                            End Using');
+            lines.push('                        End If');
+        } else if (key.type === 'Guid') {
+            lines.push('                        Else');
+            lines.push(`                            r.${key.name} = Guid.NewGuid()`);
+            lines.push('                            Using ck As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()');
+            lines.push('                                ck.Transaction = tx');
+            lines.push(`                                ck.CommandText = "${escVb(insKey)}"`);
+            ([key, ...nonKey].filter(Boolean) as DataColumnSpec[]).forEach((c, i) => {
+                lines.push(`                                ck.Parameters.AddWithValue("@p${i}", ${vbDbStoreExpr(c!)})`);
+            });
+            lines.push('                                ck.ExecuteNonQuery()');
+            lines.push('                            End Using');
+            lines.push('                        End If');
+        } else {
+            lines.push('                        Else');
+            lines.push(`                            Throw New InvalidOperationException("${t.name}: the key column '${key.name}' must have a value before a row can be added.")`);
+            lines.push('                        End If');
+        }
+    } else {
+        lines.push('                        Using ck As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()');
+        lines.push('                            ck.Transaction = tx');
+        lines.push(`                            ck.CommandText = "${escVb(insNoKey)}"`);
+        nonKey.forEach((c, i) => {
+            lines.push(`                            ck.Parameters.AddWithValue("@c${i}", ${vbDbStoreExpr(c)})`);
+        });
+        lines.push('                            ck.ExecuteNonQuery()');
+        lines.push('                        End Using');
+    }
+    lines.push('                    Next');
+    lines.push('                    tx.Commit()');
+    lines.push('                End Using');
+    lines.push('            End Using');
+    lines.push('        End Sub');
+    return lines;
+}
+
 function vbPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     const R = `${t.name}Row`;
     const OC = `System.Collections.ObjectModel.ObservableCollection(Of ${R})`;
     const lines: string[] = [];
-    lines.push('');
-    lines.push(`        ' --- ${t.name}: persistent live grid support ---`);
-    lines.push(`        Public Shared Function ${t.name}File() As String`);
-    lines.push(`            Return System.IO.Path.Combine(System.AppContext.BaseDirectory, "${escVb(spec.name)}.${escVb(t.name)}.xml")`);
-    lines.push('        End Function');
-    lines.push('');
-    lines.push(`        Public Shared Function Load${t.name}() As ${OC}`);
-    lines.push('');
-    lines.push(`            Dim rows As New ${OC}()`);
-    lines.push('            Try');
-    lines.push('                Dim ds As New DataSet()');
-    lines.push(`                ds.ReadXml(${t.name}File())`);
-    lines.push(`                For Each r As DataRow In ds.Tables("${escVb(t.name)}").Rows`);
-    lines.push(`                    rows.Add(New ${R} With {`);
-    t.columns.forEach((c, ci) => {
-        const comma = ci < t.columns.length - 1 ? ',' : '';
-        lines.push(`                        .${c.name} = ${vbRowValue(c)}${comma}`);
-    });
-    lines.push('                    })');
-    lines.push('                Next');
-    lines.push('            Catch');
-    lines.push(`                rows.Add(New ${R} With { ${t.columns.map((c) => `.${c.name} = ${vbSampleValue(c)}`).join(', ')} })`);
-    lines.push('            End Try');
-    const ph = t.columns.map((c) => `.${c.name} = ${vbPlaceholderValue(c, c === (t.columns.find((x) => x.type === 'String') ?? t.columns[0]))}`);
-    lines.push(`            rows.Add(New ${R} With { ${ph.join(', ')}, .IsPlaceholder = True })`);
-    lines.push('            Return rows');
-    lines.push('        End Function');
-    lines.push('');
-    lines.push(`        Public Shared Sub Save${t.name}(rows As ${OC})`);
-    lines.push('');
-    lines.push('            Dim ds As DataSet = CreateDataSet()');
-    lines.push(`            Dim t As DataTable = ds.Tables("${escVb(t.name)}")`);
-    lines.push(`            t.Clear() ' drop CreateDataSet's seed row(s); only the collection is saved`);
-    lines.push('            t.BeginLoadData()');
-    lines.push('            For Each r As CustomersRow In rows');
-    lines.push('                If Not r.IsPlaceholder Then');
-    lines.push(`                    t.Rows.Add(${t.columns.map((c) => vbSaveArg(c)).join(', ')})`);
-    lines.push('                End If');
-    lines.push('            Next');
-    lines.push('            t.EndLoadData()');
-    lines.push(`            ds.WriteXml(${t.name}File())`);
-    lines.push('        End Sub');
-    lines.push('');
+    if (isSqliteTable(t) || !!t.boundTo) {
+        // Every DataGrid-bound table is SQLite-backed: Load/Save talk to the .db (the shared
+        // Wire/undo code below is identical and calls these same Load/Save methods).
+        for (const l of vbSqliteMethods(spec, t)) lines.push(l);
+    } else {
+        lines.push('');
+        lines.push(`        ' --- ${t.name}: persistent live grid support ---`);
+        lines.push(`        Public Shared Function ${t.name}File() As String`);
+        lines.push(`            Return System.IO.Path.Combine(System.AppContext.BaseDirectory, "${escVb(spec.name)}.${escVb(t.name)}.xml")`);
+        lines.push('        End Function');
+        lines.push('');
+        lines.push(`        Public Shared Function Load${t.name}() As ${OC}`);
+        lines.push('');
+        lines.push(`            Dim rows As New ${OC}()`);
+        lines.push('            Try');
+        lines.push('                Dim ds As New DataSet()');
+        lines.push(`                ds.ReadXml(${t.name}File())`);
+        lines.push(`                For Each r As DataRow In ds.Tables("${escVb(t.name)}").Rows`);
+        lines.push(`                    rows.Add(New ${R} With {`);
+        t.columns.forEach((c, ci) => {
+            const comma = ci < t.columns.length - 1 ? ',' : '';
+            lines.push(`                        .${c.name} = ${vbRowValue(c)}${comma}`);
+        });
+        lines.push('                    })');
+        lines.push('                Next');
+        lines.push('            Catch');
+        lines.push(`                rows.Add(New ${R} With { ${t.columns.map((c) => `.${c.name} = ${vbSampleValue(c)}`).join(', ')} })`);
+        lines.push('            End Try');
+        const ph = t.columns.map((c) => `.${c.name} = ${vbPlaceholderValue(c, c === (t.columns.find((x) => x.type === 'String') ?? t.columns[0]))}`);
+        lines.push(`            rows.Add(New ${R} With { ${ph.join(', ')}, .IsPlaceholder = True })`);
+        lines.push('            Return rows');
+        lines.push('        End Function');
+        lines.push('');
+        lines.push(`        Public Shared Sub Save${t.name}(rows As ${OC})`);
+        lines.push('');
+        lines.push('            Dim ds As DataSet = CreateDataSet()');
+        lines.push(`            Dim t As DataTable = ds.Tables("${escVb(t.name)}")`);
+        lines.push(`            t.Clear() ' drop CreateDataSet's seed row(s); only the collection is saved`);
+        lines.push('            t.BeginLoadData()');
+        lines.push(`            For Each r As ${R} In rows`);
+        lines.push('                If Not r.IsPlaceholder Then');
+        lines.push(`                    t.Rows.Add(${t.columns.map((c) => vbSaveArg(c)).join(', ')})`);
+        lines.push('                End If');
+        lines.push('            Next');
+        lines.push('            t.EndLoadData()');
+        lines.push(`            ds.WriteXml(${t.name}File())`);
+        lines.push('        End Sub');
+        lines.push('');
+    }
     lines.push('            \' --- Undo/redo (depth = the table\'s \'Undo-Redo\' property; default 5, 0 disables) ---');
     lines.push(`        Private Shared ReadOnly _${t.name}Undo As New List(Of ${t.name}Snapshot)()`);
     lines.push(`        Private Shared ReadOnly _${t.name}Redo As New List(Of ${t.name}Snapshot)()`);
@@ -888,7 +1390,7 @@ function vbPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     lines.push('');
     lines.push(`        Public Shared Async Sub Add${t.name}Row(grid As DataGrid, rows As ${OC})`);
     lines.push('');
-    lines.push(`            Dim dlg As New ${t.name}EditDialog(MyData.CreateDataSet().Tables("${escVb(t.name)}"), Nothing)`);
+    lines.push(`            Dim dlg As New ${t.name}EditDialog(CreateDataSet().Tables("${escVb(t.name)}"), Nothing)`);
     lines.push('            Dim owner = OwnerOf(grid)');
     lines.push('            If owner IsNot Nothing AndAlso Await dlg.ShowDialog(Of Boolean)(owner) Then');
     lines.push(`                Dim row As ${R} = dlg.NewRow()`);
@@ -900,7 +1402,7 @@ function vbPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     lines.push('');
     lines.push(`        Public Shared Async Sub Edit${t.name}Row(grid As DataGrid, rows As ${OC}, row As ${R})`);
     lines.push('');
-    lines.push(`            Dim dlg As New ${t.name}EditDialog(MyData.CreateDataSet().Tables("${escVb(t.name)}"), row)`);
+    lines.push(`            Dim dlg As New ${t.name}EditDialog(CreateDataSet().Tables("${escVb(t.name)}"), row)`);
     lines.push('            Dim owner = OwnerOf(grid)');
     lines.push(`            If owner IsNot Nothing AndAlso Await dlg.ShowDialog(Of Boolean)(owner) Then`);
     lines.push('                dlg.ApplyTo(row)');
@@ -934,7 +1436,7 @@ function vbGridRowClass(t: DataTableSpec): string {
         lines.push(`                Return _${c.name}`);
         lines.push('            End Get');
         lines.push(`            Set(value As ${vbType(c.type)})`);
-        lines.push(`                If _${c.name} <> value Then`);
+        lines.push(`                If ${c.type === 'Byte[]' ? `Not Object.Equals(_${c.name}, value)` : `_${c.name} <> value`} Then`);
         lines.push(`                    _${c.name} = value`);
         lines.push(`                    OnPropertyChanged(NameOf(${c.name}))`);
         lines.push('                End If');
@@ -1124,6 +1626,7 @@ function vbDateTimeConverter(): string {
 export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
     const ns = rootNamespace || spec.name;
     const grid = anyGridBound(spec);
+    const sqlite = spec.tables.some((x) => isSqliteTable(x) || !!x.boundTo);
     const lines: string[] = [];
     lines.push('// Generated by the Avalonia Designer — DataSet designer. Do not edit by hand.');
     lines.push(`// Edit ${spec.name}.adset in the designer and re-generate. (${stamp()})`);
@@ -1171,10 +1674,11 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
     lines.push('            return ds;');
     lines.push('        }');
     // Typed row collections for bound tables — a DataGrid can't display a DataView's rows/columns.
+    // Bound tables read their rows from SQLite (Get is the list-control / read path).
     for (const t of spec.tables) {
         if (t.boundTo) {
             lines.push('');
-            for (const l of csGetMethod(t)) lines.push(l);
+            for (const l of csGetMethod(spec, t)) lines.push(l);
         }
     }
     // Live editable-grid support for DataGrid-bound tables.
@@ -1188,6 +1692,32 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
         lines.push('        private static Window? OwnerOf(DataGrid grid) => Avalonia.LogicalTree.LogicalExtensions.FindLogicalAncestorOfType<Window>(grid, true);');
     }
     lines.push('    }');
+    if (sqlite) {
+        // Shared SQLite helper (relative db files sit next to the app, like the XML files).
+        lines.push('');
+        lines.push('    /// <summary>Small SQLite helper shared by the tables the DataSet designer stores in a database file.</summary>');
+        lines.push('    public static class DatabaseAdapter');
+        lines.push('    {');
+        lines.push('        private static bool _ready;');
+        lines.push('        private static readonly object Sync = new();');
+        lines.push('        private static void EnsureReady()');
+        lines.push('        {');
+        lines.push('            lock (Sync) { if (_ready) return; _ready = true; global::SQLitePCL.Batteries_V2.Init(); }');
+        lines.push('        }');
+        lines.push('        /// <summary>Absolute path of a database file (relative paths resolve next to the app).</summary>');
+        lines.push('        public static string DbPath(string file) => Path.IsPathRooted(file) ? file : Path.Combine(AppContext.BaseDirectory, file);');
+        lines.push('        /// <summary>Opens the database (creating the file if needed) and runs an idempotent CREATE TABLE.</summary>');
+        lines.push('        public static Microsoft.Data.Sqlite.SqliteConnection Open(string file, string createSql)');
+        lines.push('        {');
+        lines.push('            EnsureReady();');
+        lines.push('            var con = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + DbPath(file));');
+        lines.push('            con.Open();');
+        lines.push('            if (!string.IsNullOrEmpty(createSql)) { using var cmd = con.CreateCommand(); cmd.CommandText = createSql; cmd.ExecuteNonQuery(); }');
+        lines.push('            return con;');
+        lines.push('        }');
+        for (const l of CS_ENSURECOLUMNS.split('\n')) lines.push(l);
+        lines.push('    }');
+    }
     for (const t of spec.tables) {
         if (t.boundTo) {
             lines.push('');
@@ -1217,6 +1747,7 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
 /** Generates a VB.NET class that builds the DataSet at runtime. */
 export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
     const grid = anyGridBound(spec);
+    const sqlite = spec.tables.some((x) => isSqliteTable(x) || !!x.boundTo);
     const lines: string[] = [];
     lines.push("' Generated by the Avalonia Designer — DataSet designer. Do not edit by hand.");
     lines.push(`' Edit ${spec.name}.adset in the designer and re-generate. (${stamp()})`);
@@ -1262,10 +1793,11 @@ export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
     lines.push('            Return ds');
     lines.push('        End Function');
     // Typed row collections for bound tables — a DataGrid can't display a DataView's rows/columns.
+    // Bound tables read their rows from SQLite (Get is the list-control / read path).
     for (const t of spec.tables) {
         if (t.boundTo) {
             lines.push('');
-            for (const l of vbGetMethod(t)) lines.push(l);
+            for (const l of vbGetMethod(spec, t)) lines.push(l);
         }
     }
     // Live editable-grid support for DataGrid-bound tables.
@@ -1282,6 +1814,40 @@ export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
     }
     lines.push('');
     lines.push('    End Class');
+    if (sqlite) {
+        // Shared SQLite helper (relative db files sit next to the app, like the XML files).
+        lines.push('');
+        lines.push('    \'\'\' <summary>Small SQLite helper shared by the tables the DataSet designer stores in a database file.</summary>');
+        lines.push('    Public Class DatabaseAdapter');
+        lines.push('        Private Shared _ready As Boolean');
+        lines.push('        Private Shared ReadOnly SyncRoot As New Object()');
+        lines.push('        Private Shared Sub EnsureReady()');
+        lines.push('            SyncLock SyncRoot');
+        lines.push('                If Not _ready Then');
+        lines.push('                    _ready = True');
+        lines.push('                    Global.SQLitePCL.Batteries_V2.Init()');
+        lines.push('                End If');
+        lines.push('            End SyncLock');
+        lines.push('        End Sub');
+        lines.push('        \'\'\' <summary>Absolute path of a database file (relative paths resolve next to the app).</summary>');
+        lines.push('        Public Shared Function DbPath(file As String) As String');
+        lines.push('            Return If(IO.Path.IsPathRooted(file), file, IO.Path.Combine(System.AppContext.BaseDirectory, file))');
+        lines.push('        End Function');
+        lines.push('        \'\'\' <summary>Opens the database (creating the file if needed) and runs an idempotent CREATE TABLE.</summary>');
+        lines.push('        Public Shared Function Open(file As String, createSql As String) As Microsoft.Data.Sqlite.SqliteConnection');
+        lines.push('            EnsureReady()');
+        lines.push('            Dim con As New Microsoft.Data.Sqlite.SqliteConnection("Data Source=" & DbPath(file))');
+        lines.push('            con.Open()');
+        lines.push('            If Not String.IsNullOrEmpty(createSql) Then');
+        lines.push('                Dim cmd As Microsoft.Data.Sqlite.SqliteCommand = con.CreateCommand()');
+        lines.push('                cmd.CommandText = createSql');
+        lines.push('                cmd.ExecuteNonQuery()');
+        lines.push('            End If');
+        lines.push('            Return con');
+        lines.push('        End Function');
+        for (const l of VB_ENSURECOLUMNS.split('\n')) lines.push(l);
+        lines.push('    End Class');
+    }
     for (const t of spec.tables) {
         if (t.boundTo) {
             lines.push('');

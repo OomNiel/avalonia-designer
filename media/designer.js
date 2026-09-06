@@ -85,13 +85,27 @@
         statusCancel: $('statusCancel'),
         splitModal: $('splitModal'),
         splitTitle: $('splitTitle'),
+        splitZones: $('splitZones'),
         splitCols: $('splitCols'),
         splitRows: $('splitRows'),
+        splitPanesRow: $('splitPanesRow'),
+        splitPanesLabel: $('splitPanesLabel'),
         splitCount: $('splitCount'),
         splitMinus: $('splitMinus'),
         splitPlus: $('splitPlus'),
         splitSave: $('splitSave'),
         splitCancel: $('splitCancel'),
+        splitterModal: $('splitterModal'),
+        splitterTitle: $('splitterTitle'),
+        splitterBody: $('splitterBody'),
+        splitterSave: $('splitterSave'),
+        splitterCancel: $('splitterCancel'),
+        dgModal: $('dgModal'),
+        dgTitle: $('dgTitle'),
+        dgHint: $('dgHint'),
+        dgBody: $('dgBody'),
+        dgSave: $('dgSave'),
+        dgCancel: $('dgCancel'),
         cellHighlight: $('cellHighlight'),
         rulerH: $('rulerH'),
         rulerV: $('rulerV'),
@@ -1558,34 +1572,56 @@
                     if (p.key === 'StatusItems') openStatusEditor(msg.name, msg.statusItems || []);
                     // 'Split Layout' opens the split editor for the selected Split Panel.
                     if (p.key === 'SplitLayout') openSplitEditor(msg.name, msg.splitInfo || {});
+                    // 'Splitters' opens the divider-bar styling editor for the selected Split Panel.
+                    if (p.key === 'Splitters') openSplitterEditor(msg.name, msg.splitters || []);
+                    // 'Rows' / 'Columns' open the DataGrid decoration editors.
+                    if (p.key === 'Rows') openDataGridEditor('rows', msg.name, msg.dgRows || {});
+                    if (p.key === 'Columns') openDataGridEditor('cols', msg.name, msg.dgCols || {});
                 });
                 control = btn;
             } else if (p.kind === 'file') {
                 // A file-path property (Image Source, Window Icon, Title Bar Icon): a text field
                 // (you can still type a path/avares:// URI) + a "Browse…" button that opens the
                 // system file picker. The picked file is bundled into the project's Assets\ folder.
+                // An Image.Source row (p.dataImage) ALSO gets a 'Data…' button that binds the Image
+                // to a DataGrid's selected-row image column; when bound the file browser is disabled
+                // (data wins) and the field shows the binding read-only.
                 const wrap = document.createElement('div');
                 wrap.className = 'prop-input-group';
                 const ftxt = document.createElement('input');
                 ftxt.type = 'text';
                 ftxt.dataset.propKey = p.key;
                 ftxt.value = p.value || '';
-                onText(ftxt);
+                if (p.dataImage && p.readOnly) ftxt.disabled = true;
+                else onText(ftxt);
                 const fbtn = document.createElement('button');
                 fbtn.type = 'button';
                 fbtn.className = 'prop-browse';
                 fbtn.textContent = '…';
                 fbtn.title = 'Browse for a file…';
+                if (p.dataImage && p.readOnly) fbtn.disabled = true;
                 fbtn.addEventListener('click', () => post({ type: 'browseFile', name: msg.name, key: p.key }));
                 wrap.appendChild(ftxt);
                 wrap.appendChild(fbtn);
+                if (p.dataImage) {
+                    const dbtn = document.createElement('button');
+                    dbtn.type = 'button';
+                    dbtn.className = 'prop-data';
+                    dbtn.textContent = 'Data…';
+                    dbtn.title = p.readOnly
+                        ? 'This Image shows the selected row\'s image file from a DataGrid. Click to change or clear.'
+                        : 'Show the image file stored in a DataGrid\'s selected row (a DataSet text column)…';
+                    dbtn.addEventListener('click', () => post({ type: 'pickImageData', name: msg.name }));
+                    wrap.appendChild(dbtn);
+                }
                 control = wrap;
                 focusTarget = ftxt;
             } else if (p.key === 'ItemsSource') {
                 // Items Source: a text field (you can still type a binding/asset manually) + a
                 // "…" button that opens the asset picker (code collections + DataSet tables).
-                // Read-only when the binding lives in code-behind (a DataSet table or a picked
-                // asset) — those are managed via the picker (or the DataSet designer).
+                // The text is read-only when the binding lives in code-behind (a DataSet table or
+                // a picked asset), but the "…" button stays ENABLED so a bound control can still be
+                // switched to another source or un-bound right here (kept in sync with the .adset).
                 const wrap = document.createElement('div');
                 wrap.className = 'prop-input-group';
                 const itxt = document.createElement('input');
@@ -1598,8 +1634,7 @@
                 ibtn.type = 'button';
                 ibtn.className = 'prop-browse';
                 ibtn.textContent = '…';
-                ibtn.title = 'Pick a collection / DataSet table to bind…';
-                ibtn.disabled = !!p.readOnly;
+                ibtn.title = p.readOnly ? 'Change or clear this binding…' : 'Pick a collection / DataSet table to bind…';
                 ibtn.addEventListener('click', () => post({ type: 'pickItemsSource', name: msg.name }));
                 wrap.appendChild(itxt);
                 wrap.appendChild(ibtn);
@@ -1733,7 +1768,10 @@
                     try { contentInput.setSelectionRange(focusCaret, focusCaret); } catch (err) { /* ignore */ }
                 }
             }
-            els.propsBody.appendChild(section);
+            // The Tab Items editor is the first thing in the Properties pane for a TabControl —
+            // prepend it so it sits ABOVE the Name/Type/theme rows (added last to the body, but
+            // inserted as the first child once all rows are appended).
+            els.propsBody.prepend(section);
         }
         // --- List Items section (shown when a ListBox is selected) ---
         if (msg.listItems) {
@@ -1838,6 +1876,27 @@
                 // is anything to undo/redo, so the toolbar buttons reflect reality.
                 els.btnUndo.disabled = !msg.canUndo;
                 els.btnRedo.disabled = !msg.canRedo;
+                break;
+            }
+            case 'fonts': {
+                // System font list from the host — refresh the header-font picker if the Columns
+                // editor is open (it may have been opened before the list arrived).
+                systemFonts = Array.isArray(msg.fonts) ? msg.fonts.map(String) : [];
+                if (dgEdit && dgEdit.mode === 'cols' && dgEdit.fieldEls && dgEdit.fieldEls.headerFont) {
+                    const sel = dgEdit.fieldEls.headerFont;
+                    const cur = String(dgEdit.values.headerFont || '');
+                    const opts = systemFonts.length ? systemFonts : FONT_FALLBACK;
+                    sel.innerHTML = '';
+                    if (cur && !opts.includes(cur)) {
+                        const o = document.createElement('option');
+                        o.value = cur; o.textContent = cur; sel.appendChild(o);
+                    }
+                    for (const f of opts) {
+                        const o = document.createElement('option');
+                        o.value = f; o.textContent = f; sel.appendChild(o);
+                    }
+                    sel.value = cur ? cur : opts[0];
+                }
                 break;
             }
             default:
@@ -2050,6 +2109,8 @@
             if (!els.menuModal.hidden) closeMenuEditor();
             if (!els.statusModal.hidden) closeStatusEditor();
             if (!els.splitModal.hidden) closeSplitEditor();
+            if (!els.splitterModal.hidden) closeSplitterEditor();
+            if (!els.dgModal.hidden) closeDataGridEditor();
         }
     });
 
@@ -2345,39 +2406,298 @@
         if (e.target === els.statusModal) closeStatusEditor(); // click outside the box
     });
 
-    // ---------------- Split Layout editor (a SplitPanel = an Avalonia Grid + GridSplitters) ----
-    // Lets the user switch between Columns (side-by-side) and Rows (stacked) and add/remove the
-    // panes (2..8). Save posts the layout; the extension rebuilds the Grid + GridSplitter bars,
-    // keeping whatever is already inside each pane.
-    let splitEdit = null; // { name, columns, count }
+    // ---------------- Split Layout editor (a SplitPanel = a Border frame around a Grid of panes + GridSplitters) ----
+    // shape: 'zones' (the T — `top` panes side-by-side in the top band over a full-width bottom
+    // pane), 'columns' (N side-by-side) or 'rows' (N stacked). The stepper sets the TOP-pane count
+    // in Zones and the total pane count in Columns/Rows. Save posts the layout; the extension
+    // rebuilds the Grid + splitter bars, keeping whatever is already inside each pane.
+    let splitEdit = null; // { name, shape, count, top }
     function renderSplitEditor() {
-        els.splitCols.classList.toggle('active', splitEdit.columns);
-        els.splitRows.classList.toggle('active', !splitEdit.columns);
-        els.splitCount.value = String(splitEdit.count);
+        els.splitZones.classList.toggle('active', splitEdit.shape === 'zones');
+        els.splitCols.classList.toggle('active', splitEdit.shape === 'columns');
+        els.splitRows.classList.toggle('active', splitEdit.shape === 'rows');
+        const zones = splitEdit.shape === 'zones';
+        els.splitPanesLabel.textContent = zones ? 'Top panes' : 'Panes';
+        els.splitPanesRow.hidden = false; // Zones now lets you choose how many panes sit up top
+        els.splitCount.value = String(zones ? splitEdit.top : splitEdit.count);
     }
     function openSplitEditor(name, info) {
         const st = info || {};
+        const shape = st.shape === 'zones' || st.shape === 'rows' ? st.shape
+            : (st.shape === 'columns' ? 'columns' : (st.columns !== false ? 'columns' : 'rows'));
+        const rawCount = Math.max(2, Math.min(8, Number(st.count) || 2));
         splitEdit = {
             name: name || null,
-            columns: st.columns !== false,
-            count: Math.max(2, Math.min(8, Number(st.count) || 2))
+            shape: shape,
+            count: rawCount,
+            // Zones: top-band panes. Older info sent count = total (top + 1) with no `top`.
+            top: shape === 'zones'
+                ? Math.max(2, Math.min(8, Number(st.top) || (rawCount > 0 ? rawCount - 1 : 2)))
+                : 2
         };
         els.splitTitle.textContent = 'Split Layout' + (splitEdit.name ? ' — ' + splitEdit.name : '');
         renderSplitEditor();
         els.splitModal.hidden = false;
     }
     function closeSplitEditor() { els.splitModal.hidden = true; splitEdit = null; }
-    els.splitCols.addEventListener('click', () => { if (splitEdit) { splitEdit.columns = true; renderSplitEditor(); } });
-    els.splitRows.addEventListener('click', () => { if (splitEdit) { splitEdit.columns = false; renderSplitEditor(); } });
-    els.splitMinus.addEventListener('click', () => { if (splitEdit && splitEdit.count > 2) { splitEdit.count--; renderSplitEditor(); } });
-    els.splitPlus.addEventListener('click', () => { if (splitEdit && splitEdit.count < 8) { splitEdit.count++; renderSplitEditor(); } });
+    els.splitZones.addEventListener('click', () => { if (splitEdit) { splitEdit.shape = 'zones'; if (!splitEdit.top) splitEdit.top = 2; renderSplitEditor(); } });
+    els.splitCols.addEventListener('click', () => { if (splitEdit) { splitEdit.shape = 'columns'; renderSplitEditor(); } });
+    els.splitRows.addEventListener('click', () => { if (splitEdit) { splitEdit.shape = 'rows'; renderSplitEditor(); } });
+    els.splitMinus.addEventListener('click', () => {
+        if (!splitEdit) return;
+        if (splitEdit.shape === 'zones') { if (splitEdit.top > 2) { splitEdit.top--; } }
+        else if (splitEdit.count > 2) { splitEdit.count--; }
+        renderSplitEditor();
+    });
+    els.splitPlus.addEventListener('click', () => {
+        if (!splitEdit) return;
+        if (splitEdit.shape === 'zones') { if (splitEdit.top < 8) { splitEdit.top++; } }
+        else if (splitEdit.count < 8) { splitEdit.count++; }
+        renderSplitEditor();
+    });
     els.splitSave.addEventListener('click', () => {
-        if (splitEdit) post({ type: 'saveSplitLayout', name: splitEdit.name, columns: splitEdit.columns, count: splitEdit.count });
+        if (splitEdit) post({
+            type: 'saveSplitLayout', name: splitEdit.name, shape: splitEdit.shape,
+            count: splitEdit.count, top: splitEdit.top
+        });
         closeSplitEditor();
     });
     els.splitCancel.addEventListener('click', closeSplitEditor);
     els.splitModal.addEventListener('click', (e) => {
         if (e.target === els.splitModal) closeSplitEditor(); // click outside the box
+    });
+
+    // ---------------- 'Splitters' editor (the runtime divider bars of a SplitPanel) ----------------
+    // Each divider bar (GridSplitter) can be styled: thickness on its axis (a vertical divider's
+    // Width, a horizontal one's Height), its colour, and whether it is visible at runtime.
+    let splitterEdit = null; // { name, rows: [{ direction, thickness, color, visible }] }
+    function renderSplitterEditor() {
+        const host = els.splitterBody;
+        host.innerHTML = '';
+        if (!splitterEdit) return;
+        const labels = {};
+        const cnt = {};
+        const rows = splitterEdit.rows || [];
+        if (rows.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'modal-hint';
+            empty.textContent = 'This split has no divider bars yet.';
+            host.appendChild(empty);
+            return;
+        }
+        rows.forEach((row, i) => {
+            const key = row.direction;
+            cnt[key] = (cnt[key] || 0) + 1;
+            const rowEl = document.createElement('div');
+            rowEl.className = 'splitter-row';
+            const label = document.createElement('div');
+            label.className = 'splitter-label';
+            label.textContent = (key === 'vertical' ? 'Vertical divider' : 'Horizontal divider')
+                + (cnt[key] > 1 ? ' ' + cnt[key] : '');
+            label.title = key === 'vertical'
+                ? 'Runs between the side-by-side panes; drag left/right to resize them.'
+                : 'Runs between the stacked panes; drag up/down to resize them.';
+            rowEl.appendChild(label);
+            // Thickness
+            const thick = document.createElement('label');
+            thick.className = 'splitter-field';
+            thick.appendChild(document.createTextNode('Thickness '));
+            const thickIn = document.createElement('input');
+            thickIn.type = 'number'; thickIn.min = '1'; thickIn.step = '1'; thickIn.value = String(row.thickness);
+            thickIn.addEventListener('input', () => { row.thickness = thickIn.value; });
+            thick.appendChild(thickIn);
+            rowEl.appendChild(thick);
+            // Colour (native swatch + hex text kept in sync)
+            const col = document.createElement('label');
+            col.className = 'splitter-field';
+            col.appendChild(document.createTextNode('Colour '));
+            const colSw = document.createElement('input');
+            colSw.type = 'color';
+            const colHex = document.createElement('input');
+            colHex.type = 'text'; colHex.maxLength = 7;
+            // initial swatch from hex (fall back to a grey when the stored colour isn't hex)
+            const init = normalizeHex(row.color) || '#B0B0B0';
+            colSw.value = init; row.color = init; colHex.value = init;
+            colSw.addEventListener('input', () => { const h = normalizeHex(colSw.value); if (h) { row.color = h; colHex.value = h; } });
+            colHex.addEventListener('input', () => { const h = normalizeHex(colHex.value); if (h) { row.color = h; colSw.value = h; } });
+            col.appendChild(colSw);
+            col.appendChild(colHex);
+            rowEl.appendChild(col);
+            // Visible
+            const vis = document.createElement('label');
+            vis.className = 'splitter-field splitter-vis';
+            const visIn = document.createElement('input');
+            visIn.type = 'checkbox';
+            visIn.checked = row.visible !== false;
+            visIn.addEventListener('change', () => { row.visible = visIn.checked; });
+            vis.appendChild(visIn);
+            vis.appendChild(document.createTextNode(' Visible'));
+            rowEl.appendChild(vis);
+            host.appendChild(rowEl);
+        });
+    }
+    function normalizeHex(c) {
+        const s = String(c || '').trim();
+        return /^#?[0-9a-fA-F]{6}$/.test(s) ? (s.startsWith('#') ? s.toLowerCase() : '#' + s.toLowerCase()) : null;
+    }
+    function openSplitterEditor(name, splitters) {
+        splitterEdit = {
+            name: name || null,
+            rows: (splitters || []).map((s) => ({
+                direction: s.direction === 'horizontal' ? 'horizontal' : 'vertical',
+                thickness: String(s.thickness ?? '5'),
+                color: normalizeHex(s.color) || '#B0B0B0',
+                visible: s.visible !== false
+            }))
+        };
+        els.splitterTitle.textContent = 'Splitters' + (splitterEdit.name ? ' — ' + splitterEdit.name : '');
+        renderSplitterEditor();
+        els.splitterModal.hidden = false;
+    }
+    function closeSplitterEditor() { els.splitterModal.hidden = true; splitterEdit = null; }
+    els.splitterSave.addEventListener('click', () => {
+        if (splitterEdit) {
+            post({
+                type: 'saveSplitters', name: splitterEdit.name,
+                items: splitterEdit.rows.map((r) => ({ direction: r.direction, thickness: r.thickness, color: r.color, visible: r.visible }))
+            });
+        }
+        closeSplitterEditor();
+    });
+    els.splitterCancel.addEventListener('click', closeSplitterEditor);
+    els.splitterModal.addEventListener('click', (e) => {
+        if (e.target === els.splitterModal) closeSplitterEditor(); // click outside the box
+    });
+
+    // ---------------- 'Rows' / 'Columns' editors (DataGrid decoration) ----------------
+    // The DataGrid's row/column decorations are grouped into two small popups. Each value is a
+    // direct Avalonia DataGrid attribute written back on Save (unchanged values leave the XAML as
+    // it was). Alternating row colours are deliberately absent — Avalonia's DataGrid has no
+    // alternation support.
+    // The 'Header text font' picker lists every system font the C# host sees (Avalonia
+    // FontManager); the list arrives asynchronously in a 'fonts' message. Until then (or if the
+    // host is unavailable) a compact default set is offered so the picker is never empty.
+    const FONT_FALLBACK = ['Default', 'Arial', 'Arial Black', 'Calibri', 'Cambria', 'Comic Sans MS',
+        'Consolas', 'Courier New', 'Georgia', 'Impact', 'Lucida Console', 'Lucida Sans Unicode',
+        'Segoe UI', 'Tahoma', 'Times New Roman', 'Trebuchet MS', 'Verdana'];
+    let systemFonts = [];
+    let dgEdit = null; // { name, mode: 'rows'|'cols', values: { fieldKey: value }, fieldEls }
+    const DG_FIELDS = {
+        rows: [
+            { key: 'rowBackground', label: 'Row background', kind: 'color' },
+            { key: 'foreground', label: 'Text colour', kind: 'color' },
+            { key: 'rowHeight', label: 'Row height (px, empty = auto)', kind: 'number' },
+            { key: 'rowHeaderWidth', label: 'Row header width (px, 0 = none)', kind: 'number' },
+            { key: 'gridLines', label: 'Grid lines', kind: 'dropdown', options: ['All', 'Horizontal', 'Vertical', 'None'] },
+            { key: 'hLine', label: 'Horizontal line colour', kind: 'color' },
+            { key: 'vLine', label: 'Vertical line colour', kind: 'color' },
+            { key: 'headers', label: 'Headers', kind: 'dropdown', options: ['All', 'Column', 'Row', 'None'] }
+        ],
+        cols: [
+            { key: 'columnWidth', label: 'Column width (Auto / * / px)', kind: 'text' },
+            { key: 'minColumnWidth', label: 'Min column width (px)', kind: 'number' },
+            { key: 'maxColumnWidth', label: 'Max column width (px, empty = none)', kind: 'number' },
+            { key: 'frozenCount', label: 'Frozen columns (pinned left)', kind: 'number' },
+            { key: 'headerHeight', label: 'Header height (px, empty = auto)', kind: 'number' },
+            { key: 'headerAlign', label: 'Header text alignment', kind: 'dropdown', options: ['Left', 'Center', 'Right'] },
+            { key: 'headerColor', label: 'Header text colour', kind: 'color' },
+            { key: 'headerFont', label: 'Header text font', kind: 'font' },
+            { key: 'headerFontSize', label: 'Header text size (px, empty = theme)', kind: 'number' },
+            { key: 'headerBg', label: 'Header background', kind: 'color' }
+        ]
+    };
+    const DG_HINTS = {
+        rows: 'Sets how the data rows and the grid around them look. Row height and row-header width are in pixels; leave a number empty to let the theme decide. (Alternating row colours aren\'t offered — Avalonia\'s DataGrid has no built-in support.)',
+        cols: 'Sets how wide the columns are and how the column headers look. Column width accepts Auto, * (fill the space), a size like 150 or 2*. The header text settings (alignment, colour, font, size, background) are written as a column-header style.'
+    };
+    function normalizeColorValue(c) {
+        const s = String(c || '').trim();
+        if (s === '') return '';
+        return /^#?[0-9a-fA-F]{6}$/.test(s) ? (s.startsWith('#') ? s.toLowerCase() : '#' + s.toLowerCase()) : s;
+    }
+    function renderDataGridEditor() {
+        const host = els.dgBody;
+        host.innerHTML = '';
+        if (!dgEdit) return;
+        els.dgTitle.textContent = dgEdit.mode === 'rows' ? 'Rows' : 'Columns';
+        els.dgHint.textContent = DG_HINTS[dgEdit.mode];
+        dgEdit.fieldEls = {};
+        for (const f of DG_FIELDS[dgEdit.mode]) {
+            const row = document.createElement('div');
+            row.className = 'splitter-row';
+            const label = document.createElement('div');
+            label.className = 'splitter-label';
+            label.textContent = f.label;
+            row.appendChild(label);
+            const value = String(dgEdit.values[f.key] ?? '');
+            if (f.kind === 'dropdown' || f.kind === 'font') {
+                // Font pickers list the system fonts (fallback set until the 'fonts' message
+                // arrives); the current value is always offered even if it isn't in the list.
+                const opts = f.kind === 'font'
+                    ? (systemFonts.length ? systemFonts : FONT_FALLBACK)
+                    : (f.options || []);
+                const sel = document.createElement('select');
+                sel.className = 'dg-input';
+                if (value && !opts.includes(value)) {
+                    const cur = document.createElement('option');
+                    cur.value = value; cur.textContent = value; sel.appendChild(cur);
+                }
+                for (const o of opts) {
+                    const opt = document.createElement('option');
+                    opt.value = o; opt.textContent = o; sel.appendChild(opt);
+                }
+                sel.value = value ? value : opts[0];
+                sel.addEventListener('change', () => { dgEdit.values[f.key] = sel.value; });
+                row.appendChild(sel);
+                dgEdit.fieldEls[f.key] = sel;
+            } else if (f.kind === 'color') {
+                const group = document.createElement('div');
+                group.className = 'dg-color';
+                const sw = document.createElement('input');
+                sw.type = 'color';
+                const tx = document.createElement('input');
+                tx.type = 'text'; tx.maxLength = 7; tx.className = 'dg-input';
+                const init = normalizeColorValue(value);
+                sw.value = /^#[0-9a-fA-F]{6}$/.test(init) ? init : '#ffffff';
+                tx.value = init;
+                const syncTxt = () => { dgEdit.values[f.key] = tx.value; };
+                const syncSw = () => { const c = normalizeColorValue(sw.value); dgEdit.values[f.key] = c; tx.value = c; };
+                tx.addEventListener('input', syncTxt);
+                sw.addEventListener('input', syncSw);
+                group.appendChild(sw);
+                group.appendChild(tx);
+                row.appendChild(group);
+                dgEdit.fieldEls[f.key] = tx;
+            } else {
+                const inp = document.createElement('input');
+                inp.type = 'text'; inp.className = 'dg-input';
+                inp.value = value;
+                inp.addEventListener('input', () => { dgEdit.values[f.key] = inp.value; });
+                row.appendChild(inp);
+                dgEdit.fieldEls[f.key] = inp;
+            }
+            host.appendChild(row);
+        }
+    }
+    function openDataGridEditor(mode, name, values) {
+        dgEdit = { name: name || null, mode: mode === 'cols' ? 'cols' : 'rows', values: Object.assign({}, values || {}) };
+        renderDataGridEditor();
+        els.dgModal.hidden = false;
+        // First time the Columns editor opens, ask the extension for the real system font list;
+        // it replies with a 'fonts' message and the picker is refreshed with every family.
+        if (dgEdit.mode === 'cols' && systemFonts.length === 0) post({ type: 'requestFonts' });
+    }
+    function closeDataGridEditor() { els.dgModal.hidden = true; dgEdit = null; }
+    els.dgSave.addEventListener('click', () => {
+        if (dgEdit) post({
+            type: dgEdit.mode === 'rows' ? 'saveDataGridRows' : 'saveDataGridCols',
+            name: dgEdit.name, values: dgEdit.values
+        });
+        closeDataGridEditor();
+    });
+    els.dgCancel.addEventListener('click', closeDataGridEditor);
+    els.dgModal.addEventListener('click', (e) => {
+        if (e.target === els.dgModal) closeDataGridEditor(); // click outside the box
     });
 
     // Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay

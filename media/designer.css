@@ -1,6 +1,11 @@
 :root {
+    /* The whole designer is a fixed dark UI, so native form controls (the popup list of a
+       <select>, scrollbars, etc.) must render in the DARK color scheme too — otherwise Chromium
+       draws an OS-light white dropdown with our light-grey text on top (unreadable). */
+    color-scheme: dark;
     --bg: #1e1e1e;
     --panel: #252526;
+    --panel-1: #2a2a2e;
     --panel-2: #2d2d30;
     --border: #3c3c3c;
     --fg: #cccccc;
@@ -601,6 +606,14 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     outline: 1px solid var(--accent);
 }
 
+/* Dropdown popup options: dark list with light text (the native list honours these with the
+   dark color-scheme above, keeping the font/alignment pickers readable). */
+.prop-row select option,
+.prop-input-group select option {
+    background: var(--panel-2);
+    color: var(--fg);
+}
+
 .prop-row input[disabled] {
     opacity: 0.6;
 }
@@ -1134,6 +1147,28 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     cursor: default;
 }
 
+/* 'Data…' button on an Image.Source row — binds the Image to a DataGrid's selected-row image. */
+.prop-data {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    background: transparent;
+    color: var(--accent, #3794ff);
+    border: 1px solid var(--accent, #3794ff);
+    border-radius: 3px;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.prop-data:hover {
+    background: rgba(55, 148, 255, 0.15);
+}
+
+.prop-data:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
 /* ---------- dot grid overlay + toolbar toggles ---------- */
 /* Toolbar toggle buttons get a pressed/highlighted look when active. */
 #toolbar button.tb-active {
@@ -1343,4 +1378,115 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     background: var(--accent);
     border-color: var(--accent);
     color: #fff;
+}
+
+/* 'Splitters' editor: one row per runtime divider bar of a SplitPanel. */
+.splitter-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+    margin: 4px 0;
+}
+
+.splitter-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 8px;
+}
+
+.splitter-label {
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.95;
+}
+
+.splitter-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    opacity: 0.9;
+    margin-right: 12px;
+}
+
+.splitter-field input[type='number'] {
+    width: 54px;
+    background: var(--panel-1);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.splitter-field input[type='color'] {
+    width: 26px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: transparent;
+}
+
+.splitter-field input[type='text'] {
+    width: 62px;
+    background: var(--panel-1);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.splitter-field input:focus {
+    outline: 1px solid var(--accent);
+}
+
+.splitter-vis {
+    cursor: pointer;
+}
+
+/* 'Rows' / 'Columns' editors: one labelled field per DataGrid decoration. */
+.dg-input {
+    width: 128px;
+    background: var(--panel-1);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.dg-input:focus {
+    outline: 1px solid var(--accent);
+}
+
+/* 'Rows'/'Columns' modal dropdown (e.g. Header text font / alignment): dark option list. */
+.dg-input option {
+    background: var(--panel-2);
+    color: var(--fg);
+}
+
+.dg-color {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.dg-color input[type='color'] {
+    width: 26px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: transparent;
 }

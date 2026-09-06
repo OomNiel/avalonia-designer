@@ -45,7 +45,24 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 1446 passed, 0 failed** (2026-09-03). Layer map + gotchas: NOTES_2026-09-03.md §6.
+- **Current: 1605 passed, 0 failed** (2026-09-06). Layer map + gotchas: NOTES_2026-09-03.md §6.
+
+### Temporary headless UI smoke test (NOT in `npm test`)
+- **`node tests/smoke/smoke.js`** — an explicit user-approved exception to the "no automated app runs"
+  rule (granted 2026-09-06). It scaffolds a real C# blank app (SmokeApp) with a bound DataGrid +
+  SQLite DataSet, then drives the REAL MainWindow on **Avalonia.Headless**: opens the app's "+ Add row"
+  modal dialog, types dummy values, confirms, kills the process, and a FRESH process verifies the grid
+  is populated from the .db (persistence across restart). Then it removes the dataset + its db, adds a
+  NEW dataset bound to the same grid, and re-runs both stages. Stages: `seed1/verify1` (SmokeData.
+  Customers→smoke.db) and `seed2/verify2` (Books.Items→books.db).
+- Harness driver = `tests/smoke/Program.cs.tpl` (tokens {NS}/{DS}/{ADD}/{ROW}/{TEXT}/{TEXT_COLS});
+  orchestrator `tests/smoke/smoke.js`. Artifacts in **`tests/out/smoke`** — TEMPORARY, delete when done
+  (re-run to recreate). Gotchas: the harness output dir (where the relative `.db` lives next to the
+  exe) must NOT be wiped between seed→verify, or the persisted data vanishes (that's exactly why the
+  folder is only mkdir'd, never rm-rf'd). The generated dataset code needs the SQLite NuGet packages
+  added to the app csproj (SmokeApp uses SmokeData.cs with DatabaseAdapter/EnsureColumns).
+- `npm test` must STAY green after smoke (smoke isn't auto-discovered — folder is `tests/smoke`, not a
+  `t?-*` layer; keep it that way).
 
 ---
 
@@ -89,11 +106,12 @@ Toolbox (TreeView) ──click-to-arm / click-canvas-to-place──▶ Webview c
 ```
 
 **Host WS messages (JSON, camelCase replies, `id` echoed):** `hello`→`helloAck`, `ping`→`pong`,
-`snippet {tag}`→`snippetResult`, `render {xaml,width,height,projectPath}`→`frame {png,controls[],gridCells}`.
+`snippet {tag}`→`snippetResult`, `render {xaml,width,height,projectPath}`→`frame {png,controls[],gridCells}`,
+`fonts`→`fontsResult {fonts[]}` (system families via `FontManager.Current.SystemFonts`).
 
-**Webview ↔ extension:** ext→webview `frame/properties/status/selectControl/armTool/clipboard/dotGrid/crosshair`;
+**Webview ↔ extension:** ext→webview `frame/properties/status/selectControl/armTool/clipboard/dotGrid/crosshair/fonts`;
 webview→ext `ready/select/deselect/setProperty/drop/move/resize/delete/openEvent/cut/copy/paste/
-moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/setDotGrid/setCrosshair/undo/redo`.
+moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/setDotGrid/setCrosshair/undo/redo/requestFonts`.
 
 **Behaviour notes:**
 - Designer is **opt-in**: `.axaml` opens in the text editor; right-click → **Avalonia: Open in Designer**.
@@ -132,6 +150,27 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     fully qualified (BC40056/BC30002).
 14. **Host frame JSON is CAMELCASE** (`name/type/x/y/width/height/parent/values`, `gridCells`).
 15. **`Grid.ShowGridLines` + cell layout need real Row/ColumnDefinitions** — the programmatic builder parses them.
+16. **DataGrid column-header styling has NO direct attributes** — the Columns editor writes a
+    `<Style Selector="dg|DataGridColumnHeader">` with Setters inside a `<dg:DataGrid.Styles>`
+    property element. **Avalonia rejects ANY attribute on a property element** (AVLN2000), so never
+    redeclare `xmlns:dg` locally — call `model.ensureXmlns('dg', ...)` on the ROOT and build the
+    fragment with a throwaway local binding that is removed before attach.
+17. **System-font enumeration lives in the C# host** (`fonts` command → `FontManager.Current.SystemFonts`,
+    deduped case-insensitively; ~2000+ families on a font-rich Linux). Host serves ONE WebSocket
+    client at a time, so probes must not open a second socket — reuse `HostClient.fonts()`. The
+    extension caches the list and pushes it to webviews in a `fonts` message (`requestFonts`
+    re-requests); the webview falls back to `FONT_FALLBACK` until it arrives. Same families the
+    generated projects resolve (both go through the OS font stack).
+18. **T4 runtime suite can flake under a full `npm test`** — `dotnet run` on the regenerated
+    HeadlessApp harness intermittently fails (CS0246 HeadlessApp not found) when the MSBuild server
+    still holds stale obj locks from the previous run. Passes on re-run / `npm run test:runtime`
+    alone; not a product defect.
+19. **Native `<select>` popups follow CSS `color-scheme`.** The webview is a fixed-dark UI, but until
+    it declared `color-scheme: dark` on `:root`, Chromium drew every OPEN dropdown list (header-font
+    picker, alignment, Properties selects) as an OS-light white box with the light-grey text on it
+    (unreadable). Any dark webview with `<select>`s must pin `color-scheme: dark` and ideally give
+    `option { background/color }` explicit contrast. Also fixed while in there: `.dg-input`/splitter
+    fields referenced `--panel-1`, which was never defined in `:root`.
 
 ---
 
@@ -150,8 +189,171 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
 
 ---
 
-## 6. Current feature state (2026-09-03)
+## 6. Current feature state (2026-09-05)
 
+- **SQLite database storage (final semantics: SQLite is the ONLY bound-data store)** — a DataSet table
+  bound to a control (DataGrid / ComboBox / ListBox / ItemsControl) is ALWAYS persisted in a SQLite
+  file; the old sample/XML data store is retired for bound tables (XML migration machinery removed).
+  `.adset` stores `keyColumn` and `sqlite { file, tableName? }`. Codegen (C# **and** VB) emits a shared
+  **`DatabaseAdapter`** (`SQLitePCL.Batteries_V2.Init` once, `DbPath` resolves relative paths
+  next-to-app, idempotent `CREATE TABLE`) and DB `Load`/`Save`; **`Get<T>` (list-bound tables) also
+  reads the DB** (`SELECT … ORDER BY rowid`). Save = transactional DELETE + INSERT (AUTOINCREMENT
+  survives → integer keys stable; new rows read `last_insert_rowid` back; auto GUID keys use
+  `Guid.NewGuid`). **Existing .db files are used IN PLACE via an absolute path (Browse stores the
+  absolute path, no copy to bin — no `<Content CopyToOutputDirectory>` injected);** a relative default
+  `<DataSetName>.db` is auto-registered when a no-storage table gets BOUND (binding any table with no
+  `sqlite` file sets `file: <DataSetName>.db`) and is created next to the app on first run. Generate
+  injects the SQLite PackageReferences (Microsoft.Data.Sqlite 9.0.1 + SQLitePCLRaw.bundle **2.1.13** —
+  direct override because 9.0.1's transitive 2.1.10/2.1.11 trip **NU1903**). Design-time: host `sqlite`
+  command (`tables` inspect + read-only `query`); DataSet designer shows **Preview SQLite data…**
+  (modal query — preview always runs against the **pointed** sqlite file, absolute or project-relative)
+  and **Import SQLite…** (reverse-map a .db into .adset tables, affinity→type, stores `file` +
+  `tableName`).
+- **DataGrid Rows & Columns editors** — a selected DataGrid gets **Rows** and **Columns** buttons
+  (Properties). Rows: row background / text colour / row height / row-header width / grid lines
+  (All/Horizontal/Vertical/None) + line colours / header visibility (All/Column/Row/None). Columns:
+  default/min/max column width, frozen columns, header height AND **column-header styling** (text
+  alignment Left/Center/Right, text colour, font, size, background). Header styling has no direct
+  DataGrid attribute — emits `<dg:DataGrid.Styles><Style Selector="dg|DataGridColumnHeader">`
+  (root `xmlns:dg` only; AVLN2000 if declared on the property element).
+- **Header-text-font picker lists every installed system font** — new host `fonts` command
+  (`FontManager.Current.SystemFonts`, case-insensitive dedupe; ~2000+ families on this Linux),
+  cached + pushed to webviews (`requestFonts` on demand; `FONT_FALLBACK` until it arrives).
+- **Native `<select>` popups readable again** — pinned `color-scheme: dark` on `:root` (a dark
+  webview otherwise draws OS-light white dropdown lists under light text) + explicit `option`
+  contrast; also defined the previously missing `--panel-1` variable.
+- **VB row-type hardcode (2026-09-06):** generated VB `Save<T>` used `For Each r As CustomersRow`
+  (only compiled when the bound table was literally named Customers). Fixed to `${R}` — surfaces as
+  “Type 'XRow' is not defined” for any other table name (e.g. imported Customers2). Applies to the
+  SQLite `Save`/snapshot loops too.
+- **SQLite migration + db auto-copy REMOVED (2026-09-06, final):** the one-time XML→SQLite migration
+  and the `<Content Include=… CopyToOutputDirectory>` db copy are GONE. Rationale: bound data is
+  SQLite-only (decision 3) and an existing `.db` is consumed IN PLACE by absolute path (decision 1),
+  so there is nothing to migrate and nothing to copy. A pre-existing file pointed to via Browse is
+  trusted as-is; a brand-new default `<DataSetName>.db` (created next to the app) is just created empty
+  via `CREATE TABLE IF NOT EXISTS`. (Legacy `MyData.<T>.xml` files from beta-era projects are no longer
+  read at all — see USER_MANUAL/CHANGELOG for the manual re-import route via Import SQLite.)
+- **SQLite schema drift fix — EnsureColumns (2026-09-06):** adding a column in the designer (or
+  changing the schema) then Generate Code used to crash at runtime with `SQLite Error 1: no such
+  column` — CREATE TABLE IF NOT EXISTS is a no-op on an existing .db, so the regenerated SELECT/INSERT
+  referenced a column the table didn't have. The generated `DatabaseAdapter` (C# AND VB) now has
+  `EnsureColumns(con, table, cols)` which reads `PRAGMA table_info` and `ALTER TABLE ADD COLUMN`s any
+  missing columns (nullable, so existing rows survive). Every generated DB reader/writer (`Get<T>`,
+  `Load<T>`, `Save<T>`) calls it right after `DatabaseAdapter.Open(...)` with the table's full
+  `name AFFINITY` column list (`csSyncColDefs`/`vbSyncColDefs`). Columns that are NOT NULL in the
+  designer are still added nullable to an existing table (SQLite forbids adding a NOT NULL column to a
+  non-empty table without a default) — new rows always supply a value via Save anyway.
+- **DataSet Generate Code now SAVES the .adset (2026-09-06):** the generated class is derived from the
+  in-memory spec, but the .adset JSON was only written on the editor's Ctrl+S — so "add column →
+  Generate" could produce code referencing a column the on-disk schema (and hence an existing .db)
+  lacked, and a later save/close could even drop the column again. `generateCode` now writes
+  `serializeDataSet(spec)` to the .adset + `markSaved()` right after regenerating, so disk always
+  matches the generated code.
+- **Remove DataSet button (2026-09-06):** the DataSet designer toolbar now has a red **Remove
+  DataSet…** button (`btnRemoveDataSet` → `removeDataSet` handler). After a modal warning listing
+  exactly what happens, it: (1) strips every code-behind binding the dataset's tables created
+  (`unbindControlFromDataSet` on the owning .axaml), (2) deletes the `.adset` + generated
+  `MyData.cs/.vb` + `.xsd`, (3) deletes ONLY the DataSet's OWN auto-created default `.db`
+  (`<DataSet>.db` in the project folder + `bin/{Debug,Release}/{net8.0,net9.0,net10.0}` copies —
+  the app creates that file next to the exe on first run). User-browsed/per-table/external `.db`
+  files are NEVER auto-deleted — they're listed in the warning ("delete them yourself") because they
+  may be shared. Then it disposes the designer panel (closes the tab). Policy per user: "Option 4 +
+  delete bin copies" — never delete a user's real DB; only the auto default (project + bin).
+- **DataSet-name ⇄ existing .db collision warning (2026-09-06):** creating a new DataSet
+  (`newDataSet`) or renaming one (`setName`) whose default `<Name>.db` already exists in the project
+  folder now warns first (bound tables would silently read/write the EXISTING file); you can cancel.
+  Guard = `defaultDbExists(folder, name)`.
+- **VB generator hardcoded dataset name FIX (2026-09-06):** generated VB add/edit-row dialog code
+  used `MyData.CreateDataSet()` — a leftover hardcode that only compiled when the DataSet class was
+  literally named `MyData` (BC30451 'MyData' is not declared for any other name, e.g. DataSet1). The
+  VB add/edit row functions are members of the DataSet class, so they now call `CreateDataSet()`
+  unqualified exactly like the C# generator already does. (C# was already correct.)
+- **EnsureColumns quote-parsing FIX (2026-09-06):** the schema-sync column defs were emitted quoted
+  (`"Id" INTEGER`) and `EnsureColumns` compared `Split(' ')[0]` (→ `"Id"` WITH quotes) against
+  `PRAGMA table_info` names (→ `Id` WITHOUT quotes) — so it never saw existing columns and re-added
+  them → runtime `duplicate column name: Id`. Fix: `csSyncColDefs`/`vbSyncColDefs` now emit UNQUOTED
+  defs (`Id INTEGER`); `EnsureColumns` (CS_ENSURECOLUMNS/VB_ENSURECOLUMNS) quotes the name ONLY in the
+  ALTER (`ADD COLUMN \"{name}\" {affinity}`). Test: t2-logic dataSet.test.js asserts unquoted defs +
+  quotes-in-ALTER for C#/VB + no hardcoded MyData refs (1605 total).
+- **DataSet name is READ-ONLY (2026-09-06):** renaming the DataSet via the name box broke the build —
+  Generate writes `<newName>.vb` but the old `<oldName>.vb` (and its code-behind references under the
+  old class name) stayed, duplicating the shared helper types (DatabaseAdapter/CustomersRow/dialog
+  classes/converters → BC30179/BC30583) and stranding the old generated file. A correct rename needs
+  file rename + old-file cleanup + code-behind reference rewrites, so per the user's fallback the DataSet
+  name is now FIXED at creation: the toolbar + DATASET-panel Name inputs are `readonly` and the `setName`
+  message is rejected with guidance. Supported rename path: **Remove DataSet…** then create a new one.
+- **Image "Data…" binding — Image shows a DataGrid's selected-row image file (2026-09-06):** an
+  Image.Source row now ALSO offers a **Data…** button (`pickImageData`) that binds the Image to a
+  DataGrid bound to a DataSet table: at runtime the Image shows the image file whose **absolute path**
+  is in a chosen **String column** of the SELECTED row (auto-selects row 0 on load; blank when nothing
+  selected / empty path / missing file). Exclusive — binding clears the XAML Source attribute (data
+  wins; picking Browse returns to a file). Design decisions (user): follow the grid's selected row,
+  absolute paths, blank on unavailable, designer preview = FIRST row's image. Storage: metadata on the
+  owning table's `.adset` (`boundImages: [{control, column}]` — same place `boundTo` lives) +
+  code-behind marker `DataImage: <img> <- <grid>.<col>` with generated selection handlers
+  (`BindImage_<c>`/`DataImage_<c>_Show`, C# AND VB — VB insert must place before `End Class` using the
+  ABSOLUTE `End Class` index, not `m.index + em.index`). Designer shows Source read-only
+  `Data: grid.col`. Cleanup on control delete + **Remove DataSet** (`unbindImageFromGrid`). Design-time
+  preview: `applyDataImagePreview` reads the first row's path from the table's .db (host sqlite) and
+  injects it as a render-only `Source` (host renders absolute file paths) — never saved. codeBehind
+  probe (/tmp/imgprobe*) validates C#+VB insert/unbind (marker inside class, removed cleanly).
+- **Design-time DATA preview on the canvas (2026-09-06):** the designer renders XAML only (no
+  code-behind), so a bound DataGrid/Data-Image looked empty in the designer even though runtime
+  worked. Fix: `designerPanel.render` reads each DataGrid-bound table's rows/columns from its `.db`
+  (host sqlite, cap 8) and sends them as a new `grids` option on the render message; the host
+  (`XamlRenderer.ApplyGridRows`) fills each named DataGrid read-only (Reflection.Emit row type with a
+  public object property per column + DataGridTextColumns, AutoGenerateColumns=False) before measure.
+  Data-Image preview shows the first row's image (only when rows exist). Runtime untouched. Extension
+  plumbing: `hostClient.render(..., grids?)` + `Program.cs` render case parses `grids` (`JsonCell`).
+  Verified: host probe renders a DataGrid with rows 800×450 no error; suite 1605/0.
+- **Design-time Image preview FIXED (2026-09-06):** grid rows rendered but the Data-Image still showed
+  nothing — isolated to a HOST bug, not the extension: an absolute file path in `Image.Source` (e.g.
+  `/home/.../x.png`) rendered **0×0**. Root cause: `XamlRenderer.ResolveAssetPath` checked
+  `spec.StartsWith("/")` (treating it as project-rooted → `projectPath + "/home/..."` → file "missing")
+  BEFORE `Path.IsPathRooted`. On Linux EVERY absolute path starts with `/`, so all absolute paths were
+  mis-resolved and the image silently never loaded. Fix: `IsPathRooted` check comes first (existing file
+  → used as-is), with a fallback to `projectPath` only when the rooted form doesn't exist but
+  `<project>/<path>` does (keeps the `/Assets/x.png` designer convention working). Second
+  ApplyImageSources-after-arrange pass kept (harmless; realizes images only present post-measure).
+  Verified: /tmp/simpleimg.js 240×300, /tmp/im2probe.js Image2 w=122 h=152 + DataGrid1 516×291; suite
+  1605/0. Packaged v1.0.0-beta.2 (rebuilt host/*.cs auto-recompiles on next designer open).
+- **RELEASED: `v1.0.0-beta.1` + `v1.0.0-beta.2` GitHub PRE-RELEASES**
+- **SQLite import auto-links + real table name (2026-09-06):** Import SQLite now stores the source
+  `file` on each imported table AND `sqlite.tableName` = the DB's real table name. Without this an
+  import renamed to avoid a clash (DB Customers → .adset Customers2) would generate SQL against a
+  non-existent Customers2 table and a non-sqlite import just seeded the Sample row when bound.
+  All SQLite SQL (CREATE/SELECT/INSERT/DELETE/COUNT) uses `sqliteTableName(t)`.
+- **Placed-control Dock normalisation (2026-09-06):** a non-docked control dropped as a DockPanel's
+  last child inherited `LastChildFill="True"` → designer showed Dock **Fill** though no DockPanel.Dock
+  existed (user expects None). Drop handler now sets the parent's LastChildFill to False for a placed
+  last child without a Dock attribute (same as picking Dock=None), so the panel reads None. Dock=Fill
+  is an explicit choice that re-enables LastChildFill.
+- **DataGrid runtime **Reorder/Resize defaults corrected to FALSE** (the framework's real default) —
+  setting True now writes `CanUserReorderColumns="True"`/`CanUserResizeColumns="True"` so dragging
+  columns/edges works at runtime.
+- **Bind-dropdown empty bug (2026-09-06):** DataSet designer's `walkProject` used `/^\.axaml$/i`
+  (only matches a file literally named `.axaml`!) → no `.axaml` ever scanned → "Bind to control"
+  always empty. Fixed to `/\.axaml$/i`; also added a `getControls` refresh when a table is selected.
+- **ItemsSource picker ⇄ DataSet designer stay in sync — 'both ways' (2026-09-06):** binding a
+  DataSet table from the form's Items Source "…" (`pickItemsSource` → `bindDataSetAsset`) now records
+  the EXACT state the DataSet designer's Bind dropdown records: `boundTo`/`boundToType` + the shared
+  per-DataSet SQLite default (`defaultDbFile` → `<DataSet>.db`, exported) for a no-storage table, then
+  regenerates the DataSet class/.xsd AND calls the exported `ensureSqlitePackages`. The DataSet
+  designer's Generate/bind path already did both — now both sides agree (no more "bound via grid →
+  DataSet screen shows Sample/XML / project lacks SQLite packages"). The ItemsSource "…" button is no
+  longer disabled for a read-only (bound) field, so you can SWITCH or UN-BIND from the grid too:
+  `pickItemsSource` offers Un-bind + the current binding + other sources; switching drops the old
+  binding first (only ONE ItemsSource survives — previously a stale code-asset line could linger) and
+  `unbindCurrentDataSetBinding`/`isDatasetTableClaimed` mirror the DataSet Un-bind (keep schema+sqlite).
+  Cross-panel live sync: `dataSetEditor.ts` exports `reloadDataSetPanel(uri)` — open DataSet designer
+  panels register a reloader (`liveReloaders`) that re-reads the .adset, swaps the in-memory spec,
+  resets undo history and repaints — called after every form-side bind/unbind, so a panel open on the
+  same .adset shows the change instantly instead of a stale unbound schema.
+- **Properties top-actions (2026-09-06):** the "editor" buttons users reach for are now pinned to the
+  TOP of the Properties list, above Name/Type/Theme: DataGrid **Rows + Columns**, SplitPanel **Split
+  Layout + Splitters** (`propertyDefsFor` builds a `topActions` PropDef[] that is `concat`-prepended —
+  tests are key/sig-based so order is safe; t5 audit sorts keys). TabControl's **Tab Items** editor
+  section is `propsBody.prepend`-ed in `designer.js` so it sits above the property rows too.
 - **RELEASED: `v1.0.0-beta.1` + `v1.0.0-beta.2` GitHub PRE-RELEASES** (tags pushed, .vsix attached,
   README/CHANGELOG updated). URLs: .../releases/tag/v1.0.0-beta.1 and .../releases/tag/v1.0.0-beta.2
   Marketplace publish NOT done (publisher `grumpy` has no vsce login/PAT; **global Azure DevOps PATs
@@ -163,17 +365,25 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   DataSet designer, C#/VB project + form scaffolding (net10 + Avalonia 12, F5-ready), ChromeWindow custom
   title-bar tool, custom **crosshair** (§69: one toolbar button → settings popup; anchors on the pointer /
   control top-left while moving / the active handle while resizing).
-- Suite green: **1555 passed**; PROBLEMS clean after every change.
-- SplitPanel hit-test fix: the host loader IGNORES the `ColumnDefinitions="*,5,*"` attribute shorthand
-  (children all reported full-width & overlapping → clicking anywhere hit Pane1). The SplitPanel
-  snippet now writes EXPLICIT `<Grid.ColumnDefinitions>` property elements (like the Grid editor's
-  setGridDefinitions) so the panes confine to their cells and are individually clickable.
-- SplitPanel tool (Avalonia-native): an Avalonia **Grid** (named SplitPanelN) whose panes are
-  Borders (settable pane border + an empty named Canvas body to drop controls into) separated by
-  runtime-draggable **GridSplitters** (Auto lanes); star panes resize with the form. Default 2
-  panes side-by-side. Properties: **Split Layout** (editor: Columns/Rows + 2..8 panes; keeps pane
-  contents, rebuilds splitters) and **Pane Border** (writes BorderThickness on every pane).
-  GridSplitter added to host TypeMap so the fallback builder renders it.
+- Suite green: **1597 passed**; PROBLEMS clean after every change.
+- SplitPanel tool: a **Border frame** (named SplitPanelN — clicking its border selects the whole panel)
+  wrapping a **Grid**; panes are Borders with a named Canvas body to drop into, separated by
+  runtime-draggable **GridSplitters** (bars carry `MinWidth="1"`/`MinHeight="1"` so they never
+  shrink below 1 px, and star rows/cols flex with the form). Default **Zones** layout = the T
+  (Pane0 | Pane1 side-by-side over a full-width Pane2); older Grid-rooted splits still load and
+  convert. Grid/row definitions are always written as EXPLICIT `<Grid.ColumnDefinitions>` property
+  elements — the host loader ignores the attribute shorthand (so panes confine to their cells and
+  stay individually clickable, §78). GridSplitter is in the host TypeMap.
+- Split Panel Properties: **Split Layout** (editor: Zones / Columns / Rows; the stepper picks the
+  TOP-band pane count for Zones — 2-up over 1 by default, e.g. 3-up over 1 — and the total pane
+  count for Columns/Rows; keeps each pane's contents, rebuilds the splitters; converting an old
+  Grid-rooted split to Zones wraps it in the Border frame), **Splitters** (each divider bar's
+  thickness, colour and runtime visibility — only changed attributes are written, keeping the XAML
+  tidy) and **Pane Border** (writes BorderThickness on every pane).
+- Pane Width/Height ARE the divider positions (a pane fills its grid cell): a selected side-by-side
+  pane's **Width** — and the full-width bottom pane's **Height** — pin that row/column to pixels;
+  **0 hides** the pane; `*`/blank lets it flex again. The axis that isn't a real divider (e.g. Width
+  on the full-width bottom pane) is dropped from the Properties list, and typing it shows a hint.
 - Docked strips (Menu/StatusBar) dropped onto free space now AUTO-DOCK into the form's root
   DockPanel (before the fill child) instead of floating on the Body canvas (their snippets carry
   DockPanel.Dock, which a Canvas ignores). Fixed via ensureDockPanelParent in the drop handler;

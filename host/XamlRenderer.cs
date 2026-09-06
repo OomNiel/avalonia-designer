@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Xml.Linq;
 using Avalonia;
 using Avalonia.Controls;
@@ -66,7 +67,7 @@ public class XamlRenderer
     /// <summary>User project root (for resolving avares://… image Sources) during the programmatic build.</summary>
     private static string? CurrentProjectPath;
 
-    public FrameResult Render(string xaml, double designW, double designH, string? projectPath = null, string? theme = null)
+    public FrameResult Render(string xaml, double designW, double designH, string? projectPath = null, string? theme = null, IReadOnlyList<GridPreviewData>? grids = null)
     {
         try
         {
@@ -94,8 +95,19 @@ public class XamlRenderer
             // size (a null source measures to 0x0).
             ApplyImageSources(window, xaml, projectPath);
 
+            // Design-time data: a DataGrid bound to a DataSet table is populated at runtime by the
+            // app's code-behind, which the headless preview doesn't run. When the extension supplies
+            // rows for a named DataGrid, fill it (read-only) so the designer shows the same data.
+            ApplyGridRows(window, grids);
+
             window.Measure(finalSize);
             window.Arrange(new Rect(new Point(0, 0), finalSize));
+
+            // Second pass: the first ApplyImageSources ran before measure, when an Image in a
+            // container may not be realized yet. Re-apply now (idempotent) so any Image whose Source
+            // is a plain file path / avares URI that Avalonia's loader couldn't resolve still gets a
+            // bitmap (e.g. Data-Image previews and hand-typed absolute paths).
+            ApplyImageSources(window, xaml, projectPath);
 
             var rtb = new RenderTargetBitmap(new PixelSize((int)designW, (int)designH), new Vector(96, 96));
             rtb.Render(window);
@@ -358,12 +370,25 @@ public class XamlRenderer
             var rel = rest.Substring(slash + 1).Replace('/', Path.DirectorySeparatorChar);
             return Path.Combine(projectPath, rel);
         }
+        // Check for a fully-rooted path BEFORE the leading-slash branch — on Linux an absolute path
+        // starts with '/', so "/home/.../x.png" must be used as-is, not treated as project-relative.
+        // A leading-slash source like "/Assets/f.png" is still resolved under the project when the
+        // plain absolute form doesn't exist (designer convention).
+        if (Path.IsPathRooted(spec))
+        {
+            if (File.Exists(spec)) return spec;
+            if (spec.StartsWith("/") && !string.IsNullOrEmpty(projectPath))
+            {
+                var proj = Path.Combine(projectPath, spec.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(proj)) return proj;
+            }
+            return spec;
+        }
         if (spec.StartsWith("/"))
         {
             if (string.IsNullOrEmpty(projectPath)) return null;
             return Path.Combine(projectPath, spec.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
         }
-        if (Path.IsPathRooted(spec)) return spec;
         if (string.IsNullOrEmpty(projectPath)) return null;
         return Path.Combine(projectPath, spec);
     }
@@ -389,6 +414,86 @@ public class XamlRenderer
             if (desc is not Image img || string.IsNullOrEmpty(img.Name)) continue;
             if (map.TryGetValue(img.Name!, out var bmp)) img.Source = bmp;
         }
+    }
+
+    /// <summary>Design-time rows for one named DataGrid (from the bound DataSet's .db).</summary>
+    public sealed class GridPreviewData
+    {
+        public string Control { get; set; } = "";
+        public string[] Columns { get; set; } = Array.Empty<string>();
+        public object?[][] Rows { get; set; } = Array.Empty<object?[]>();
+    }
+
+    /// <summary>Fills each named DataGrid with the supplied rows (read-only, design-time preview).</summary>
+    private static void ApplyGridRows(Window window, IReadOnlyList<GridPreviewData>? grids)
+    {
+        if (grids is null || grids.Count == 0) return;
+        foreach (var gd in grids)
+        {
+            if (string.IsNullOrEmpty(gd.Control) || gd.Columns.Length == 0) continue;
+            try
+            {
+                DataGrid? dg = null;
+                foreach (var desc in window.GetVisualDescendants())
+                {
+                    if (desc is DataGrid grid && grid.Name == gd.Control) { dg = grid; break; }
+                }
+                if (dg is null) continue;
+
+                // A row type whose public properties match the grid's columns, so Avalonia's
+                // DataGridTextColumn bindings can resolve the cell values by name.
+                var rowType = BuildRowType(gd.Columns);
+                var items = new List<object>();
+                foreach (var cells in gd.Rows)
+                {
+                    var row = Activator.CreateInstance(rowType);
+                    if (row is null) continue;
+                    for (var i = 0; i < gd.Columns.Length; i++)
+                    {
+                        if (i >= cells.Length) break;
+                        try { rowType.GetProperty(gd.Columns[i])?.SetValue(row, cells[i]); }
+                        catch { /* leave the cell null */ }
+                    }
+                    items.Add(row);
+                }
+
+                dg.AutoGenerateColumns = false;
+                dg.Columns.Clear();
+                foreach (var col in gd.Columns)
+                {
+                    dg.Columns.Add(new DataGridTextColumn { Header = col, Binding = new Avalonia.Data.Binding(col) });
+                }
+                dg.ItemsSource = items;
+            }
+            catch { /* design-time preview is best-effort — keep the empty grid */ }
+        }
+    }
+
+    /// <summary>Builds (via Reflection.Emit) a simple row type exposing one public object property per column.</summary>
+    private static Type BuildRowType(IReadOnlyList<string> columns)
+    {
+        var asm = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("GridPreviewRows"), AssemblyBuilderAccess.Run);
+        var mod = asm.DefineDynamicModule("GridPreviewRowsMod");
+        var tb = mod.DefineType("Row" + Math.Abs(columns.Count.GetHashCode()), TypeAttributes.Public | TypeAttributes.Class);
+        foreach (var col in columns)
+        {
+            var field = tb.DefineField("_" + col, typeof(object), FieldAttributes.Private);
+            var prop = tb.DefineProperty(col, PropertyAttributes.None, typeof(object), null);
+            var getter = tb.DefineMethod("get_" + col, MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig, typeof(object), Type.EmptyTypes);
+            var ig = getter.GetILGenerator();
+            ig.Emit(OpCodes.Ldarg_0);
+            ig.Emit(OpCodes.Ldfld, field);
+            ig.Emit(OpCodes.Ret);
+            prop.SetGetMethod(getter);
+            var setter = tb.DefineMethod("set_" + col, MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig, null, new[] { typeof(object) });
+            var isg = setter.GetILGenerator();
+            isg.Emit(OpCodes.Ldarg_0);
+            isg.Emit(OpCodes.Ldarg_1);
+            isg.Emit(OpCodes.Stfld, field);
+            isg.Emit(OpCodes.Ret);
+            prop.SetSetMethod(setter);
+        }
+        return tb.CreateType()!;
     }
 
     private static Dictionary<string, Bitmap> ScanImageSources(XDocument doc, string projectPath)

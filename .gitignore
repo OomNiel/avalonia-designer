@@ -18,3 +18,7 @@ host/obj/
 
 # Local tooling (private settings, not for the repo)
 .poolside/
+
+# Local-only approved smoke harness + compliance snapshot (never released)
+tests/smoke/
+tests/compliance.json

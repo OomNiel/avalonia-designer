@@ -8,7 +8,7 @@
 > guided: every control has a plain-language explanation, every property has a helpful editor and
 > a hover description, and the code-behind is created for you.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-08-28)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-05)
 
 ---
 
@@ -358,6 +358,35 @@ area where you type **one item per line**:
 The **Items** property is disabled when the control's items come from a bound **DataSet table** or
 an **ItemsSource** — use the DataSet designer to manage those instead.
 
+### DataGrid — Rows & Columns editors
+
+When you select a **DataGrid**, its properties include two **…** buttons, **Rows** and **Columns**,
+each opening a small editor:
+
+- **Rows** — how the data rows and the grid around them look: **row background**, **text colour**,
+  **row height**, **row-header width**, **grid lines** (All / Horizontal / Vertical / None) and
+  their colours, and **header visibility** (All / Column / Row / None).
+- **Columns** — the column layout: default **column width** (`Auto`, `*` to fill the space, or a
+  size like `150`), **min/max column width**, **frozen columns** (pinned to the left when you
+  scroll) and **header height**. The same popup also styles the **column headers**: **text
+  alignment** (Left / Centre / Right), **text colour**, **header background**, and **text font** —
+  a drop-down listing **every font installed on the machine** (the font picker falls back to a
+  short built-in list only for the instant before the list arrives).
+
+Only the values you change are written into the XAML — leaving a field at its default keeps the
+form tidy. The header text styling (alignment / colour / font / size / background) has **no direct
+Avalonia `DataGrid` attribute**, so the designer stores it as a small column-header style
+(`<Style Selector="dg|DataGridColumnHeader">`) behind the scenes; the headers look exactly as you
+styled them at runtime.
+
+Two DataGrid behaviour notes:
+
+- **Reorder / resize columns are OFF by default** in Avalonia. The designer's defaults match that,
+  and the **Can User Reorder Columns** / **Can User Resize Columns** properties switch them on —
+  set them to **True** and users can drag columns / drag column edges at runtime.
+- **Dock = Fill** (or any Dock) on a DataGrid placed inside a SplitPanel pane docks it **within
+  that pane**, never yanking it out of the split.
+
 ---
 
 ## 9. The "About this control" help panel
@@ -510,8 +539,8 @@ Key points:
 
 ### Docking (the Dock property)
 
-**ListBox, Image, Panel, Grid, StackPanel, WrapPanel, TabControl, DataGrid, Menu and Status Bar**
-all have a **Dock** property in the Properties panel (a drop-down):
+**ListBox, Image, Panel, Grid, StackPanel, WrapPanel, TabControl, DataGrid, Menu, Status Bar and
+Split Panel** all have a **Dock** property in the Properties panel (a drop-down):
 
 - **None** *(default)* — **no docking** is applied: the control is simply drawn in its last placed
   position (not pinned to an edge, not filling).
@@ -560,6 +589,33 @@ A typical layout:
 >   for Left/Right, Height for Top/Bottom) so the control never collapses out of view.
 > - The **Menu** tool defaults to `Dock=Top` and the **Status Bar** tool to `Dock=Bottom`, ready
 >   for a DockPanel layout.
+
+### Split panels (the SplitPanel tool)
+
+The Toolbox **SplitPanel** tool drops a resizable, multi-pane container. Its default **Zones**
+layout is a **T**: two panes side-by-side (`Pane0` | `Pane1`) over a full-width bottom pane
+(`Pane2`). Draggable divider bars separate the panes, and the panes all stretch when the form
+resizes.
+
+- **Selecting:** click the panel's outer **border** to select the whole Split Panel (so you can
+  move or **Dock** it); click inside a pane to select that pane. Drop controls into any pane.
+- **Resizing at design time:** with a side-by-side pane selected, its **Width** is that divider's
+  position — type a number to pin it, **0 hides** the pane, `*` (or clearing the field) lets it
+  flex again. The full-width bottom pane uses **Height** the same way. (Its other dimension isn't a
+  real divider, so it's hidden from the list.)
+- **Docking inside a pane:** if you give a control that sits inside a pane a **Dock** value, it
+  docks **within that pane** (the pane's body becomes a DockPanel) rather than to the form —
+  e.g. **Dock = Fill** makes a DataGrid fill the whole pane. It never leaves the split panel.
+- **At runtime:** drag the divider bars to resize the panes; they also resize with the window.
+- **On the Split Panel's Properties:**
+  - **Split Layout** — switch between **Zones** (a top band of panes over a full-width one),
+    **Columns** (side-by-side) and **Rows** (stacked). The stepper sets how many panes are in the
+    **top band** for Zones — 2 over 1 by default; bump it to 3 for **three panes over one** — or
+    the **total pane count** for Columns/Rows. Panes keep whatever is inside them; older Grid-based
+    splits are converted automatically.
+  - **Splitters** — style each divider bar: its **thickness**, **colour**, and whether it is
+    **visible** (a hidden bar can't be dragged at runtime). Bars can't shrink below 1 px.
+  - **Pane Border** — the border width drawn around each pane.
 
 ### Anchoring (the Anchor property)
 
