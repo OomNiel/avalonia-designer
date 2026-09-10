@@ -253,6 +253,13 @@ function fieldName(c: DataColumnSpec): string {
     return `${s}Input`;
 }
 
+/** The table's integer key column (its "row ID") — auto-filled with the next number when the add
+ *  dialog opens, so a new row never needs a hand-typed id. null when the table has no integer key. */
+function autoKeyColumn(t: DataTableSpec): DataColumnSpec | undefined {
+    const k = keyColumnOf(t);
+    return k && (k.type === 'Int32' || k.type === 'Int64') ? k : undefined;
+}
+
 // ---- C# ----
 
 /** C# read of a persisted row (Convert.* is robust to ReadXml's string-type inference). */
@@ -343,15 +350,19 @@ function csSqliteCreateSql(t: DataTableSpec): string {
     return `CREATE TABLE IF NOT EXISTS "${sqliteTableName(t)}" (${defs.join(', ')})`;
 }
 
-/** C# expression that stores a typed row value as a SQLite-friendly parameter object. */
+/** C# expression that stores a typed row value as a SQLite-friendly parameter object. Never yields a
+ *  null parameter: a null String/Byte[] (e.g. a cell the user cleared) or an empty DateTime/Guid is
+ *  stored as SQL NULL via System.DBNull.Value — Microsoft.Data.Sqlite can't infer a type from a null
+ *  value and throws "Value must be set." at bind (verified 2026-09-07). */
 function csDbStoreExpr(c: DataColumnSpec): string {
     const n = `r.${c.name}`;
     switch (c.type) {
-        case 'String': case 'Byte[]': case 'Int32': case 'Int64': case 'Double': return n;
+        case 'String': case 'Byte[]': return `(object?)${n} ?? System.DBNull.Value`;
+        case 'Int32': case 'Int64': case 'Double': return n;
         case 'Decimal': return `${n}.ToString(System.Globalization.CultureInfo.InvariantCulture)`;
-        case 'Boolean': return `${n} ? 1L : 0L`;
-        case 'DateTime': return `${n} == DateTime.MinValue ? (object?)null : ${n}.ToString("O")`;
-        case 'Guid': return `${n} == Guid.Empty ? (object?)null : ${n}.ToString("D")`;
+        case 'Boolean': return `${n} ? (object)1L : (object)0L`;
+        case 'DateTime': return `${n} == DateTime.MinValue ? (object)System.DBNull.Value : (object)${n}.ToString("O")`;
+        case 'Guid': return `${n} == Guid.Empty ? (object)System.DBNull.Value : (object)${n}.ToString("D")`;
     }
 }
 
@@ -738,7 +749,13 @@ function csPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     lines.push('');
     lines.push(`        public static async System.Threading.Tasks.Task Add${t.name}Row(DataGrid grid, ${L} rows)`);
     lines.push('        {');
-    lines.push(`            var dlg = new ${t.name}EditDialog(CreateDataSet().Tables["${escCs(t.name)}"]!, null);`);
+    const autoKey = autoKeyColumn(t);
+    if (autoKey) {
+        // Auto-increment the row's id: the next number after the highest existing (non-placeholder) row.
+        lines.push(`            var nextId = ${autoKey.type === 'Int64' ? '1L' : '1'};`);
+        lines.push(`            foreach (var r in rows) { if (!r.IsPlaceholder && r.${autoKey.name} >= nextId) nextId = r.${autoKey.name} + 1; }`);
+    }
+    lines.push(`            var dlg = new ${t.name}EditDialog(CreateDataSet().Tables["${escCs(t.name)}"]!, null${autoKey ? ', nextId' : ''});`);
     lines.push('            var owner = OwnerOf(grid);');
     lines.push('            if (owner != null && await dlg.ShowDialog<bool>(owner))');
     lines.push('            {');
@@ -818,11 +835,90 @@ function csInputConstruct(c: DataColumnSpec): string[] {
         out.push(`        ${fn} = new CheckBox();`);
     } else if (c.type === 'DateTime') {
         out.push(`        ${fn} = new DatePicker();`);
+    } else if (c.type === 'String') {
+        // A text column gets a "Browse…" button (native file picker) beside its box so the user can
+        // point the field at a file on disk — the picked file's FULL path is stored.
+        out.push(`        ${fn} = new TextBox();`);
+        out.push(`        var row_${fn} = new Grid();`);
+        out.push(`        row_${fn}.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));`);
+        out.push(`        row_${fn}.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));`);
+        out.push(`        row_${fn}.Children.Add(${fn});`);
+        out.push(`        var browse_${fn} = new Button { Content = "Browse\u2026" };`);
+        out.push(`        browse_${fn}.Margin = new Thickness(6, 0, 0, 0);`);
+        out.push(`        browse_${fn}.Click += async (_, _) => await BrowseAsync(${fn});`);
+        out.push(`        Grid.SetColumn(browse_${fn}, 1);`);
+        out.push(`        row_${fn}.Children.Add(browse_${fn});`);
+        out.push(`        root.Children.Add(row_${fn});`);
+        return out;
     } else {
         out.push(`        ${fn} = new TextBox();`);
     }
     out.push(`        root.Children.Add(${fn});`);
     return out;
+}
+
+/** C# dialog: the shared "Browse…" file picker. Opens the OS picker (images first, then all files),
+ *  stores the chosen file's absolute path in `box`, and remembers the folder for next time. */
+function csBrowseMethod(): string {
+    return [
+        '        private async Task BrowseAsync(TextBox box)',
+        '        {',
+        '            var options = new FilePickerOpenOptions',
+        '            {',
+        '                Title = "Select a file",',
+        '                AllowMultiple = false,',
+        '                FileTypeFilter = new[] { FilePickerFileTypes.ImageAll, FilePickerFileTypes.All }',
+        '            };',
+        '            var last = FilePickerMemory.LastFolder;',
+        '            if (!string.IsNullOrEmpty(last))',
+        '            {',
+        '                try { options.SuggestedStartLocation = await StorageProvider.TryGetFolderFromPathAsync(new Uri(last)); }',
+        '                catch { /* the remembered folder is gone - let the OS choose */ }',
+        '            }',
+        '            var files = await StorageProvider.OpenFilePickerAsync(options);',
+        '            if (files.Count == 0) return;',
+        '            var path = files[0].TryGetLocalPath();',
+        '            if (string.IsNullOrEmpty(path)) return;',
+        '            box.Text = path;',
+        '            try { FilePickerMemory.LastFolder = Path.GetDirectoryName(path); } catch { /* best effort */ }',
+        '        }'
+    ].join('\n');
+}
+
+/** C# helper that remembers the folder the last "Browse…" pick used — kept in memory, and persisted
+ *  next to the app (best-effort) so it survives a restart when that folder is writable. */
+function csFilePickerMemoryClass(specName: string): string {
+    return `    /// <summary>Remembers the folder the row dialogs' "Browse…" picker used last (best-effort).</summary>
+    public static class FilePickerMemory
+    {
+        private static string? _folder;
+        private static bool _loaded;
+        private static string StorePath => Path.Combine(AppContext.BaseDirectory, "${escCs(specName)}.lastfolder");
+        /// <summary>The folder the last Browse… dialog used (null = let the OS pick its default).</summary>
+        public static string? LastFolder
+        {
+            get
+            {
+                if (!_loaded)
+                {
+                    _loaded = true;
+                    try { if (File.Exists(StorePath)) _folder = File.ReadAllText(StorePath).Trim(); } catch { /* best effort */ }
+                }
+                return _folder;
+            }
+            set
+            {
+                _loaded = true;
+                _folder = value;
+                try
+                {
+                    if (string.IsNullOrEmpty(value)) { if (File.Exists(StorePath)) File.Delete(StorePath); }
+                    else File.WriteAllText(StorePath, value);
+                }
+                catch { /* best effort (read-only app folder) */ }
+            }
+        }
+    }`;
 }
 
 /** C# dialog: pre-fill an input from the row. */
@@ -859,13 +955,14 @@ function csInputNew(c: DataColumnSpec): string {
 /** C# edit/add dialog class for a DataGrid-bound table. */
 function csDialogClass(t: DataTableSpec): string {
     const editable = t.columns.filter((c) => c.type !== 'Byte[]');
+    const key = autoKeyColumn(t);
     const lines: string[] = [];
     lines.push(`    public class ${t.name}EditDialog : Window`);
     lines.push('    {');
     lines.push('        private readonly System.Data.DataTable _table;');
     for (const c of editable) { const d = csInputFieldDecl(c); if (d) lines.push(d); }
     lines.push('');
-    lines.push(`        public ${t.name}EditDialog(System.Data.DataTable table, ${t.name}Row? row)`);
+    lines.push(`        public ${t.name}EditDialog(System.Data.DataTable table, ${t.name}Row? row${key ? `, ${csType(key.type)}? newKey = null` : ''})`);
     lines.push('        {');
     lines.push('            _table = table;');
     lines.push('            Width = 360;');
@@ -881,7 +978,14 @@ function csDialogClass(t: DataTableSpec): string {
     lines.push('            btnRow.Children.Add(cancelBtn);');
     lines.push('            root.Children.Add(btnRow);');
     lines.push('            Content = root;');
-    lines.push('            if (row != null) LoadRow(row);');
+    if (key) {
+        // A NEW row's key is the next number, shown read-only (its value flows into the row via
+        // ApplyTo) — so adding rows never needs a hand-typed id.
+        lines.push('            if (row != null) LoadRow(row);');
+        lines.push(`            else if (newKey.HasValue) { ${fieldName(key)}.Value = newKey.Value; ${fieldName(key)}.IsReadOnly = true; }`);
+    } else {
+        lines.push('            if (row != null) LoadRow(row);');
+    }
     lines.push('        }');
     lines.push('');
     lines.push(`        private void LoadRow(${t.name}Row row)`);
@@ -900,6 +1004,10 @@ function csDialogClass(t: DataTableSpec): string {
     lines.push('        {');
     for (const c of editable) { const l = csInputNew(c); if (l) lines.push(l); }
     lines.push('        }');
+    if (editable.some((c) => c.type === 'String')) {
+        lines.push('');
+        for (const l of csBrowseMethod().split('\n')) lines.push(l);
+    }
     lines.push('    }');
     return lines.join('\n');
 }
@@ -1019,15 +1127,19 @@ function vbSqliteCreateSql(t: DataTableSpec): string {
     return `CREATE TABLE IF NOT EXISTS "${sqliteTableName(t)}" (${defs.join(', ')})`;
 }
 
-/** VB expression that stores a typed row value as a SQLite-friendly parameter object. */
+/** VB expression that stores a typed row value as a SQLite-friendly parameter object. Never yields a
+ *  Nothing parameter: a null String/Byte[] (e.g. a cell the user cleared) or an empty DateTime/Guid is
+ *  stored as SQL NULL via System.DBNull.Value — Microsoft.Data.Sqlite can't infer a type from Nothing
+ *  and throws "Value must be set." at bind (verified 2026-09-07). */
 function vbDbStoreExpr(c: DataColumnSpec): string {
     const n = `r.${c.name}`;
     switch (c.type) {
-        case 'String': case 'Byte[]': case 'Int32': case 'Int64': case 'Double': return n;
+        case 'String': case 'Byte[]': return `If(${n} Is Nothing, CObj(System.DBNull.Value), CObj(${n}))`;
+        case 'Int32': case 'Int64': case 'Double': return n;
         case 'Decimal': return `${n}.ToString(System.Globalization.CultureInfo.InvariantCulture)`;
-        case 'Boolean': return `If(${n}, 1L, 0L)`;
-        case 'DateTime': return `If(${n} = DateTime.MinValue, Nothing, ${n}.ToString("O"))`;
-        case 'Guid': return `If(${n} = Guid.Empty, Nothing, ${n}.ToString("D"))`;
+        case 'Boolean': return `If(${n}, CObj(1L), CObj(0L))`;
+        case 'DateTime': return `If(${n} = DateTime.MinValue, CObj(System.DBNull.Value), CObj(${n}.ToString("O")))`;
+        case 'Guid': return `If(${n} = Guid.Empty, CObj(System.DBNull.Value), CObj(${n}.ToString("D")))`;
     }
 }
 
@@ -1406,7 +1518,15 @@ function vbPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     lines.push('');
     lines.push(`        Public Shared Async Sub Add${t.name}Row(grid As DataGrid, rows As ${OC})`);
     lines.push('');
-    lines.push(`            Dim dlg As New ${t.name}EditDialog(CreateDataSet().Tables("${escVb(t.name)}"), Nothing)`);
+    const autoKey = autoKeyColumn(t);
+    if (autoKey) {
+        // Auto-increment the row's id: the next number after the highest existing (non-placeholder) row.
+        lines.push(`            Dim nextId = ${autoKey.type === 'Int64' ? '1L' : '1'}`);
+        lines.push('            For Each r In rows');
+        lines.push(`                If Not r.IsPlaceholder AndAlso r.${autoKey.name} >= nextId Then nextId = r.${autoKey.name} + 1`);
+        lines.push('            Next');
+    }
+    lines.push(`            Dim dlg As New ${t.name}EditDialog(CreateDataSet().Tables("${escVb(t.name)}"), Nothing${autoKey ? ', nextId' : ''})`);
     lines.push('            Dim owner = OwnerOf(grid)');
     lines.push('            If owner IsNot Nothing AndAlso Await dlg.ShowDialog(Of Boolean)(owner) Then');
     lines.push(`                Dim row As ${R} = dlg.NewRow()`);
@@ -1500,12 +1620,96 @@ function vbInputConstruct(c: DataColumnSpec): string[] {
         out.push(`        ${fn} = New CheckBox()`);
     } else if (c.type === 'DateTime') {
         out.push(`        ${fn} = New DatePicker()`);
+    } else if (c.type === 'String') {
+        // A text column gets a "Browse…" button (native file picker) beside its box; the picked
+        // file's FULL path is stored in the field.
+        out.push(`        ${fn} = New TextBox()`);
+        out.push(`        Dim row${c.name} As New Grid()`);
+        out.push(`        row${c.name}.ColumnDefinitions.Add(New ColumnDefinition(GridLength.Star))`);
+        out.push(`        row${c.name}.ColumnDefinitions.Add(New ColumnDefinition(GridLength.Auto))`);
+        out.push(`        row${c.name}.Children.Add(${fn})`);
+        out.push(`        Dim browse${c.name} As New Button With {.Content = "Browse\u2026"}`);
+        out.push(`        browse${c.name}.Margin = New Thickness(6, 0, 0, 0)`);
+        out.push(`        AddHandler browse${c.name}.Click, AddressOf BrowseFile${c.name}`);
+        out.push(`        Grid.SetColumn(browse${c.name}, 1)`);
+        out.push(`        row${c.name}.Children.Add(browse${c.name})`);
+        out.push(`        root.Children.Add(lbl${c.name})`);
+        out.push(`        root.Children.Add(row${c.name})`);
+        return out;
     } else {
         out.push(`        ${fn} = New TextBox()`);
     }
     out.push(`        root.Children.Add(lbl${c.name})`);
     out.push(`        root.Children.Add(${fn})`);
     return out;
+}
+
+/** VB dialog: the shared "Browse…" file picker (OS picker, images first then all files; stores the
+ *  chosen file's absolute path in `box` and remembers the folder for next time). */
+function vbBrowseMethod(): string {
+    return [
+        '        Private Async Function BrowseAsync(box As TextBox) As System.Threading.Tasks.Task',
+        '            Dim options As New FilePickerOpenOptions()',
+        '            options.Title = "Select a file"',
+        '            options.AllowMultiple = False',
+        '            options.FileTypeFilter = New FilePickerFileType() {FilePickerFileTypes.ImageAll, FilePickerFileTypes.All}',
+        '            Dim last = FilePickerMemory.LastFolder',
+        '            If Not String.IsNullOrEmpty(last) Then',
+        '                Try',
+        '                    options.SuggestedStartLocation = Await StorageProvider.TryGetFolderFromPathAsync(New Uri(last))',
+        '                Catch',
+        '                End Try',
+        '            End If',
+        '            Dim files = Await StorageProvider.OpenFilePickerAsync(options)',
+        '            If files.Count = 0 Then Return',
+        '            Dim path = files(0).TryGetLocalPath()',
+        '            If String.IsNullOrEmpty(path) Then Return',
+        '            box.Text = path',
+        '            Try',
+        '                FilePickerMemory.LastFolder = System.IO.Path.GetDirectoryName(path)',
+        '            Catch',
+        '            End Try',
+        '        End Function'
+    ].join('\n');
+}
+
+/** VB helper that remembers the folder the last "Browse…" pick used (memory + best-effort file). */
+function vbFilePickerMemoryModule(specName: string): string {
+    return `    ''' <summary>Remembers the folder the row dialogs' "Browse…" picker used last (best-effort).</summary>
+    Public Module FilePickerMemory
+        Private _folder As String = Nothing
+        Private _loaded As Boolean = False
+        Private ReadOnly Property StorePath As String
+            Get
+                Return System.IO.Path.Combine(AppContext.BaseDirectory, "${escVb(specName)}.lastfolder")
+            End Get
+        End Property
+        ''' <summary>The folder the last Browse… dialog used (Nothing = let the OS pick its default).</summary>
+        Public Property LastFolder As String
+            Get
+                If Not _loaded Then
+                    _loaded = True
+                    Try
+                        If System.IO.File.Exists(StorePath) Then _folder = System.IO.File.ReadAllText(StorePath).Trim()
+                    Catch
+                    End Try
+                End If
+                Return _folder
+            End Get
+            Set(value As String)
+                _loaded = True
+                _folder = value
+                Try
+                    If String.IsNullOrEmpty(value) Then
+                        If System.IO.File.Exists(StorePath) Then System.IO.File.Delete(StorePath)
+                    Else
+                        System.IO.File.WriteAllText(StorePath, value)
+                    End If
+                Catch
+                End Try
+            End Set
+        End Property
+    End Module`;
 }
 
 /** VB dialog: pre-fill an input from the row. */
@@ -1540,6 +1744,7 @@ function vbInputNew(c: DataColumnSpec): string {
 /** VB edit/add dialog class for a DataGrid-bound table. */
 function vbDialogClass(t: DataTableSpec): string {
     const editable = t.columns.filter((c) => c.type !== 'Byte[]');
+    const key = autoKeyColumn(t);
     const lines: string[] = [];
     lines.push(`    Public Class ${t.name}EditDialog`);
     lines.push('        Inherits Window');
@@ -1547,7 +1752,7 @@ function vbDialogClass(t: DataTableSpec): string {
     lines.push('        Private ReadOnly _table As DataTable');
     for (const c of editable) { const d = vbInputFieldDecl(c); if (d) lines.push(d); }
     lines.push('');
-    lines.push(`        Public Sub New(table As DataTable, Optional row As ${t.name}Row = Nothing)`);
+    lines.push(`        Public Sub New(table As DataTable, Optional row As ${t.name}Row = Nothing${key ? `, Optional newKey As ${vbType(key.type)}? = Nothing` : ''})`);
     lines.push('');
     lines.push('            _table = table');
     lines.push('            Width = 360');
@@ -1566,7 +1771,18 @@ function vbDialogClass(t: DataTableSpec): string {
     lines.push('            root.Children.Add(btnRow)');
     lines.push('');
     lines.push('            Content = root');
-    lines.push('            If row IsNot Nothing Then LoadRow(row)');
+    if (key) {
+        // A NEW row's key is the next number, shown read-only (its value flows into the row via
+        // ApplyTo) — so adding rows never needs a hand-typed id.
+        lines.push('            If row IsNot Nothing Then');
+        lines.push('                LoadRow(row)');
+        lines.push('            ElseIf newKey.HasValue Then');
+        lines.push(`                _${fieldName(key)}.Value = newKey.Value`);
+        lines.push(`                _${fieldName(key)}.IsReadOnly = True`);
+        lines.push('            End If');
+    } else {
+        lines.push('            If row IsNot Nothing Then LoadRow(row)');
+    }
     lines.push('        End Sub');
     lines.push('');
     lines.push(`        Private Sub LoadRow(row As ${t.name}Row)`);
@@ -1588,6 +1804,17 @@ function vbDialogClass(t: DataTableSpec): string {
         if (l) for (const part of l.split('\n')) lines.push(part);
     }
     lines.push('        End Sub');
+    const stringCols = editable.filter((c) => c.type === 'String');
+    if (stringCols.length > 0) {
+        for (const c of stringCols) {
+            lines.push('');
+            lines.push(`        Private Async Sub BrowseFile${c.name}(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)`);
+            lines.push(`            Await BrowseAsync(_${fieldName(c)})`);
+            lines.push('        End Sub');
+        }
+        lines.push('');
+        for (const l of vbBrowseMethod().split('\n')) lines.push(l);
+    }
     lines.push('    End Class');
     return lines.join('\n');
 }
@@ -1659,6 +1886,7 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
         lines.push('using Avalonia.Input;');
         lines.push('using Avalonia.Layout;');
         lines.push('using Avalonia.LogicalTree;');
+        lines.push('using Avalonia.Platform.Storage;');
     }
     lines.push('');
     lines.push(`namespace ${ns}`);
@@ -1745,6 +1973,8 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
         }
     }
     if (grid) {
+        lines.push('');
+        for (const l of csFilePickerMemoryClass(spec.name).split('\n')) lines.push(l);
         for (const t of spec.tables) {
             if (isGridBound(t)) {
                 lines.push('');
@@ -1779,6 +2009,7 @@ export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
         lines.push('Imports Avalonia.Input');
         lines.push('Imports Avalonia.Layout');
         lines.push('Imports Avalonia.LogicalTree');
+        lines.push('Imports Avalonia.Platform.Storage');
     }
     lines.push('');
     // VB applies RootNamespace to global-namespace types, so the class is emitted WITHOUT
@@ -1875,6 +2106,8 @@ export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
         }
     }
     if (grid) {
+        lines.push('');
+        for (const l of vbFilePickerMemoryModule(spec.name).split('\n')) lines.push(l);
         for (const t of spec.tables) {
             if (isGridBound(t)) {
                 lines.push('');

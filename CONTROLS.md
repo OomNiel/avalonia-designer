@@ -15,14 +15,17 @@ to the designer's Toolbox.
 
 | Component | Avalonia version |
 |-----------|------------------|
-| Designer Previewer Host (`host/PreviewerHost.csproj`) | **11.0.10** |
+| Designer Previewer Host (`host/PreviewerHost.csproj`) | **12.1.1** |
 | New projects scaffolded by this extension (`src/projectScaffold.ts`) | **12.1.1** |
 
-The main tables below list the controls in **Avalonia 11.0.10** (the version the designer host
-renders). Controls added in **12.1.x** are listed separately in [Appendix: controls new in Avalonia
-12](#appendix-controls-new-in-avalonia-12). Summaries come from the framework XML documentation
-(`/Avalonia.Controls.xml`); a handful of internal/template parts have no published summary and are
-described by role instead.
+> **Single Avalonia version** since 2026-09-07: the designer host and the projects it generates both
+> run **12.1.1**, so the designer preview now shows exactly what your app will look like.
+
+The tables below list the controls in the **Avalonia 12.1.1** assemblies (the version the designer
+host renders — the same as generated projects). Controls that are new in 12.x (vs the earlier 11.x)
+are flagged and grouped in [Appendix: controls new in Avalonia 12](#appendix-controls-new-in-avalonia-12).
+Summaries come from the framework XML documentation (`/Avalonia.Controls.xml`); a handful of
+internal/template parts have no published summary and are described by role instead.
 
 ### Designer support legend
 
@@ -57,7 +60,7 @@ described by role instead.
 | CalendarDatePicker | `CalendarDatePicker` | A date-selection control; the user picks a date from a drop-down calendar. | ✓ |
 | Calendar | `Calendar` | A control that enables a user to select a date using a visual calendar display. | ✓ |
 | DropDownButton | `DropDownButton` | A button with a drop-down chevron indicating a flyout of additional actions. | ✓ |
-| HyperlinkButton | `HyperlinkButton` | *(Avalonia 12)* A button that navigates to a URI. | — |
+| HyperlinkButton | `HyperlinkButton` | A button styled as a clickable link that opens a web page *(Avalonia 12)*. | ✅ Toolbox |
 | Menu | `Menu` | A top-level menu control (the menu bar). | ✅ Toolbox |
 | MenuItem | `MenuItem` | A menu item control. Add `Header` children to a `Menu`. | ✓ |
 | MenuBase | `MenuBase` | Base class for menu controls. | — |
@@ -191,6 +194,48 @@ described by role instead.
 > colour and runtime visibility) and **Pane Border** (width of the border around each pane). A
 > pane's own **Width** (side-by-side panes) or **Height** (the full-width bottom pane) is its
 > divider position — **0** hides the pane, `*` lets it flex.
+>
+> **Panes keep their minimums on resize.** A pane's **Min Height / Max Height** (full-width panes)
+> and **Min Width / Max Width** (side-by-side panes) are written onto the Row/Column definition,
+> which is what actually clamps a star row/column at runtime — so when you shrink the window the
+> flexible panes give way first, and a pane never shrinks below its minimum. When a pane minimum or
+> divider is set, the designer also keeps the **form's own Min Height/Width** at the layout floor
+> (title bar + docked bars + the split's fixed/minimum rows/columns), so the OS stops the window
+> being resized below the point where nothing can shrink any further.
+
+> **Drag the dividers at design time.** Grab a divider bar (the strip between two panes) and drag
+> it to resize the panes: a guide line follows the mouse and the split is applied when you release.
+> **Only the divider you drag moves** — in multi-pane splits too (e.g. three side-by-side columns):
+> the dragged pane takes the new pixels and its immediate neighbour absorbs the difference, so every
+> divider beyond it stays put. The pane's Width/Height shows the new divider position. The axis is
+> kept **all-star** (each pane's star value = its pixel width, the same model Avalonia's own
+> GridSplitter ends with after a runtime drag), which is what makes the real splitters behave: a
+> **fixed + star mix** makes a runtime `GridSplitter` resize only the fixed neighbour while the star
+> absorbs — so *both* splitters appear to move — whereas two star neighbours are resized together
+> with a conserved sum (only the dragged divider shifts). The drag respects each pane's minimum and
+> is one undo step (Ctrl+Z). Works in every SplitPanel layout (Zones / Columns / Rows) along each
+> divider's valid direction; typing a pane's pixel **Width/Height** uses the same all-star model.
+
+> **GrumpyPanel:** a designer convenience backed by a **bundled control** (like ChromeWindow). The
+> toolbox **Grumpy Panel** inserts a real `<chrome:GrumpyPanel>` (bundled `GrumpyPanel.cs`/`.vb`,
+> namespace `AvaloniaChrome`) — a **Border frame** whose single child is a `DockPanel` with a named
+> **Body** canvas that fills it. Drop it on any canvas/panel:
+> - Controls you drop inside land **freely** in the body (exact `Canvas.Left/Top`) — no automatic
+>   placement.
+> - A **dock-able** control (Menu, Status Bar, Image, ListBox, grids, TabControl, …) can instead be
+>   **Docked** (Left/Top/Right/Bottom): the designer moves it into the panel's inner `DockPanel`
+>   with `DockPanel.Dock`, so it pins to that edge of the panel and the free body shrinks to fill
+>   the remainder. A docked child's **Anchor is ignored**; setting Dock back to **None** returns it
+>   to the free body.
+> - The panel itself has a **Dock** (so it can pin to a form edge like any bar) and its own
+>   **8-position Anchor** — Left / Right / Top / Bottom / Top-Left / Top-Right / Bottom-Left /
+>   Bottom-Right — that pins the whole panel to its container.
+> - Style the frame with **Background**, **Border Brush**, **Border Thickness**, **Corner Radius**
+>   and **Padding**; the **Theme** row is the master switch: **System** = neutral (no forced
+>   chrome), **Custom** = your colours above.
+>
+> New projects bundle `GrumpyPanel.cs`/`.vb` automatically; when you place one in an older project
+> the designer copies the matching helper in next to `ChromeWindow`.
 
 ---
 
@@ -283,6 +328,13 @@ Drawing shapes that render as vector graphics on the design surface.
 > of an existing row **auto-saves on commit** (Enter / Tab / click-away; Escape cancels); the
 > right-click menu is **Delete row** only. The blank "+ Add row…" row still opens the add popup.
 >
+> **File browser in the add/edit row dialog:** every **text (String) column** in the row dialog has a
+> **Browse…** button next to its box. Click it to pick a file from anywhere on the system drive in the
+> native OS picker (images first — `.png/.jpg/.jpeg/.bmp/.gif/.webp` — with an **All files** option);
+> the chosen file's **full absolute path** is written into that box (so an image/photo column stores a
+> path the app can load). The dialog remembers the folder you last picked from and starts there next
+> time (best-effort: kept in memory and in a small `<DataSet>.lastfolder` file next to the app).
+>
 > **Undo/Redo:** bound grids support **Ctrl+U** (undo) and **Ctrl+R** (redo) for add / edit /
 > delete, up to a configurable depth. The depth is set with the **'Undo-Redo'** property on the
 > DataGrid in the form designer (default 5; 0 disables undo) — it's stored in the bound table's
@@ -334,7 +386,16 @@ Drawing shapes that render as vector graphics on the design surface.
 | **Menu** (toolbox) | `Menu` | A horizontal menu bar. | ✅ Toolbox |
 | **StatusBar** (toolbox) | `Border` + `TextBlock` | Bottom status strip (not a real framework control). | ✅ Toolbox *(pattern)* |
 | **Status Date / Time** (toolbox) | `TextBlock` + timer | A live clock updating every second (not a framework control). | ✅ Toolbox *(composition)* |
+| **GrumpyStatus** (toolbox) | `chrome:GrumpyPanel` strip | A dark status strip built on the **GrumpyPanel** base: docked to the bottom with a status label on the left and a live clock on the right. | ✅ Toolbox *(composition)* |
 | **Custom Title Bar** (toolbox) | `chrome:ChromeWindow` root | Replaces the window's default OS title bar with the bundled ChromeWindow bar (drag/min/max/close). Not a control — a **window-root action**. | ✅ Toolbox *(action)* |
+
+---
+
+## Dev Helpers (toolbox) — designer-only conveniences
+
+| Control | XAML tag | What it does | Designer |
+|---------|----------|--------------|----------|
+| **XY-Tracker** (toolbox) | `TextBlock` + timer | A live **W x H px** display. Dropped on a container it reports that container's size; dropped on a Status Bar (or added as a Status item) it reports the **form's** client size and hugs the right edge. | ✅ Toolbox *(composition)* |
 
 ---
 
@@ -347,12 +408,15 @@ title bar (dark-navy bar with drag / min / max / close):
 
 - Drop it anywhere on the form (or click the tool, then click the canvas). The root becomes
   `<chrome:ChromeWindow>`, the code-behind base class changes to `AvaloniaChrome.ChromeWindow`,
-  and the window grows by the 44px title bar so the body stays the same size.
-- Edit the title text via **Properties → Title Bar Text** (and the optional Title Bar Icon).
+  and the window grows by the default 44px title bar so the body stays the same size.
+- Edit the custom title bar via **Properties** on the Form (these three rows are pinned above the
+  window properties): **Title Bar Text**, **Title Bar Icon** (optional) and **Title Bar Height**
+  (the bar height in pixels, default **44** — the form body sits below it and the caption buttons
+  fill the bar).
 - The **designer preview mirrors the whole title bar**: dark-navy bar, centred title, the min /
   max / close caption buttons on the right, and the **Title Bar Icon** on the left (the icon is
   resolved from the project's `Assets\` when set via the file browser, so it shows in the designer
-  as well as at runtime).
+  as well as at runtime). A changed **Title Bar Height** is reflected in the preview and at runtime.
 - It's a normal edit, so **Ctrl+Z** reverts to the default title bar (undo also restores the
   code-behind).
 - Only works on **Window**-rooted forms (not UserControl). The ChromeWindow.cs/.vb + AnchorHelper
@@ -378,6 +442,37 @@ The **Status Date / Time** tool places a `TextBlock` with a `Loaded` handler tha
 `DispatcherTimer` updating the text to the current system date/time (OS format, updated every
 second). The generated C#/VB code-behind is created for you. See *Code-behind* in the USER_MANUAL.
 
+**Date & Time formats.** Selecting a StatusDate clock shows two beginner-friendly pickers in the
+Properties panel — **Date Format** and **Time Format** — plus a live **Preview** of how the clock
+reads right now:
+
+- **None (hidden)** — that part is not shown (so you can show only the time, or only the date).
+- **System date / System time** — the OS current-culture format (the default, i.e. today's
+  behaviour).
+- **An example** (e.g. *Mon, 9 Sep 2026*, *09/09/2026*, *14:32*, *2:32 PM*, …) — a fixed layout.
+  No format-string knowledge needed; the example you pick is exactly what is shown (a space joins
+  the date and time when both are shown).
+
+The chosen formats are written into the generated code-behind handler (the clock's per-second tick
+line), so the designer keeps working and the change is reflected live at runtime.
+
+### XY-Tracker (Dev Helpers)
+The **XY-Tracker** tool places a `TextBlock` (marked with `Classes="XYTracker"`) that shows the live
+size of its context as **W x H px** (updated every 200 ms by a `Loaded` handler + `DispatcherTimer`
+in the generated code-behind). What it measures depends on where you drop it:
+
+- **On a container** — it reports the size of the control it lands in (its immediate parent), e.g.
+  a panel it was dropped onto.
+- **On a Status Bar** (or added via the Status Bar's **Status Items** editor as the **'form WxH'**
+  kind) — it reports the **form's** client size and pins itself to the **right** edge of the strip.
+- **On a GrumpyStatus** (or any GrumpyPanel docked to the bottom edge) — that strip is treated like a
+  Status Bar: the tracker is moved into the strip's dock band, pinned to the **right** edge, and
+  reports the **form's** client size (drop it on the strip's empty middle or straight onto its label/
+  clock).
+
+Background, Foreground and Font properties work like any TextBlock, and its **Anchor** behaves like
+other status items (a right edge anchor keeps it hugging the right edge as the window resizes).
+
 ### Menu
 The **Menu** tool inserts a `Menu` docked to the top with one starter `MenuItem` ("File"). Add more
 `MenuItem`s as children, each with a `Header`. There is no separate `MenuBar` control in Avalonia —
@@ -398,15 +493,54 @@ strongly-typed codegen):
   project's bindable controls (ListBox/ComboBox/ItemsControl/DataGrid); picking one writes the
   DataView property + `ItemsSource` line into the form's code-behind (`*` marks controls already
   bound; Un-bind removes it).
+- **Follow a column instead (read-only controls)** — a table belongs to ONE control, so a second
+  control can't bind to it. A control that only displays data (ComboBox / ListBox / ItemsControl)
+  can **follow** a grid-bound table's **text column** instead: the form designer's **Items Source**
+  picker lists those columns as `DataSet.Table.Column` entries and writes
+  `Control.ItemsSource = New ColumnFollower(Of <Table>Row, String)(<rows>, Function(r) r.<Column>, Function(r) r.IsPlaceholder)`
+  using the bundled `ColumnFollower.cs|.vb` helper. The list is **live** (add/edit/delete in the grid
+  updates it, values replaced in place), keeps the grid's row order and skips the “+ Add row…”
+  placeholder. The binding is recorded on the table's `.adset` (`followers`). A control that still has
+  inline **items** must be cleared first — Avalonia refuses an `ItemsSource` while they exist.
 - v1 is **schema-only** — no `DataRelation`s yet.
+
+### Code Fix… (designer toolbar)
+Not a control — the designer toolbar's **🩺 Code Fix…** button checks the form's **code-behind**
+against the current `.axaml` **and** the project's `.adset` files and repairs what drifted apart.
+It is the safety net for the cases that otherwise fail as an unhelpful compile error:
+
+- **VB named-control accessors** — missing (→ `BC30451`, the reason a control can be "not declared"
+  even though it exists in the form) or left over from a deleted control.
+- **Duplicate method definitions** (`BC30269`/`CS0111`) — typically a generated Data-Image block
+  inserted twice because its `' DataImage:` marker was lost.
+- **Event wiring** — a XAML `Click=`/`Loaded=`/`SelectionChanged=` attribute whose method is gone
+  (a stub is inserted) or whose `EventArgs` type is wrong (signature rewritten, body untouched).
+- **Handlers of deleted controls** — removed as a whole method, nesting-aware (a generated clock's
+  inner `Sub … End Sub` is counted, so nothing is left dangling).
+- **Data-Image / ItemsSource bindings** — incomplete blocks, lost markers, renamed columns/tables,
+  deleted Image/DataGrid/control targets.
+- **Build prerequisites** — bundled helper files (`ChromeWindow`, `GrumpyPanel`, `AnchorHelper`,
+  `ExifImageLoader`) that the project is missing, and missing `Imports`/`using` statements
+  (`Avalonia.Controls.Shapes`, `AvaloniaChrome`, `Avalonia.Platform.Storage`, `System.Data`,
+  `Avalonia.Input`).
+- **Structure** — `InitializeComponent()` never called, `chrome:ChromeWindow` root with a `Window`
+  base class.
+
+Findings appear in the designer's list **and** in the **PROBLEMS** pane (diagnostics on the
+`.vb`/`.cs`, or on the `.axaml` for XAML-side findings such as a wired handler that doesn't exist).
+Each finding has **Go to line** and, when the repair is mechanical, **Fix**; **Fix all** applies
+every mechanical repair. A finding that needs a human decision (invalid/duplicate `x:Name`,
+`x:Class` mismatch, a stale name still used in hand-written code) is listed without a Fix button.
+Before the first fix of a run the code-behind is copied into the extension's storage; the checker
+itself is read-only.
 
 ---
 
 ## Default events & auto-wiring
 
-A subset of interactive controls carry a **default event** the designer can middle-click to wire (the
-handler is written into the XAML **and** the code-behind stub is generated). Mapping in
-`src/codeBehind.ts`:
+Interactive controls carry a **default event** that is wired **automatically when you place the
+control**: the handler attribute (e.g. `Click="Button1_Click"`) is written into the XAML **and**
+the code-behind stub is generated on the spot. Mapping in `src/codeBehind.ts`:
 
 | Control | Default event |
 |---------|----------------|
@@ -416,10 +550,17 @@ handler is written into the XAML **and** the code-behind stub is generated). Map
 | TextBox | `TextChanged` |
 | any other control | `DoubleTapped` (fallback) |
 
-> **Recent change:** placing a control **no longer** auto-wires its event — middle-click the control
-> to generate the handler. Layout containers and non-interactive types (`Image`, `Panel`, `Grid`,
-> `StackPanel`, `DockPanel`, `WrapPanel`, `Menu`, `StatusBar`, `StatusDate`) have **no** default
-> event (`hasDefaultEvent()` returns `false`), so middle-click does not wire them.
+> **Middle-click = jump to the handler.** Since placement already inserts the handler, middle-
+> clicking (the scroll wheel) a control just **opens the code-behind at that method** — it does not
+> write anything when the handler already exists. It only creates the stub as a fallback if the
+> method is somehow missing (e.g. a control placed before this behaviour, or hand-written XAML).
+> Layout containers and non-interactive types (`Image`, `Panel`, `Grid`, `StackPanel`, `DockPanel`,
+> `WrapPanel`, `Menu`, `StatusBar`, `StatusDate`) have **no** default event
+> (`hasDefaultEvent()` returns `false`) and are placed as-is, with no handler auto-wired.
+>
+> If the wiring and the code-behind drift apart (hand-edited XAML, a deleted control, a renamed
+> handler), run **🩺 Code Fix…** in the designer toolbar: it lists every missing/left-over handler
+> and the signature mismatches, and fixes them (see *Special behaviors → Code Fix…*).
 
 ---
 
@@ -436,18 +577,37 @@ A drop-down in the Properties panel with values **None / Left / Top / Right / Bo
 - **Fill** — fills the remaining space; the designer moves the control to be the **last child** of the
   `DockPanel` and turns `LastChildFill` on (a DockPanel's last child is what "fills").
 
-> Dock only takes effect when the control's **parent is a `DockPanel`**. If it isn't (e.g. the
+> **Dock only takes effect when the control's **parent is a `DockPanel`. If it isn't (e.g. the
 > control sits on the Body Canvas), the designer **auto-docks it into the form's root `DockPanel`**.
+> Inside a **GrumpyPanel** (which is its own dock region) a dock-able control docks to that
+> panel's edge instead, never leaving the panel.
 
 ---
 
 ## Anchoring (the Anchor property)
 
-Every non-root control placed on a **Canvas** gets an **Anchor** drop-down:
-`None / Left / Right / Top / Bottom / Left,Right / Top,Bottom / Left,Bottom / Right,Bottom /
-Left,Top / Right,Top`. Opposite-edge pairs (`Left,Right` / `Top,Bottom`) make the control
-**stretch** with the container. Anchoring requires the bundled `AnchorHelper.cs`/`.vb` (generated
-projects include it automatically; existing projects can copy it next to `ChromeWindow`).
+Every non-root control whose **direct parent is a Canvas** (free placement) or a **DockPanel**
+gets an **Anchor** drop-down: `None / Left / Right / Top / Bottom / Left,Right / Top,Bottom /
+Left,Bottom / Right,Bottom / Left,Top / Right,Top`.
+
+- **On a Canvas** — WinForms-style free anchoring: the control keeps a fixed distance from its
+  anchored edges as the canvas resizes. Anchored to one edge → it moves with that edge; anchored to
+  two OPPOSITE edges (`Left,Right` / `Top,Bottom`) → it **stretches** between them.
+- **Inside a DockPanel** — e.g. a **Status Bar** strip — an edge Anchor **docks** the control to
+  that edge (the designer mirrors it as `DockPanel.Dock`, so the preview and runtime agree). This is
+  how a **StatusDate** or **TextBlock** — which have no Dock property of their own — is pinned, e.g.
+  **Anchor = Right** keeps a status date hugging the right edge as the window resizes.
+- The **top-level bars** the template docks into the form's layout DockPanel (the Menu bar, the
+  Status Bar strip itself, the Body canvas, a SplitPanel) are structural and do **not** offer Anchor.
+
+A **GrumpyPanel** is the one control with a **dedicated 8-position Anchor** — Left / Right / Top /
+Bottom / Top-Left / Top-Right / Bottom-Left / Bottom-Right — offered wherever the panel sits
+(non-root). On a Canvas the corner anchors pin that corner of the panel (keeping a gap) as the
+canvas resizes; inside a DockPanel an edge anchor docks it to that edge.
+
+Anchoring requires the bundled `AnchorHelper.cs`/`.vb` (generated projects include it automatically;
+the designer refreshes an older copy when you use a chrome/anchor property, or you can copy it next to
+`ChromeWindow`).
 
 ---
 
@@ -473,9 +633,19 @@ Toolbox — they are created for you by the template engine (`src/formTemplates.
 
 ## Appendix: controls new in Avalonia 12
 
-The following controls exist in Avalonia 12.x (used by projects the extension scaffolds) but are
-**absent from the 11.0.10 previewer host**. They are real framework controls usable in generated
-projects, but the designer host (11.0.10) renders them only via its programmatic fallback:
+The controls below are new in Avalonia 12.x (they don't exist in the earlier 11.x line). The Previewer
+Host now also runs **12.1.1**, and the toolbox items that use them are realised by their **real types**
+and render in the designer exactly as at runtime (through the programmatic builder — the headless host
+has no string-XAML loader, so every form is built from its XML). Controls in this appendix that are
+not wired into the toolbox can still be hand-written into XAML; the host simply drops any type it
+isn't told how to realise (no preview for those, but they still compile & run in your app):
+
+> **Toolbox (Avalonia 12 controls):** `GroupBox` (Layout panels), `HyperlinkButton` and the
+> `CommandBar` family — `CommandBar`, `CommandBarButton`, `CommandBarToggleButton`,
+> `CommandBarSeparator` (Buttons & command controls). Saved as the real Avalonia 12 tag and rendered
+> with their real Fluent look by the 12.1.1 host. Drop controls inside a GroupBox to make its content.
+> CommandBar commands belong under `CommandBar.PrimaryCommands` (added in the XAML until a designer
+> editor exists). The Properties panel lists the real properties (Header, Navigate Uri, Label, …).
 
 | Control | What it does |
 |---------|--------------|
@@ -491,6 +661,6 @@ projects, but the designer host (11.0.10) renders them only via its programmatic
 ---
 
 *Control set and summaries derived from the installed Avalonia assemblies —
-`~/.nuget/packages/avalonia/11.0.10` and `12.1.1` (`Avalonia.Controls.xml` + reflection over
+`~/.nuget/packages/avalonia/12.1.1` (`Avalonia.Controls.xml` + reflection over
 `Avalonia.Controls.dll` / `Avalonia.Controls.DataGrid.dll`). See `USER_MANUAL.md` for the full
 user guide and `NOTES.md` for the designer support matrix.*

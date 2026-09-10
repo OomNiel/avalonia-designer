@@ -20,8 +20,12 @@ Namespace Global.AvaloniaChrome
     ''' The control keeps a fixed distance from the anchored edges of its container as the
     ''' container resizes: one edge = the control moves with that edge; two OPPOSITE edges
     ''' (Left+Right or Top+Bottom) = the control stretches between them.
-    ''' "None" (or an empty value) disables anchoring. Only direct children of a Panel (a
-    ''' Canvas) are tracked; inside flow panels (StackPanel/Grid/DockPanel) it is inert.
+    ''' "None" (or an empty value) disables anchoring.
+    ''' On a Canvas the control is free-placed (Canvas.Left/Top). Inside a DockPanel — a Status Bar
+    ''' strip, a Menu bar, etc. — an edge Anchor DOCKs the control to that edge (a StatusDate /
+    ''' TextBlock has no Dock property of its own, so Anchor is how one is pinned, e.g. Right to hug
+    ''' the right edge as the window resizes). Grid/StackPanel children are laid out by their panel
+    ''' and are not anchored.
     ''' </summary>
     Public NotInheritable Class AnchorHelper
 
@@ -60,7 +64,7 @@ Namespace Global.AvaloniaChrome
         Private Shared ReadOnly Trackers As New ConditionalWeakTable(Of Control, AnchorTracker)()
 
         Private _c As Control
-        Private _parent As Panel
+        Private _parent As Canvas
         Private _left As Boolean
         Private _right As Boolean
         Private _top As Boolean
@@ -98,13 +102,41 @@ Namespace Global.AvaloniaChrome
         Private Sub OnLoaded(sender As Object, e As RoutedEventArgs)
             If _c Is Nothing Then Return
             RemoveHandler _c.Loaded, AddressOf OnLoaded
-            Dim parent = TryCast(_c.GetVisualParent(), Panel)
-            If parent Is Nothing Then Return
-            _parent = parent
-            Parse(AnchorHelper.GetAnchor(_c))
-            Capture(_c, parent.Bounds.Width, parent.Bounds.Height)
-            Apply(_c, parent.Bounds.Width, parent.Bounds.Height)
-            AddHandler parent.SizeChanged, AddressOf OnParentSizeChanged
+            ' Free placement on a Canvas: classic Canvas.Left/Top anchoring. Inside a DockPanel
+            ' (a Status Bar strip, …) children are edge-docked by the panel — a StatusDate /
+            ' TextBlock has no Dock property, so an edge Anchor docks the control to that edge and
+            ' the DockPanel keeps it pinned as the window resizes.
+            Dim parent = TryCast(_c.GetVisualParent(), Canvas)
+            If parent IsNot Nothing Then
+                _parent = parent
+                Parse(AnchorHelper.GetAnchor(_c))
+                Capture(_c, parent.Bounds.Width, parent.Bounds.Height)
+                Apply(_c, parent.Bounds.Width, parent.Bounds.Height)
+                AddHandler parent.SizeChanged, AddressOf OnParentSizeChanged
+                Return
+            End If
+            Dim dock = TryCast(_c.GetVisualParent(), DockPanel)
+            If dock IsNot Nothing Then
+                DockTo(dock, AnchorHelper.GetAnchor(_c))
+            End If
+        End Sub
+
+        ''' Maps an Anchor edge set to the single Dock edge for a DockPanel child (Right wins over
+        ''' Left, Bottom over Top) — inside a DockPanel an edge Anchor docks the control to that edge.
+        Private Shared Function AnchorDockEdge(anchor As String) As Dock
+            If anchor.IndexOf("Right", StringComparison.OrdinalIgnoreCase) >= 0 Then Return Dock.Right
+            If anchor.IndexOf("Left", StringComparison.OrdinalIgnoreCase) >= 0 Then Return Dock.Left
+            If anchor.IndexOf("Bottom", StringComparison.OrdinalIgnoreCase) >= 0 Then Return Dock.Bottom
+            If anchor.IndexOf("Top", StringComparison.OrdinalIgnoreCase) >= 0 Then Return Dock.Top
+            Return Dock.Left
+        End Function
+
+        Private Sub DockTo(dock As DockPanel, anchor As String)
+            If _c Is Nothing Then Return
+            If String.IsNullOrEmpty(anchor) OrElse String.Equals(anchor, "None", StringComparison.OrdinalIgnoreCase) Then Return
+            Dim edge = AnchorDockEdge(anchor)
+            If DockPanel.GetDock(_c) = edge Then Return ' the designer usually mirrors it already
+            DockPanel.SetDock(_c, edge)
         End Sub
 
         Private Sub Parse(anchor As String)

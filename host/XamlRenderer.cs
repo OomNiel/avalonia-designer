@@ -16,6 +16,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 
 namespace PreviewerHost;
@@ -109,11 +110,28 @@ public class XamlRenderer
             // bitmap (e.g. Data-Image previews and hand-typed absolute paths).
             ApplyImageSources(window, xaml, projectPath);
 
+            // A DataGrid realises its rows/column presenters lazily (a virtualising ScrollViewer
+            // inside its template), so the single Measure/Arrange pass above leaves a freshly-filled
+            // grid BLANK — ApplyGridRows set the columns/ItemsSource but nothing is drawn. When grid
+            // rows were supplied, pump the dispatcher and run one more layout cycle so the header
+            // row and cells are generated before the snapshot (verified 2026-09-07 on 12.1.1).
+            if (grids is not null && grids.Count > 0)
+            {
+                try
+                {
+                    Dispatcher.UIThread.RunJobs();
+                    window.Measure(finalSize);
+                    window.Arrange(new Rect(new Point(0, 0), finalSize));
+                    Dispatcher.UIThread.RunJobs();
+                }
+                catch { /* design-time preview is best-effort */ }
+            }
+
             var rtb = new RenderTargetBitmap(new PixelSize((int)designW, (int)designH), new Vector(96, 96));
             rtb.Render(window);
 
             using var ms = new MemoryStream();
-            rtb.Save(ms);
+            rtb.Save(ms, new PngBitmapEncoderOptions());
             var png = Convert.ToBase64String(ms.ToArray());
 
             var frame = new FrameResult { PngBase64 = png, Width = designW, Height = designH };
@@ -266,11 +284,15 @@ public class XamlRenderer
     /// chrome:ChromeWindow forms.</summary>
     private static Control BuildChromeTitleBar(Control body, XElement root, string? projectPath)
     {
+        // Custom title-bar colours (mirror the runtime ChromeWindow's TitleBarBackground /
+        // TitleBarForeground; defaults: dark navy bar, white text + caption glyphs).
+        var barBackground = AttrBrush(root, "TitleBarBackground") ?? new SolidColorBrush(Color.Parse("#0E2138"));
+        var barForeground = AttrBrush(root, "TitleBarForeground") ?? Brushes.White;
         var title = root.Attributes().FirstOrDefault(a => a.Name.LocalName == "TitleBarTitle")?.Value ?? "";
         var titleText = new TextBlock
         {
             Text = title,
-            Foreground = Brushes.White,
+            Foreground = barForeground,
             FontSize = 15,
             FontWeight = FontWeight.SemiBold,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -293,6 +315,11 @@ public class XamlRenderer
             };
         }
 
+        // The custom title-bar height is configurable via TitleBarHeight on the root (default 44).
+        double barHeight = 44;
+        var hAttr = root.Attributes().FirstOrDefault(a => a.Name.LocalName == "TitleBarHeight")?.Value;
+        if (double.TryParse(hAttr, NumberStyles.Float, CultureInfo.InvariantCulture, out var bh) && bh > 0) barHeight = bh;
+
         // Caption buttons (min / max / close) on the right — static stand-ins; the real
         // window behaviour (minimize/maximize/close) is provided by the runtime ChromeWindow.
         var buttons = new StackPanel
@@ -300,7 +327,7 @@ public class XamlRenderer
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Top,
-            Children = { CaptionButton("\u2013"), CaptionButton("\u25A1"), CaptionButton("\u2715") },
+            Children = { CaptionButton("\u2013", barHeight, barForeground), CaptionButton("\u25A1", barHeight, barForeground), CaptionButton("\u2715", barHeight, barForeground) },
         };
 
         var titleBarInner = new Grid { Children = { titleText, buttons } };
@@ -308,8 +335,8 @@ public class XamlRenderer
 
         var titleBar = new Border
         {
-            Height = 44,
-            Background = new SolidColorBrush(Color.Parse("#0E2138")),
+            Height = barHeight,
+            Background = barBackground,
             BorderBrush = new SolidColorBrush(Color.Parse("#081527")),
             BorderThickness = new Thickness(0, 0, 0, 1),
             Child = titleBarInner,
@@ -328,19 +355,27 @@ public class XamlRenderer
         return grid;
     }
 
-    /// <summary>Static look-alike of the runtime ChromeWindow caption button (42x44, transparent
-    /// background, white glyph) — purely decorative in the preview.</summary>
-    private static Button CaptionButton(string content)
+    /// <summary>Parses a #RRGGBB / colour-name attribute into a brush, or null when absent/unparsable.</summary>
+    private static IBrush? AttrBrush(XElement root, string name)
+    {
+        var v = root.Attributes().FirstOrDefault(a => a.Name.LocalName == name)?.Value;
+        if (string.IsNullOrWhiteSpace(v)) return null;
+        return Color.TryParse(v, out var c) ? new SolidColorBrush(c) : null;
+    }
+
+    /// <summary>Static look-alike of the runtime ChromeWindow caption button (42 wide, full bar
+    /// height, transparent background, title-bar text glyph) — purely decorative in the preview.</summary>
+    private static Button CaptionButton(string content, double height, IBrush foreground)
     {
         return new Button
         {
             Content = content,
             Background = Brushes.Transparent,
-            Foreground = Brushes.White,
+            Foreground = foreground,
             BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(0),
             Width = 42,
-            Height = 44,
+            Height = height,
             VerticalAlignment = VerticalAlignment.Center,
             FontSize = 13,
         };
@@ -355,7 +390,9 @@ public class XamlRenderer
         if (string.IsNullOrEmpty(spec)) return null;
         var full = ResolveAssetPath(spec, projectPath);
         if (full is null || !File.Exists(full)) return null;
-        try { return new Bitmap(full); }
+        // EXIF-aware: a JPEG with a camera orientation tag is baked upright (same as the runtime
+        // ExifImageLoader used by generated code), so the title-bar icon matches the app.
+        try { return ExifImageLoader.LoadImageOriented(full); }
         catch { return null; }
     }
 
@@ -400,7 +437,7 @@ public class XamlRenderer
     private static void ApplyImageSources(Window window, string xaml, string? projectPath)
     {
         if (string.IsNullOrEmpty(projectPath)) return;
-        Dictionary<string, Bitmap>? map = null;
+        Dictionary<string, IImage>? map = null;
         try
         {
             var doc = XDocument.Parse(xaml);
@@ -496,9 +533,9 @@ public class XamlRenderer
         return tb.CreateType()!;
     }
 
-    private static Dictionary<string, Bitmap> ScanImageSources(XDocument doc, string projectPath)
+    private static Dictionary<string, IImage> ScanImageSources(XDocument doc, string projectPath)
     {
-        var map = new Dictionary<string, Bitmap>(StringComparer.Ordinal);
+        var map = new Dictionary<string, IImage>(StringComparer.Ordinal);
         foreach (var el in doc.Descendants())
         {
             if (!string.Equals(el.Name.LocalName, "Image", StringComparison.OrdinalIgnoreCase)) continue;
@@ -507,7 +544,9 @@ public class XamlRenderer
             if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(src)) continue;
             var full = ResolveAssetPath(src, projectPath);
             if (full is null || !File.Exists(full)) continue;
-            try { map[name!] = new Bitmap(full); }
+            // EXIF-aware decode (see ExifImageLoader) — JPEGs with a camera orientation tag are
+            // baked upright so the design preview matches the app's upright rendering.
+            try { map[name!] = ExifImageLoader.LoadImageOriented(full); }
             catch { /* skip this image */ }
         }
         return map;
@@ -554,7 +593,8 @@ public class XamlRenderer
                 var full = ResolveAssetPath(srcAttr, CurrentProjectPath);
                 if (full is not null && File.Exists(full))
                 {
-                    try { image.Source = new Bitmap(full); }
+                    // EXIF-aware decode (see ExifImageLoader) so portrait JPEGs render upright.
+                    try { image.Source = ExifImageLoader.LoadImageOriented(full); }
                     catch { /* keep the (null) source */ }
                 }
             }
@@ -805,7 +845,11 @@ public class XamlRenderer
             if (node is Control c)
             {
                 var name = c.Name;
-                if (string.IsNullOrEmpty(name) || seen.Add(name))
+                // Avalonia 12 realises an extra unnamed visual root (TopLevelHost) under the window.
+                // Only the window itself is reported unnamed — stray unnamed hosts would otherwise
+                // show up as extra "Form"-like entries in the control list.
+                bool addIt = string.IsNullOrEmpty(name) ? ReferenceEquals(c, window) : seen.Add(name);
+                if (addIt)
                 {
                     // The control's extent in window space. RenderTransform rotates the DRAWN visual
                     // but not the layout Bounds, so for a rotated control report the axis-aligned
@@ -890,7 +934,7 @@ public class XamlRenderer
     }
 
     /// <summary>Reads the (internal) DefinitionBase.FinalOffset — the laid-out left/top edge of a
-    /// row/column — via reflection, since it isn't public in Avalonia 11.0.10.</summary>
+    /// row/column — via reflection, since it isn't public in Avalonia.</summary>
     private static readonly PropertyInfo? FinalOffsetProp =
         typeof(DefinitionBase).GetProperty("FinalOffset", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
@@ -974,7 +1018,7 @@ public class XamlRenderer
             rtb.Render(window);
 
             using var ms = new MemoryStream();
-            rtb.Save(ms);
+            rtb.Save(ms, new PngBitmapEncoderOptions());
             window.Close();
             return new FrameResult { PngBase64 = Convert.ToBase64String(ms.ToArray()), Width = w, Height = h, Error = ex.Message };
         }

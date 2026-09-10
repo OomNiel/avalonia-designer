@@ -83,7 +83,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 │   ├── projectParser.ts      detects C# vs VB.NET from nearest .csproj/.vbproj
 │   ├── hostClient.ts         WebSocket client + PreviewerHostManager
 │   └── logger.ts             Output channel "Avalonia Designer" (reliable diagnostics)
-├── host/                     C# Previewer Host (net8.0, Avalonia 11.0.10)
+├── host/                     C# Previewer Host (net8.0, Avalonia 12.1.1)
 │   ├── Program.cs            HttpListener WebSocket server (sync serve on main thread)
 │   ├── XamlRenderer.cs       XAML → PNG + control bounds (+ gridCells) — 3 load strategies
 │   └── ControlFactory.cs     default XAML snippets + control type map
@@ -124,9 +124,11 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
 
 ## 4. Key technical decisions & gotchas (IMPORTANT)
 
-1. **No public string XAML loader in Avalonia 11.0.10.** `XamlRenderer` tries 3 strategies (reflection
-   `IRuntimeXamlLoader`; temp-file loader; programmatic builder). The runtime loader fails broadly, so the
-   programmatic builder must handle grids, `<ListBox.Styles>`, images and the chrome title bar faithfully.
+1. **No public string XAML loader in the headless host** (true on both Avalonia 11.0.10 and the
+   current 12.1.1 — no XamlIl runtime loader is registered). `XamlRenderer` tries 3 strategies
+   (reflection `IRuntimeXamlLoader`; temp-file loader; programmatic builder). The runtime loader
+   fails broadly, so the programmatic builder must handle grids, `<ListBox.Styles>`, images and the
+   chrome title bar faithfully.
 2. **Namespaces:** `UseHeadless` + options are in `Avalonia.Headless`; `UseSkia()` from `Avalonia.Skia`.
 3. **Do NOT use `CaptureRenderedFrame`** — render with `RenderTargetBitmap` + `rtb.Render(window)`.
 4. **Headless window is stuck at 1024×768** — force the design size via reflection on `TopLevel.ClientSize`.
@@ -191,6 +193,481 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
 
 ## 6. Current feature state (2026-09-05)
 
+- **File browser in the generated add/edit row dialog (2026-09-09, suite 1842/0).** User spec: in the
+  "Add row…" pop-up dialog add a file browser tool that selects a file from the system drive and
+  fills the currently selected column box. Answers: every **String** column; a **Browse… button next
+  to each eligible field**; store the **full absolute path**; filter **images first, then all files**;
+  **both C# and VB**, both Add and Edit (the same `<Table>EditDialog` serves both); and **remember the
+  last folder**. Implementation (src/dataSetGenerator.ts): for a String column the dialog now builds a
+  `Grid(*,Auto)` row = TextBox + `Browse…` Button (C# `Grid.SetColumn`/inline `async` lambda; VB Grid +
+  per-column `Private Async Sub BrowseFile<Col>` — VB is CASE-INSENSITIVE so the handler name must
+  differ from the `browse<Col>` button variable, else BC30577). A shared `BrowseAsync(box)` uses
+  Avalonia `StorageProvider.OpenFilePickerAsync(FilePickerOpenOptions{ FileTypeFilter = ImageAll,
+  All, SuggestedStartLocation = remembered folder })`, then `files[0].TryGetLocalPath()` → box.Text and
+  remembers `Path.GetDirectoryName`. New generated `FilePickerMemory` (C# static class / VB Module) keeps
+  the last folder in memory + best-effort `<DataSet>.lastfolder` next to the app (`AppContext.BaseDirectory`).
+  Added `using/Imports Avalonia.Platform.Storage` (grid forms only) for FilePickerFileTypes + the
+  TryGetLocalPath extension. VERIFIED by generating a DataGrid+SQLite dataset and dotnet-building
+  standalone C# and VB projects: **both 0 warnings / 0 errors** (this is the real gate — the API names
+  are correct). t2 dataSet.test.js grew content assertions. USER: regenerate the DataSet code → the row
+  dialog has a Browse… button per text column; it lands in the last-used folder.
+
+- **Deleting a VB control whose handler contains a nested Sub leaves no code-behind fragments
+  (2026-09-09, suite 1829/0).** Bug: deleting an XY-Tracker (or any control whose handler embeds an
+  anonymous `Sub`) left `timer.Start() / End Sub` behind in the .vb. ROOT CAUSE: `removeVbMethod`
+  removed up to the FIRST `End Sub` after the signature — the generated XY-Tracker / StatusDate VB
+  handler wraps its per-second timer in `AddHandler timer.Tick, Sub(s2, e2) … End Sub`, so the inner
+  `End Sub` truncated the method early. FIX (codeBehind): new `vbMatchingEnd(text, from)` counts VB
+  `Sub`/`Function` nesting (skipping `'` comments and `"…"` strings so a stray keyword can't
+  unbalance it) and returns the MATCHING `End Sub`/`End Function`; `removeVbMethod` now removes the
+  whole method. Applies to both the delete path and `removeOrphanedHandlersForControls`. C# was already
+  brace-aware (matchingBrace) so unaffected. t2 regression: remove a nested-Sub XYTracker handler →
+  whole method gone, sibling survives. Full suite 1829/0. USER: reload → delete an XY-Tracker → no
+  leftover code-behind.
+
+- **SplitPanel divider drag in multi-pane splits only moves the DRAGGED divider (2026-09-09).** Bug:
+  in a 3-vertical-pane (or any >2 pane) split, dragging one divider ALSO moved the other divider — at
+  design-time AND runtime. Two linked causes: (1) design-time `setSplitPaneSize` pinned the dragged
+  pane to FIXED px and left the other stars to share the remainder, so the far divider shifted (and
+  repeated drags mangled columns, e.g. 285/24). (2) Runtime: Avalonia GridSplitter has special
+  behaviour for a fixed+star pair — it resizes ONLY the fixed neighbour while the star absorbs, so the
+  dragged divider doesn't move cleanly / the far one does; only TWO STAR neighbours use `Split`
+  (both resized, sum conserved → only the dragged divider moves). FIX (designerPanel): new
+  `setSplitDividerPixels` applies a drag the way Avalonia ends up after a runtime drag — the whole
+  axis is stored ALL-STAR with each content def's star value = its measured pixel width (heals old
+  fixed columns), the dragged pane's cell = the new px and its immediate neighbour absorbs the
+  difference (pair sum conserved → every divider beyond the neighbour stays put). `case 'setSplitter'`
+  and the typed pane-Width path (`setSplitPaneSize`, pixel values) both route through it (a plain `*`
+  / `0` keeps the old path). Host `ParseGridLength` already parses `N*` star widths. Verified with
+  real-code drag harnesses on a fresh 3-col split + the user's mangled file: dragging divider1 moved
+  P0 (259→295) with P2 (259) UNCHANGED (divider2 stayed), columns became `297*/226*/261*`; typed
+  P0 Width=300 → P0≈300, P1 absorbed, P2 unchanged. Full suite 1826/0. USER: reload → drag a
+  SplitPanel divider in a 3-pane split → only the dragged divider moves (and runtime matches).
+
+- **XY-Tracker on the new GrumpyStatus bar reports the FORM's size (2026-09-09).** Bug: dropping an
+  XY-Tracker onto the GrumpyStatus (the new status strip, a chrome:GrumpyPanel docked BOTTOM) showed
+  the STRIP's size instead of the form's — the form-mode detection `isWithinStatusBar` only matched
+  the legacy `StatusBarN` (a DockPanel), not the GrumpyStatus. Fix (designerPanel): `isWithinStatusBar`
+  now also returns true when an ancestor (≤4) is a **bottom-docked** `chrome:GrumpyPanel` (any
+  GrumpyPanel docked to the bottom edge counts as a status strip). And on a form-mode XYTracker drop
+  that lands inside a Grumpy strip, relocate the tracker into the strip's inner `{n}Dock` band BEFORE
+  the `{n}Body` (restoring LastChildFill=True) so Dock=Right/HAlign=Right actually pin it to the edge
+  (parity with the legacy StatusBar, whose items lived straight in the DockPanel) — works whether the
+  drop hit the strip's empty body or its label/clock. Full suite 1826/0. (Form "- GrumpyPanel" dropdown
+  label is just the window Title being "GrumpyPanel" — not a type.) USER: reload → drop an XY-Tracker
+  onto the GrumpyStatus strip → shows the form's W x H and hugs the right edge.
+
+- **SplitPanel — design-time splitter dragging (2026-09-09), suite 1826/0.** User spec: drag the
+  runtime GridSplitters to resize panes AT DESIGN TIME. Answers (all recommended): fixed pixels on
+  release (matches pane Width/Height semantics — a sibling stays star); guide line + apply on
+  release (smooth, ONE re-render); all layouts (Zones/Columns/Rows); respect pane minimums + one
+  undo step. **Geometry:** GridSplitters are UNNAMED (host frame reports only named controls) and
+  Border-wrapped split grids are unnamed (no gridCells) → derive divider bars PURELY from the
+  measured pane-body rects in the frame: `splitBarsOf(controls)` (module fn in designerPanel)
+  finds edge-adjacent pane bodies (SplitPanelNPaneM) of the SAME SplitPanel prefix with a small gap
+  (≤60px) and overlap → a `SplitBar {pane(left/top), other, axis:'v'|'h', x,y,w,h}` (the gutter
+  gap). Posted on every frame as `splitBars`. **Webview (media/designer.js, hand-written IIFE):**
+  `barAt(x,y)` hit-tests bars (5px grab tolerance); `onPointerDown` starts `drag.mode='split'`
+  (before marquee) when pressing a bar (not a handle/tool); `onPointerMove` draws a `#splitGuide`
+  line (new element + CSS) at the pointer's axis coord; `onPointerUp` posts ONE
+  `{type:'setSplitter', pane, other, axis, pos}`. **Extension handler `case 'setSplitter'`** uses
+  the last stored frame + pane Border border-thickness (bt) to convert pos → pixel size
+  (`cellStart = body.x/y - bt`), clamps: `minAllowed` = this pane's def Min (≥1), `maxAllowed` =
+  far pane's cell end − its def Min (so dragging can't shrink a pane below its minimum), then calls
+  `setSplitPaneSize` (writes the def px, keeps a star sibling, applyFormMinimum, one undo step,
+  re-render). template + designer.css gained `#splitGuide`; t3 IDS + a new pointer test
+  (splitter-drag: press divider at x243 → move x300 → guide shows → release posts ONE setSplitter
+  with pane/other/axis/pos=300). Full suite 1826/0; `node --check designer.js` OK. USER: reload →
+  drag a SplitPanel divider in the canvas (guide follows, panes resize on release; Ctrl+Z undoes;
+  drags respect pane minima).
+- **StatusDate clock — Date/Time formats, System/Custom presets (2026-09-09), suite 1818/0.**
+  User spec: beginner-friendly; System = OS format; Custom = pick from example formats (no raw
+  .NET format strings); must be able to HIDE date or time. Answers: separate Date + Time formats;
+  example pickers; live preview. **Shared catalogue** (`src/propertyCatalog.ts`):
+  `STATUS_CLOCK_CHOICES.date/time` (friendly ids: 'None (hidden)', 'System date'/'System time' +
+  examples like 'Mon, 9 Sep 2026', '14:32'); `statusClockFormat(part,choice)` → .NET format (''=
+  hidden, 'd'/'T'=OS current-culture standard, else explicit pattern rendered InvariantCulture);
+  `isStatusClock(el)` = TextBlock with a Loaded handler that is NOT Classes=XYTracker (covers
+  toolbox StatusDate, Status Items clocks, GrumpyStatus date — NOT plain labels / XYTracker);
+  `statusClockSample(...)` TS mini-formatter for the live Preview row (covers the preset tokens +
+  JS approx of OS date/time). propertyDefsFor gains a `statusClock` override param and, for a clock,
+  pushes rows: StatusDate.Date / StatusDate.Time (dropdowns of the friendly choices) +
+  StatusDate.Preview (read-only). **Persistence = code-behind, not XAML:** `src/codeBehind.ts`
+  `getStatusDateSettings` reads a marker comment on the clock's tick line
+  (`// statusclock:<name>: <date>|<time>` C# / `' …` VB) with legacy fallback System date/time;
+  `setStatusDateSettings` rewrites the tick line to the composed expression
+  (date-part [+" "+ time-part]) with invariant patterns for examples and current-culture for System,
+  creating the default handler first if none. designerPanel: setProperty routes StatusDate.Date/
+  StatusDate.Time → setStatusDateSettings (+render+sendProperties); sendProperties reads settings +
+  preview override for a selected clock. Tests: vb matrix StatusDate rows are designer-managed —
+  added to NON_XAML_KEYS (vb-all-controls) + MANAGED_KEYS (property-audit); property-audit
+  auto-re-recorded StatusDate (its prop list grew). Full suite 1818/0; VB probe built 0/0 (invariant
+  pattern line + marker). USER: reload → select a StatusDate clock → set Date/Time Format (None/
+  System/examples) + watch Preview; runs live at runtime.
+- **New toolbox control: GrumpyStatus (Bars) — a status strip built on the GrumpyPanel base
+  (2026-09-09), suite 1815/0.** User spec: bottom-docked, dark-grey background, StatusDate docked
+  RIGHT + a left label, based on GrumpyPanel. Answers: new Bars toolbox item (existing Status Bar
+  stays); left element = **TextBlock label** (not a TextBox); StatusDate = **live clock** (wire the
+  per-second timer); later editing = normal GrumpyPanel behaviours (no Status Items editor).
+  Snippet (host/ControlFactory) =
+  `<chrome:GrumpyPanel DockPanel.Dock="Bottom" Height="26" Background="#333333" BorderBrush="#333333" BorderThickness="0" CornerRadius="0"><DockPanel {n}Dock LastChildFill=True><TextBlock {n}Label "Ready" Dock=Left …Foreground #E6E6E6/><TextBlock {n}Date now Dock=Right … Loaded="{n}Date_Loaded"/><Canvas {n}Body/></DockPanel></chrome:GrumpyPanel>`.
+  **Designer generalisation:** Grumpy structural detection is now STRUCTURAL not name-prefix regex —
+  `grumpyPartOf(el)` recognises the inner DockPanel/{n}Body of ANY `chrome:GrumpyPanel` root
+  (GrumpyPanel1, GrumpyStatus1, …) by walking Dock→root (root tag GrumpyPanel + `{root}Dock`/
+  `{root}Body` names). `isGrumpy{Dock,Body,Part,Panel}Name` regex predicates replaced. Drop special
+  case: GrumpyStatus wired the embedded date clock via `insertStatusDateClock(uri, '{name}Date')`
+  (same as StatusDate) + `ensureGrumpyPanelHelpers` (GrumpyPanel & GrumpyStatus). Drop dedup now
+  renames the WHOLE name family via `replaceFragmentFamilyName` (root + {n}Dock/{n}Body/{n}Label/
+  {n}Date) — this also FIXED a latent bug where the old dedup overwrote the inner-renamed xaml with
+  the root-only-renamed snip.xaml. infoTagFor returns 'GrumpyStatus' by name. No TypeMap change
+  (root tag is GrumpyPanel). Tests: vb matrix 32→33 (950 in vb-all-controls; property-audit
+  auto-recorded GrumpyStatus; full suite 1815/0). USER: reload + drop Grumpy Status from Bars →
+  docks bottom, dark grey, "Ready" label left + live clock right; add more items / Dock them like
+  any GrumpyPanel; edit label text, clock text colour, strip height from Properties.
+- **New toolbox control: GrumpyPanel — a bundled docking-region Border control (2026-09-09), suite 1783/0.**
+  User spec: dockable panel with free placement of children (no auto placement), dock-able children,
+  8-way corner Anchor, Border/Background chrome + System/Custom Theme. Answers: Layout-panels group;
+  **bundled custom control** (like ChromeWindow); child dock = REAL dock band (docked child's Anchor
+  ignored, Dock None returns it to the free body); dedicated 8-way panel Anchor; Theme = frame preset
+  (System neutral / Custom = the 4 chrome attrs). **Architecture:** `resources/GrumpyPanel.cs/.vb`
+  = `AvaloniaChrome.GrumpyPanel : Border` (a thin subclass — layout is the STOCK nested composition,
+  so preview==runtime with zero custom layout): snippet =
+  `<chrome:GrumpyPanel Width=360 Height=220 Background=#F7F7F7 BorderBrush=#909090 BorderThickness=1 CornerRadius=4><DockPanel x:Name="{n}Dock" LastChildFill=True><Canvas x:Name="{n}Body"/></DockPanel></chrome:GrumpyPanel>`.
+  Free drops land in `{n}Body` (a real Canvas); docked bars are moved into `{n}Dock` before the body.
+  Touchpoints: ControlFactory snippet + TypeMap (host links GrumpyPanel.cs); PreviewerHost.csproj
+  `<Compile Include ../resources/GrumpyPanel.cs>`; hostClient.hostSourceIsNewer now watches
+  GrumpyPanel.cs too; toolboxProvider (Layout panels, 'Grumpy Panel'); controlInfo; xamlModel
+  addControl ensureChromeNamespace on GrumpyPanel tag (mirrors DataGrid dg); propertyCatalog
+  CONTROL_PROPS['GrumpyPanel'] (Dock + frame + Padding) + dedicated GRUMPY_ANCHOR (8 values,
+  hyphen corners reusing AnchorHelper substring matching — no helper change); codeBehind
+  applyAccessors now adds `Imports AvaloniaChrome` when a named control's type is GrumpyPanel
+  (else BC30002 in VB accessors); designerPanel: `isGrumpy{Dock,Body}Name` structural predicates
+  (locked + paneBody flags), `dockIntoGrumpy` (ensureDockPanelParent docks WITHIN the panel, never
+  root), Dock=None moves a band child back to the body, drop dedup renames the `{n}Dock/{n}Body`
+  family, `ensureGrumpyPanelHelpers` copies the helper into OLD projects on drop; scaffold
+  grumpyCs/grumpyVb bundled into new projects (projectScaffold/projectCreator/tests build.js).
+  Tests: vb matrix 31→32 controls, GrumpyPanel props compile in the combined 12.1.1 VB build
+  (919 in vb-all-controls; full suite 1783/0). host dotnet build 0/0. USER: reload + drop Grumpy
+  Panel → free-drop children, Dock a Menu/StatusBar/Image to an edge, Dock=None returns to body,
+  set the panel's own Dock on a form edge + 8-way Anchor, style frame + System/Custom Theme.
+  C# IDE shows a stale "AvaloniaChrome not found" on ControlFactory.cs — false positive (the C#
+  LS doesn't follow the csproj `<Compile Include ../resources/…>` link); `dotnet build` 0/0 is truth.
+- **XY-Tracker form-mode compile FIX — Avalonia 12 has NO Control.TopLevel (2026-09-09), suite 1752/0:**
+  dropping an XY-Tracker onto a Status Bar (form mode) generated VB using `c.TopLevel` →
+  BC30456 "'TopLevel' is not a member of 'Control'" (6 errors across the two trackers in
+  TestAV12BlankVB). AV12 removed the instance `TopLevel` property; the reach-the-window accessor is
+  the static attached getter **`Avalonia.Controls.TopLevel.GetTopLevel(Visual)`** (verified in the
+  12.1.1 ref XML: `M:Avalonia.Controls.TopLevel.GetTopLevel(Avalonia.Visual)`). Fixed BOTH generators
+  in `src/codeBehind.ts` — VB form: `Dim top = Avalonia.Controls.TopLevel.GetTopLevel(c)` then
+  `top.ClientSize.W/H`; C# form: `Avalonia.Controls.TopLevel.GetTopLevel(c) is Avalonia.Controls.TopLevel top`
+  (the C# `c.TopLevel` would have failed the same way — it was never compile-gated until now).
+  **Test coverage gap closed:** the t5 combined build only exercised CONTAINER mode, so form mode
+  shipped broken. vb-all-controls Phase D now adds a SECOND renamed XYTracker (`XYTracker2`,
+  snippet name `XYTracker1`→`XYTracker2`) and inserts its clock in FORM mode, so the authoritative
+  combined 12.1.1 build compile-gates BOTH handlers. TestAV12BlankVB code-behind patched to
+  GetTopLevel → builds 0/0.
+- **New toolbox control: XY-Tracker — live WxH dimension TextBlock (2026-09-08), suite 1752/0:**
+  toolbox group **Dev Helpers** → **XY-Tracker**. Snippet (`host/ControlFactory.cs`) = a `TextBlock`
+  carrying `Classes="XYTracker"` + `Loaded="<name>_Loaded"`. Drop behaviour
+  (`designerPanel.ts`): onto a plain container → **container** mode (reports the size of the control
+  it lands in = its immediate parent); onto a Status Bar strip (`isWithinStatusBar`) → **form** mode:
+  `DockPanel.Dock=Right` + `HorizontalAlignment=Right` + `VerticalAlignment=Center` so it hugs the
+  right edge, and reports the **form**'s client size (the window). It can also be added as a Status
+  Items kind (`STATUS_KIND_OPTIONS` label 'form WxH', `statusKindOf` checks `Classes="XYTracker"`
+  BEFORE the Loaded heuristic). Generated code-behind (`src/codeBehind.ts` insertXyTrackerClock):
+  a `Loaded` handler starts a 200 ms `DispatcherTimer` updating the Text to `"W x H px"`
+  (InvariantCulture). C#: `sender is Control c && c.TopLevel is TopLevel top`
+  (form) / `c.Parent is Avalonia.Visual p` (container). VB: `TryCast(sender, Control)` then
+  `c.TopLevel.ClientSize` (form) / `TryCast(c.Parent, Avalonia.Visual)` (container).
+  **Avalonia 12 gotcha:** VB `c.Parent.Bounds` FAILS to compile — AV12 types `Control.Parent` as
+  `StyledElement` (no `Bounds`) → BC30456. Cast to `Avalonia.Visual` first. Also added XYTracker to
+  `toolboxProvider.ts` (Dev Helpers), `controlInfo.ts`, the StatusItems webview, and the t5 vb matrix
+  (`vb-all-controls` combined compile now 31 controls). **Test-infra fix:** the t5 fallback treated
+  `dotnetBuild`'s `errors=-1` (command-threw) sentinel as PASS (`rc.errors > 0` → `!== 0`), which had
+  MASKED the real VB compile error; now surfaced.
+- **SplitPanel pane bodies always autosize to their pane — stray geometry FIXED + guarded (2026-09-07):**
+  each SplitPanel pane body (the Canvas/DockPanel inside a pane Border) must always FILL its pane area.
+  The bottom full-width pane's canvas had picked up explicit `Width`/`Height` + a negative `Margin`
+  (resizing/moving a pane body like a normal control writes those, since its parent is a Border not a
+  Canvas) — so it stopped stretching with its pane. Its row had also been pinned to a fixed `35px`
+  divider, so it never grew when the form resized (the SplitPanel template's own rows are star:
+  `3*/Auto/2*`). Fixes: (1) designerPanel `move`/`resize`/align/distribute paths now SKIP SplitPanel
+  pane bodies (`isSplitPaneName`) so they can never be given stray size/margin again; (2) user's
+  TestAV12BlankVB `SplitPanel1Pane3` canvas cleared of Width/Height/Margin and its row set to
+  `3*/Auto/2*` (flex). Pane dividers are still changed via the pane's own Width/Height property
+  (setSplitPaneSize writes the row/col definition, never the body). suite 1664/0.
+- **SplitPanel pane bodies selectable but NOT mouse-resizable/movable (2026-09-07):** a pane body is
+  NOT locked (so it appears in the Properties list and stays click-selectable), but it must always FILL
+  its pane. The frame now flags each control with `paneBody: isSplitPaneName(c.name)`; the webview
+  (`designer.js`) renders a pane body with a selection outline but NO resize handles, blocks any drag
+  (`onPointerDown` early-return `c.locked || c.paneBody`) and excludes it from multi-select align
+  "movable" counts; CSS `.pane { cursor: default; }`. A plain click still selects it so its properties
+  are editable in the PROPERTIES panel. suite 1664/0.
+- **JPEGs render upright — EXIF orientation honoured (2026-09-08):** Avalonia's `Bitmap` ignores the
+  EXIF `Orientation` tag, so a JPEG with a camera orientation tag (phone photos) shows sideways in an
+  `Image` while PNGs (no tag) stay upright. Fix (user fixed TestAV12BlankVB, then mirrored in the ext):
+  (1) new bundled helpers `resources/ExifImageLoader.cs` + `.vb` — read EXIF Orientation 0x0112
+  (bare-metal JPEG APP1/TIFF parser, little+big-endian) and bake the rotation/flip (tags 2-8) into a
+  fresh `RenderTargetBitmap` via `DrawingContext.PushTransform`; PNGs/plain JPEGs take a fast path
+  (no re-render). (2) Generated **Data-Image** code-behind (C#+VB, `src/codeBehind.ts`) now sets
+  `Image.Source = ExifImageLoader.LoadImageOriented(row.Col)` instead of `new Bitmap(path)` — the
+  only image-loading code the extension generates. (3) Scaffold bundles ExifImageLoader.cs/.vb into
+  every new C#/VB project (`projectScaffold` + `projectCreator`; optional fields so test-only callers
+  are unchanged). (4) `designerPanel.bindDataImage` copies the helper in when an EXISTING project
+  (created pre-fix) binds an Image, so the generated code compiles. (5) The DESIGN preview mirrors it:
+  `host/PreviewerHost.csproj` `<Compile Link>`s the SAME resources/ExifImageLoader.cs (one source of
+  truth) and `XamlRenderer` decodes via `ExifImageLoader.LoadImageOriented` at every site
+  (title-bar icon, `ScanImageSources`, inline `<Image>` creation) — so a Data-Image/plain-Source JPEG
+  shows upright in the designer too. `hostClient.hostSourceIsNewer` also watches the linked
+  resources file so an ExifImageLoader fix triggers the host auto-rebuild. Tests: codeBehind
+  DataImage asserts LoadImageOriented (cs+vb) + unbind; scaffold asserts the helper is bundled;
+  helpers/build.js bundles it so T0 compile-checks it in generated cs+vb apps. suite 1677/0.
+  CAVEAT: a plain authored `<Image Source="x.jpg">` (no Data-Image) is still decoded by Avalonia at
+  RUNTIME (EXIF ignored) — the extension can only fix the paths it generates/renders; use the
+  Data-Image binding (or the loader) for DB-held JPEGs.
+- **SplitPanel pane body reverts to Canvas when emptied (2026-09-08):** WHY a pane's base surface
+  flips Canvas→DockPanel: pane bodies are Canvas; Canvas can't Dock/Fill a child, so when a control
+  in a pane is given a real Dock/Fill (the natural way to make an Image/DataGrid fill the pane or a
+  CommandBar/Menu pin to an edge) `ensureDockPanelParent` sees the parent is a SplitPanel pane-body
+  Canvas and CONVERTS it into a DockPanel (`paneBodyAsDockPanel`, same name + plain attrs, Canvas.*
+  dropped) so Dock has somewhere to act INSIDE that pane — it never leaves the split. A plain free
+  drop (no Dock) does NOT convert. Deleting never reverted it → the DockPanel stayed. FIX: new
+  `paneBodyAsCanvas` + `revertEmptyPaneBodies(model)` — after delete / cut / move-out,
+  any SplitPanel pane body that is a DockPanel with ZERO element children is converted back to its
+  Canvas base (keeps name + shared attrs like Background; drops DockPanel-only LastChildFill), as
+  part of the same undo step. suite 1677/0. (Revert only fires when the pane body is EMPTY, so a
+  pane holding multiple docked items stays a DockPanel while it has content.)
+- **Arrow keys nudge the selection (whole multi-select moves together) (2026-09-08):** the four
+  arrow keys now relocate the selected control(s) in the designer — a single press = 1 px, Shift =
+  10 px. The WHOLE selection moves in ONE undo step + ONE render: the webview keydown handler sends
+  `{type:'nudge', names:[anchor + all ctrl+clicked], dx, dy}` (a new `designerPanel` case); the
+  server moves each name that is a free-placed control (direct Canvas child) by the same delta via
+  `model.move` (Canvas.Left/Top) — Grid/DockPanel children are laid out by their container and are
+  not arrow-moved. Guarded: not while typing in a field, a toolbox tool is armed, or a drag is in
+  progress. Tests (t3 webview): ArrowRight nudges the anchor 1 px; Shift+ArrowUp = −10 px; after
+  ctrl+click a second control ArrowDown moves BOTH; arrow inside an `<input>` does not nudge. suite
+  1689/0. (GOTCHA: the selection helper is `selectionNames()`, not `selectedNames()` — the first
+  pass used the wrong name and the keydown silently no-op'd.)
+- **Menu 'Space' item — invisible top-bar gap with a px width (2026-09-08):** the Menu Items editor
+  gains a **Space** kind (TOP-LEVEL only — a submenu uses Separators). A Space = an invisible gap
+  of N px between top-level menu items. Realised at runtime as an INERT `<MenuItem IsEnabled=
+  "False" Focusable="False" Width="N"/>` (no Header/submenu — disabled, so it shows nothing and
+  can't be hovered/opened; its Width IS the gap). Round-trips: `menuNodeOf` re-reads that shape as
+  `{kind:'Space',width}`; `menuElementFor` emits it; `sanitizeMenuNodes` accepts Space only at
+  depth 1 (nested Space dropped) + clamps width 1..500 (default 12). Webview editor: 'Space' is
+  offered only on depth-1 kind selects (menuKindOptions); switching to Space clears header/children
+  + shows a `.mn-width` number field ("N px gap"); bar dummies reserve the gap (no chip, cursor +=
+  width). t3 webview tests: gap not a chip, top-level offers Space / nested doesn't, width round-
+  trips and is carried on Save. suite 1701/0.
+- **Top-level Menu Separator renders VERTICAL — class-scoped, sub-menus stay HORIZONTAL (2026-09-09,
+  v2 of this fix):** WHY a plain `<Separator/>` looks wrong on the bar: Avalonia's `Separator` Fluent
+  theme ALWAYS draws a HORIZONTAL flyout line (short Height `MenuFlyoutSeparatorThemeHeight` +
+  full-width template) and a top-level `Menu` lays items in a horizontal StackPanel but accepts a
+  bare `<Separator/>` (MenuBase.NeedsContainerOverride allows MenuItem or Separator) → it shows as a
+  horizontal dash. FIX: `saveMenuItems` calls `syncMenuSeparatorStyle(model, menuEl, hasTopSeparator)`
+  — while a menu has a TOP-LEVEL Separator it adds `<Menu.Styles>` with a class-scoped
+  `<Style Selector="Separator.MenuBarDivider">` (Width=1, Height=16, Margin 6,3, centered; template
+  = `<Border Width=1 VerticalAlignment=Stretch ...SystemControlForegroundBaseMediumLowBrush>`), and
+  `menuElementFor` emits top-level Separators as `<Separator Classes="MenuBarDivider"/>` (sub-menu
+  ones stay plain `<Separator/>`). GOTCHA that produced a regression (v1 of this fix): an UN-scoped
+  `Selector="Separator"` under `Menu.Styles` leaks into sub-menu popups (Avalonia applies a control's
+  Styles through the logical tree into popups) AND the short theme Height collapses the 1px Border to
+  ~1px → user saw TINY DOTS on top-level AND sub-menu separators. Class-scoping fixes both: sub-menu
+  separators lack the class so they stay HORIZONTAL, and explicit Width/Height/Margin give a real
+  ~16px centered vertical divider on the bar. Removal logic (`findOurs`) also strips a legacy
+  `Selector="Separator"` rule an old build may have saved (heals on re-save). Round-trip unchanged
+  (still `<Separator>` elements; the Style + Classes are ignored by menuNodeOf/menuItemEls).
+  Compile-probed in a real C# Avalonia 12 app (0/0). suite 1701/0. AFTER INSTALL: user must re-save
+  the menu once so the old leaking rule is replaced by the class-scoped one.
+- **Avalonia 12 removed runtime XAML loading + middle-click is NAVIGATE-FIRST (2026-09-09):** the
+  TestAV12BlankVB runtime crash `No precompiled XAML found for TestAV12BlankVB.App` turned out to be
+  an Avalonia 12 breaking change, not a project bug: in 12.1.1 `AvaloniaXamlLoader.Load(obj)` — the
+  classic `App.Initialize()` / `InitializeComponent()` pattern in BOTH C# and VB — is a STUB that
+  ALWAYS throws (checked the 12.1.1 source: `Load(object)`/`Load(IServiceProvider,object)` bodies
+  throw unconditionally). Precompiled XAML is mandatory; the Avalonia XAML compiler must run and
+  rewrite those Load calls (`CompiledAvaloniaXaml.!XamlLoader.TryLoad` ends up in the assembly). The
+  earlier build that "succeeded" had skipped/not emitted that loader → runtime stub throw. Once the
+  compiler runs it also VALIDATES handlers: every XAML `Click=`/`Loaded=` must exist in code-behind
+  or you get **AVLN3000** ("Unable to find suitable setter or adder for property Click…") — a HARD
+  BUILD error where Avalonia 11's runtime loader silently no-oped. Repro chain in TestAV12BlankVB:
+  a designer middle-click mess + manual cleanup left `Button1_Click`/`Button4_Click` missing while
+  the XAML still had `Click="Button1_Click"`/`Button4_Click"` → AVLN3000 → stubs re-added → builds
+  0/0 + runs. FIX in the extension: middle-click = **navigate-first**. New `codeBehind.
+  findHandlerInCodeBehind(uri, handler)` locates an existing handler WITHOUT writing/creating
+  (returns file + cursor offset at the method, else undefined); `designerPanel.wireDefaultHandler`
+  with openEditor now: (1) find the existing handler → open it, touch nothing; (2) only if genuinely
+  missing → `insertHandlerIntoCodeBehind` fallback + wire the XAML attr (if absent) + save + open.
+  Placement (openEditor=false) unchanged. Handler detection hardened so a hand-edited handler can
+  NEVER be duplicated (this duplicate was the real "middle-click still inserts code-behind" bug):
+  `findCsMethodDecl` matches ANY accessibility + optional `async` (was only `private void` —
+  `public async void X_Click` used to slip past the check and a second method was inserted);
+  `findVbMethodDecl` matches any accessibility (Public/Friend/Protected/Shared). CONTROLS.md
+  "Default events & auto-wiring" section corrected (place = auto-wire; middle-click = jump to it,
+  create only as fallback). Tests: +12 find-handler asserts (find existing w/o write cs+vb, absent →
+  undefined, no duplicate for `public async void`/`Public Shared` handlers). suite 1713/0.
+  TestAV12BlankVB rebuilt 0/0 + runs. NOTE for generated VB: the `AvaloniaXamlLoader.Load(Me)`
+  scaffold pattern is only correct on 12 BECAUSE the compiler rewrites it — the compiler must be
+  active (default globbing of *.axaml as AvaloniaResource) or VB apps hit the stub.
+- **Middle-click release pasted a stray `>` into the code-behind (Linux/X11) FIXED (2026-09-09):**
+  middle-clicking a control opened the code-behind editor on mousedown — while the middle button was
+  still held. On release, the OS's middle-click paste (X11 PRIMARY selection) then landed in the
+  newly focused editor, inserting whatever text was last selected (a `>`, breaking the build). Fix
+  in `media/designer.js`: the middle-button mousedown now only records the press + selects the
+  control; the `openEvent` (open code-behind at handler) is deferred until the button is RELEASED
+  (a `mouseup` on button 1 with <5px pointer movement = a click, not a drag), and `preventDefault`
+  runs on BOTH press and release so no primary-selection paste can ever fire. User-tested: no more
+  stray characters. suite 1713/0 (unchanged); designer.js `node --check` OK.
+- **SplitPanel pane Min/Max Height/Width now go on the Row/Column definition (2026-09-09):** "the
+  Min Height setting doesn't work" — a generic `MinHeight="39"` was being written onto the PANE BODY
+  (Canvas), which the Grid's star sizing ignores, so shrinking the window let the bottom pane fall
+  below 39. Real fix: the designer routes a pane's Min/Max to its matching `RowDefinition`/
+  `ColumnDefinition` (`MinHeight`/`MaxHeight`/`MinWidth`/`MaxWidth`) — mirroring how `Height`/`Width`
+  already map to the def size — since that is what clamps a star row/column at runtime. Read side
+  (`adjustSplitPaneProps`) now hides the whole Width OR Height family on the axis the pane does not
+  drive (full-width bottom pane shows only Height/Min/Max-Height) and shows Min/Max from the def
+  (legacy body attrs still surfaced until re-saved). Write side (`setSplitPaneMinMax`): px value →
+  def attribute, empty or min 0 → clears, and a legacy Min/Max attribute is stripped off the pane
+  body. TestAV12BlankVB Pane3 now `<RowDefinition Height="2*" MinHeight="39"/>` (moved by hand once)
+  → builds 0/0; runtime keeps the bottom pane ≥39 when the form is shrunk. suite 1713/0 (unchanged).
+- **AUTO FORM MINIMUM = layout floor (2026-09-09):** user spec — when a pane Min is set (not 0) it
+  must be kept; other panes shrink first; when nothing can shrink the FORM must refuse. Verified the
+  Avalonia mechanism from source: `Window.MinWidth/MinHeight` are pushed to the platform
+  (`SetMinMaxSize` → Win32 WM_GETMINMAXINFO min-track / X11 hints / macOS clamp / Wayland
+  `set_min_size`), so ONLY a minimum on the Window makes the OS stop the resize — RowDefinition mins
+  alone clip at the bottom. The designer now keeps the form's own MinWidth/MinHeight in sync:
+  module helpers `pxOf/marginExtents/splitGridMin/formFloorOf` compute the layout floor (chrome
+  TitleBarHeight + docked top/bottom bar heights+margins + docked left/right widths + the fill
+  child's min — for a SplitPanel that's fixed rows/cols + splitter Auto gutters + star MinValues);
+  `applyFormMinimum(doc)` writes max(floor, user value) onto the window root. Hooked after
+  `setSplitPaneSize` and `setSplitPaneMinMax` (single undo step; Min/Max edits now also snapshot
+  BEFORE mutating so Undo is correct). Reproduces the validated TestAV12BlankVB numbers exactly:
+  MinHeight 483 (chrome 30 + menu 24 + status 28 + split 360+2+39), MinWidth 394. NOT auto-run on
+  open (avoids surprise edits) — the floor refreshes whenever a pane size/min is changed. suite 1713/0.
+- **Runtime crash editing a bound grid cell — "Value must be set." (Microsoft.Data.Sqlite) FIXED
+  (2026-09-07):** editing/entering a String cell of a DataGrid-bound SQLite table crashed on save.
+  Cause: the generated `Save…` passed a NULL/Nothing value to `AddWithValue` — Microsoft.Data.Sqlite
+  cannot infer a parameter type from a null and throws `InvalidOperationException: Value must be set.`
+  at `SqliteParameter.Bind`. Sandbox proof: `AddWithValue(null)` throws; a `SqliteParameter` with an
+  explicit type + `null` Value STILL throws; only `DBNull.Value` (with or without an explicit type)
+  binds SQL NULL. Fix in `src/dataSetGenerator.ts`: `csDbStoreExpr`/`vbDbStoreExpr` never yield null —
+  null String/Byte[] become `(object?)r.X ?? System.DBNull.Value` / `If(r.X Is Nothing,
+  CObj(System.DBNull.Value), CObj(r.X))`, and empty DateTime/Guid (`MinValue`/`Empty`) become
+  `System.DBNull.Value` instead of `null`/`Nothing`. User's `dsFamily.vb` regenerated from
+  dsFamily.adset → builds 0/0. Existing apps must click **Generate Code** again to pick up the fixed
+  generated save code. suite 1664/0.
+- **Design-time DataGrid rows now ACTUALLY render — was blank on 11 AND 12 (2026-09-07):** user asked
+  if dataset-bound grid preview "died in the Avalonia 12 port". It didn't — but probing revealed a
+  real latent bug: the design-time row fill ran with NO error and set columns+items on the grid, yet
+  the DataGrid drew NOTHING (blank surface) in the one-shot headless snapshot — verified IDENTICAL on
+  the pre-port host (Avalonia 11.0.10, built from git HEAD) and 12.1.1. Root cause: the DataGrid
+  realises its rows/column presenters lazily (virtualising ScrollViewer in its template), so a single
+  Measure/Arrange after ApplyGridRows leaves it blank. Fix in host/XamlRenderer.cs: when `grids` were
+  supplied, `Dispatcher.UIThread.RunJobs()` + one more Measure/Arrange + RunJobs before the PNG
+  render (gated on grids.Count>0 → no-grid renders unchanged). Probe now shows headers + rows on
+  12.1.1 (PNG 3320→13140 B); full suite 1664/0. GOTCHAS: tests/helpers/host.js `render()` DROPS the
+  grids arg (old /tmp/gridprobe.js never actually sent rows — its "no error" check was shallow); use
+  a direct WebSocket render with `grids` to test rows (see the probe pattern in this session).
+- **Anchor restored for Status Bar (DockPanel) items — and now really pins; delete also sweeps
+  orphaned handlers (2026-09-07):** hiding Anchor for Status Bar items was wrong — a StatusDate /
+  TextBlock in the strip has NO Dock property, so Anchor was the only way to pin one, and "it used to
+  work" meant it was simply present. Now: (1) propertyCatalog offers Anchor for a direct child of a
+  Canvas OR a DockPanel (excluding the form's top-level layout DockPanel — the template's own Menu /
+  StatusBar / Body / SplitPanel bars don't get it); (2) setting an edge Anchor on a DockPanel child
+  MIRRORS it as `DockPanel.Dock` (`mirrorAnchorDock`: Right→Dock Right, else Left, else Bottom, else
+  Top) so the design preview and runtime agree — e.g. Anchor=Right docks a status date to the right
+  edge where it hugs as the window resizes; (3) AnchorHelper.cs/.vb gained a DockPanel mode
+  (`AnchorDockEdge`/`DockTo` — Canvas children keep the Canvas.Left/Top free-anchoring, DockPanel
+  children get docked to the anchored edge at runtime if the XAML lacks it). bundledComponents stale
+  marker for AnchorHelper is now `AnchorDockEdge` so old Canvas-only copies in existing projects are
+  refreshed (auto-heal also runs on Anchor set). (4) Delete now also removes ORPHANED handler
+  methods named after the deleted control/subtree that no remaining XAML event attribute references
+  (`removeOrphanedHandlersForControls`; new `XamlModel.namesInSubtree`) — fixes a second StatusDate
+  whose XAML Loaded pointed at the first clock's handler leaving its own `StatusDate2_Loaded` method
+  behind. t2 propertyCatalog/bundledComponents reworked (+2); suite 1664/0. C#+VB helper check
+  builds 0/0. User's TestAV12BlankVB AnchorHelper.vb refreshed → builds 0/0.
+- **Existing projects self-heal stale bundled components — fixes "Unable to resolve …
+  TitleBarHeight" (2026-09-07):** a project created by an OLDER extension keeps its OLD
+  ChromeWindow.cs/.vb; once the bundled component gained the settable `TitleBarHeight`, writing
+  `TitleBarHeight="…"` into such a project's XAML fails to compile ("Unable to resolve suitable
+  regular or attached property TitleBarHeight on type … MainWindow Line 1, position 2") — at default
+  44 the designer strips the attribute so it only broke on a non-default height. The designer now
+  refreshes provably-old BUNDLED copies automatically (new pure module `src/bundledComponents.ts`:
+  `bundledComponentSpecs(vb)` + `isStaleBundledCopy(text,vb,kind)`; a copy is stale = bundled header
+  `Reusable frameless Avalonia window`/`WinForms-style anchoring` present AND current marker
+  `TitleBarHeightProperty`/`_parent As Canvas`/`Canvas? _parent` MISSING — customised copies without
+  the header are left alone). `designerPanel.ensureBundledComponentsCurrent(doc)` also COPIES IN a
+  missing ChromeWindow on conversion; it's called from `applyCustomTitleBar` (convert) AND before
+  writing any chrome prop (`TitleBarTitle`/`Icon`/`Height`) on a ChromeWindow root; an info message
+  lists what was refreshed. Also refreshes a stale (Panel-wide) AnchorHelper so existing projects get
+  the Canvas-only fix. t2 bundledComponents.test.js (+13); suite 1662/0. Immediate unblock for the
+  user's TestAV12BlankVB: copy master ChromeWindow.vb + AnchorHelper.vb over the project's stale ones
+  → 0/0. (Scaffold copies resources/ live from the INSTALLED extension — a project made before a
+  resource update keeps its old copy.)
+- **Anchor is now FREE-PLACEMENT ONLY (direct Canvas children) — fixes the Status Bar item
+  "broken" Anchor (2026-09-07):** the Properties panel offered an Anchor row on EVERY non-root
+  element, including Status Bar items and other DockPanel/Grid/StackPanel children — but the
+  runtime AnchorHelper only truly works on Canvas children (it writes Canvas.Left/Top + Width/
+  Height, which is wrong/inert in a Dock), so it LOOKED broken. Now: propertyCatalog only adds
+  ANCHOR_PROPS when the element's DIRECT parent is a Canvas (`!isRoot && onCanvas`); and both
+  resources/AnchorHelper.cs AND .vb harden the runtime to attach ONLY when
+  `GetVisualParent() is Canvas` (was `is not Panel` — DockPanel is a Panel so it wrongly tracked
+  dock/flow children). Status Bar items keep their Dock LEFT/RIGHT pinning and no longer show
+  Anchor. Tests: t2 propertyCatalog.test.js reworked (Button under a Canvas → Anchor present;
+  Button inside a DockPanel / parentless root → NO Anchor); suite 1649/0. Matches CONTROLS.md doc
+  ("Anchor ... placed directly on a Canvas") which already said Canvas-only.
+- **ChromeWindow custom-title-bar props reachable + settable Title Bar Height (2026-09-07):**
+  TitleBarTitle/Icon were at the BOTTOM of the Form's property list; now the ChromeWindow rows
+  (Title Bar Text, Title Bar Icon, **Title Bar Height**) are pinned ABOVE the Window props. The
+  bundled ChromeWindow.cs/.vb expose a settable `TitleBarHeight` (StyledProperty, default 44) and
+  REBUILD the chrome on a height change (bar + caption buttons sized to it, body below). The host
+  preview's chrome bar (`BuildChromeTitleBar`) reads the root's `TitleBarHeight` attr (default 44)
+  so the designer mirrors a taller/shorter bar (probe /tmp/chromeh.js: TopBtn y=44 vs y=60).
+  propertyCatalog: CHROME_WINDOW_PROPS + TitleBarHeight (number, default 44) + ordering chrome-first
+  + KEY_DEFAULTS/DEFAULTS entries. Both components compile 0/0 (C# + VB check projects under /tmp/
+  cwcs, cwvb). t2 chromeProps.test.js (9 asserts); suite 1647/0. NOTE: default stays 44, so existing
+  forms are unchanged; the convert-to-chrome growth uses the default 44.
+- **Multi-select bulk property editing (2026-09-07):** with several controls selected (Ctrl+Click,
+  anchor = first), the Properties panel shows the INTERSECTION of the selected controls' editable
+  XAML properties — a value appears only when every selected control has the same (effective) value;
+  differing values show an empty box (`mixed` flag → "(multiple)" placeholder). Setting a value
+  applies it to ALL selected controls as ONE undo step. Chosen behaviour: hide per-type editor
+  buttons + read-only/bound rows (Name/Type, Items, Rows/Columns, Tab Items, Split Layout,
+  Data…/read-only ItemsSource), include size & position (Width/Height/Margin/align/Canvas.Left-Top),
+  exclude Dock + Grid.Row/Column + UndoRedoDepth/ItemsSource (bulk would move/stack/hit .adset).
+  Theme (System/Custom) IS included (per-control colour backup/clear/restore). Plumbing: webview
+  `postSelection()` sends `{select, name: anchor, multi:[names]}`; extension `sendMultiProperties`
+  (uses new `propertyCatalog.multiCommonProps` — pure + unit-tested) posts `{properties, multi,
+  names}`; webview keeps its own multi selection (doesn't collapse), routes every edit through
+  `postSet` (adds `names`); extension `multiSetProperty` (single `notifyEdit` → one undo) applies
+  via shared normalization (Opacity %, default-strip, chrome ns). Palette/Data…/Browse buttons are
+  hidden in multi (typing/swatch applies to all). t2 multiProps.test.js (17 asserts); suite 1638/0.
+- **Avalonia 12 controls in the toolbox (2026-09-06):** added `GroupBox` (Layout), `HyperlinkButton`
+  + the `CommandBar` family — `CommandBar`, `CommandBarButton`, `CommandBarToggleButton`,
+  `CommandBarSeparator` (Buttons & command controls). These exist ONLY in Avalonia 12, which is why
+  they originally needed the host off 11.0.10; after the 2026-09-07 host switch to 12.1.1 (see next
+  bullet) `ControlFactory.TypeMap` instantiates their REAL types and they preview with their real
+  Fluent look. Snippets ship the REAL 12 tag (saved verbatim, compile in 12 apps). designerPanel.frame
+  overrides each control's reported `type` with the model's real tag (localName). GroupBox added to
+  SINGLE_CONTENT_TAGS + CONTAINER_TAGS (drop children in = Content). Props catalogued (Header,
+  NavigateUri, Label, LabelPosition Bottom/Right/Collapsed, OverflowButtonVisibility
+  Auto/Visible/Collapsed, IsOpen/IsSticky/IsDynamicOverflowEnabled…; enums verified by reflection on
+  12.1.1). DEFAULT_EVENT: HyperlinkButton/CommandBarButton→Click, CommandBarToggleButton→
+  IsCheckedChanged. No Icon property on command items (object-typed — a string attr wouldn't compile).
+  CommandBar commands live under CommandBar.PrimaryCommands (XAML) until a commands editor. T5:
+  AV12_PREVIEW skip-list skips host render phases but the controls are compile-gated in Phase D
+  (real 12.1.1 VB project). Suite 1621/0 (on the 11 host).
+- **Previewer Host moved to Avalonia 12.1.1 — SINGLE Avalonia version (2026-09-07):** the host
+  (`host/PreviewerHost.csproj`) was pinned to 11.0.10 while generated projects were already 12.1.1.
+  Probe-first: bump → build (only 2 obsolete `Bitmap.Save` warnings) → probes (grid rows, absolute-
+  path images, new-controls) green → full suite 1638/0 on the 12.1.1 host. Finalised: csproj →
+  12.1.1 (kept net8.0); `XamlRenderer` Save calls → `new PngBitmapEncoderOptions()` (kills CS0618);
+  `CollectControls` now reports an unnamed control ONLY for the window itself — Avalonia 12 realises
+  an extra unnamed `TopLevelHost` root that would otherwise show up as a second "Form"-like entry;
+  `ControlFactory.TypeMap` Avalonia-12 controls → REAL types so they render for real. The headless
+  host STILL has no string-XAML loader on 12.1.1 (no XamlIl runtime loader) → the programmatic
+  builder remains the effective path (TypeMap instantiates the real types). Probed:
+  /tmp/av12probe.js shows real GroupBox/HyperlinkButton/CommandBar at real bounds. Suite 1638/0;
+  host build 0 warnings / 0 errors. User must reload + visually re-check the designer.
 - **SQLite database storage (final semantics: SQLite is the ONLY bound-data store)** — a DataSet table
   bound to a control (DataGrid / ComboBox / ListBox / ItemsControl) is ALWAYS persisted in a SQLite
   file; the old sample/XML data store is retired for bound tables (XML migration machinery removed).
@@ -445,8 +922,84 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
 - §69b: "Align vertical/horizontal centres" buttons were swapped — `btnAlignMiddle` (↕, vertical
   centres) now posts `centre` (centre-X → a vertical line of centres); `btnAlignCentre` (↔,
   horizontal centres) posts `middle` (centre-Y → a horizontal line). Geometry was already correct.
+- §70 **Code Fix… (code-behind checker)** — new `src/codeBehindCheck.ts` (pure analysis + fixers,
+  no webview deps) driven by a designer-toolbar button: `analyzeCodeBehind(axamlUri, {axamlText,
+  controls, dataSet})` returns `CodeIssue[]` (severity/kind/title/detail/line/data), the panel turns
+  them into webview findings **and** `Diagnostic`s, and `applyLocalFix(issue)` applies the pure ones
+  (accessors, duplicates, handlers, signatures, `InitializeComponent`, Data-Image marker/call,
+  `Imports`, chrome base). DataSet-dependent fixes (`regenerate-binding`, `rebind-grid`,
+  `copy-bundled-helper`) are dispatched by the panel because they need the `.adset` spec / resources.
+  Findings are re-derived by re-analysing after every fix (the webview only sends an issue **id**).
+- §70a Inputs are the **designer's in-memory XAML** (`doc.model.serialize(true)`) plus
+  `controlsForCheck(...)` = union of the saved file and the model — the same rule the accessor sync
+  uses, so the check can't disagree with the fix about which controls exist.
+- §70b Detection deliberately **excludes** generated names (`DataImage_*`, `BindImage_*`, …) from
+  the `<Control>_<Event>` orphan rule, requires the event part to be a real event name, and treats
+  a binding whose grid is fed by `Wire<Table>Grid(...)`/`Load<Table>()` as wired (a naive
+  "no ItemsSource line" check false-positives on every generated DataGrid).
+- §70c The Data-Image grid/column for a **marker-less** block is derived from the block itself:
+  grid from the `BindImage_<c>` selection listener, column from `row.<X>` inside
+  `DataImage_<c>_Show`, skipping DataSet bookkeeping members (`IsPlaceholder`, `HasErrors`, …).
+- §71 **Data-Image / accessor hardening** — `imgMarkerRe` (marker) **or** `imgBindMethodRe`
+  (`BindImage_<c>` method) now proves a binding exists, so a lost `' DataImage:` marker makes the
+  block *heal* (marker re-stamped) instead of being inserted a second time (BC30269);
+  `syncVbAccessors` unions disk + model (accessors were being dropped when the two disagreed) and
+  `namedControlsInAxaml` also reads `Name=` (the `Root`/`Body` DockPanel/Canvas were invisible to it).
+- §72 **Previewer-host lifecycle** — the C# host used to wait for another client after its socket
+  closed, so every window reload leaked a process (22 found reparented to `systemd`, ~600 MB). The
+  host now exits on client disconnect (+90 s watchdog when no client ever connects), `dispose()`
+  kills the child before dropping the socket and `deactivate()` disposes the shared manager.
+- §73 **Host errors stay in our channel** — `hostClient` logs `msg.error` to the "Avalonia Designer"
+  channel before rejecting, so a host failure no longer shows up as an unhandled-rejection stack in
+  the Extension Host output.
+- §74 **Test-suite findings (2026-09-10)** — the T3 jsdom fixture missed `btnRefresh`, so
+  `designer.js` threw at load and the layer silently ran 5 of ~360 checks (total dropped to 1473);
+  the T3 test now asserts the fixture covers every `$('…')` id in `media/designer.js`. The bundled-
+  component fixtures needed the current `TitleBarBackgroundProperty` marker, and the T4 harness can
+  lose its `ProjectReference` between write and build (it now re-asserts it): **1843 passed / 0
+  failed**.
+- §75 **Follow-a-column bindings (2026-09-10)** — a read-only control
+  (ComboBox/ListBox/ItemsControl) can list one TEXT column of a table a DataGrid owns, live.
+  `Asset` gained `kind: 'follower'` (`scanDataSets` emits one entry per String column of a
+  grid-bound table: label `DataSet.Table.Column`, detail “follows <grid>”); the picker still rejects
+  a DataGrid-owned **table** but offers its columns; the binding is one `ItemsSource` line written by
+  `bindFollowerToColumn` and recorded on the table's `.adset` (`followers`, mirroring `boundImages`).
+- §75a **Ordering matters** — the generated line goes directly AFTER the grid's `Wire<Table>Grid(...)`
+  line, never after `InitializeComponent()`: the follower is built from the row collection that the
+  wire line receives (inserting it earlier would build it from `Nothing`). That is why
+  `upsertItemsSourceLine` could not be reused here.
+- §75b **Bundled `ColumnFollower(Of TRow, TValue)`** (`resources/`, shipped with new projects, copied
+  on demand) mirrors the row collection into an `ObservableCollection(Of TValue)`: Add/Remove keep the
+  control's selection (insert/remove at the mapped index), a cell edit REPLACES that entry in place,
+  the `IsPlaceholder` row is skipped, Replace/Move/Reset rebuild. Two VB traps, one build each:
+  `select` is a reserved keyword (the parameter is `selector`) and a doc-comment `cref` may not
+  contain `(Of …)` (BC30201).
+- §75c **Inline items vs ItemsSource** — Avalonia throws “Items collection must be empty before using
+  ItemsSource.” (string confirmed inside Avalonia.Controls.dll 12.1.1) when a control has both
+  `Items` children and an `ItemsSource`. The picker offers to clear them as part of the bind (a MODEL
+  edit — a direct file edit would be overwritten by the designer's next save) and Code Fix reports
+  the combination (`remove-inline-items`); it also drops a follower whose grid/column vanished
+  (`drop-follower`) and re-copies a missing `ColumnFollower`.
+- **XAML header (§76):** every `.axaml` starts with `<!-- Do NOT edit this file manually - Use the
+  Designer to make changes -->` (see §76 below).
+- §76 **XAML header — “Do NOT edit this file manually” (2026-09-10)** — new `src/xamlHeader.ts`
+  (`DESIGNER_HEADER` + idempotent `withDesignerHeader`) stamps the notice as the first line of every
+  form the extension produces: `buildAxaml`/`buildChromeAxaml` (`formTemplates.ts`), `appAxaml`
+  (`projectScaffold.ts`, so `App.axaml` too) and the designer's write sites
+  (`saveCustomDocument`, `saveCustomDocumentAs`, the event-handler attribute save, the hot-exit
+  backup). `withDesignerHeader` removes every existing copy first, so re-saving can never duplicate
+  it, keeps a leading `<?xml …?>`/BOM first, and drops the blank line a removal leaves.
+- §76a **Why the save sites need it and the generator alone would not** — `XamlModel.serialize()` is
+  tree-based and therefore drops **all** comments (verified: an inline `<!-- note -->` does not
+  survive a save; a hand-written comment is silently lost). Stamping at save time is what makes the
+  notice survive editing, and it also retro-fits files created by older versions or by hand.
+- §76b **Refresh compares header-normalised text** — the on-disk file carries the notice while
+  `doc.model.serialize(true)` does not, so the plain `text !== serialize()` check would report a
+  change on EVERY refresh and rebuild the model unnecessarily. Both sides now run through
+  `withDesignerHeader` before comparing. `t2-logic/xamlHeader.test.js` (33 checks) golden-guards the
+  text, idempotency/de-duplication, `<?xml?>`+BOM order, all four producers, every designer write
+  site and the parse/save round-trip.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
-
 ## 7. Feature history
 
 - Original §1–§51: **`NOTES_ARCHIVE.md`** (verbatim).
@@ -457,7 +1010,11 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
 
 - Moving is absolute only inside a `Canvas`; elsewhere it uses `Margin` (best-effort).
 - Custom/third-party controls the host can't load render as approximations or an error card.
-- Unnamed controls get temporary in-memory names; stripped on save, but the file is re-formatted on save (comments kept).
+- **Unnamed controls** get temporary in-memory names; stripped on save. The file is **re-formatted on
+  save** and the model is tree-based, so **every comment in the file is dropped** (verified: an
+  inline `<!-- note -->` does not survive a save). That is why each generated/saved `.axaml` carries
+  the fixed notice from `src/xamlHeader.ts` — it is re-stamped on every save instead of being
+  preserved.
 - Toolbox **drag** is unreliable on Linux/Xorg — the reliable path is **click the tool, then click the canvas**.
 - The preview's runtime XAML loader is unreliable (falls back to the programmatic builder).
 - The T0 10-project build matrix is slow — run on demand (`npm run test:build`).

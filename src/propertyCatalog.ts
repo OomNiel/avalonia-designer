@@ -2,7 +2,7 @@ import { localName } from './xamlModel';
 
 /**
  * Property descriptions for the designer's Properties panel.
- * Verified against the real Avalonia 11.0.10 assemblies (reflection dump of
+ * Verified against the real Avalonia 12.1.1 assemblies (reflection dump of
  * public instance properties) so every property here is settable in XAML
  * without breaking the previewer render.
  */
@@ -20,6 +20,8 @@ export interface PropDef {
     /** An Image.Source row: also offers a 'Data…' button that binds the Image to a DataGrid's
      *  selected-row image column (in addition to the file browser). */
     dataImage?: boolean;
+    /** Multi-select row: the selected controls' values for this key DIFFER (shown as an empty box). */
+    mixed?: boolean;
 }
 
 interface PropTemplate {
@@ -48,6 +50,9 @@ const ORIENTATION = ['Vertical', 'Horizontal'];
 const DOCK_OPTIONS = ['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom'];
 const CLICK_MODE = ['Release', 'Press', 'Hover'];
 const LINE_CAPS = ['Flat', 'Round', 'Square'];
+// CommandBar label/overflow position enums (verified against Avalonia 12.1.1).
+const LABEL_POS = ['Bottom', 'Right', 'Collapsed'];
+const OVERFLOW_VIS = ['Auto', 'Visible', 'Collapsed'];
 const SCROLLBAR = ['Disabled', 'Auto', 'Hidden', 'Visible'];
 const SELECTION_MODE = ['Single', 'Multiple', 'Extended', 'Toggle'];
 const TAB_PLACEMENT = ['Top', 'Bottom', 'Left', 'Right'];
@@ -156,6 +161,98 @@ export const ANCHOR_PROPS: PropTemplate[] = [
     { key: 'chrome:AnchorHelper.Anchor', label: 'Anchor', kind: 'dropdown', options: ANCHOR_OPTIONS }
 ];
 
+/**
+ * GrumpyPanel's DEDICATED Anchor: 8 positions (the 4 edges + the 4 corners). Unlike the generic
+ * Anchor (Canvas/DockPanel children only), this is offered on the panel wherever it sits (non-root).
+ * The hyphenated corner values are read by the bundled AnchorHelper's substring matching
+ * ("Top-Left" contains both "Left" and "Top" → pins that corner), so no helper change is needed.
+ */
+export const GRUMPY_ANCHOR_OPTIONS = [
+    'None', 'Left', 'Right', 'Top', 'Bottom',
+    'Top-Left', 'Top-Right', 'Bottom-Left', 'Bottom-Right'
+];
+
+export const GRUMPY_ANCHOR_PROPS: PropTemplate[] = [
+    { key: 'chrome:AnchorHelper.Anchor', label: 'Anchor', kind: 'dropdown', options: GRUMPY_ANCHOR_OPTIONS }
+];
+
+// ---------------- StatusDate clock — Date/Time format (System / Custom presets) ----------------
+/**
+ * Friendly choices for the Date and Time parts of a StatusDate clock — aimed at beginners: each
+ * option shows what it looks like, no raw .NET format strings required. 'None (hidden)' hides that
+ * part; 'System date' / 'System time' use the OS current-culture standard (short date / long time).
+ */
+export const STATUS_CLOCK_CHOICES: Record<'date' | 'time', string[]> = {
+    date: ['None (hidden)', 'System date', 'Mon, 9 Sep 2026', '9 September 2026', '09/09/2026', '2026-09-09'],
+    time: ['None (hidden)', 'System time', '14:32', '14:32:05', '2:32 PM', '02:32:05 PM']
+};
+
+/** The .NET format string behind a friendly StatusDate choice: '' hides that part; 'd'/'T' are the
+ *  OS current-culture standard short date / long time; anything else is an explicit pattern that the
+ *  generated code renders with the InvariantCulture so the example the user picked is exact. */
+export function statusClockFormat(part: 'date' | 'time', choice: string): string {
+    if (choice === 'None (hidden)') return '';
+    if (choice === 'System date') return 'd';
+    if (choice === 'System time') return 'T';
+    if (part === 'date') {
+        switch (choice) {
+            case 'Mon, 9 Sep 2026': return 'ddd, d MMM yyyy';
+            case '9 September 2026': return 'd MMMM yyyy';
+            case '09/09/2026': return 'dd/MM/yyyy';
+            case '2026-09-09': return 'yyyy-MM-dd';
+        }
+    } else {
+        switch (choice) {
+            case '14:32': return 'HH:mm';
+            case '14:32:05': return 'HH:mm:ss';
+            case '2:32 PM': return 'h:mm tt';
+            case '02:32:05 PM': return 'hh:mm:ss tt';
+        }
+    }
+    return '';
+}
+
+/** The default StatusDate choices (OS date + OS time — today's behaviour) when a clock has no
+ *  stored setting (e.g. placed before this feature). */
+export const STATUS_CLOCK_DEFAULT = { date: 'System date', time: 'System time' };
+
+/** True when `el` is a StatusDate live clock: a TextBlock with a Loaded handler that is NOT an
+ *  XYTracker (which is also a TextBlock with Loaded, distinguished by Classes="XYTracker"). */
+export function isStatusClock(el: Element): boolean {
+    if (localName(el.tagName) !== 'TextBlock') return false;
+    const cls = (el.getAttribute('Classes') || '').split(/\s+/);
+    if (cls.indexOf('XYTracker') >= 0) return false;
+    return el.hasAttribute('Loaded');
+}
+
+/** A lightweight "what will it look like right now?" sample for the preview row. Renders the small,
+ *  fixed set of tokens our presets use (plus a JS approximation of the OS date/time). Not a full
+ *  .NET formatter — it only needs to cover the offered choices. */
+export function statusClockSample(dateChoice: string, timeChoice: string, now: Date = new Date()): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const render = (fmt: string, system: boolean): string => {
+        if (!fmt) return '';
+        if (system) {
+            if (fmt === 'd') return now.toLocaleDateString();
+            return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+        let h12 = now.getHours() % 12; if (h12 === 0) h12 = 12;
+        const ampm = now.getHours() < 12 ? 'AM' : 'PM';
+        const toks: Record<string, string> = {
+            ddd: days[now.getDay()], MMMM: months[now.getMonth()], MMM: months[now.getMonth()].slice(0, 3),
+            yyyy: String(now.getFullYear()), MM: pad(now.getMonth() + 1), dd: pad(now.getDate()),
+            d: String(now.getDate()), HH: pad(now.getHours()), mm: pad(now.getMinutes()),
+            ss: pad(now.getSeconds()), hh: pad(h12), h: String(h12), tt: ampm
+        };
+        return fmt.replace(/dddd|ddd|MMMM|MMM|yyyy|HH|mm|ss|dd|hh|tt|[dh]/g, (tok) => toks[tok] ?? tok);
+    };
+    const d = dateChoice === 'None (hidden)' ? '' : render(statusClockFormat('date', dateChoice), dateChoice === 'System date');
+    const t = timeChoice === 'None (hidden)' ? '' : render(statusClockFormat('time', timeChoice), timeChoice === 'System time');
+    return [d, t].filter((s) => s !== '').join(' ');
+}
+
 /** Font/text properties — only on text-capable controls (not panels, Border, Image). */
 export const FONT_PROPS: PropTemplate[] = [
     { key: 'FontFamily', label: 'Font Family', kind: 'text' },
@@ -168,7 +265,9 @@ export const FONT_PROPS: PropTemplate[] = [
 /** Controls that expose the font/text properties (TemplatedControl / TextElement). */
 export const HAS_FONT_PROPS = new Set([
     'Button', 'TextBox', 'TextBlock', 'ComboBox', 'ListBox', 'ListBoxItem', 'CheckBox', 'RadioButton',
-    'TabControl', 'TabItem', 'DataGrid', 'Menu', 'StatusBar', 'ScrollViewer', 'UserControl', 'Window'
+    'TabControl', 'TabItem', 'DataGrid', 'Menu', 'StatusBar', 'ScrollViewer', 'UserControl', 'Window',
+    // Avalonia 12 text-bearing controls (headers / labels / link text)
+    'GroupBox', 'HyperlinkButton', 'CommandBar', 'CommandBarButton', 'CommandBarToggleButton'
 ]);
 
 export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
@@ -186,6 +285,77 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
         { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
         { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' }
+    ],
+    // --- Avalonia 12 controls (real tags; the 11 preview host draws approximations) ---
+    GroupBox: [
+        { key: 'Header', label: 'Header', kind: 'text' },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
+        { key: 'Background', label: 'Background', kind: 'text' },
+        { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'HorizontalContentAlignment', label: 'H. Content', kind: 'dropdown', options: H_ALIGN },
+        { key: 'VerticalContentAlignment', label: 'V. Content', kind: 'dropdown', options: V_ALIGN }
+    ],
+    HyperlinkButton: [
+        { key: 'Content', label: 'Content', kind: 'text' },
+        { key: 'NavigateUri', label: 'Navigate URI', kind: 'text' },
+        { key: 'IsVisited', label: 'Visited', kind: 'dropdown', options: BOOL },
+        { key: 'Command', label: 'Command', kind: 'text' },
+        { key: 'CommandParameter', label: 'Command Param', kind: 'text' },
+        { key: 'HorizontalContentAlignment', label: 'H. Content', kind: 'dropdown', options: H_ALIGN },
+        { key: 'VerticalContentAlignment', label: 'V. Content', kind: 'dropdown', options: V_ALIGN },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
+        { key: 'Background', label: 'Background', kind: 'text' },
+        { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' }
+    ],
+    CommandBar: [
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
+        { key: 'Background', label: 'Background', kind: 'text' },
+        { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'IsOpen', label: 'Overflow Open', kind: 'dropdown', options: BOOL },
+        { key: 'IsSticky', label: 'Sticky', kind: 'dropdown', options: BOOL },
+        { key: 'IsDynamicOverflowEnabled', label: 'Dynamic Overflow', kind: 'dropdown', options: BOOL },
+        { key: 'OverflowButtonVisibility', label: 'Overflow Button', kind: 'dropdown', options: OVERFLOW_VIS },
+        { key: 'DefaultLabelPosition', label: 'Label Position', kind: 'dropdown', options: LABEL_POS }
+    ],
+    CommandBarButton: [
+        { key: 'Content', label: 'Content', kind: 'text' },
+        { key: 'Label', label: 'Label', kind: 'text' },
+        { key: 'IsCompact', label: 'Compact', kind: 'dropdown', options: BOOL },
+        { key: 'LabelPosition', label: 'Label Position', kind: 'dropdown', options: LABEL_POS },
+        { key: 'Command', label: 'Command', kind: 'text' },
+        { key: 'CommandParameter', label: 'Command Param', kind: 'text' },
+        { key: 'HorizontalContentAlignment', label: 'H. Content', kind: 'dropdown', options: H_ALIGN },
+        { key: 'VerticalContentAlignment', label: 'V. Content', kind: 'dropdown', options: V_ALIGN },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
+        { key: 'Background', label: 'Background', kind: 'text' },
+        { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' }
+    ],
+    CommandBarToggleButton: [
+        { key: 'Content', label: 'Content', kind: 'text' },
+        { key: 'Label', label: 'Label', kind: 'text' },
+        { key: 'IsChecked', label: 'Is Checked', kind: 'dropdown', options: BOOL },
+        { key: 'IsCompact', label: 'Compact', kind: 'dropdown', options: BOOL },
+        { key: 'LabelPosition', label: 'Label Position', kind: 'dropdown', options: LABEL_POS },
+        { key: 'Command', label: 'Command', kind: 'text' },
+        { key: 'CommandParameter', label: 'Command Param', kind: 'text' },
+        { key: 'HorizontalContentAlignment', label: 'H. Content', kind: 'dropdown', options: H_ALIGN },
+        { key: 'VerticalContentAlignment', label: 'V. Content', kind: 'dropdown', options: V_ALIGN },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
+        { key: 'Background', label: 'Background', kind: 'text' },
+        { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' }
+    ],
+    CommandBarSeparator: [
+        { key: 'IsCompact', label: 'Compact', kind: 'dropdown', options: BOOL }
     ],
     TextBox: [
         { key: 'Text', label: 'Text', kind: 'text' },
@@ -315,6 +485,17 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
     DockPanel: [
         { key: 'Background', label: 'Background', kind: 'text' },
         { key: 'LastChildFill', label: 'Last Child Fill', kind: 'dropdown', options: BOOL }
+    ],
+    // GrumpyPanel (a bundled AvaloniaChrome.GrumpyPanel — a Border whose child is a DockPanel +
+    // named free body Canvas). Dock docks the whole panel into a DockPanel; the frame props style
+    // its Border chrome (Theme System/Custom controls which of these are present).
+    GrumpyPanel: [
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
+        { key: 'Background', label: 'Background', kind: 'text' },
+        { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'Padding', label: 'Padding', kind: 'text' }
     ],
     WrapPanel: [
         { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
@@ -459,7 +640,10 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
 /** Extra properties specific to the reusable ChromeWindow component (custom title bar). */
 export const CHROME_WINDOW_PROPS: PropTemplate[] = [
     { key: 'TitleBarTitle', label: 'Title Bar Text', kind: 'text' },
-    { key: 'TitleBarIcon', label: 'Title Bar Icon', kind: 'file' }
+    { key: 'TitleBarIcon', label: 'Title Bar Icon', kind: 'file' },
+    { key: 'TitleBarHeight', label: 'Title Bar Height', kind: 'number' },
+    { key: 'TitleBarBackground', label: 'Title Bar Color', kind: 'color' },
+    { key: 'TitleBarForeground', label: 'Title Bar Text Color', kind: 'color' }
 ];
 
 /**
@@ -543,6 +727,12 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     // window
     Title: { desc: 'Text shown in the window title bar.' },
     Icon: { desc: 'Icon shown in the title bar / taskbar (a file path or avares:// URI).' },
+    // custom title bar (ChromeWindow)
+    TitleBarTitle: { desc: 'Text shown centred in the custom title bar (ChromeWindow).' },
+    TitleBarIcon: { desc: 'Icon shown on the left of the custom title bar (a file path or avares:// URI).' },
+    TitleBarHeight: { unit: 'px', desc: 'Height of the custom title bar in pixels (default 44). The form body sits below it.' },
+    TitleBarBackground: { kind: 'color', options: COLORS, desc: 'Background color of the custom title bar (default the dark navy #0E2138). Clear the box to go back to the default.' },
+    TitleBarForeground: { kind: 'color', options: COLORS, desc: 'Color of the custom title bar\'s text and its min/max/close glyphs (default white).' },
     CanResize: { desc: 'Whether the window can be resized by the user.' },
     ShowInTaskbar: { desc: 'Whether the window appears in the taskbar.' },
     ShowActivated: { desc: 'Whether the window becomes active when shown.' },
@@ -554,7 +744,7 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     ExtendClientAreaToDecorationsHint: { desc: 'Extend content into the title-bar area (for custom chrome).' },
 
     // content / values
-    Header: { desc: 'Header (label) shown on the tab strip for a TabItem.' },
+    Header: { desc: 'Header (title/label) of the control — e.g. a TabItem tab label or a GroupBox group title.' },
     Content: { desc: 'Text (or content) displayed in the control.' },
     Text: { desc: 'Text content of the control.' },
     PlaceholderText: { desc: 'Hint text shown while the field is empty.' },
@@ -562,6 +752,17 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     GroupName: { desc: 'Radio buttons sharing a group name act as a single group.' },
     Command: { desc: 'Command to execute when the control is triggered.' },
     CommandParameter: { desc: 'Parameter passed to the Command.' },
+    // HyperlinkButton
+    NavigateUri: { desc: 'Web address (URI) the link opens when clicked (e.g. https://example.com). Leave empty to act on Command instead.' },
+    IsVisited: { desc: 'Whether the link is shown as already visited (visited styling).' },
+    // CommandBar / CommandBarButton
+    Label: { desc: 'Label text shown for the command (in a Command Bar) or button.' },
+    IsCompact: { desc: 'Compact mode — icon/label fit in a smaller command area.' },
+    LabelPosition: { desc: 'Where the label sits: Bottom (stacked below the icon), Right (beside it) or Collapsed (icon only).' },
+    IsOpen: { desc: 'Whether the Command Bar overflow panel is open.' },
+    IsSticky: { desc: 'Whether an opened overflow stays open until dismissed.' },
+    IsDynamicOverflowEnabled: { desc: 'Whether commands automatically move to the overflow when the bar is too small.' },
+    OverflowButtonVisibility: { desc: 'When the overflow (…) button is shown: Auto, Visible or Collapsed.' },
     Source: { desc: 'Image source: a file path or avares:// URI.' },
     Stretch: { desc: 'How the image is fitted inside its box.' },
     StretchDirection: { desc: 'Which directions the image may be scaled.' },
@@ -610,6 +811,8 @@ const ADVANCED_KEYS = new Set([
     'IsThreeState', 'IsDefault', 'IsCancel', 'ClickMode', 'AcceptsTab', 'IsUndoEnabled',
     'SelectionStart', 'SelectionEnd',
     'Command', 'CommandParameter',
+    'IsVisited', 'IsCompact', 'LabelPosition',
+    'IsOpen', 'IsSticky', 'IsDynamicOverflowEnabled', 'OverflowButtonVisibility',
     'MaxDropDownHeight', 'WrapSelection', 'IsTextSearchEnabled',
     'AutoGenerateColumns', 'CanUserReorderColumns', 'CanUserResizeColumns', 'CanUserSortColumns',
     'FrozenColumnCount', 'HeadersVisibility', 'GridLinesVisibility', 'ColumnWidth', 'RowHeight', 'RowHeaderWidth',
@@ -623,7 +826,7 @@ const ADVANCED_KEYS = new Set([
  * when the attribute is absent on the element, and (b) strip attributes that the
  * user sets back to their default (keeping the saved XAML clean).
  *
- * Avalonia 11.0.10 defaults. Opaque (Opacity 1 → display 100 %) is in XAML form here;
+ * Avalonia 12.1.1 defaults. Opaque (Opacity 1 → display 100 %) is in XAML form here;
  * the panel converts it for display. Properties whose Avalonia default is genuinely
  * "unset/auto/empty" use '' so the field reads as auto (e.g. Width, Height, NaN).
  */
@@ -650,6 +853,9 @@ export const DEFAULTS: Record<string, string> = {
     'Canvas.Top': '',
     'DockPanel.Dock': 'None',
     'chrome:AnchorHelper.Anchor': 'None',
+
+    // --- custom title bar (ChromeWindow) ---
+    TitleBarHeight: '44',
 
     // --- styling (default = no border/padding/corner) ---
     Padding: '',
@@ -703,6 +909,15 @@ export const DEFAULTS: Record<string, string> = {
     IsDefault: 'False',
     IsCancel: 'False',
     ClickMode: 'Release',
+
+    // --- HyperlinkButton ---
+    NavigateUri: '',
+    IsVisited: 'False',
+
+    // --- CommandBar ---
+    IsCompact: 'False',
+    IsOpen: 'False',
+    IsSticky: 'False',
 
     // --- ComboBox ---
     IsDropDownOpen: 'False',
@@ -897,7 +1112,10 @@ export function propertyDefsFor(
     /** 'Undo-Redo' depth for a DataGrid bound to a DataSet table (stored in the .adset, not XAML). */
     undoRedo?: { value: string },
     /** True when this Image opted OUT of dynamic Grid-cell auto-sizing (stored in the extension, not XAML). */
-    autoSizeOff?: boolean
+    autoSizeOff?: boolean,
+    /** StatusDate clock format settings (read from its generated code-behind handler). When present
+     *  on a status-clock TextBlock, the two System/Custom pickers + live preview rows are offered. */
+    statusClock?: { date?: string; time?: string; preview?: string }
 ): PropDef[] {
     const tag = localName(el.tagName);
     const name = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
@@ -905,6 +1123,9 @@ export function propertyDefsFor(
     // generated name (StatusBar1, ...) identifies it so the StatusBar properties
     // (including Dock) show instead of only the generic Border ones.
     const isStatusBar = /^StatusBar\d*$/.test(name);
+    // The GrumpyPanel tool inserts a bundled <chrome:GrumpyPanel> — a Border-based docking
+    // region. It gets a DEDICATED 8-position Anchor + the frame (Border) chrome properties.
+    const isGrumpyPanel = tag === 'GrumpyPanel';
     // The Split Panel tool is named SplitPanelN. New 3-zone splits are a Border wrapper
     // (its own clickable frame) around a Grid; older splits are the Grid itself. Its Split
     // Layout + Pane Border properties live here (the generic Grid 'Rows & Columns' editor is
@@ -914,8 +1135,9 @@ export function propertyDefsFor(
 
     const typeTemplates: PropTemplate[] = isWindowLike
         ? [
-            ...(CONTROL_PROPS['Window'] || []),
-            ...(tag === 'ChromeWindow' ? CHROME_WINDOW_PROPS : [])
+            // ChromeWindow custom-title-bar properties are pinned ABOVE the generic Window props.
+            ...(tag === 'ChromeWindow' ? CHROME_WINDOW_PROPS : []),
+            ...(CONTROL_PROPS['Window'] || [])
         ]
         : [
             ...(isStatusBar ? (CONTROL_PROPS['StatusBar'] || []) : []),
@@ -935,18 +1157,35 @@ export function propertyDefsFor(
     // Only non-root elements can anchor to a container (the root element is the
     // window/UserControl itself).
     const isRoot = !el.parentNode || (el.parentNode as Node).nodeType !== 1;
+    const parentEl: Element | null = !isRoot && el.parentNode && (el.parentNode as Node).nodeType === 1
+        ? (el.parentNode as Element) : null;
+    const parentTag = parentEl ? localName(parentEl.tagName) : '';
 
     // A control inside a Grid cell is positioned/sized by the Grid — DockPanel.Dock and
     // Canvas.Left/Top have no effect there (a Grid child's size is managed by its cell), so
     // hide them for direct Grid children.
-    const inGrid = !isRoot && el.parentNode && (el.parentNode as Element).nodeType === 1
-        && localName((el.parentNode as Element).tagName) === 'Grid';
+    const inGrid = parentTag === 'Grid';
+    // The Anchor property: on a CANVAS it is WinForms-style free anchoring (keeps a fixed
+    // distance from the anchored edges; opposite edges stretch). Inside a DOCKPANEL — e.g. a
+    // Status Bar strip — a StatusDate/TextBlock has no Dock property of its own, so an edge
+    // Anchor pins the control to that edge (the designer mirrors it as DockPanel.Dock). The
+    // form's TOP-LEVEL layout DockPanel (its own parent is the window root) is where the
+    // template docks the Menu bar / Status Bar / Body / SplitPanel — those structural bars are
+    // not offered Anchor. Grid / StackPanel children are laid out by their panel, so Anchor is
+    // not offered there either.
+    const parentIsTopLayout = parentTag === 'DockPanel' && !!parentEl
+        && parentEl.parentNode && (parentEl.parentNode as Node).nodeType === 1
+        && /window|usercontrol|chrome/i.test(localName((parentEl.parentNode as Element).tagName));
+    const anchorable = parentTag === 'Canvas' || (parentTag === 'DockPanel' && !parentIsTopLayout);
 
     const templates: PropTemplate[] = [
         ...COMMON_PROPS,
         ...(isWindowLike || HAS_FONT_PROPS.has(tag) ? FONT_PROPS : []),
         ...typeTemplates,
-        ...(isRoot ? [] : ANCHOR_PROPS)
+        // GrumpyPanel carries a DEDICATED 8-position Anchor that is offered wherever the panel
+        // sits (non-root) — it replaces the generic Canvas/DockPanel-gated Anchor for the panel.
+        ...(!isRoot && isGrumpyPanel ? GRUMPY_ANCHOR_PROPS : []),
+        ...(!isRoot && !isGrumpyPanel && anchorable ? ANCHOR_PROPS : [])
     ].filter((t) =>
         // A control inside a Grid cell is positioned/sized by the Grid.
         !(inGrid && (t.key === 'DockPanel.Dock' || t.key === 'Canvas.Left' || t.key === 'Canvas.Top')) &&
@@ -968,6 +1207,27 @@ export function propertyDefsFor(
             desc: 'System: follow the OS theme (no fixed colours). Custom: use the colours you set below.'
         }
     ];
+    // A StatusDate live clock (a TextBlock whose Loaded handler ticks a clock) offers beginner-
+    // friendly Date/Time format pickers (System = OS format, or pick a shown example) + a preview.
+    if (isStatusClock(el)) {
+        props.push(
+            {
+                key: 'StatusDate.Date', label: 'Date Format', kind: 'dropdown', options: STATUS_CLOCK_CHOICES.date,
+                value: statusClock?.date ?? STATUS_CLOCK_DEFAULT.date,
+                desc: 'How the date is shown. "None (hidden)" hides the date, "System date" uses your OS date format, or pick an example for a fixed look.'
+            },
+            {
+                key: 'StatusDate.Time', label: 'Time Format', kind: 'dropdown', options: STATUS_CLOCK_CHOICES.time,
+                value: statusClock?.time ?? STATUS_CLOCK_DEFAULT.time,
+                desc: 'How the time is shown. "None (hidden)" hides the time, "System time" uses your OS time, or pick an example for a fixed look.'
+            },
+            {
+                key: 'StatusDate.Preview', label: 'Preview', kind: 'text',
+                value: statusClock?.preview ?? '', readOnly: true,
+                desc: 'A live sample of what the clock shows with these formats.'
+            }
+        );
+    }
     for (const t of templates) {
         if (seen.has(t.key)) continue;
         seen.add(t.key);
@@ -1144,4 +1404,32 @@ export function propertyDefsFor(
         });
     }
     return topActions.concat(props);
+}
+
+/** Property rows NEVER offered for bulk multi-select editing: identity (name/type), things handled
+ *  elsewhere (Undo-Redo lives in the .adset; ItemsSource can be a code-behind binding), docking and
+ *  Grid-cell placement (bulk-setting these would move/stack the controls). Theme IS offered. */
+export const MULTI_PROP_EXCLUDE = new Set([
+    '__name__', '__type__', 'UndoRedoDepth', 'ItemsSource', 'DockPanel.Dock', 'Grid.Row', 'Grid.Column'
+]);
+
+/**
+ * Builds the multi-select Properties rows for several selected elements: only keys EVERY element
+ * supports — plain, editable XAML properties (no designer editor buttons, no read-only/bound rows,
+ * no MULTI_PROP_EXCLUDE keys). A row's value is shown only when every selected element has the same
+ * value; when they differ the row is empty and flagged `mixed`. Theme (System/Custom) is kept.
+ */
+export function multiCommonProps(els: Element[]): PropDef[] {
+    if (els.length === 0) return [];
+    const keep = (p: PropDef) => p.kind !== 'button' && !p.readOnly && !MULTI_PROP_EXCLUDE.has(p.key);
+    const lists: PropDef[][] = els.map((el) => propertyDefsFor(el).filter(keep));
+    const rows: PropDef[] = [];
+    for (const d of lists[0]) {
+        if (!lists.every((l) => l.some((x) => x.key === d.key))) continue; // intersection only
+        const per = lists.map((l) => l.find((x) => x.key === d.key)!);
+        const v0 = per[0].value ?? '';
+        const same = per.every((x) => (x.value ?? '') === v0);
+        rows.push({ ...per[0], value: same ? v0 : '', mixed: !same });
+    }
+    return rows;
 }

@@ -18,6 +18,8 @@
         btnUndo: $('btnUndo'),
         btnRedo: $('btnRedo'),
         btnNewForm: $('btnNewForm'),
+        btnRefresh: $('btnRefresh'),
+        btnCodeFix: $('btnCodeFix'),
         btnZoomIn: $('btnZoomIn'),
         btnZoomOut: $('btnZoomOut'),
         btnFit: $('btnFit'),
@@ -38,6 +40,7 @@
         multiSel: $('multiSel'),
         marquee: $('marquee'),
         radiusGuide: $('radiusGuide'),
+        splitGuide: $('splitGuide'),
         dotGrid: $('dotGrid'),
         dotGridModal: $('dotGridModal'),
         dotGridSpacingX: $('dotGridSpacingX'),
@@ -83,6 +86,12 @@
         statusAdd: $('statusAdd'),
         statusSave: $('statusSave'),
         statusCancel: $('statusCancel'),
+        codeModal: $('codeModal'),
+        codeHint: $('codeHint'),
+        codeBody: $('codeBody'),
+        codeRecheck: $('codeRecheck'),
+        codeFixAll: $('codeFixAll'),
+        codeClose: $('codeClose'),
         splitModal: $('splitModal'),
         splitTitle: $('splitTitle'),
         splitZones: $('splitZones'),
@@ -139,6 +148,8 @@
         clipboard: false,
         controlListKey: null,
         recell: null, // { gridName, cells: { v: [], h: [] } } when the selected control is a Grid child
+        // Divider bars of every SplitPanel (design coords) — a drag on one resizes the panes.
+        splitBars: [],
         dotGrid: { enabled: true, snap: false, spacingX: 16, spacingY: 16, color: '#9db4d0', dotSize: 1.5 },
         // Crosshair look/length: mode 'short'|'long', shortLength px (Short cross total), line
         // thickness px, opacity %, line colour. The outline colour is auto-derived for contrast.
@@ -278,6 +289,7 @@
     function applyFrame(msg) {
         const sizeChanged = state.designW !== (msg.width || 800) || state.designH !== (msg.height || 450);
         state.frame = msg;
+        state.splitBars = msg.splitBars || [];
         state.designW = msg.width || 800;
         state.designH = msg.height || 450;
         if (msg.png) els.img.src = 'data:image/png;base64,' + msg.png;
@@ -385,6 +397,15 @@
             : (state.selected && state.selected.name ? [state.selected.name] : []);
     }
 
+    // Tells the extension about the current selection. A multi-selection (>1) sends the whole
+    // name list so the Properties panel can offer the intersection (common) properties.
+    function postSelection() {
+        const names = selectionNames();
+        const m = { type: 'select', name: state.selected ? state.selected.name : null };
+        if (names.length >= 2) m.multi = names;
+        post(m);
+    }
+
     // Sets the whole selection: `anchor` is the first-selected control alignment aligns to.
     function setSelection(anchor, names) {
         state.multi = new Set(names && names.length ? names : []);
@@ -401,7 +422,7 @@
         }
         hideCellHighlight();
         renderSelection();
-        post({ type: 'select', name: anchor });
+        postSelection();
     }
 
     // Selects a control. With `additive` (Ctrl+Click) it toggles the control in the multi-selection
@@ -432,7 +453,7 @@
             }
             hideCellHighlight();
             renderSelection();
-            post({ type: 'select', name: state.selected ? state.selected.name : null });
+            postSelection();
             return;
         }
         setSelection(hit ? hit.name : null, hit ? [hit.name] : []);
@@ -496,6 +517,12 @@
         return !!(state.frame && state.frame.controls.some((x) => x.name === name && x.locked));
     }
 
+    /** True if the control is a SplitPanel pane body — selectable + editable in the Properties
+     *  panel, but it must always FILL its pane, so it can't be resized or moved with the mouse. */
+    function isPaneBodyControl(name) {
+        return !!(state.frame && state.frame.controls.some((x) => x.name === name && x.paneBody));
+    }
+
     // Draws the (lighter) selection outline for the NON-anchor selected controls; the anchor keeps
     // the full box + resize handles. Also refreshes the alignment toolbar buttons' enabled state.
     function renderMultiOutlines() {
@@ -543,7 +570,7 @@
         // child — those are placed by Grid.Row/Column, so their position isn't coordinate-based).
         const movable = multi && state.frame ? names.filter((n) => {
             const c = state.frame.controls.find((x) => x.name === n);
-            if (!c || c.locked || !c.name) return false;
+            if (!c || c.locked || c.paneBody || !c.name) return false;
             if (!c.parent) return true;
             const p = state.frame.controls.find((x) => x.name === c.parent);
             return !p || p.type !== 'Grid';
@@ -582,6 +609,7 @@
         }
         s.hidden = false;
         s.classList.toggle('locked', !!c.locked);
+        s.classList.toggle('pane', isPaneBodyControl(c.name));
         s.classList.toggle('shape', isShapeControl(c));
         s.classList.toggle('shape-line', c.type === 'Line');
         s.classList.toggle('shape-arc', c.type === 'Arc');
@@ -602,12 +630,16 @@
         }
         // Structural controls (the Body design surface + the root layout panel) have NO resize
         // handles and can't be dragged — they fill the form automatically, so their size and
-        // position are not user-editable.
+        // position are not user-editable. A SplitPanel pane body is the same: it FILLS its pane,
+        // so it gets a selection outline but no resize handles (its divider is moved with the
+        // pane's Width/Height property, or the Split Layout editor).
         s.innerHTML = c.locked
             ? '<div class="lock-badge" title="Locked (Body / root panel) — fills the form">🔒</div>'
-            : ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
-                .map((cor) => `<div class="handle ${cor}" data-corner="${cor}"></div>`)
-                .join('');
+            : isPaneBodyControl(c.name)
+                ? ''
+                : ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+                    .map((cor) => `<div class="handle ${cor}" data-corner="${cor}"></div>`)
+                    .join('');
         syncControlList();
     }
 
@@ -702,6 +734,18 @@
         const p0 = toDesign(e.clientX, e.clientY);
         const hit0 = hitTest(p0.x, p0.y);
         const grabbingHandle = !!(t.classList && (t.classList.contains('handle') || t.classList.contains('shape-handle')));
+        // Design-time SplitPanel divider drag: pressing on a divider bar starts a splitter drag (a
+        // guide line follows the mouse; the new pane size is applied once on release).
+        if (!state.pendingTag && !grabbingHandle) {
+            const overBar = barAt(p0.x, p0.y);
+            if (overBar) {
+                e.preventDefault();
+                e.stopPropagation();
+                drag = { mode: 'split', pane: overBar.pane, other: overBar.other, axis: overBar.axis, bar: overBar, sx: e.clientX, sy: e.clientY };
+                els.canvas.setPointerCapture(e.pointerId);
+                return;
+            }
+        }
         if (!state.pendingTag && !grabbingHandle && (!hit0 || hit0.locked)) {
             drag = { mode: 'marquee', sx: e.clientX, sy: e.clientY, x0: p0.x, y0: p0.y };
             els.canvas.setPointerCapture(e.pointerId);
@@ -711,7 +755,9 @@
         if (!sel || !state.frame) return;
         const c = state.frame.controls.find((x) => x.name === sel.name);
         if (!c) return;
-        if (c.locked) return; // the Body design surface can't be moved or resized
+        // The Body design surface and a SplitPanel pane body can't be moved or resized — a pane
+        // body always fills its pane (clicking it still selects it so its properties are editable).
+        if (c.locked || c.paneBody) return;
         const start = { x: c.x, y: c.y, w: c.width, h: c.height };
         if (t.classList && t.classList.contains('handle')) {
             e.preventDefault();
@@ -745,6 +791,45 @@
     }
     function hideMarquee() {
         els.marquee.hidden = true;
+    }
+
+    // ---------------- SplitPanel divider (design-time splitter) drag ----------------
+    /** The divider bar under a design point (design coords), if any (with a small grab tolerance). */
+    function barAt(x, y) {
+        const bars = state.splitBars || [];
+        const GRAB = 5;
+        for (const b of bars) {
+            if (b.axis === 'v') {
+                const cx = b.x + b.w / 2;
+                if (Math.abs(x - cx) <= (b.w / 2 + GRAB) && y >= b.y && y <= b.y + b.h) return b;
+            } else {
+                const cy = b.y + b.h / 2;
+                if (Math.abs(y - cy) <= (b.h / 2 + GRAB) && x >= b.x && x <= b.x + b.w) return b;
+            }
+        }
+        return null;
+    }
+
+    /** Draws a guide line for the dragged divider at `pos` (a design-coord offset along the axis). */
+    function updateSplitGuide(b, pos) {
+        const g = els.splitGuide;
+        if (!g) return;
+        g.hidden = false;
+        const t = Math.max(2, 2 * state.scale);
+        if (b.axis === 'v') {
+            g.style.left = ((pos - 1) * state.scale) + 'px';
+            g.style.top = (b.y * state.scale) + 'px';
+            g.style.width = t + 'px';
+            g.style.height = (b.h * state.scale) + 'px';
+        } else {
+            g.style.left = (b.x * state.scale) + 'px';
+            g.style.top = ((pos - 1) * state.scale) + 'px';
+            g.style.width = (b.w * state.scale) + 'px';
+            g.style.height = t + 'px';
+        }
+    }
+    function hideSplitGuide() {
+        if (els.splitGuide) els.splitGuide.hidden = true;
     }
 
     // After a marquee drag: select every control whose bounds intersect the drawn box. The anchor
@@ -808,6 +893,11 @@
             else hideRadiusGuide();
             return;
         }
+        if (drag.mode === 'split') {
+            const p = toDesign(e.clientX, e.clientY);
+            updateSplitGuide(drag.bar, drag.axis === 'v' ? p.x : p.y);
+            return;
+        }
         els.selection.classList.add('dragging');
         if (drag.recell && state.recell) {
             // Show which cell the dragged control will land in.
@@ -856,6 +946,15 @@
                 const p = toDesign(e.clientX, e.clientY);
                 hideMarquee();
                 marqueeSelect(drag.x0, drag.y0, p.x, p.y);
+            } else if (drag.mode === 'split') {
+                // Apply the dragged divider in ONE message (the pointer's position along the bar's
+                // axis, in design coords); the extension converts it to a pane size + clamps.
+                const p = toDesign(e.clientX, e.clientY);
+                hideSplitGuide();
+                post({
+                    type: 'setSplitter', pane: drag.pane, other: drag.other, axis: drag.axis,
+                    pos: Math.round(drag.axis === 'v' ? p.x : p.y)
+                });
             } else if (drag.mode === 'shape') {
                 const p = toDesign(e.clientX, e.clientY);
                 hideRadiusGuide();
@@ -1038,19 +1137,32 @@
         select(hit, e.ctrlKey || e.metaKey);
     });
 
-    // Middle-mouse-button click on a control -> wire the default event and open the
-    // code-behind at the handler (this replaced the old double-click action). Handled on
-    // mousedown (button 1) so it works even where the browser suppresses the auxclick
-    // event, and preventDefault stops the middle-click auto-scroll / paste.
+    // Middle-mouse-button click on a control -> open the code-behind at the handler (this
+    // replaced the old double-click action). Handled on mousedown (button 1) so it works even
+    // where the browser suppresses the auxclick event, and preventDefault stops the middle-click
+    // auto-scroll / paste. IMPORTANT (Linux/X11): the code-behind editor must NOT be opened while
+    // the middle button is still held — releasing it over the newly focused editor pastes the
+    // current primary selection into the .cs/.vb (a stray '>' or whatever text was last selected),
+    // which breaks the build. So we only SELECT on press and post 'openEvent' once the button has
+    // been RELEASED (and the pointer hasn't moved, i.e. it was a click, not a scroll attempt).
+    let midDown = null; // {x, y, name} of the middle-button press
     els.canvas.addEventListener('mousedown', (e) => {
         if (e.button !== 1) return; // middle button only (right-click shows the context menu)
         e.preventDefault();
         const p = toDesign(e.clientX, e.clientY);
         const hit = hitTest(p.x, p.y);
-        if (hit && hit.name) {
-            select(hit);
-            post({ type: 'openEvent', name: hit.name });
-        }
+        midDown = hit && hit.name ? { x: e.clientX, y: e.clientY, name: hit.name } : null;
+        if (midDown) select(hit);
+    });
+    window.addEventListener('mouseup', (e) => {
+        if (e.button !== 1) return;
+        e.preventDefault(); // never let the release perform a primary-selection paste
+        const d = midDown;
+        midDown = null;
+        if (!d) return;
+        // A click (not a drag): the pointer stayed put between press and release.
+        if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 4) return;
+        post({ type: 'openEvent', name: d.name });
     });
 
     // ---------------- drag & drop from toolbox ----------------
@@ -1177,8 +1289,29 @@
     window.addEventListener('resize', hideContextMenu);
     els.wrap.addEventListener('scroll', hideContextMenu, true);
 
-    // Esc cancels an armed toolbox tool; Ctrl+X/C/V cut/copy/paste; Delete removes.
+    // Esc cancels an armed toolbox tool; arrows nudge the selection; Ctrl+X/C/V cut/copy/paste;
+    // Delete removes. Arrow keys move ALL selected controls together (one undo step): the anchor
+    // and every Ctrl+clicked control nudge by the same delta — Shift = coarse 10 px, plain = fine
+    // 1 px. Only free-placed controls (direct Canvas children) nudge; a Grid/DockPanel lays its
+    // children out, so they are not arrow-moved.
     document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            const t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+            if (state.pendingTag || drag) return; // a toolbox tool is armed, or a drag is in progress
+            const step = e.shiftKey ? 10 : 1;
+            const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0;
+            const dy = e.key === 'ArrowDown' ? step : e.key === 'ArrowUp' ? -step : 0;
+            const names = selectionNames().filter((n) => {
+                const c = state.frame && state.frame.controls.find((x) => x.name === n);
+                return !!c && !c.locked && !c.paneBody;
+            });
+            if (!names.length) return;
+            e.preventDefault();
+            e.stopPropagation();
+            post({ type: 'nudge', names, dx, dy });
+            return;
+        }
         if (e.key === 'Escape' && state.pendingTag) {
             state.pendingTag = null;
             updatePendingTool();
@@ -1420,7 +1553,16 @@
                 focusCaret = active.selectionStart != null ? active.selectionStart : (active.value ? active.value.length : 0);
             }
         }
-        state.lastProps = { name: msg.name, properties: msg.properties, info: msg.info, tabItems: msg.tabItems, listItems: msg.listItems };
+        state.lastProps = { name: msg.name, properties: msg.properties, info: msg.info, tabItems: msg.tabItems, listItems: msg.listItems, multi: msg.multi === true, names: msg.names };
+        const isMulti = state.lastProps.multi;
+        // Multi-select: property edits must carry the WHOLE selection so the extension applies the
+        // value to every selected control in one undo step.
+        const multiNames = isMulti && Array.isArray(msg.names) && msg.names.length > 1 ? msg.names : null;
+        const postSet = (key, value) => {
+            const m = { type: 'setProperty', name: msg.name, key, value };
+            if (multiNames) m.names = multiNames;
+            post(m);
+        };
         if (!msg.properties) {
             els.propsBody.hidden = true;
             els.propsEmpty.hidden = false;
@@ -1433,7 +1575,9 @@
         els.propsToggleRow.hidden = false;
         renderHelp(msg.info);
         els.propsBody.innerHTML = '';
-        if (msg.name !== undefined) {
+        // A single selection anchors the Properties to that control; a MULTI selection must keep
+        // the webview's own selection set (the rows are the common properties across all of it).
+        if (msg.name !== undefined && !isMulti) {
             state.selected = { name: msg.name };
             renderSelection();
         }
@@ -1474,7 +1618,7 @@
                 el.addEventListener('input', () => {
                     clearTimeout(timer);
                     timer = setTimeout(() => {
-                        post({ type: 'setProperty', name: msg.name, key: p.key, value: el.value });
+                        postSet(p.key, el.value);
                     }, 400);
                 });
             };
@@ -1482,6 +1626,13 @@
             if (p.kind === 'dropdown' || p.kind === 'font') {
                 const sel = document.createElement('select');
                 sel.dataset.propKey = p.key;
+                // Multi-select: values that differ show an empty '(multiple)' placeholder option.
+                if (p.mixed) {
+                    const ph = document.createElement('option');
+                    ph.value = '';
+                    ph.textContent = '(multiple)';
+                    sel.appendChild(ph);
+                }
                 for (const o of options) {
                     const opt = document.createElement('option');
                     opt.value = o;
@@ -1496,7 +1647,7 @@
                 }
                 sel.value = p.value || '';
                 sel.addEventListener('change', () => {
-                    post({ type: 'setProperty', name: msg.name, key: p.key, value: sel.value });
+                    postSet(p.key, sel.value);
                 });
                 control = sel;
                 focusTarget = sel;
@@ -1521,25 +1672,28 @@
                 swatch.addEventListener('change', () => {
                     // Fires only when the user CONFIRMS the color (closes the picker with OK/Enter).
                     text.value = swatch.value;
-                    post({ type: 'setProperty', name: msg.name, key: p.key, value: swatch.value });
+                    postSet(p.key, swatch.value);
                 });
                 onText(text);
-                // Palette button — opens the full colour list. (A <datalist> on the text box was
-                // dropped because the browser filters datalist options by the typed value, so the
-                // dropdown appeared to list only the current colour.)
-                const palBtn = document.createElement('button');
-                palBtn.type = 'button';
-                palBtn.className = 'color-drop';
-                palBtn.textContent = '▾';
-                palBtn.title = 'Choose from the colour palette…';
-                palBtn.addEventListener('click', (ev) => {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                    openColorPalette(palBtn, msg.name, p.key, options, p.value || '');
-                });
+                // Palette button — opens the full colour list (hidden in multi-select; the swatch /
+                // hex field apply to all selected). (A <datalist> on the text box was dropped because
+                // the browser filters datalist options by the typed value, so the dropdown appeared
+                // to list only the current colour.)
+                if (!isMulti) {
+                    const palBtn = document.createElement('button');
+                    palBtn.type = 'button';
+                    palBtn.className = 'color-drop';
+                    palBtn.textContent = '▾';
+                    palBtn.title = 'Choose from the colour palette…';
+                    palBtn.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        openColorPalette(palBtn, msg.name, p.key, options, p.value || '');
+                    });
+                    wrap.appendChild(palBtn);
+                }
                 wrap.appendChild(swatch);
                 wrap.appendChild(text);
-                wrap.appendChild(palBtn);
                 control = wrap;
                 focusTarget = text;
             } else if (p.kind === 'margin') {
@@ -1547,6 +1701,7 @@
                 control.type = 'text';
                 control.dataset.propKey = p.key;
                 control.value = p.value || '';
+                if (p.mixed) control.placeholder = '(multiple)';
                 control.setAttribute('list', 'designerMarginList');
                 ensureDatalist('designerMarginList', options);
                 onText(control);
@@ -1592,6 +1747,7 @@
                 ftxt.type = 'text';
                 ftxt.dataset.propKey = p.key;
                 ftxt.value = p.value || '';
+                if (p.mixed) ftxt.placeholder = '(multiple)';
                 if (p.dataImage && p.readOnly) ftxt.disabled = true;
                 else onText(ftxt);
                 const fbtn = document.createElement('button');
@@ -1602,17 +1758,21 @@
                 if (p.dataImage && p.readOnly) fbtn.disabled = true;
                 fbtn.addEventListener('click', () => post({ type: 'browseFile', name: msg.name, key: p.key }));
                 wrap.appendChild(ftxt);
-                wrap.appendChild(fbtn);
-                if (p.dataImage) {
-                    const dbtn = document.createElement('button');
-                    dbtn.type = 'button';
-                    dbtn.className = 'prop-data';
-                    dbtn.textContent = 'Data…';
-                    dbtn.title = p.readOnly
-                        ? 'This Image shows the selected row\'s image file from a DataGrid. Click to change or clear.'
-                        : 'Show the image file stored in a DataGrid\'s selected row (a DataSet text column)…';
-                    dbtn.addEventListener('click', () => post({ type: 'pickImageData', name: msg.name }));
-                    wrap.appendChild(dbtn);
+                // In multi-select the text field applies to all selected controls; the Browse /
+                // Data… buttons act on the anchor only, so they're hidden there.
+                if (!isMulti) {
+                    wrap.appendChild(fbtn);
+                    if (p.dataImage) {
+                        const dbtn = document.createElement('button');
+                        dbtn.type = 'button';
+                        dbtn.className = 'prop-data';
+                        dbtn.textContent = 'Data…';
+                        dbtn.title = p.readOnly
+                            ? 'This Image shows the selected row\'s image file from a DataGrid. Click to change or clear.'
+                            : 'Show the image file stored in a DataGrid\'s selected row (a DataSet text column)…';
+                        dbtn.addEventListener('click', () => post({ type: 'pickImageData', name: msg.name }));
+                        wrap.appendChild(dbtn);
+                    }
                 }
                 control = wrap;
                 focusTarget = ftxt;
@@ -1645,11 +1805,12 @@
                 num.type = 'number';
                 num.dataset.propKey = p.key;
                 num.value = p.value || '';
+                if (p.mixed) num.placeholder = '(multiple)';
                 // 'Undo-Redo' commits on blur/Enter (not per keystroke) — it writes the .adset
                 // and regenerates the DataSet class, so it must not fire on every digit.
                 if (p.key === 'UndoRedoDepth') {
                     num.addEventListener('change', () => {
-                        post({ type: 'setProperty', name: msg.name, key: p.key, value: num.value });
+                        postSet(p.key, num.value);
                     });
                 } else {
                     onText(num);
@@ -1672,6 +1833,7 @@
                 control.type = 'text';
                 control.dataset.propKey = p.key;
                 control.value = p.value || '';
+                if (p.mixed) control.placeholder = '(multiple)';
                 if (p.key === '__type__') control.disabled = true;
                 if (p.key === '__name__') {
                     // Renaming commits when the field loses focus (or Enter is pressed): the
@@ -1855,6 +2017,9 @@
             case 'status':
                 els.status.textContent = msg.message;
                 break;
+            case 'codeIssues':
+                renderCodeIssues(msg);
+                break;
             case 'selectControl': {
                 if (state.frame) {
                     const c = state.frame.controls.find((x) => x.name === msg.name);
@@ -1911,6 +2076,17 @@
     els.btnUndo.addEventListener('click', () => post({ type: 'undo', name: state.selected ? state.selected.name : null }));
     els.btnRedo.addEventListener('click', () => post({ type: 'redo', name: state.selected ? state.selected.name : null }));
     els.btnNewForm.addEventListener('click', () => post({ type: 'openNewForm' }));
+    // Refresh: re-read the .axaml and re-render the preview (the extension also re-queries the
+    // design-time SQLite data, so rows added by a RUNNING app show up without reopening the form).
+    els.btnRefresh.addEventListener('click', () => {
+        els.status.textContent = 'Refreshing\u2026';
+        post({ type: 'refresh' });
+    });
+    // Code Fix…: check the code-behind against the form / DataSet and list what is wrong with it.
+    els.btnCodeFix.addEventListener('click', () => {
+        els.status.textContent = 'Checking the code-behind\u2026';
+        post({ type: 'codeCheck' });
+    });
     els.btnZoomIn.addEventListener('click', () => {
         state.fitted = false;
         state.scale = Math.min(4, state.scale * 1.2);
@@ -2049,6 +2225,90 @@
     els.itemsModal.addEventListener('click', (e) => {
         if (e.target === els.itemsModal) closeItemsEditor(); // click outside the box
     });
+
+    // --- 'Code Fix…' findings (code-behind checker) ---
+    // The extension RE-posts the list after every fix, so the panel always shows the current state
+    // of the file instead of a stale snapshot — the per-item buttons stay enabled until then.
+    function closeCodeFixes() {
+        els.codeModal.hidden = true;
+    }
+    function renderCodeIssues(msg) {
+        const issues = msg.issues || [];
+        const file = msg.file || 'the code-behind';
+        els.codeFixAll.disabled = false;
+        els.codeBody.innerHTML = '';
+        els.codeHint.textContent = issues.length === 0
+            ? 'No problems found in ' + file + '.'
+            : (msg.errors || 0) + ' error(s), ' + (msg.warnings || 0) + ' warning(s) in ' + file + '.';
+        if (msg.backup) {
+            const note = document.createElement('div');
+            note.className = 'code-backup';
+            note.textContent = 'Backup: ' + msg.backup;
+            els.codeBody.appendChild(note);
+        }
+        for (const it of issues) {
+            const row = document.createElement('div');
+            row.className = 'code-item ' + (it.severity === 'error' ? 'error' : 'warning');
+            const head = document.createElement('div');
+            head.className = 'code-item-head';
+            const badge = document.createElement('span');
+            badge.className = 'code-badge';
+            badge.textContent = it.severity === 'error' ? 'Error' : 'Warning';
+            const title = document.createElement('span');
+            title.className = 'code-item-title';
+            title.textContent = it.title;
+            head.appendChild(badge);
+            head.appendChild(title);
+            const detail = document.createElement('div');
+            detail.className = 'code-item-detail';
+            detail.textContent = it.detail;
+            const actions = document.createElement('div');
+            actions.className = 'code-item-actions';
+            if (it.line) {
+                const go = document.createElement('button');
+                go.type = 'button';
+                go.className = 'modal-btn';
+                go.textContent = 'Go to line ' + it.line;
+                go.addEventListener('click', () => post({ type: 'codeOpen', file: it.file, line: it.line }));
+                actions.appendChild(go);
+            }
+            if (it.fixable) {
+                const fix = document.createElement('button');
+                fix.type = 'button';
+                fix.className = 'modal-btn primary';
+                fix.textContent = 'Fix';
+                fix.addEventListener('click', () => {
+                    fix.disabled = true;
+                    fix.textContent = 'Fixing\u2026';
+                    post({ type: 'codeFix', id: it.id });
+                });
+                actions.appendChild(fix);
+            } else {
+                const manual = document.createElement('span');
+                manual.className = 'code-item-manual';
+                manual.textContent = 'needs a manual decision';
+                actions.appendChild(manual);
+            }
+            row.appendChild(head);
+            row.appendChild(detail);
+            row.appendChild(actions);
+            els.codeBody.appendChild(row);
+        }
+        els.codeModal.hidden = false;
+    }
+    els.codeRecheck.addEventListener('click', () => {
+        els.status.textContent = 'Checking the code-behind\u2026';
+        post({ type: 'codeCheck' });
+    });
+    els.codeFixAll.addEventListener('click', () => {
+        els.codeFixAll.disabled = true;
+        els.status.textContent = 'Applying fixes\u2026';
+        post({ type: 'codeFixAll' });
+    });
+    els.codeClose.addEventListener('click', closeCodeFixes);
+    els.codeModal.addEventListener('click', (e) => {
+        if (e.target === els.codeModal) closeCodeFixes(); // click outside the box
+    });
     // --- 'Rows & Columns' editor modal (Grid) ---
     let gridTarget = null;
     function gridInput() {
@@ -2111,6 +2371,7 @@
             if (!els.splitModal.hidden) closeSplitEditor();
             if (!els.splitterModal.hidden) closeSplitterEditor();
             if (!els.dgModal.hidden) closeDataGridEditor();
+            if (!els.codeModal.hidden) closeCodeFixes();
         }
     });
 
@@ -2124,11 +2385,19 @@
     let menuExpanded = new Set();  // paths ("0", "0.1", …) expanded in the editor
     const MENU_MAX_DEPTH_UI = 5;
     const MENU_KIND_OPTIONS = ['Item', 'CheckBox', 'Radio', 'ComboBox', 'Separator'];
+    /** Kind choices for one row. 'Space' — an invisible gap on the top bar — is a TOP-LEVEL kind
+     *  (a submenu uses Separators for gaps), so it is only offered at depth 1. */
+    function menuKindOptions(depth, current) {
+        const list = MENU_KIND_OPTIONS.slice();
+        if (depth === 1 || current === 'Space') list.push('Space');
+        return list;
+    }
     function menuKey(path) { return path.join('.'); }
     function menuCopy(n) {
         return {
             kind: (n && n.kind) || 'Item',
             header: n && n.header != null ? String(n.header) : '',
+            width: n && n.width != null ? Number(n.width) : undefined,
             children: Array.isArray(n && n.children) ? n.children.map(menuCopy) : []
         };
     }
@@ -2174,7 +2443,8 @@
             row.dataset.path = key;
             row.style.paddingLeft = (10 + (depth - 1) * 24) + 'px';
             const isSep = node.kind === 'Separator';
-            const canHaveKids = !isSep && depth < MENU_MAX_DEPTH_UI;
+            const isSpace = node.kind === 'Space';
+            const canHaveKids = !isSep && !isSpace && depth < MENU_MAX_DEPTH_UI;
             const hasKids = !!node.children && node.children.length > 0;
             const isOpen = menuExpanded.has(key);
             // Expand/collapse caret (leaf items show a dot).
@@ -2189,19 +2459,31 @@
                 });
             } else { caret.textContent = '·'; caret.disabled = true; }
             row.appendChild(caret);
-            // Kind (maps to real MenuItem semantics on save).
+            // Kind (maps to real MenuItem semantics on save). 'Space' is only a top-level bar gap.
             const sel = document.createElement('select');
             sel.className = 'mn-kind';
-            for (const k of MENU_KIND_OPTIONS) {
+            for (const k of menuKindOptions(depth, node.kind)) {
                 const o = document.createElement('option'); o.value = k; o.textContent = k;
                 sel.appendChild(o);
             }
             sel.value = node.kind;
             sel.title = 'Item kind (how it behaves at runtime)';
             sel.addEventListener('change', () => {
-                if (sel.value === 'Separator') node.header = '';
-                if (node.kind === 'Separator' && sel.value !== 'Separator' && !node.header) node.header = 'New Item';
-                node.kind = sel.value;
+                const to = sel.value;
+                if (to === 'Space') {
+                    node.kind = 'Space';
+                    node.header = '';
+                    node.children = [];
+                    if (!(Number(node.width) > 0)) node.width = 12;
+                } else if (node.kind === 'Space') {
+                    node.kind = to;
+                    delete node.width;
+                    if (to !== 'Separator' && !node.header) node.header = 'New Item';
+                } else {
+                    if (to === 'Separator') node.header = '';
+                    else if (node.kind === 'Separator' && !node.header) node.header = 'New Item';
+                    node.kind = to;
+                }
                 renderMenuTree();
                 menuFocus(path);
             });
@@ -2211,6 +2493,24 @@
                 lbl.className = 'mn-sep-label';
                 lbl.textContent = '—— separator ——';
                 row.appendChild(lbl);
+            } else if (isSpace) {
+                const span = document.createElement('span');
+                span.className = 'mn-space';
+                const inp = document.createElement('input');
+                inp.type = 'number'; inp.className = 'mn-width';
+                inp.min = '1'; inp.max = '500';
+                inp.value = String(Number(node.width) > 0 ? Number(node.width) : 12);
+                inp.title = 'Width of the invisible gap between items, in pixels';
+                inp.addEventListener('input', () => {
+                    const w = parseInt(inp.value, 10);
+                    node.width = Number.isFinite(w) && w > 0 ? Math.min(500, w) : 12;
+                });
+                inp.addEventListener('keydown', (e) => { e.stopPropagation(); });
+                span.appendChild(inp);
+                const px = document.createElement('span');
+                px.className = 'mn-sep-label'; px.textContent = 'px gap';
+                span.appendChild(px);
+                row.appendChild(span);
             } else {
                 const inp = document.createElement('input');
                 inp.type = 'text'; inp.className = 'mn-header';
@@ -2299,7 +2599,7 @@
     // ---------------- Status Items editor (flat list) ----------------
     // A Status Bar is a DockPanel strip; this editor manages its child controls (kind + text +
     // a LEFT/RIGHT anchor). Items are listed left→right; Save writes the real child controls.
-    const STATUS_KIND_OPTIONS = ['TextBlock', 'TextBox', 'Button', 'ProgressBar', 'Separator', 'StatusDate'];
+    const STATUS_KIND_OPTIONS = ['TextBlock', 'TextBox', 'Button', 'ProgressBar', 'Separator', 'StatusDate', 'XYTracker'];
     let statusEdit = null; // { name, items: [{kind, text, position}] }
     const statusBtn = (label, cls, title, fn) => {
         const b = document.createElement('button');
@@ -2337,7 +2637,7 @@
             } else {
                 const lbl = document.createElement('span');
                 lbl.className = 'mn-sep-label';
-                lbl.textContent = it.kind === 'StatusDate' ? 'live clock' : it.kind === 'ProgressBar' ? '0–100%' : 'gap';
+                lbl.textContent = it.kind === 'StatusDate' ? 'live clock' : it.kind === 'XYTracker' ? 'form WxH' : it.kind === 'ProgressBar' ? '0–100%' : 'gap';
                 row.appendChild(lbl);
             }
             const posSel = document.createElement('select');
@@ -2742,6 +3042,11 @@
             const EST = 7.3; // approx px per header char at the bar's ~13px font
             let cursor = c.x + 3;
             items.forEach((it, i) => {
+                if (it.kind === 'Space') {
+                    // An invisible gap of the space's width (px) between the items on the bar.
+                    cursor += (Number(it.width) > 0 ? Number(it.width) : 12);
+                    return;
+                }
                 if (it.kind === 'Separator') {
                     const s = document.createElement('div');
                     s.className = 'menu-dummy-sep';

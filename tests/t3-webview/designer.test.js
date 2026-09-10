@@ -15,7 +15,8 @@ const DESIGNER_JS = path.join(__dirname, '..', '..', 'media', 'designer.js');
 const DESIGNER_CSS = path.join(__dirname, '..', '..', 'media', 'designer.css');
 
 const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomValue', 'canvasWrap',
-    'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
+    'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
+    'menuDummies',
     'contextMenu', 'ctxDelete', 'ctxCut', 'ctxCopy', 'ctxPaste', 'ctxMoveToContainer',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
@@ -25,11 +26,12 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'splitModal', 'splitTitle', 'splitZones', 'splitCols', 'splitRows', 'splitPanesRow', 'splitPanesLabel', 'splitCount', 'splitMinus', 'splitPlus', 'splitSave', 'splitCancel',
     'splitterModal', 'splitterTitle', 'splitterBody', 'splitterSave', 'splitterCancel',
     'dgModal', 'dgTitle', 'dgHint', 'dgBody', 'dgSave', 'dgCancel',
+    'codeModal', 'codeHint', 'codeBody', 'codeRecheck', 'codeFixAll', 'codeClose',
     'cellHighlight',
     'btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'dotGrid',
     'dotGridModal', 'dotGridSpacingX', 'dotGridSpacingY', 'dotGridColor', 'dotGridDotSize',
     'dotGridSave', 'dotGridCancel',
-    'multiSel', 'marquee', 'radiusGuide',
+    'multiSel', 'marquee', 'radiusGuide', 'splitGuide',
     'btnAlignLeft', 'btnAlignCentre', 'btnAlignRight', 'btnAlignTop', 'btnAlignMiddle', 'btnAlignBottom',
     'btnAlignText', 'btnSameWidth', 'btnSameHeight', 'btnEqualV', 'btnEqualH',
     'crosshair', 'chH', 'chV', 'btnCrosshair',
@@ -58,7 +60,8 @@ function setup() {
             || id === 'splitZones' || id === 'splitCols' || id === 'splitRows' || id === 'splitMinus' || id === 'splitPlus'
             || id === 'splitSave' || id === 'splitCancel'
             || id === 'splitterSave' || id === 'splitterCancel'
-            || id === 'dgSave' || id === 'dgCancel') return 'button';
+            || id === 'dgSave' || id === 'dgCancel'
+            || id === 'codeRecheck' || id === 'codeFixAll' || id === 'codeClose') return 'button';
         if (id === 'splitCount') return 'input';
         if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
@@ -131,6 +134,13 @@ module.exports = async (t) => {
     }
     t.pass('jsdom', 'available', '');
 
+    // The fixture must mirror EVERY element media/designer.js looks up: a missing id makes
+    // `$('…')` return null, the script throws at load time and this whole layer silently collapses
+    // to a handful of actions (an added toolbar button once hid ~350 checks this way).
+    const wantedIds = [...new Set([...fs.readFileSync(DESIGNER_JS, 'utf8').matchAll(/\$\('([A-Za-z0-9_]+)'\)/g)].map((m) => m[1]))];
+    t.equal(wantedIds.filter((id) => IDS.includes(id) === false), [], 'fixture',
+        'IDS covers every element designer.js uses');
+
     const css = fs.readFileSync(DESIGNER_CSS, 'utf8');
     t.ok(/pointer-events:\s*none/.test(css), 'css', 'selection box pointer-events:none (click-select fix)');
     // Properties sidebar: everything up to & including "Show advanced" stays pinned; ONLY the
@@ -178,6 +188,44 @@ module.exports = async (t) => {
     dispatch('click', 'canvas', { clientX: 110, clientY: 60 });
     t.equal(posted[posted.length - 1].type, 'select', 'click-select', 'posts select');
     t.equal(posted[posted.length - 1].name, 'btn1', 'click-select', 'name = btn1');
+
+    // --- arrow keys nudge the selection (the WHOLE selection moves together) ---
+    // Single selection: ArrowRight posts a 1 px nudge for the selected control only.
+    posted.length = 0;
+    s.window.document.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    let nudge = posted.find((m) => m.type === 'nudge');
+    t.ok(!!nudge && Array.isArray(nudge.names) && nudge.names.length === 1 && nudge.names[0] === 'btn1', 'nudge', 'ArrowRight nudges the selected control');
+    t.equal(nudge && nudge.dx, 1, 'nudge', 'plain arrow = 1 px');
+    t.equal(nudge && nudge.dy, 0, 'nudge', 'no vertical move for Right');
+
+    // Shift+ArrowUp = the coarse 10 px step.
+    posted.length = 0;
+    s.window.document.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true, shiftKey: true }));
+    nudge = posted.find((m) => m.type === 'nudge');
+    t.ok(!!nudge, 'nudge', 'Shift+ArrowUp posts a nudge');
+    t.equal(nudge && nudge.dx, 0, 'nudge', 'Shift+Up = no horizontal move');
+    t.equal(nudge && nudge.dy, -10, 'nudge', 'Shift = 10 px step');
+
+    // Multi-selection: ctrl+click btn2 (btn1 stays the anchor) → ArrowDown moves BOTH together.
+    dispatch('click', 'canvas', { clientX: 320, clientY: 60, ctrlKey: true });
+    posted.length = 0;
+    s.window.document.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    nudge = posted.find((m) => m.type === 'nudge');
+    t.ok(!!nudge && Array.isArray(nudge.names), 'nudge', 'ArrowDown after multi-select posts a nudge');
+    t.equal(nudge.names.length, 2, 'nudge', 'both selected controls move together');
+    t.ok(nudge.names.includes('btn1') && nudge.names.includes('btn2'), 'nudge', 'names = anchor + ctrl-clicked');
+    t.equal(nudge.dy, 1, 'nudge', 'ArrowDown = 1 px down');
+    t.equal(nudge.dx, 0, 'nudge', 'ArrowDown = no horizontal move');
+
+    // Typing in a text field must NOT nudge (arrows are for the field's cursor).
+    const someInput = s.window.document.createElement('input');
+    s.window.document.body.appendChild(someInput);
+    someInput.focus();
+    posted.length = 0;
+    someInput.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+    t.ok(!posted.some((m) => m.type === 'nudge'), 'nudge', 'arrow in a text input does not nudge');
+    someInput.remove();
+
     const sel = $('selection');
     t.equal(sel.hidden, false, 'click-select', 'selection shown');
     t.equal(sel.querySelectorAll('.handle').length, 8, 'click-select', '8 resize handles (unlocked)');
@@ -1021,6 +1069,60 @@ module.exports = async (t) => {
         t.ok(posted.every((m) => m.type !== 'saveMenuItems'), 'menu-empty', 'Escape does not save');
     }
 
+    // --- 'Space' top-level kind: an invisible, pixel-wide gap between bar items ---
+    {
+        // A Space reserves a gap on the bar: no dummy chip is drawn for it.
+        msg(Object.assign(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'mainMenu', type: 'Menu', x: 0, y: 0, w: 800, h: 32, parent: 'Root' }
+        ]), {
+            menus: {
+                mainMenu: [
+                    { kind: 'Item', header: 'File', children: [{ kind: 'Item', header: 'Exit' }] },
+                    { kind: 'Space', width: 24 },
+                    { kind: 'Item', header: 'View' }
+                ]
+            }
+        }));
+        const dm = $('menuDummies');
+        t.equal(dm.children.length, 3, 'menu-space', 'dummies = File, View + trailing "+" (the Space reserves a gap, no chip)');
+        t.equal(dm.children[0].textContent, 'File', 'menu-space', 'first dummy is File');
+        t.equal(dm.children[1].textContent, 'View', 'menu-space', 'no chip between File and View for the Space');
+
+        // Open the editor on File → top-level rows offer Space; a NESTED item does not.
+        dm.children[0].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const rows0 = [...$('menuBody').querySelectorAll('.mn-row')];
+        const fileRow = rows0.find((r) => r.dataset.path === '0');
+        const exitRow = rows0.find((r) => r.dataset.path === '0.0');
+        const viewRow = rows0.find((r) => r.dataset.path === '2');
+        const topKinds = [...fileRow.querySelector('.mn-kind').options].map((o) => o.value);
+        const nestedKinds = [...exitRow.querySelector('.mn-kind').options].map((o) => o.value);
+        t.ok(topKinds.includes('Space'), 'menu-space', 'a top-level row offers the Space kind');
+        t.ok(!nestedKinds.includes('Space'), 'menu-space', 'a nested (submenu) item does NOT offer Space');
+        t.equal(rows0.find((r) => r.querySelector('.mn-width')).querySelector('.mn-width').value, '24', 'menu-space', 'space width round-trips into the px field');
+        t.equal(viewRow.querySelector('.mn-header').value, 'View', 'menu-space', 'View is the last top-level item');
+
+        // Turn the last top-level item (View) into a Space and set its width, then Save.
+        const vsel = viewRow.querySelector('.mn-kind');
+        vsel.value = 'Space';
+        vsel.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        const rows1 = [...$('menuBody').querySelectorAll('.mn-row')];
+        const spaceRow = [...rows1].reverse().find((r) => r.querySelector('.mn-width'));
+        t.ok(!!spaceRow, 'menu-space', 'switching a top-level item to Space shows the px width field');
+        const wInp = spaceRow.querySelector('.mn-width');
+        wInp.value = '30';
+        wInp.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        posted.length = 0;
+        $('menuSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const savSpace = posted[posted.length - 1];
+        t.equal(savSpace.type, 'saveMenuItems', 'menu-space', 'Save posts saveMenuItems');
+        const sp = [...savSpace.items].reverse().find((x) => x.kind === 'Space'); // the one just edited
+        t.ok(!!sp, 'menu-space', 'saved tree carries a Space node');
+        t.equal(sp.width, 30, 'menu-space', 'Space width in px is carried to the extension');
+        t.equal(sp.header, '', 'menu-space', 'a Space has no header');
+    }
+
     // --- Status Items editor (the Status Bar is a DockPanel; items are kind + text + Left/Right) ---
     // The 'Status Items' property opens a FLAT item editor (no nesting). Save posts the list back
     // and the extension writes the child controls; each item is anchored LEFT or RIGHT.
@@ -1187,6 +1289,38 @@ module.exports = async (t) => {
         t.equal(spv.items[0].visible, false, 'splitters', 'visibility change carried');
         t.equal(spv.items[1].direction, 'horizontal', 'splitters', 'second row preserved');
         t.equal($('splitterModal').hidden, true, 'splitters', 'Save closes the editor');
+    }
+
+    // --- design-time splitter drag: press on a SplitPanel divider → guide follows → ONE
+    // 'setSplitter' post on release (the extension turns it into a pane size). ---
+    {
+        msg({
+            type: 'frame', png: 'AA==', width: 800, height: 450,
+            controls: [
+                { name: 'Root', type: 'DockPanel', x: 0, y: 0, width: 800, height: 450, parent: null, locked: false },
+                { name: 'SplitPanel1Pane0', type: 'Canvas', x: 60, y: 60, width: 180, height: 240, parent: null, locked: false },
+                { name: 'SplitPanel1Pane1', type: 'Canvas', x: 247, y: 60, width: 180, height: 240, parent: null, locked: false }
+            ],
+            splitBars: [
+                { pane: 'SplitPanel1Pane0', other: 'SplitPanel1Pane1', axis: 'v', x: 240, y: 60, w: 7, h: 240 }
+            ]
+        });
+        posted.length = 0;
+        $('splitGuide').hidden = true; // real DOM ships it hidden
+        const pdSplit = new s.window.MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: 243, clientY: 150 });
+        $('canvas').dispatchEvent(pdSplit);
+        t.equal($('splitGuide').hidden, true, 'splitter-drag', 'guide hidden until the divider moves');
+        dispatch('pointermove', 'canvas', { clientX: 300, clientY: 150 });
+        t.equal($('splitGuide').hidden, false, 'splitter-drag', 'guide shown while dragging the divider');
+        dispatch('pointerup', 'canvas', { clientX: 300, clientY: 150 });
+        const sp = posted.find((m) => m.type === 'setSplitter');
+        t.ok(!!sp, 'splitter-drag', 'pointerdown on a divider starts a splitter drag');
+        t.equal(sp && sp.pane, 'SplitPanel1Pane0', 'splitter-drag', 'left/top pane carried');
+        t.equal(sp && sp.other, 'SplitPanel1Pane1', 'splitter-drag', 'far pane carried');
+        t.equal(sp && sp.axis, 'v', 'splitter-drag', 'vertical axis carried');
+        t.equal(sp && sp.pos, 300, 'splitter-drag', 'pointer position along the axis carried');
+        t.equal($('splitGuide').hidden, true, 'splitter-drag', 'guide hidden after release');
+        t.equal(posted.filter((m) => m.type === 'setSplitter').length, 1, 'splitter-drag', 'exactly one setSplitter message');
     }
 
     // --- 'Rows' / 'Columns' editors (DataGrid decoration) ---

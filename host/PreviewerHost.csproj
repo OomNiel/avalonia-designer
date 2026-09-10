@@ -10,13 +10,24 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.0.10" />
-    <PackageReference Include="Avalonia.Headless" Version="11.0.10" />
-    <PackageReference Include="Avalonia.Skia" Version="11.0.10" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.0.10" />
-    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.0.10" />
+    <!-- Avalonia 12.1.1 — the SAME version generated projects target (single-version stack, 2026-09-07). -->
+    <PackageReference Include="Avalonia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.1" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
+  </ItemGroup>
+
+  <!-- Shared with generated C# projects (the scaffold copies the same file into them):
+       EXIF-aware image loading, so a JPEG with a camera orientation tag renders upright in the
+       design preview exactly like it will in the app (which calls the same loader). -->
+  <ItemGroup>
+    <Compile Include="../resources/ExifImageLoader.cs" Link="ExifImageLoader.cs" />
+    <!-- GrumpyPanel (a Border subclass, also bundled into generated projects) is linked so the
+         programmatic builder can realise <chrome:GrumpyPanel> elements in the preview. -->
+    <Compile Include="../resources/GrumpyPanel.cs" Link="GrumpyPanel.cs" />
   </ItemGroup>
 
 </Project>

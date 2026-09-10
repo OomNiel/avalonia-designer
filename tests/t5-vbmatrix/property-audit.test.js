@@ -35,7 +35,8 @@ const META_KEYS = new Set(['__name__', '__type__', '__theme__']);
 const MANAGED_KEYS = new Set([
     'Command', 'CommandParameter', 'SelectedItem', 'Items', 'ItemsSource', 'UndoRedoDepth',
     'SplitLayout', 'SplitPanelPaneBorder', 'Splitters', 'Rows', 'Columns',
-    'MenuItems', 'StatusItems', 'Grid.Defs', 'chrome:AnchorHelper.Anchor'
+    'MenuItems', 'StatusItems', 'Grid.Defs', 'chrome:AnchorHelper.Anchor',
+    'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview'
 ]);
 // Keys our writer stores as DERIVED XAML rather than an attribute of the same name.
 const DERIVED_KEYS = new Set(['Angle', 'Radius']);

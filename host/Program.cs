@@ -64,6 +64,14 @@ internal static class Program
         listener.Start();
         Console.WriteLine($"PREVIEWER_HOST_READY port={port}");
 
+        // Safety net: if the extension never manages to connect (crashed or killed right after
+        // spawning us), don't linger as an orphan — exit after 90 s without a single client.
+        var served = 0;
+        using var idle = new Timer(_ =>
+        {
+            if (Volatile.Read(ref served) == 0) Environment.Exit(0);
+        }, null, TimeSpan.FromSeconds(90), Timeout.InfiniteTimeSpan);
+
         try
         {
             while (true)
@@ -75,7 +83,16 @@ internal static class Program
                 if (ctx.Request.IsWebSocketRequest)
                 {
                     using var ws = ctx.AcceptWebSocketAsync(null).GetAwaiter().GetResult().WebSocket;
+                    Interlocked.Exchange(ref served, 1);
                     Serve(ws);
+
+                    // The extension keeps ONE socket per host process and spawns a fresh host
+                    // instead of reconnecting to this port, so a dropped socket means this
+                    // process is no longer needed — that is what left ~20 orphaned hosts (and
+                    // their memory) behind after every window reload. A short grace lets a
+                    // handshake that is already in flight finish, then we exit.
+                    Thread.Sleep(500);
+                    break;
                 }
                 else
                 {

@@ -18,8 +18,12 @@ namespace AvaloniaChrome;
 ///   - anchored to one edge: the control moves with that edge;
 ///   - anchored to two OPPOSITE edges (Left+Right or Top+Bottom): the control stretches
 ///     between them (so it grows/shrinks with the container).
-/// "None" (or an empty value) disables anchoring. Only direct children of a Panel (a Canvas)
-/// are tracked; inside flow panels (StackPanel/Grid/DockPanel) the property is inert.
+/// "None" (or an empty value) disables anchoring.
+/// On a Canvas the control is free-placed (Canvas.Left/Top). Inside a DockPanel — a Status Bar
+/// strip, a Menu bar, etc. — an edge Anchor DOCKs the control to that edge (a StatusDate /
+/// TextBlock has no Dock property of its own, so Anchor is how one is pinned, e.g. Right to hug
+/// the right edge as the window resizes). Grid/StackPanel children are laid out by their panel
+/// and are not anchored.
 /// </summary>
 public class AnchorHelper
 {
@@ -53,7 +57,7 @@ internal sealed class AnchorTracker
     private static readonly ConditionalWeakTable<Control, AnchorTracker> Trackers = new();
 
     private Control? _c;
-    private Panel? _parent;
+    private Canvas? _parent;
     private bool _left, _right, _top, _bottom;
     private double _mL, _mT, _mR, _mB;
 
@@ -77,12 +81,43 @@ internal sealed class AnchorTracker
     {
         if (_c is not Control c) return;
         c.Loaded -= OnLoaded;
-        if (c.GetVisualParent() is not Panel parent) return;
-        _parent = parent;
-        Parse(AnchorHelper.GetAnchor(c));
-        Capture(c, parent.Bounds.Width, parent.Bounds.Height);
-        Apply(c, parent.Bounds.Width, parent.Bounds.Height);
-        parent.SizeChanged += OnParentSizeChanged;
+        // Free placement on a Canvas: classic Canvas.Left/Top anchoring (keeps a fixed distance,
+        // opposite-edge pairs stretch). Inside a DockPanel (a Status Bar strip, …) children are
+        // edge-docked by the panel — a StatusDate/TextBlock has no Dock property, so an edge
+        // Anchor docks the control to that edge and the DockPanel keeps it pinned as the window
+        // resizes.
+        if (c.GetVisualParent() is Canvas parent)
+        {
+            _parent = parent;
+            Parse(AnchorHelper.GetAnchor(c));
+            Capture(c, parent.Bounds.Width, parent.Bounds.Height);
+            Apply(c, parent.Bounds.Width, parent.Bounds.Height);
+            parent.SizeChanged += OnParentSizeChanged;
+        }
+        else if (c.GetVisualParent() is DockPanel dock)
+        {
+            DockTo(dock, AnchorHelper.GetAnchor(c));
+        }
+    }
+
+    /** Maps an Anchor edge set to the single Dock edge for a DockPanel child (Right wins over
+     *  Left, Bottom over Top) — inside a DockPanel an edge Anchor docks the control to that edge. */
+    private static Dock AnchorDockEdge(string anchor)
+    {
+        if (anchor.Contains("Right", StringComparison.OrdinalIgnoreCase)) return Dock.Right;
+        if (anchor.Contains("Left", StringComparison.OrdinalIgnoreCase)) return Dock.Left;
+        if (anchor.Contains("Bottom", StringComparison.OrdinalIgnoreCase)) return Dock.Bottom;
+        if (anchor.Contains("Top", StringComparison.OrdinalIgnoreCase)) return Dock.Top;
+        return Dock.Left;
+    }
+
+    private void DockTo(DockPanel dock, string anchor)
+    {
+        if (_c is not Control c) return;
+        if (string.IsNullOrEmpty(anchor) || string.Equals(anchor, "None", StringComparison.OrdinalIgnoreCase)) return;
+        var edge = AnchorDockEdge(anchor);
+        if (DockPanel.GetDock(c) == edge) return; // the designer usually mirrors it already
+        DockPanel.SetDock(c, edge);
     }
 
     private void Parse(string anchor)

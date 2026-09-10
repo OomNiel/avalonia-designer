@@ -19,6 +19,8 @@ function makeProject(language, vbBridgeDll) {
         chromeVb: "' chrome vb",
         anchorCs: '// anchor cs',
         anchorVb: "' anchor vb",
+        exifCs: '// ExifImageLoader.cs (test stub)',
+        exifVb: "' ExifImageLoader.vb (test stub)",
         vbBridgeDll
     });
     return dir;
@@ -29,6 +31,10 @@ module.exports = async (t) => {
 
     for (const language of ['cs', 'vb']) {
         const dir = makeProject(language);
+        // Every new project ships the bundled EXIF-aware image loader (used by Data-Image binds).
+        const exifFile = language === 'cs' ? 'ExifImageLoader.cs' : 'ExifImageLoader.vb';
+        t.ok(fs.existsSync(path.join(dir, exifFile)), 'scaffold-exif', `${language}: ExifImageLoader bundled`);
+        t.ok(fs.readFileSync(path.join(dir, exifFile), 'utf8').includes('ExifImageLoader'), 'scaffold-exif', `${language}: ExifImageLoader has content`);
         const lj = path.join(dir, '.vscode', 'launch.json');
         const tj = path.join(dir, '.vscode', 'tasks.json');
         const sj = path.join(dir, '.vscode', 'settings.json');

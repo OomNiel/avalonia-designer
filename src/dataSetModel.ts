@@ -114,6 +114,11 @@ export interface DataTableSpec {
     /** Image controls (elsewhere on the same form) that follow this table's bound DataGrid selection
      *  and show the image file referenced by one of this table's String columns. */
     boundImages?: BoundImageRef[];
+    /** Read-only controls (ComboBox / ListBox / ItemsControl) that FOLLOW this table: they display one
+     *  String column of the rows the bound DataGrid shows, live (the generated code binds their
+     *  ItemsSource to a `ColumnFollower` built from the grid's row collection). A control may not
+     *  own a table *and* follow one. */
+    followers?: FollowerRef[];
 }
 
 export interface DataSetSpec {
@@ -125,6 +130,18 @@ export interface DataSetSpec {
 /** The table's image (Image follows the bound DataGrid selection) bindings. */
 export function boundImagesOf(t: DataTableSpec): BoundImageRef[] {
     return t.boundImages ?? [];
+}
+
+/** A read-only control that follows this table's bound DataGrid (see `followers`). */
+export interface FollowerRef {
+    control: string; // the ComboBox / ListBox / ItemsControl x:Name
+    type: string;    // its control type, so the generated code can be re-checked
+    column: string;  // the String column whose values it lists
+}
+
+/** The read-only controls that follow this table. */
+export function followersOf(t: DataTableSpec): FollowerRef[] {
+    return t.followers ?? [];
 }
 
 /** True if `s` is a usable code identifier (letters/digits/underscore, not starting with a digit). */
@@ -242,6 +259,22 @@ export function parseDataSet(text: string): DataSetSpec {
                 }
                 if (imgs.length) table.boundImages = imgs;
             }
+            // Read-only controls that follow this table (ComboBox/ListBox/ItemsControl).
+            if (Array.isArray(t.followers)) {
+                const fw: FollowerRef[] = [];
+                for (const f of t.followers) {
+                    if (f && typeof f === 'object'
+                        && typeof f.control === 'string' && f.control
+                        && typeof f.column === 'string' && f.column) {
+                        fw.push({
+                            control: f.control,
+                            type: typeof f.type === 'string' && f.type ? f.type : 'ComboBox',
+                            column: f.column
+                        });
+                    }
+                }
+                if (fw.length) table.followers = fw;
+            }
             if (table.columns.length === 0) {
                 table.columns.push({ name: 'Id', type: 'Int32', caption: 'ID', allowNull: false, sampleValue: null });
             }
@@ -275,7 +308,8 @@ export function serializeDataSet(spec: DataSetSpec): string {
             ...(t.undoRedoDepth !== undefined && t.undoRedoDepth !== 5 ? { undoRedoDepth: t.undoRedoDepth } : {}),
             ...(t.keyColumn ? { keyColumn: t.keyColumn } : {}),
             ...(t.sqlite && t.sqlite.file ? { sqlite: { file: t.sqlite.file, ...(t.sqlite.connectionString ? { connectionString: t.sqlite.connectionString } : {}), ...(t.sqlite.tableName ? { tableName: t.sqlite.tableName } : {}) } } : {}),
-            ...(t.boundImages && t.boundImages.length ? { boundImages: t.boundImages } : {})
+            ...(t.boundImages && t.boundImages.length ? { boundImages: t.boundImages } : {}),
+            ...(t.followers && t.followers.length ? { followers: t.followers } : {})
         }))
     };
     return JSON.stringify(plain, null, 2) + '\n';

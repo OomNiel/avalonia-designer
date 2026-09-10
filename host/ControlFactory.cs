@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
+using AvaloniaChrome;
 
 namespace PreviewerHost;
 
@@ -76,6 +77,30 @@ public class ControlFactory
             // current time (so the preview shows a placeholder) and a Loaded event whose code-behind
             // handler starts a per-second timer that keeps the text current at runtime.
             ["StatusDate"] = n => $"<TextBlock x:Name=\"{n}\" Text=\"{DateTime.Now:G}\" FontSize=\"14\" Loaded=\"{n}_Loaded\"/>",
+            // XYTracker (Dev Helpers): a TextBlock that reports the live WxH (pixels) of its
+            // container — or, when placed in a Status Bar, of the whole form. The Classes="XYTracker"
+            // marks it so the Status Items editor / status-kind detection can tell it apart from a
+            // StatusDate (which is also a TextBlock with a Loaded handler). The code-behind handler
+            // (insertXyTrackerClock) keeps the text current on a short timer.
+            ["XYTracker"] = n => $"<TextBlock x:Name=\"{n}\" Classes=\"XYTracker\" Text=\"800 x 494 px\" FontSize=\"13\" Loaded=\"{n}_Loaded\"/>",
+            // GrumpyPanel (Layout panels): a Border-based docking REGION — a Border frame (its own
+            // clickable chrome: BorderBrush/Background/BorderThickness/CornerRadius) whose single
+            // Child is a DockPanel whose LAST child is the named free-placement body Canvas
+            // ({n}Body). Controls dropped inside land freely in that body canvas (exact
+            // Canvas.Left/Top); dock-able controls (Menu / StatusBar / …) are instead inserted into
+            // the inner DockPanel (before the body) with DockPanel.Dock set, so they pin to the
+            // panel's edges and the free body shrinks — real docking, but NO automatic placement of
+            // undocked children. The `chrome:` prefix (xmlns:chrome="using:AvaloniaChrome") is
+            // declared by the extension when placing it (GrumpyPanel.cs/.vb are bundled into every
+            // generated project, like ChromeWindow).
+            ["GrumpyPanel"] = n => $"<chrome:GrumpyPanel x:Name=\"{n}\" Width=\"360\" Height=\"220\" Background=\"#F7F7F7\" BorderBrush=\"#909090\" BorderThickness=\"1\" CornerRadius=\"4\">\n    <DockPanel x:Name=\"{n}Dock\" LastChildFill=\"True\">\n        <Canvas x:Name=\"{n}Body\"/>\n    </DockPanel>\n</chrome:GrumpyPanel>",
+            // GrumpyStatus (Bars): a status strip built on the GrumpyPanel base. It is a
+            // GrumpyPanel Border docked BOTTOM with a dark-grey background (no border), whose
+            // single child is the DockPanel that every GrumpyPanel ships: a left status label
+            // ({n}Label), a RIGHT-docked live StatusDate clock ({n}Date, Loaded-wired by the
+            // designer's insertStatusDateClock), and the free body Canvas ({n}Body) filling the
+            // middle. Dock-able controls can be added later exactly like any GrumpyPanel.
+            ["GrumpyStatus"] = n => $"<chrome:GrumpyPanel x:Name=\"{n}\" DockPanel.Dock=\"Bottom\" Height=\"26\" Background=\"#333333\" BorderBrush=\"#333333\" BorderThickness=\"0\" CornerRadius=\"0\">\n    <DockPanel x:Name=\"{n}Dock\" LastChildFill=\"True\">\n        <TextBlock x:Name=\"{n}Label\" Text=\"Ready\" DockPanel.Dock=\"Left\" VerticalAlignment=\"Center\" Margin=\"8,0,0,0\" Foreground=\"#E6E6E6\" FontSize=\"13\"/>\n        <TextBlock x:Name=\"{n}Date\" Text=\"{DateTime.Now:G}\" DockPanel.Dock=\"Right\" VerticalAlignment=\"Center\" Margin=\"0,0,8,0\" Foreground=\"#E6E6E6\" FontSize=\"13\" Loaded=\"{n}Date_Loaded\"/>\n        <Canvas x:Name=\"{n}Body\"/>\n    </DockPanel>\n</chrome:GrumpyPanel>",
             // --- Shapes (transparent fill + black 1px outline by default) ---
             // A Line is defined by its START/END points in its own coordinate space; it has NO
             // Width/Height — its size IS the geometry (0,0 → EndPoint), so the selection box
@@ -87,7 +112,25 @@ public class ControlFactory
             ["Rectangle"] = n => $"<Rectangle x:Name=\"{n}\" Width=\"120\" Height=\"80\" Fill=\"Transparent\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>",
             ["Ellipse"] = n => $"<Ellipse x:Name=\"{n}\" Width=\"100\" Height=\"100\" Fill=\"Transparent\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>",
             // Arc is stroked only (no fill); StartAngle/SweepAngle (degrees) sweep inside its box.
-            ["Arc"] = n => $"<Arc x:Name=\"{n}\" Width=\"100\" Height=\"100\" StartAngle=\"0\" SweepAngle=\"270\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>"
+            ["Arc"] = n => $"<Arc x:Name=\"{n}\" Width=\"100\" Height=\"100\" StartAngle=\"0\" SweepAngle=\"270\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>",
+            // --- Avalonia 12 controls (GroupBox / HyperlinkButton / CommandBar family) ---
+            // The host is now on Avalonia 12.1.1 (same as generated apps), so the snippets below use
+            // the REAL tags and the TypeMap instantiates the REAL types. Since the headless string
+            // XAML loader is unavailable, these render through the programmatic builder; the Fluent
+            // theme in the form's own XAML styles them like they look at runtime.
+            // GroupBox: a HeaderedContentControl (Header + Content). Grey border keeps the box
+            // visible; the header text + rounded look come from the Fluent theme.
+            ["GroupBox"] = n => $"<GroupBox x:Name=\"{n}\" Header=\"{n}\" Width=\"220\" Height=\"150\" BorderBrush=\"#808080\" BorderThickness=\"1\" CornerRadius=\"4\" Padding=\"12\"/>",
+            // HyperlinkButton: a Button whose 12 theme draws it as an underlined link. No NavigateUri
+            // by default (an empty attribute wouldn't parse as a Uri) — add one in Properties.
+            ["HyperlinkButton"] = n => $"<HyperlinkButton x:Name=\"{n}\" Content=\"{n}\" Width=\"160\" Height=\"28\"/>",
+            // CommandBar: commands belong under CommandBar.PrimaryCommands (added via XAML until a
+            // designer 'Commands' editor exists), so the snippet is an empty bar sized like a strip.
+            ["CommandBar"] = n => $"<CommandBar x:Name=\"{n}\" Width=\"480\" Height=\"44\"/>",
+            // CommandBar command items (real Button/ToggleButton subclasses in 12).
+            ["CommandBarButton"] = n => $"<CommandBarButton x:Name=\"{n}\" Content=\"{n}\" Width=\"120\" Height=\"32\"/>",
+            ["CommandBarToggleButton"] = n => $"<CommandBarToggleButton x:Name=\"{n}\" Content=\"{n}\" Width=\"120\" Height=\"32\"/>",
+            ["CommandBarSeparator"] = n => $"<CommandBarSeparator x:Name=\"{n}\" Width=\"8\" Height=\"24\" Margin=\"4,0\"/>"
         };
     }
 
@@ -136,10 +179,21 @@ public class ControlFactory
         ["Canvas"] = typeof(Canvas),
         ["UserControl"] = typeof(UserControl),
         ["Window"] = typeof(Window),
+        // The bundled GrumpyPanel (a Border subclass in AvaloniaChrome) — linked into the host
+        // from resources/GrumpyPanel.cs so the programmatic builder can realise it for real.
+        ["GrumpyPanel"] = typeof(GrumpyPanel),
         ["Line"] = typeof(Line),
         ["Rectangle"] = typeof(Rectangle),
         ["Ellipse"] = typeof(Ellipse),
-        ["Arc"] = typeof(Arc)
+        ["Arc"] = typeof(Arc),
+        // Avalonia 12-only controls — the host is now ON Avalonia 12.1.1 (same as generated apps),
+        // so these map to their REAL types and render genuinely in the programmatic builder.
+        ["GroupBox"] = typeof(GroupBox),
+        ["HyperlinkButton"] = typeof(HyperlinkButton),
+        ["CommandBar"] = typeof(CommandBar),
+        ["CommandBarButton"] = typeof(CommandBarButton),
+        ["CommandBarToggleButton"] = typeof(CommandBarToggleButton),
+        ["CommandBarSeparator"] = typeof(CommandBarSeparator)
     };
 
     public static Type? GetTypeForName(string name)

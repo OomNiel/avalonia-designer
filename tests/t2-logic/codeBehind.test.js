@@ -8,8 +8,10 @@ const { Uri } = require('vscode');
 const {
     bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet,
     hasDataSetBinding, findItemsSourceBinding, removeItemsSourceBinding,
-    insertHandlerIntoCodeBehind, convertCodeBehindToChrome, hasDefaultEvent, defaultEventFor,
-    applyAccessors
+    insertHandlerIntoCodeBehind, findHandlerInCodeBehind, convertCodeBehindToChrome, hasDefaultEvent, defaultEventFor,
+    removeHandlersFromCodeBehind,
+    applyAccessors,
+    bindImageToGrid, hasDataImageBinding, unbindImageFromGrid
 } = require('../../out/codeBehind.js');
 
 const NS = 'xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"';
@@ -92,6 +94,33 @@ module.exports = async (t) => {
         t.equal(findItemsSourceBinding(p.uri, 'lstTest'), 'planets', 'asset-bind', 'vb find round-trip');
         await removeItemsSourceBinding(p.uri, 'lstTest');
         t.ok(!p.read().includes('lstTest.ItemsSource'), 'asset-bind', 'vb line removed');
+    }
+
+    // --- Data-Image binding loads via the bundled EXIF-aware ExifImageLoader (JPEGs upright),
+    //     not a plain Bitmap(path) — which ignores the EXIF Orientation tag (portrait JPEGs
+    //     would render sideways while PNGs stay upright). Bind/unbind must round-trip. ---
+    {
+        const p = tmpProject('cs');
+        const ref = { datasetName: 'D', tableName: 'Family', controlName: 'Image1', gridName: 'DataGrid1', column: 'Image' };
+        const file = await bindImageToGrid(p.uri, ref);
+        t.ok(!!file, 'data-image', 'cs bind returns a path');
+        const cs = p.read();
+        t.ok(cs.includes('Image1.Source = ExifImageLoader.LoadImageOriented(row.Image);'), 'data-image', 'cs loads via ExifImageLoader.LoadImageOriented');
+        t.ok(!cs.includes('new Avalonia.Media.Imaging.Bitmap(row.Image)'), 'data-image', 'cs no longer uses a plain Bitmap(path)');
+        t.ok(hasDataImageBinding(p.uri, 'Image1'), 'data-image', 'cs hasDataImageBinding true');
+        await unbindImageFromGrid(p.uri, 'Image1');
+        t.ok(!hasDataImageBinding(p.uri, 'Image1'), 'data-image', 'cs unbind removes the binding');
+    }
+    {
+        const p = tmpProject('vb');
+        const ref = { datasetName: 'D', tableName: 'Family', controlName: 'Image1', gridName: 'DataGrid1', column: 'Image' };
+        await bindImageToGrid(p.uri, ref);
+        const vb = p.read();
+        t.ok(vb.includes('Image1.Source = ExifImageLoader.LoadImageOriented(row.Image)'), 'data-image', 'vb loads via ExifImageLoader.LoadImageOriented');
+        t.ok(!vb.includes('New Avalonia.Media.Imaging.Bitmap(row.Image)'), 'data-image', 'vb no longer uses a plain Bitmap(path)');
+        t.ok(hasDataImageBinding(p.uri, 'Image1'), 'data-image', 'vb hasDataImageBinding true');
+        await unbindImageFromGrid(p.uri, 'Image1');
+        t.ok(!hasDataImageBinding(p.uri, 'Image1'), 'data-image', 'vb unbind removes the binding');
     }
 
     // --- VB shape accessors: a shape control gets an accessor AND the Shapes namespace import ---
@@ -192,6 +221,49 @@ module.exports = async (t) => {
         t.ok(/Sub newHandler\(/.test(p.read()), 'handler', 'vb method present');
     }
 
+    // --- middle-click NAVIGATE: findHandlerInCodeBehind locates an existing handler WITHOUT
+    //     writing anything (placement owns creation; middle-click just jumps to it). ---
+    {
+        // CS fixture already contains `private void btnTest_Click(`.
+        const p = tmpProject('cs');
+        const loc = findHandlerInCodeBehind(p.uri, 'btnTest_Click');
+        t.ok(!!loc && loc.cursorOffset >= 0, 'find-handler', 'cs finds the existing handler');
+        t.equal((p.read().match(/btnTest_Click\s*\(/g) || []).length, 1, 'find-handler', 'cs file untouched (no re-insert)');
+        // A missing handler is reported as absent (so the fallback can create it).
+        t.equal(findHandlerInCodeBehind(p.uri, 'nope_Click'), undefined, 'find-handler', 'cs absent handler -> undefined');
+    }
+    {
+        // VB fixture already contains `Private Sub btnTest_Click(`.
+        const p = tmpProject('vb');
+        const loc = findHandlerInCodeBehind(p.uri, 'btnTest_Click');
+        t.ok(!!loc && loc.cursorOffset >= 0, 'find-handler', 'vb finds the existing handler');
+        t.equal((p.read().match(/btnTest_Click\s*\(/gi) || []).length, 1, 'find-handler', 'vb file untouched (no re-insert)');
+        t.equal(findHandlerInCodeBehind(p.uri, 'nope_Click'), undefined, 'find-handler', 'vb absent handler -> undefined');
+    }
+
+    // --- no duplicate when the existing handler was hand-edited to a DIFFERENT accessibility /
+    //     modifier (the classic "middle-click still inserts code-behind" duplicate). ---
+    {
+        const p = tmpProject('cs');
+        const alt = p.read().replace('private void btnTest_Click(', 'public async void btnTest_Click(');
+        fs.writeFileSync(path.join(p.dir, 'TestForm.axaml.cs'), alt);
+        const loc = findHandlerInCodeBehind(p.uri, 'btnTest_Click');
+        t.ok(!!loc, 'find-handler', 'cs recognises a public async handler');
+        const r = await insertHandlerIntoCodeBehind(p.uri, 'btnTest_Click', 'Click');
+        t.ok(!!r, 'find-handler', 'cs insert still returns a location');
+        t.equal((p.read().match(/btnTest_Click\s*\(/g) || []).length, 1, 'find-handler', 'cs NO duplicate for public async handler');
+    }
+    {
+        const p = tmpProject('vb');
+        const alt = p.read().replace('Private Sub btnTest_Click(', 'Public Shared Sub btnTest_Click(');
+        fs.writeFileSync(path.join(p.dir, 'TestForm.axaml.vb'), alt);
+        const loc = findHandlerInCodeBehind(p.uri, 'btnTest_Click');
+        t.ok(!!loc, 'find-handler', 'vb recognises a Public Shared handler');
+        const r = await insertHandlerIntoCodeBehind(p.uri, 'btnTest_Click', 'Click');
+        t.ok(!!r, 'find-handler', 'vb insert still returns a location');
+        t.equal((p.read().match(/btnTest_Click\s*\(/gi) || []).length, 1, 'find-handler', 'vb NO duplicate for Public Shared handler');
+    }
+
     // --- Chrome conversion of code-behind (both languages) ---
     {
         const p = tmpProject('cs');
@@ -202,5 +274,45 @@ module.exports = async (t) => {
         const p = tmpProject('vb');
         await convertCodeBehindToChrome(p.uri);
         t.ok(p.read().includes('Inherits AvaloniaChrome.ChromeWindow'), 'chrome-convert', 'vb base class (fully qualified)');
+    }
+
+    // --- Deleting a VB handler that CONTAINS a nested anonymous Sub (the XY-Tracker / StatusDate
+    //     timer `AddHandler … Sub(s2, e2) … End Sub`) must remove the WHOLE method — the inner
+    //     `End Sub` must not truncate it and leave `timer.Start()/End Sub` behind. ---
+    {
+        const p = tmpProject('vb');
+        const vbWithClock = `Imports Avalonia.Controls
+
+Namespace Proj
+    Public Class TestForm
+        Inherits Window
+
+        Public Sub New()
+            InitializeComponent()
+        End Sub
+
+        Private Sub XYTracker1_Loaded(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)
+            Dim timer As New Avalonia.Threading.DispatcherTimer With {.Interval = TimeSpan.FromMilliseconds(200)}
+            AddHandler timer.Tick, Sub(s2, e2)
+                Dim c = TryCast(sender, Avalonia.Controls.Control)
+                Dim p = TryCast(c.Parent, Avalonia.Visual)
+                If p IsNot Nothing Then
+                    XYTracker1.Text = String.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0} x {1:0} px", p.Bounds.Width, p.Bounds.Height)
+                End If
+            End Sub
+            timer.Start()
+        End Sub
+
+        Private Sub btnTest_Click(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)
+        End Sub
+    End Class
+End Namespace
+`;
+        fs.writeFileSync(path.join(p.dir, 'TestForm.axaml.vb'), vbWithClock);
+        await removeHandlersFromCodeBehind(p.uri, ['XYTracker1_Loaded']);
+        const vb = p.read();
+        t.ok(!/XYTracker1_Loaded/.test(vb), 'vb-remove-nested', 'whole XYTracker handler removed');
+        t.ok(!/timer\.Start\(\)/.test(vb), 'vb-remove-nested', 'no timer.Start() leftover');
+        t.ok(/btnTest_Click/.test(vb), 'vb-remove-nested', 'a later sibling handler survives');
     }
 };

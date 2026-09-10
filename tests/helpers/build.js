@@ -40,9 +40,15 @@ function generateProject({ language, tplId, name, outDir = OUT_DIR }) {
     const chromeVb = readResource('ChromeWindow.vb');
     const anchorCs = readResource('AnchorHelper.cs');
     const anchorVb = readResource('AnchorHelper.vb');
+    const exifCs = readResource('ExifImageLoader.cs');
+    const exifVb = readResource('ExifImageLoader.vb');
+    const grumpyCs = readResource('GrumpyPanel.cs');
+    const grumpyVb = readResource('GrumpyPanel.vb');
+    const followerCs = readResource('ColumnFollower.cs');
+    const followerVb = readResource('ColumnFollower.vb');
     generateProjectScaffold({
         language, tpl, name, projectPath: dir,
-        chromeCs, chromeVb, anchorCs, anchorVb
+        chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, followerCs, followerVb
     });
     return dir;
 }

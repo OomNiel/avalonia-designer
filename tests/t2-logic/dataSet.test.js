@@ -85,6 +85,23 @@ module.exports = async (t) => {
   t.ok(vb.includes('addData.IsPlaceholder'), 'generate', 'vb add-row handler re-checks DataContext');
   t.ok(vb.includes('AddHandler grid.UnloadingRow, Sub(s, e) e.Row.RemoveHandler(Avalonia.Input.InputElement.PointerPressedEvent, addRowPointer)'), 'generate', 'vb add-row handler removed on UnloadingRow');
 
+  // Row-dialog file browser: every String column gets a "Browse…" button that opens the OS file
+  // picker (images first, then all files), stores the picked file's FULL path in that box, and
+  // remembers the folder for next time (memory + best-effort file next to the app). C# and VB.
+  t.ok(cs.includes('using Avalonia.Platform.Storage;'), 'browse', 'cs imports Storage');
+  t.ok(cs.includes('private async Task BrowseAsync(TextBox box)'), 'browse', 'cs picker method');
+  t.ok(cs.includes('var browse_nameInput = new Button { Content = "Browse\u2026" }'), 'browse', 'cs browse button on the String box');
+  t.ok(cs.includes('browse_nameInput.Click += async (_, _) => await BrowseAsync(nameInput);'), 'browse', 'cs button opens the picker for its box');
+  t.ok(cs.includes('public static class FilePickerMemory'), 'browse', 'cs remembers the last folder');
+  t.ok(cs.includes('FilePickerFileTypes.ImageAll') && cs.includes('FilePickerFileTypes.All'), 'browse', 'cs images-first filter');
+  t.ok(cs.includes('box.Text = path;'), 'browse', 'cs stores the full path');
+  t.ok(vb.includes('Imports Avalonia.Platform.Storage'), 'browse', 'vb imports Storage');
+  t.ok(vb.includes('Private Async Function BrowseAsync(box As TextBox) As System.Threading.Tasks.Task'), 'browse', 'vb picker method');
+  t.ok(vb.includes('Dim browseName As New Button With {.Content = "Browse…"}'), 'browse', 'vb browse button on the String box');
+  t.ok(vb.includes('AddHandler browseName.Click, AddressOf BrowseFileName'), 'browse', 'vb handler name distinct from the button (case-insensitive)');
+  t.ok(vb.includes('Public Module FilePickerMemory'), 'browse', 'vb remembers the last folder');
+  t.ok(vb.includes('box.Text = path'), 'browse', 'vb stores the full path');
+
   const xsd = generateXsd(spec);
   t.ok(xsd.includes('<xs:schema'), 'generate', 'xsd schema root');
   t.ok(xsd.includes('Customers'), 'generate', 'xsd table element');

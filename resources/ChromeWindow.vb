@@ -66,7 +66,45 @@ Namespace AvaloniaChrome
             End Set
         End Property
 
-        Private Const TitleBarHeight As Double = 44
+        Public Shared ReadOnly TitleBarHeightProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of ChromeWindow, Double)(NameOf(TitleBarHeight), 44.0)
+
+        ''' <summary>Height of the custom title bar in pixels (default 44). The body sits below it.</summary>
+        Public Property TitleBarHeight As Double
+            Get
+                Return GetValue(TitleBarHeightProperty)
+            End Get
+            Set(value As Double)
+                SetValue(TitleBarHeightProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly TitleBarBackgroundProperty As StyledProperty(Of IBrush) =
+            AvaloniaProperty.Register(Of ChromeWindow, IBrush)(NameOf(TitleBarBackground), New SolidColorBrush(Color.Parse("#0E2138")))
+
+        ''' <summary>Background brush of the custom title bar (default the dark navy #0E2138).</summary>
+        Public Property TitleBarBackground As IBrush
+            Get
+                Return GetValue(TitleBarBackgroundProperty)
+            End Get
+            Set(value As IBrush)
+                SetValue(TitleBarBackgroundProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly TitleBarForegroundProperty As StyledProperty(Of IBrush) =
+            AvaloniaProperty.Register(Of ChromeWindow, IBrush)(NameOf(TitleBarForeground), Brushes.White)
+
+        ''' <summary>Colour of the title-bar text (and the min/max/close glyphs) — default white.</summary>
+        Public Property TitleBarForeground As IBrush
+            Get
+                Return GetValue(TitleBarForegroundProperty)
+            End Get
+            Set(value As IBrush)
+                SetValue(TitleBarForegroundProperty, value)
+            End Set
+        End Property
+
         Private Const CornerRadiusValue As Double = 12
         Private Shared ReadOnly TitleBarColor As Color = Color.Parse("#0E2138")
         Private Shared ReadOnly TitleBarBorderColor As Color = Color.Parse("#081527")
@@ -77,6 +115,7 @@ Namespace AvaloniaChrome
 
         Private _composing As Boolean
         Private _bodyControl As Control
+        Private _userContent As Object
 
         Public Sub New()
             SetFrameless()
@@ -130,6 +169,13 @@ Namespace AvaloniaChrome
                 Finally
                     _composing = False
                 End Try
+            ElseIf change.Property Is TitleBarHeightProperty AndAlso Not _composing AndAlso _userContent IsNot Nothing Then
+                _composing = True
+                Try
+                    Content = BuildChrome(_userContent)
+                Finally
+                    _composing = False
+                End Try
             End If
         End Sub
 
@@ -152,6 +198,10 @@ Namespace AvaloniaChrome
                 .Source = Me,
                 .Path = NameOf(TitleBarTitle)
             })
+            title.Bind(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty, New Binding With {
+                .Source = Me,
+                .Path = NameOf(TitleBarForeground)
+            })
 
             Dim icon As New Image With {
                 .Width = 26,
@@ -170,9 +220,10 @@ Namespace AvaloniaChrome
                 .Converter = IconVisibleConverter
             })
 
-            Dim minimize = CaptionButton("–") ' –
-            Dim maximize = CaptionButton("□") ' □
-            Dim close = CaptionButton("✕")    ' ✕
+            Dim barHeight = TitleBarHeight ' customisable title-bar height (default 44)
+            Dim minimize = CaptionButton("–", barHeight) ' –
+            Dim maximize = CaptionButton("□", barHeight) ' □
+            Dim close = CaptionButton("✕", barHeight)    ' ✕
             AddHandler minimize.Click, Sub(s, e) WindowState = WindowState.Minimized
             AddHandler maximize.Click, Sub(s, e) ToggleMaximize()
             AddHandler close.Click, Sub(s, e) Me.Close()
@@ -188,6 +239,10 @@ Namespace AvaloniaChrome
             buttons.Children.Add(minimize)
             buttons.Children.Add(maximize)
             buttons.Children.Add(close)
+            ' The caption glyphs follow the title-bar text colour so they stay legible on a custom bar.
+            minimize.Bind(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty, New Binding With {.Source = Me, .Path = NameOf(TitleBarForeground)})
+            maximize.Bind(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty, New Binding With {.Source = Me, .Path = NameOf(TitleBarForeground)})
+            close.Bind(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty, New Binding With {.Source = Me, .Path = NameOf(TitleBarForeground)})
 
             Dim titleBar As New Border With {
                 .Height = TitleBarHeight,
@@ -201,12 +256,17 @@ Namespace AvaloniaChrome
             titleGrid.Children.Add(icon)
             titleGrid.Children.Add(buttons)
             titleBar.Child = titleGrid
+            titleBar.Bind(Border.BackgroundProperty, New Binding With {
+                .Source = Me,
+                .Path = NameOf(TitleBarBackground)
+            })
 
             AddHandler titleBar.PointerPressed, AddressOf OnTitleBarPointerPressed
             AddHandler titleBar.DoubleTapped, Sub(s, e) ToggleMaximize()
 
             ' --- Content area sits below the title bar (its own grid row) ---
             _bodyControl = TryCast(userContent, Control)
+            _userContent = userContent
             Dim content As New ContentPresenter With {
                 .Content = userContent
             }
@@ -262,7 +322,7 @@ Namespace AvaloniaChrome
             End If
         End Sub
 
-        Private Shared Function CaptionButton(content As String) As Button
+        Private Shared Function CaptionButton(content As String, height As Double) As Button
             Return New Button With {
                 .Content = content,
                 .Background = Brushes.Transparent,
@@ -270,7 +330,7 @@ Namespace AvaloniaChrome
                 .BorderThickness = New Thickness(0),
                 .CornerRadius = New CornerRadius(0),
                 .Width = 42,
-                .Height = 44,
+                .Height = height,
                 .VerticalAlignment = VerticalAlignment.Center,
                 .FontSize = 13
             }

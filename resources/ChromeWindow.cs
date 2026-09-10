@@ -63,7 +63,36 @@ public class ChromeWindow : Window
         set => SetValue(TitleBarIconProperty, value);
     }
 
-    private const double TitleBarHeight = 44;
+    public static readonly StyledProperty<double> TitleBarHeightProperty =
+        AvaloniaProperty.Register<ChromeWindow, double>(nameof(TitleBarHeight), 44.0);
+
+    /// <summary>Height of the custom title bar in pixels (default 44). The body sits below it.</summary>
+    public double TitleBarHeight
+    {
+        get => GetValue(TitleBarHeightProperty);
+        set => SetValue(TitleBarHeightProperty, value);
+    }
+
+    public static readonly StyledProperty<IBrush?> TitleBarBackgroundProperty =
+        AvaloniaProperty.Register<ChromeWindow, IBrush?>(nameof(TitleBarBackground), new SolidColorBrush(Color.Parse("#0E2138")));
+
+    /// <summary>Background brush of the custom title bar (default the dark navy #0E2138).</summary>
+    public IBrush? TitleBarBackground
+    {
+        get => GetValue(TitleBarBackgroundProperty);
+        set => SetValue(TitleBarBackgroundProperty, value);
+    }
+
+    public static readonly StyledProperty<IBrush?> TitleBarForegroundProperty =
+        AvaloniaProperty.Register<ChromeWindow, IBrush?>(nameof(TitleBarForeground), Brushes.White);
+
+    /// <summary>Colour of the title-bar text (and the min/max/close glyphs) — default white.</summary>
+    public IBrush? TitleBarForeground
+    {
+        get => GetValue(TitleBarForegroundProperty);
+        set => SetValue(TitleBarForegroundProperty, value);
+    }
+
     private const double CornerRadiusValue = 12;
     private static readonly Color TitleBarColor = Color.Parse("#0E2138");
     private static readonly Color TitleBarBorderColor = Color.Parse("#081527");
@@ -74,6 +103,7 @@ public class ChromeWindow : Window
 
     private bool _composing;
     private Control? _bodyControl;
+    private object? _userContent;
 
     public ChromeWindow()
     {
@@ -135,6 +165,20 @@ public class ChromeWindow : Window
                 _composing = false;
             }
         }
+        // A changed title-bar height rebuilds the chrome so the bar (and its caption buttons)
+        // take the new height.
+        else if (change.Property == TitleBarHeightProperty && !_composing && _userContent is not null)
+        {
+            _composing = true;
+            try
+            {
+                Content = BuildChrome(_userContent);
+            }
+            finally
+            {
+                _composing = false;
+            }
+        }
     }
 
     private Border BuildChrome(object? userContent)
@@ -156,6 +200,7 @@ public class ChromeWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
         };
         title[!TextBlock.TextProperty] = this[!TitleBarTitleProperty];
+        title[!TextBlock.ForegroundProperty] = this[!TitleBarForegroundProperty];
 
         var icon = new Image
         {
@@ -173,9 +218,10 @@ public class ChromeWindow : Window
             Converter = IconVisibleConverter,
         };
 
-        var minimize = CaptionButton("\u2013");
-        var maximize = CaptionButton("\u25A1");
-        var close = CaptionButton("\u2715");
+        var barHeight = TitleBarHeight; // customisable title-bar height (default 44)
+        var minimize = CaptionButton("\u2013", barHeight);
+        var maximize = CaptionButton("\u25A1", barHeight);
+        var close = CaptionButton("\u2715", barHeight);
         minimize.Click += (_, _) => WindowState = WindowState.Minimized;
         maximize.Click += (_, _) => ToggleMaximize();
         close.Click += (_, _) => Close();
@@ -190,21 +236,27 @@ public class ChromeWindow : Window
             VerticalAlignment = VerticalAlignment.Top,
             Children = { minimize, maximize, close },
         };
+        // The caption glyphs follow the title-bar text colour so they stay legible on a custom bar.
+        minimize[!Button.ForegroundProperty] = this[!TitleBarForegroundProperty];
+        maximize[!Button.ForegroundProperty] = this[!TitleBarForegroundProperty];
+        close[!Button.ForegroundProperty] = this[!TitleBarForegroundProperty];
 
         var titleBar = new Border
         {
-            Height = TitleBarHeight,
+            Height = barHeight,
             VerticalAlignment = VerticalAlignment.Top,
             Background = new SolidColorBrush(TitleBarColor),
             BorderBrush = new SolidColorBrush(TitleBarBorderColor),
             BorderThickness = new Thickness(0, 0, 0, 1),
             Child = new Grid { Children = { title, icon, buttons } },
         };
+        titleBar[!Border.BackgroundProperty] = this[!TitleBarBackgroundProperty];
         titleBar.PointerPressed += OnTitleBarPointerPressed;
         titleBar.DoubleTapped += (_, _) => ToggleMaximize();
 
         // --- Content area sits below the title bar (its own grid row) ---
         _bodyControl = userContent as Control;
+        _userContent = userContent;
         var content = new ContentPresenter
         {
             Content = userContent,
@@ -274,7 +326,7 @@ public class ChromeWindow : Window
     private static IBrush FrameBrush(ThemeVariant variant) =>
         new SolidColorBrush(variant == ThemeVariant.Dark ? Color.Parse("#202020") : Color.Parse("#F3F3F3"));
 
-    private static Button CaptionButton(string content)
+    private static Button CaptionButton(string content, double height)
     {
         return new Button
         {
@@ -284,7 +336,7 @@ public class ChromeWindow : Window
             BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(0),
             Width = 42,
-            Height = 44,
+            Height = height,
             VerticalAlignment = VerticalAlignment.Center,
             FontSize = 13,
         };

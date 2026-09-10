@@ -1,6 +1,8 @@
 /* T2 — propertyCatalog: every control's Properties list (Name/Type always present),
  * 'file' kind (Image Source, Window Icon, ChromeWindow TitleBarIcon), Items/ItemsSource,
- * read-only bound ItemsSource override, root vs non-root (Anchor only for non-root). */
+ * read-only bound ItemsSource override, root vs non-root (Anchor for a direct Canvas child — free
+ * placement — and for a direct DockPanel child — e.g. a Status Bar item / StatusDate, which has no
+ * Dock property, so an edge Anchor docks it; Grid/StackPanel children get no Anchor). */
 'use strict';
 const { DOMParser } = require('@xmldom/xmldom');
 const { propertyDefsFor } = require('../../out/propertyCatalog.js');
@@ -22,13 +24,36 @@ const childEls = (el) => Array.from(el.childNodes).filter((n) => n.nodeType === 
 module.exports = async (t) => {
     t.section('propertyCatalog');
 
-    // --- Button: name/type + Content + Anchor (non-root) ---
-    const btn = elFrom('<Button x:Name="b1" Content="Go"/>');
+    // --- Button on a Canvas (free placement): name/type + Content + Anchor ---
+    const onCanvas = elFrom('<Canvas><Button x:Name="b1" Content="Go"/></Canvas>');
+    const btn = childEls(onCanvas)[0];
     const btnProps = propertyDefsFor(btn);
     t.equal(keyOf(btnProps, '__name__').value, 'b1', 'props', 'Button name');
     t.equal(keyOf(btnProps, '__type__').value, 'Button', 'props', 'Button type');
     t.equal(keyOf(btnProps, 'Content').kind, 'text', 'props', 'Button Content kind');
-    t.ok(keyOf(btnProps, 'chrome:AnchorHelper.Anchor'), 'props', 'non-root has Anchor');
+    t.ok(keyOf(btnProps, 'chrome:AnchorHelper.Anchor'), 'props', 'Canvas child has Anchor');
+
+    // --- Button in a DockPanel (a Status Bar item): Anchor IS offered (edge-pin; no Dock prop) ---
+    const onDock = elFrom('<DockPanel><Button x:Name="s1" Content="Ready"/></DockPanel>');
+    const dockBtn = childEls(onDock)[0];
+    t.ok(keyOf(propertyDefsFor(dockBtn), 'chrome:AnchorHelper.Anchor'), 'props', 'DockPanel child (Status Bar item) has Anchor');
+
+    // --- A bare root Button (no element parent) gets no Anchor ---
+    const rootBtn = elFrom('<Button x:Name="r1" Content="Root"/>');
+    t.equal(!!keyOf(propertyDefsFor(rootBtn), 'chrome:AnchorHelper.Anchor'), false, 'props', 'root (parentless) Button has no Anchor');
+
+    // --- A Button inside a Grid cell is laid out by the Grid: no Anchor ---
+    const onGrid = elFrom('<Grid><Button x:Name="g1"/></Grid>');
+    const gridBtn = childEls(onGrid)[0];
+    t.equal(!!keyOf(propertyDefsFor(gridBtn), 'chrome:AnchorHelper.Anchor'), false, 'props', 'Grid cell child has no Anchor');
+
+    // --- Structural bars of the TOP-LEVEL layout DockPanel (Menu / StatusBar / Body) get no Anchor ---
+    const topWin = elFrom('<Window><DockPanel><Menu x:Name="Menu1" DockPanel.Dock="Top"/><Canvas Name="Body"/></DockPanel></Window>');
+    const topDock = childEls(topWin).find((c) => c.tagName === 'DockPanel');
+    const menu = topDock ? childEls(topDock).find((c) => (c.getAttribute('x:Name') || '') === 'Menu1') : undefined;
+    if (topDock && menu) {
+        t.equal(!!keyOf(propertyDefsFor(menu), 'chrome:AnchorHelper.Anchor'), false, 'props', 'top-level docked Menu bar has no Anchor');
+    }
 
     // --- Image: Source is a file picker + Rotate (Angle) comes from the RenderTransform ---
     const img = elFrom('<Image x:Name="i1"/>');

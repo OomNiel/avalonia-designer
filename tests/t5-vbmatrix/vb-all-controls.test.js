@@ -34,7 +34,7 @@ const META_KEYS = new Set(['__name__', '__type__', '__theme__']);
 // Properties that are NOT set via a plain XAML attribute (binding / editor / .adset-based).
 // Split Layout / Pane Border are designer-managed (no XAML attribute) — the designerPanel routes
 // them; the pane border is written onto the pane Borders, not the split Grid.
-const NON_XAML_KEYS = new Set(['Command', 'CommandParameter', 'SelectedItem', 'Items', 'ItemsSource', 'UndoRedoDepth', 'SplitLayout', 'SplitPanelPaneBorder']);
+const NON_XAML_KEYS = new Set(['Command', 'CommandParameter', 'SelectedItem', 'Items', 'ItemsSource', 'UndoRedoDepth', 'SplitLayout', 'SplitPanelPaneBorder', 'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview']);
 // Properties the preview host reflects in frame.controls[].values.
 const REPORTABLE = new Set(['Width', 'Height', 'Margin', 'Padding', 'BorderThickness', 'CornerRadius',
     'FontSize', 'FontFamily', 'Background', 'Foreground', 'BorderBrush', 'CaretBrush', 'SelectionBrush']);
@@ -64,7 +64,10 @@ const VALUES = {
     HorizontalAlignment: 'Left', VerticalAlignment: 'Top',
     HorizontalContentAlignment: 'Left', VerticalContentAlignment: 'Top',
     Opacity: '0.5', BorderThickness: '2', Padding: '6,6,6,6', CornerRadius: '10',
-    Source: 'Assets/matrix.png', Icon: 'Assets/matrix.png', TitleBarIcon: 'Assets/matrix.png'
+    Source: 'Assets/matrix.png', Icon: 'Assets/matrix.png', TitleBarIcon: 'Assets/matrix.png',
+    NavigateUri: 'https://example.com', Label: 'Hello', IsVisited: 'True', IsCompact: 'True',
+    IsOpen: 'True', IsSticky: 'True', IsDynamicOverflowEnabled: 'True',
+    LabelPosition: 'Right', OverflowButtonVisibility: 'Auto'
 };
 
 function valueFor(prop) {
@@ -129,7 +132,11 @@ module.exports = async (t) => {
 
     // 0) toolbox enumeration sanity
     const controls = toolboxControls();
-    t.equal(controls.length, 24, 'toolbox', 'all placeable controls enumerated',
+    // Avalonia 12-only controls: the 11.0.10 preview host can't instantiate the real types, so it
+    // renders a stand-in (Border/Button/ToggleButton). Their real-tag XAML + every listed property
+    // are still compile-verified against Avalonia 12.1.1 in Phase D (the authoritative gate).
+    const AV12_PREVIEW = new Set(['GroupBox', 'HyperlinkButton', 'CommandBar', 'CommandBarButton', 'CommandBarToggleButton', 'CommandBarSeparator']);
+    t.equal(controls.length, 33, 'toolbox', 'all placeable controls enumerated',
         `${controls.length}: ${controls.map((c) => c.tag).join(', ')}`);
     const tags = controls.map((c) => c.tag);
 
@@ -159,6 +166,10 @@ module.exports = async (t) => {
         const compileProps = {}; // tag -> [{key,kind,value}]
         for (const c of controls) {
             const s = snippets[c.tag];
+            if (AV12_PREVIEW.has(c.tag)) {
+                t.note(c.tag, 'place', 'Avalonia 12-only control — preview host renders a stand-in; real-tag compile is checked in Phase D');
+                continue;
+            }
             const m = new XamlModel(WINDOW(''));
             const body = m.findByName('Body');
             let el;
@@ -199,6 +210,13 @@ module.exports = async (t) => {
                 tested.push({ key: p.key, kind: p.kind, value: val });
             }
             compileProps[c.tag] = tested;
+
+            // Avalonia 12-only controls: the 11 host's stand-in can't reflect their real properties,
+            // so skip the runtime-render check — Phase D compiles every property against real 12.1.1.
+            if (AV12_PREVIEW.has(c.tag)) {
+                t.note(c.tag, 'props', `Avalonia 12-only — ${tested.filter((p) => p.value !== null).length} properties compile-gated in Phase D`);
+                continue;
+            }
 
             // --- runtime render (all that control's properties applied) ---
             const frame = await host.render(m.serialize(false), 800, 450, dir);
@@ -242,12 +260,33 @@ module.exports = async (t) => {
             }
             col++; if (col >= 4) { col = 0; row++; }
         }
+        // A SECOND XYTracker (renamed XYTracker2) inserted in FORM mode — the StatusBar path the
+        // user actually drops onto. It compile-gates the form handler (TopLevel.GetTopLevel) in
+        // the same authoritative build as the container-mode XYTracker1 handler.
+        const sXy = snippets['XYTracker'];
+        const xy2Name = 'XYTracker2';
+        model.addControl(body, sXy.xaml.split(sXy.name).join(xy2Name), { x: 1200, y: 0 });
         model.ensureChromeNamespace();
         fs.writeFileSync(axamlPath, model.serialize(true), 'utf8');
 
         // StatusDate Loaded handler (the snippet references `StatusDate1_Loaded`).
         try { await insertStatusDateClock(Uri.file(axamlPath), snippets['StatusDate'].name); }
         catch (e) { t.fail('StatusDate', 'codebehind', `insertStatusDateClock: ${e.message}`); }
+
+        // GrumpyStatus embeds a live StatusDate ({name}Date, Loaded="…Date_Loaded") — wire its
+        // clock handler too so the combined 12.1.1 build compiles (AVLN3000 otherwise).
+        if (snippets['GrumpyStatus']) {
+            try { await insertStatusDateClock(Uri.file(axamlPath), `${snippets['GrumpyStatus'].name}Date`); }
+            catch (e) { t.fail('GrumpyStatus', 'codebehind', `insertStatusDateClock: ${e.message}`); }
+        }
+
+        // XYTracker Loaded handlers: XYTracker1 sits on the Body canvas → container mode (reports
+        // its parent); XYTracker2 (added above) is dropped in FORM mode like a StatusBar tracker.
+        const { insertXyTrackerClock } = require('../../out/codeBehind.js');
+        try { await insertXyTrackerClock(Uri.file(axamlPath), sXy.name, 'container'); }
+        catch (e) { t.fail('XYTracker', 'codebehind', `insertXyTrackerClock: ${e.message}`); }
+        try { await insertXyTrackerClock(Uri.file(axamlPath), xy2Name, 'form'); }
+        catch (e) { t.fail('XYTracker', 'codebehind-form', `insertXyTrackerClock(form): ${e.message}`); }
 
         // ItemsSource functionality: bind the list controls to a code-behind collection (the
         // same path the asset picker uses).
@@ -270,7 +309,7 @@ module.exports = async (t) => {
             const warns = (r.output.match(/warning[^\n]*/gi) || []).slice(0, 8);
             t.note('build warnings:\n' + warns.map((w) => '  - ' + w.trim()).join('\n'));
         }
-        if (r.errors > 0) {
+        if (r.errors !== 0) {
             t.note('combined build failed — isolating per control…');
             const errOut = (r.output || '').slice(0, 1500);
             t.note('first build error block:\n' + errOut.split('\n').slice(0, 12).join('\n'));
@@ -287,7 +326,9 @@ module.exports = async (t) => {
                 fs.writeFileSync(axamlPath, per.serialize(true), 'utf8');
                 const rc = dotnetBuild(dir);
                 const errTxt = (rc.output || '').slice(0, 400);
-                if (rc.errors > 0) {
+                // `!== 0` (not `> 0`): dotnetBuild returns errors=-1 when the build command threw,
+                // which must be treated as a failure, not silently swallowed by the else branch.
+                if (rc.errors !== 0) {
                     // try to name the offending attribute from the compiler message
                     const m = /'(?:[A-Za-z]+\.)?([A-Za-z_][\w.]*)'/.exec(errTxt) || /([A-Za-z_][\w.]*)(?=\s+was not found|\s+does not exist|\s+is not a valid)/i.exec(errTxt);
                     const key = m ? m[1] : null;

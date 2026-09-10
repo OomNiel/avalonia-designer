@@ -107,7 +107,7 @@ const INFO: Record<string, ControlInfo> = {
     Menu: {
         label: 'Menu Bar',
         desc: 'A horizontal menu bar with drop-down menus (File, Edit, Help, …).',
-        use: 'Use at the top of a window to group commands. Add MenuItem children with a Header (e.g. "File").'
+        use: 'Use at the top of a window to group commands. Add MenuItem children with a Header (e.g. "File"). Space items (Menu Items editor) put an invisible, pixel-wide gap between top-level items.'
     },
     StatusBar: {
         label: 'Status Bar',
@@ -119,10 +119,25 @@ const INFO: Record<string, ControlInfo> = {
         desc: 'A resizable multi-pane container (an Avalonia Grid with GridSplitters).',
         use: 'Drag the bar between panes at runtime to resize them; the panel resizes with the window. Add/remove panes and switch Columns/Rows under Split Layout in the Properties panel; each pane has a settable border and an empty body to drop controls into.'
     },
+    GrumpyPanel: {
+        label: 'Grumpy Panel',
+        desc: 'A reusable docking-region panel: a framed box you drop controls into freely, which can also dock dock-able controls to its edges.',
+        use: 'Drop it on any canvas or panel. Controls you drop inside land freely (like the form body); set a dock-able control\'s Dock (Left/Top/Right/Bottom) and it pins to that edge of the panel while the free body shrinks. Style the frame with Border Thickness / Border Brush / Background; the Theme row switches between the System look and your Custom colours. Its own Anchor (8 positions) pins the whole panel to its container.'
+    },
     StatusDate: {
         label: 'Status Date / Time',
         desc: 'A live clock that shows the current system date and time (in the OS date/time format).',
         use: 'Placed anywhere (often in a Status Bar). It shows the current date/time in the OS format and updates itself every second — no code needed from you.'
+    },
+    GrumpyStatus: {
+        label: 'Grumpy Status',
+        desc: 'A dark status strip built on the GrumpyPanel base: docked to the bottom with a live clock on the right and a status label on the left.',
+        use: 'Drop it on the form — it docks to the bottom edge. The label on the left shows "Ready" (edit its Text); the right side shows the live date/time. Add more items like any GrumpyPanel: drop them inside, or Dock a control (Left/Right/Bottom/Top) to pin it to a strip edge. Edit the dark-grey background, the light label/clock text colours, and the strip height from Properties.'
+    },
+    XYTracker: {
+        label: 'XY-Tracker',
+        desc: 'A live read-out of the current Width × Height in pixels.',
+        use: 'Dropped on a form it tracks its containing control (drop it into a pane or panel to watch that panel resize); placed in a Status Bar it reports the whole form\'s size. Style it like a label — Background, text Foreground and the font properties all work. Give it an Anchor to pin it to an edge.'
     },
     CustomTitleBar: {
         label: 'Custom Title Bar',
@@ -173,6 +188,36 @@ const INFO: Record<string, ControlInfo> = {
         label: 'Arc',
         desc: 'A curved line (arc) drawn within its box, from a Start Angle sweeping to a Sweep Angle.',
         use: 'Use for gauges, progress-like curves or decorative arcs. Set the angles, thickness and colour in Properties.'
+    },
+    GroupBox: {
+        label: 'Group Box',
+        desc: 'A titled box that groups related controls inside it (Avalonia 12 control).',
+        use: 'Drop it on the form, then drop controls inside it to keep related settings together. Edit the title via Properties → Header. The designer shows an outline box; the titled group box appears at runtime.'
+    },
+    HyperlinkButton: {
+        label: 'Hyperlink Button',
+        desc: 'A button styled as a clickable link that opens a web page (Avalonia 12 control).',
+        use: 'Use for “terms”, “learn more” or external links. Type the address in Properties → Navigate URI (or bind a Command); middle-click adds a Click handler. The designer preview shows a plain button.'
+    },
+    CommandBar: {
+        label: 'Command Bar',
+        desc: 'A horizontal bar of command buttons with an overflow menu (Avalonia 12 control).',
+        use: 'Use as a toolbar of actions for a window or page. Commands live under CommandBar.PrimaryCommands (added in the XAML; a commands editor is planned). Dock it Top for a toolbar. The designer shows an empty bar area — the buttons appear at runtime.'
+    },
+    CommandBarButton: {
+        label: 'Command Bar Button',
+        desc: 'A single command button for a Command Bar (Avalonia 12 control).',
+        use: 'Edit its Content/Label text; middle-click adds a Click handler. In a Command Bar, list it under CommandBar.PrimaryCommands in the XAML. The designer preview shows a normal button.'
+    },
+    CommandBarToggleButton: {
+        label: 'Command Bar Toggle Button',
+        desc: 'A toggle (on/off) command button for a Command Bar (Avalonia 12 control).',
+        use: 'Shows an on/off state, e.g. a Bold/Italic button. In a Command Bar, list it under CommandBar.PrimaryCommands. The designer preview shows a toggle button.'
+    },
+    CommandBarSeparator: {
+        label: 'Command Bar Separator',
+        desc: 'A thin divider between groups of command buttons (Avalonia 12 control).',
+        use: 'Add it between commands in CommandBar.PrimaryCommands to visually group them.'
     }
 };
 

@@ -12,7 +12,15 @@ import { parseDataSet } from './dataSetModel';
 
 export type Asset =
     | { kind: 'code'; label: string; detail: string; value: string }
-    | { kind: 'dataset'; label: string; detail: string; datasetName: string; tableName: string; adsetPath: string };
+    | { kind: 'dataset'; label: string; detail: string; datasetName: string; tableName: string; adsetPath: string }
+    /** A read-only control can FOLLOW one text column of a table a DataGrid owns (the grid keeps
+     *  the editable row collection; this control lists the column's values live). */
+    | {
+        kind: 'follower'; label: string; detail: string;
+        datasetName: string; tableName: string; column: string;
+        /** The DataGrid that owns the table's row collection. */
+        owner: string; adsetPath: string;
+    };
 
 const IGNORE_DIRS = new Set(['bin', 'obj', '.git', 'node_modules', '.vs']);
 
@@ -157,7 +165,9 @@ function scanVb(text: string, formClass: string): { value: string; label: string
 
 // ---- DataSet tables ---------------------------------------------------------------------------
 
-/** Collect every table in every .adset in the project as a dataset asset. */
+/** Collect every table in every .adset in the project as a dataset asset — plus, for every table a
+ *  DataGrid owns, its **text columns** as `follower` assets (a ComboBox/ListBox can list one of
+ *  them live without owning the table). */
 function scanDataSets(folder: string): Asset[] {
     const out: Asset[] = [];
     for (const f of projectFiles(folder, ['.adset'])) {
@@ -173,6 +183,22 @@ function scanDataSets(folder: string): Asset[] {
                     tableName: t.name,
                     adsetPath: f
                 });
+                // Columns a read-only control can follow — only the grid-bound tables have the live
+                // row collection this needs, and only text columns are offered.
+                if (!t.boundTo || t.boundToType !== 'DataGrid') continue;
+                for (const c of t.columns) {
+                    if (c.type !== 'String') continue;
+                    out.push({
+                        kind: 'follower',
+                        label: `${spec.name}.${t.name}.${c.name}`,
+                        detail: `follows ${t.boundTo} — lists the ${c.name} column, live`,
+                        datasetName: spec.name,
+                        tableName: t.name,
+                        column: c.name,
+                        owner: t.boundTo,
+                        adsetPath: f
+                    });
+                }
             }
         } catch { /* skip unreadable .adset */ }
     }

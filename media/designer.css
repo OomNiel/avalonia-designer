@@ -317,6 +317,30 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     letter-spacing: 0.5px;
 }
 
+/* A top-level 'Space' gap: a narrow px-width field + 'px gap' label. */
+.mn-space {
+    flex: 1 1 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 120px;
+}
+
+.mn-space .mn-width {
+    width: 64px;
+    box-sizing: border-box;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--panel-2);
+    color: var(--fg);
+    padding: 2px 6px;
+    font-size: 12px;
+}
+
+.mn-space .mn-sep-label {
+    flex: 0 0 auto;
+}
+
 .mn-act {
     flex: 0 0 auto;
     min-width: 24px;
@@ -386,6 +410,11 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 
 /* Locked design surface (the Body canvas): no drag cursor, no handles, a small lock badge. */
 #selection.sel.locked {
+    cursor: default;
+}
+
+/* SplitPanel pane body: selectable (Properties editable) but fixed to its pane — no drag cursor. */
+#selection.sel.pane {
     cursor: default;
 }
 
@@ -1042,6 +1071,92 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     color: #fff;
 }
 
+/* 'Code Fix…' findings (code-behind checker) */
+.code-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 52vh;
+    overflow-y: auto;
+    margin-bottom: 4px;
+}
+
+.code-backup {
+    font-size: 10px;
+    opacity: 0.6;
+    word-break: break-all;
+}
+
+.code-item {
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+    border-radius: 4px;
+    padding: 6px 8px;
+    background: var(--panel-2);
+}
+
+.code-item.error {
+    border-left-color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.code-item.warning {
+    border-left-color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.code-item-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.code-badge {
+    flex: 0 0 auto;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 1px 5px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    opacity: 0.9;
+}
+
+.code-item.error .code-badge {
+    color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.code-item.warning .code-badge {
+    color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.code-item-title {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.code-item-detail {
+    font-size: 11px;
+    opacity: 0.8;
+    margin: 3px 0 5px;
+    white-space: pre-wrap;
+}
+
+.code-item-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.code-item-actions .modal-btn {
+    padding: 3px 10px;
+    font-size: 11px;
+}
+
+.code-item-manual {
+    font-size: 10px;
+    opacity: 0.6;
+    font-style: italic;
+}
+
 /* Grid 'Rows & Columns' editor modal */
 .modal-wide {
     width: min(92vw, 620px);
@@ -1315,6 +1430,19 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 }
 
 #radiusGuide[hidden] {
+    display: none;
+}
+
+/* Guide line for a SplitPanel divider being dragged at design time (resizes the panes on release). */
+#splitGuide {
+    position: absolute;
+    background: var(--accent);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+    z-index: 21;
+}
+
+#splitGuide[hidden] {
     display: none;
 }
 

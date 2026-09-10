@@ -20,6 +20,7 @@ const TOOLBOX_CATEGORY_LAYOUT = 'Layout panels';
 const TOOLBOX_CATEGORY_SHAPES = 'Shapes';
 const TOOLBOX_CATEGORY_DATA = 'Data & grid';
 const TOOLBOX_CATEGORY_BARS = 'Bars';
+const TOOLBOX_CATEGORY_DEV = 'Dev Helpers';
 
 /**
  * The complete list of controls offered by the Toolbox sidebar. The order is
@@ -33,13 +34,21 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'ComboBox', tag: 'ComboBox', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'ListBox', tag: 'ListBox', group: TOOLBOX_CATEGORY_ITEMS }, { label: 'ItemsControl', tag: 'ItemsControl', group: TOOLBOX_CATEGORY_ITEMS }, { label: 'CheckBox', tag: 'CheckBox', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'RadioButton', tag: 'RadioButton', group: TOOLBOX_CATEGORY_BUTTONS },
+    // --- Avalonia 12 controls (real tags saved; the 11 preview host draws approximations) ---
+    { label: 'Hyperlink Button', tag: 'HyperlinkButton', group: TOOLBOX_CATEGORY_BUTTONS },
+    { label: 'Command Bar', tag: 'CommandBar', group: TOOLBOX_CATEGORY_BUTTONS },
+    { label: 'Command Bar Button', tag: 'CommandBarButton', group: TOOLBOX_CATEGORY_BUTTONS },
+    { label: 'Command Bar Toggle Button', tag: 'CommandBarToggleButton', group: TOOLBOX_CATEGORY_BUTTONS },
+    { label: 'Command Bar Separator', tag: 'CommandBarSeparator', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'Image', tag: 'Image', group: TOOLBOX_CATEGORY_INPUT },
     { label: 'Panel', tag: 'Panel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'Grid', tag: 'Grid', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'StackPanel', tag: 'StackPanel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'DockPanel', tag: 'DockPanel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'WrapPanel', tag: 'WrapPanel', group: TOOLBOX_CATEGORY_LAYOUT },
+    { label: 'Group Box', tag: 'GroupBox', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'SplitPanel', tag: 'SplitPanel', group: TOOLBOX_CATEGORY_LAYOUT },
+    { label: 'Grumpy Panel', tag: 'GrumpyPanel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'TabControl', tag: 'TabControl', group: TOOLBOX_CATEGORY_ITEMS },
     // --- Shapes ---
     { label: 'Line', tag: 'Line', group: TOOLBOX_CATEGORY_SHAPES },
@@ -51,6 +60,9 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'Menu', tag: 'Menu', group: TOOLBOX_CATEGORY_BARS },
     { label: 'StatusBar', tag: 'StatusBar', group: TOOLBOX_CATEGORY_BARS },
     { label: 'StatusDate', tag: 'StatusDate', group: TOOLBOX_CATEGORY_BARS },
+    { label: 'GrumpyStatus', tag: 'GrumpyStatus', group: TOOLBOX_CATEGORY_BARS },
+    // --- Dev Helpers (design-time / debugging conveniences) ---
+    { label: 'XY-Tracker', tag: 'XYTracker', group: TOOLBOX_CATEGORY_DEV },
     // Not a form control — a designer action: converts a Window's default title bar to the
     // bundled ChromeWindow custom title bar. Handled specially in the designer's drop handler.
     { label: 'Custom Title Bar', tag: 'CustomTitleBar', group: TOOLBOX_CATEGORY_BARS }
@@ -68,7 +80,8 @@ export const TOOLBOX_CATEGORIES: { label: string; group: string }[] = [
     { label: TOOLBOX_CATEGORY_LAYOUT, group: TOOLBOX_CATEGORY_LAYOUT },
     { label: TOOLBOX_CATEGORY_SHAPES, group: TOOLBOX_CATEGORY_SHAPES },
     { label: TOOLBOX_CATEGORY_DATA, group: TOOLBOX_CATEGORY_DATA },
-    { label: TOOLBOX_CATEGORY_BARS, group: TOOLBOX_CATEGORY_BARS }
+    { label: TOOLBOX_CATEGORY_BARS, group: TOOLBOX_CATEGORY_BARS },
+    { label: TOOLBOX_CATEGORY_DEV, group: TOOLBOX_CATEGORY_DEV }
 ];
 
 /** Returns the controls that belong to a CONTROLS.md category, in catalog order. */

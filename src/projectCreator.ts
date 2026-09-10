@@ -180,6 +180,12 @@ function generateProject(opts: GenerateOptions): void {
         chromeVb: readResource(context, 'resources/ChromeWindow.vb'),
         anchorCs: readResource(context, 'resources/AnchorHelper.cs'),
         anchorVb: readResource(context, 'resources/AnchorHelper.vb'),
+        exifCs: readResource(context, 'resources/ExifImageLoader.cs'),
+        exifVb: readResource(context, 'resources/ExifImageLoader.vb'),
+        grumpyCs: readResource(context, 'resources/GrumpyPanel.cs'),
+        grumpyVb: readResource(context, 'resources/GrumpyPanel.vb'),
+        followerCs: readResource(context, 'resources/ColumnFollower.cs'),
+        followerVb: readResource(context, 'resources/ColumnFollower.vb'),
         vbBridgeDll: vbBridgeDllPath()
     });
 }

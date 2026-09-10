@@ -59,7 +59,9 @@ const EVENT_ATTRS = new Set([
  * designer needs to place a second child, it wraps both in a Canvas so the XAML stays valid.
  */
 export const SINGLE_CONTENT_TAGS = new Set([
-    'UserControl', 'ContentControl', 'TabItem', 'Border', 'ScrollViewer', 'Expander'
+    'UserControl', 'ContentControl', 'TabItem', 'Border', 'ScrollViewer', 'Expander',
+    // Avalonia 12 HeaderedContentControl — content dropped in becomes the GroupBox's Content.
+    'GroupBox'
 ]);
 
 function elementChildren(el: Element): Element[] {
@@ -323,6 +325,11 @@ export class XamlModel {
         // so its snippet uses the `dg` prefix and the root must declare xmlns:dg for it to build.
         if (localName(el.tagName) === 'DataGrid') {
             this.ensureXmlns('dg', 'using:Avalonia.Controls');
+        }
+        // GrumpyPanel is the bundled AvaloniaChrome.GrumpyPanel (like ChromeWindow) — its snippet
+        // uses the `chrome` prefix, so the root must declare xmlns:chrome for the XAML to compile.
+        if (localName(el.tagName) === 'GrumpyPanel') {
+            this.ensureChromeNamespace();
         }
 
         const parentTag = localName(parent.tagName);
@@ -866,6 +873,19 @@ export class XamlModel {
         const out: string[] = [];
         const walk = (e: Element): void => {
             out.push(...this.eventHandlersOf(e));
+            for (const c of elementChildren(e)) walk(c);
+        };
+        walk(el);
+        return out;
+    }
+
+    /** The explicit (x:Name / Name) of the element and every descendant — used to sweep orphaned
+     *  code-behind handler methods (named after a removed control) when a subtree is deleted. */
+    namesInSubtree(el: Element): string[] {
+        const out: string[] = [];
+        const walk = (e: Element): void => {
+            const n = e.getAttribute('x:Name') || e.getAttribute('Name') || '';
+            if (n) out.push(n);
             for (const c of elementChildren(e)) walk(c);
         };
         walk(el);

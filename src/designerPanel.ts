@@ -4,14 +4,20 @@ import * as fs from 'fs';
 import { XamlModel, localName, SINGLE_CONTENT_TAGS } from './xamlModel';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle } from './hostClient';
 import { createNewForm } from './newForm';
-import { propertyDefsFor, opacityToXaml, defaultFor, THEME_COLOR_KEYS } from './propertyCatalog';
-import { defaultEventFor, hasDefaultEvent, insertHandlerIntoCodeBehind, insertStatusDateClock, removeHandlersFromCodeBehind, renameControlInCodeBehind, syncVbAccessors, namedControlsInAxaml, findCodeBehindFile, convertCodeBehindToChrome, findItemsSourceBinding, bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet, removeItemsSourceBinding, bindImageToGrid, unbindImageFromGrid, hasDataImageBinding, DataSetBindingRef, DataImageRef } from './codeBehind';
+import { propertyDefsFor, opacityToXaml, defaultFor, THEME_COLOR_KEYS, multiCommonProps, isStatusClock, statusClockSample } from './propertyCatalog';
+import { defaultEventFor, hasDefaultEvent, insertHandlerIntoCodeBehind, findHandlerInCodeBehind, insertStatusDateClock, insertXyTrackerClock, XyTrackerMode, getStatusDateSettings, setStatusDateSettings, removeHandlersFromCodeBehind, removeOrphanedHandlersForControls, renameControlInCodeBehind, syncVbAccessors, namedControlsInAxaml, unionNamedControls, findCodeBehindFile, convertCodeBehindToChrome, findItemsSourceBinding, bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet, removeItemsSourceBinding, bindFollowerToColumn, bindImageToGrid, unbindImageFromGrid, hasDataImageBinding, DataSetBindingRef, DataImageRef } from './codeBehind';
+import {
+    analyzeCodeBehind, applyLocalFix, backupCodeBehind, publishIssues, controlsForCheck,
+    CodeIssue, CheckOptions, DataSetContext, DataSetFollowerInfo, DataSetGridInfo, DataSetImageInfo
+} from './codeBehindCheck';
+import { withDesignerHeader } from './xamlHeader';
 import { controlInfoFor } from './controlInfo';
 import { findProject, ProjectInfo } from './projectParser';
 import { listAssets, Asset } from './assetCatalog';
 import { ensureDataGridAutoGenerateColumns, ensureSqlitePackages, defaultDbFile, reloadDataSetPanel } from './dataSetEditor';
 import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTableName } from './dataSetModel';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
+import { bundledComponentSpecs } from './bundledComponents';
 
 const DEFAULT_SIZE = { width: 800, height: 450 };
 
@@ -133,8 +139,29 @@ function findImageBinding(projectFolder: string, controlName: string | null | un
     return undefined;
 }
 
-/** Bind targets for the Data-Image picker: every DataGrid-bound table's String columns. */
-function dataImageTargets(projectFolder: string): { label: string; detail: string; datasetName: string; tableName: string; gridName: string; column: string }[] {
+/** The "follower" binding of a control: a read-only control listing one text column of a table a
+ *  DataGrid owns. Mirrors `findImageBinding`. */
+function findFollowerRecord(projectFolder: string, controlName: string | null | undefined): { info: { datasetName: string; tableName: string; column: string; owner: string; adsetPath: string }; spec: DataSetSpec; table: DataTableSpec } | undefined {
+    if (!projectFolder || !controlName) return undefined;
+    for (const f of readDataSetFiles(projectFolder)) {
+        for (const t of f.spec.tables) {
+            const fol = (t.followers || []).find((x) => x.control === controlName);
+            if (fol && t.boundTo) {
+                return {
+                    info: {
+                        datasetName: f.spec.name, tableName: t.name, column: fol.column,
+                        owner: t.boundTo, adsetPath: f.adsetPath
+                    },
+                    spec: f.spec,
+                    table: t
+                };
+            }
+        }
+    }
+    return undefined;
+}
+
+/** Bind targets for the Data-Image picker: every DataGrid-bound table's String columns. */function dataImageTargets(projectFolder: string): { label: string; detail: string; datasetName: string; tableName: string; gridName: string; column: string }[] {
     const out: { label: string; detail: string; datasetName: string; tableName: string; gridName: string; column: string }[] = [];
     for (const f of readDataSetFiles(projectFolder)) {
         for (const t of f.spec.tables) {
@@ -178,6 +205,10 @@ function isLockedStructure(model: XamlModel, name: string | null | undefined): b
     if (!name) return false;
     const el = model.findByName(name);
     if (!el) return false;
+    // A GrumpyPanel-based bar's structural inner parts ({name}Dock band + {name}Body free surface)
+    // must stay fixed in place — they always fill/drive the panel, so they can't be moved, resized,
+    // deleted or renamed (they still RECEIVE drops: the body is the free drop surface).
+    if (grumpyPartOf(el)) return true;
     const rc = rootContainer(model);
     return !!rc && rc === el;
 }
@@ -206,7 +237,8 @@ function codeBindingFor(axamlUri: vscode.Uri, controlName: string | null | undef
 const CONTAINER_TAGS = new Set([
     'Panel', 'Grid', 'StackPanel', 'DockPanel', 'WrapPanel', 'Canvas', 'UniformGrid',
     'TabControl', 'ItemsControl', 'ListBox', 'Carousel',
-    'Border', 'ScrollViewer', 'UserControl', 'Window', 'TabItem', 'ContentControl'
+    'Border', 'ScrollViewer', 'UserControl', 'Window', 'TabItem', 'ContentControl',
+    'GroupBox'
 ]);
 
 /** The drawing shapes — they render BEHIND other controls by default (Send to Back). */
@@ -258,6 +290,14 @@ function escRe(s: string): string {
 const anchorWarnedDocs = new Set<string>();
 
 /**
+ * The ChromeWindow custom title-bar properties (Title Bar Text/Icon/Height). They live on the
+ * extension's bundled ChromeWindow.cs/.vb — writing one of these into the XAML of a project whose
+ * copy predates them (e.g. an older ChromeWindow without the settable TitleBarHeight) fails to
+ * compile, so the designer refreshes the stale bundled copy first (see ensureBundledComponentsCurrent).
+ */
+const CHROME_ROOT_PROPS = new Set(['TitleBarTitle', 'TitleBarIcon', 'TitleBarHeight', 'TitleBarBackground', 'TitleBarForeground']);
+
+/**
  * Documents already warned that the project lacks the Avalonia.Controls.DataGrid package.
  */
 const dataGridWarnedDocs = new Set<string>();
@@ -280,6 +320,30 @@ function anchorHelperMissing(axamlUri: vscode.Uri): string | null {
         if (fs.existsSync(path.join(d, fileName))) return null;
     }
     return fileName;
+}
+
+/** Maps an Anchor edge set to the single DockPanel.Dock edge for a DockPanel child (a Status Bar
+ *  item): Right wins over Left, Bottom over Top. Returns '' for no edge (Canvas free placement). */
+function dockEdgeForAnchor(value: string): string {
+    if (/right/i.test(value)) return 'Right';
+    if (/left/i.test(value)) return 'Left';
+    if (/bottom/i.test(value)) return 'Bottom';
+    if (/top/i.test(value)) return 'Top';
+    return '';
+}
+
+/** When an edge Anchor is set on a direct DockPanel child (e.g. a Status Bar item / StatusDate),
+ *  mirror it as DockPanel.Dock so the design preview and the runtime layout agree (the AnchorHelper
+ *  does the same dock at runtime). No-op on a Canvas (free placement uses Canvas.Left/Top), on a
+ *  DockPanel that is the form's top-level layout (the template docks the Menu bar / Status Bar /
+ *  Body there), and when the Anchor value has no edge (cleared). */
+function mirrorAnchorDock(el: Element, value: string): void {
+    const parent = el.parentNode as Element | null;
+    if (!parent || parent.nodeType !== 1 || localName(parent.tagName) !== 'DockPanel') return;
+    const top = parent.parentNode as Element | null;
+    if (top && top.nodeType === 1 && /window|usercontrol|chrome/i.test(localName(top.tagName))) return;
+    const dock = dockEdgeForAnchor(value);
+    if (dock) el.setAttribute('DockPanel.Dock', dock);
 }
 
 /**
@@ -341,6 +405,12 @@ function ensureDockPanelParent(model: XamlModel, el: Element): Element {
         if (pnm === 'Canvas' && isSplitPaneName(parent.getAttribute('x:Name') || parent.getAttribute('Name') || '')) {
             return paneBodyAsDockPanel(model, parent);
         }
+        // A control dropped inside a GrumpyPanel-based bar docks WITHIN that bar (its inner
+        // DockPanel), never the form's root — the bar is its own dock region.
+        if (pnm === 'Canvas') {
+            const dock = dockIntoGrumpy(model, el, parent);
+            if (dock) return dock;
+        }
     }
 
     // Only free-positioning contexts (a Canvas or the window root itself) get wrapped/
@@ -377,6 +447,50 @@ function ensureDockPanelParent(model: XamlModel, el: Element): Element {
     return dockPanel;
 }
 
+/** Converts an auto-converted SplitPanel pane body back from a DockPanel to its original Canvas
+ *  base (same name + plain attributes, children moved across). Used to restore a pane's free
+ *  placement surface once the docked content that required the DockPanel is gone. Returns the
+ *  pane's content element (the Canvas, or the original when not convertible). */
+function paneBodyAsCanvas(model: XamlModel, paneBody: Element): Element {
+    if (localName(paneBody.tagName) === 'Canvas') return paneBody;
+    if (localName(paneBody.tagName) !== 'DockPanel') return paneBody;
+    const nm = paneBody.getAttribute('x:Name') || paneBody.getAttribute('Name') || '';
+    const canvas = model.createElement('<Canvas/>');
+    if (nm) canvas.setAttribute('x:Name', nm);
+    for (let a = 0; a < paneBody.attributes.length; a++) {
+        const at = paneBody.attributes.item(a);
+        if (!at) continue;
+        if (at.name === 'x:Name' || at.name === 'Name') continue;
+        if (at.name === 'LastChildFill') continue; // DockPanel-only — meaningless on a Canvas
+        if (/^DockPanel\./.test(at.name)) continue; // a pane body is never itself docked
+        canvas.setAttribute(at.name, at.value);
+    }
+    while (paneBody.firstChild) canvas.appendChild(paneBody.firstChild);
+    if (paneBody.parentNode) paneBody.parentNode.replaceChild(canvas, paneBody);
+    return canvas;
+}
+
+/** Restores the Canvas base of any SplitPanel pane body that is still a DockPanel but now has NO
+ *  children. A pane body is only ever converted to a DockPanel to host a docked/filled control
+ *  (see ensureDockPanelParent) — once that content is removed the pane should look like it started
+ *  (a free-placement Canvas), not stay a DockPanel forever. Returns true when any pane was reverted. */
+function revertEmptyPaneBodies(model: XamlModel): boolean {
+    let changed = false;
+    for (const el of model.controlElements()) {
+        const nm = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+        if (!isSplitPaneName(nm) || localName(el.tagName) !== 'DockPanel') continue;
+        let hasChild = false;
+        for (let c = el.firstChild; c; c = c.nextSibling) {
+            if (c.nodeType === 1) { hasChild = true; break; }
+        }
+        if (!hasChild) {
+            paneBodyAsCanvas(model, el);
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 /** The first real content child of the window root (e.g. the root DockPanel). */
 function rootContainer(model: XamlModel): Element | undefined {
     const root = model.root;
@@ -387,6 +501,17 @@ function rootContainer(model: XamlModel): Element | undefined {
 /** Replaces the name attribute (x:Name / Name) in a serialized XAML fragment. */
 function replaceFragmentName(xaml: string, oldName: string, newName: string): string {
     return xaml.replace(new RegExp(`(?:x:Name|Name)\\s*=\\s*"${escRe(oldName)}"`), `x:Name="${newName}"`);
+}
+
+/** Renames the root name AND every sibling-family name in a XAML fragment that starts with
+ *  `oldName` (e.g. a GrumpyPanel's `{n}Dock`/`{n}Body`, a GrumpyStatus's `{n}Label`/`{n}Date`)
+ *  to the matching `newName…` form, keeping each suffix. The root itself (no suffix) becomes
+ *  exactly `newName`. */
+function replaceFragmentFamilyName(xaml: string, oldName: string, newName: string): string {
+    return xaml.replace(
+        new RegExp(`((?:x:Name|Name)\\s*=\\s*"${escRe(oldName)})([A-Za-z0-9_]*)"`, 'g'),
+        (_m, pre: string, suffix: string) => `${pre}${newName}${suffix}"`
+    );
 }
 
 function elementChildren(el: Element): Element[] {
@@ -491,10 +616,12 @@ function tabItemXaml(tabControlName: string, page: number): string {
 //   Radio     → <MenuItem Header="…" ToggleType="Radio">
 //   ComboBox  → a <MenuItem> whose submenu holds its option items
 //   Separator → <Separator/>
+//   Space     → an invisible gap on the TOP bar: saved as an inert, fixed-width <MenuItem
+//               IsEnabled="False" Focusable="False" Width="…"/> (no header/submenu)
 // The same shape travels to/from the webview (the tree editor + the bar dummies). Nesting is
 // capped at MENU_MAX_DEPTH item levels below the Menu bar (top-level item = level 1).
-type MenuNodeKind = 'Item' | 'CheckBox' | 'Radio' | 'ComboBox' | 'Separator';
-interface MenuTreeNode { kind: MenuNodeKind; header?: string; children?: MenuTreeNode[]; }
+type MenuNodeKind = 'Item' | 'CheckBox' | 'Radio' | 'ComboBox' | 'Separator' | 'Space';
+interface MenuTreeNode { kind: MenuNodeKind; header?: string; width?: number; children?: MenuTreeNode[]; }
 const MENU_MAX_DEPTH = 5;
 
 /** Direct child <MenuItem>/<Separator> elements of a Menu or of a MenuItem's submenu. */
@@ -510,6 +637,14 @@ function menuNodeOf(el: Element): MenuTreeNode | null {
     const t = localName(el.tagName);
     if (t === 'Separator') return { kind: 'Separator' };
     if (t !== 'MenuItem') return null;
+    // A Space gap is saved as an inert, empty, fixed-width MenuItem (IsEnabled=False, Focusable=
+    // False, no Header, no children) — recognise it again on re-read so the editor round-trips.
+    if ((el.getAttribute('IsEnabled') || '').toLowerCase() === 'false'
+        && !((el.getAttribute('Header') || '').trim())
+        && elementChildren(el).length === 0) {
+        const w = parseFloat(el.getAttribute('Width') || '0');
+        if (Number.isFinite(w) && w > 0) return { kind: 'Space', width: Math.round(w) };
+    }
     const tt = (el.getAttribute('ToggleType') || '').toLowerCase();
     const kind: MenuNodeKind = tt === 'checkbox' ? 'CheckBox' : tt === 'radio' ? 'Radio' : 'Item';
     const header = (el.getAttribute('Header') || '').trim();
@@ -527,7 +662,20 @@ function menuTreeOf(el: Element): MenuTreeNode[] {
 
 /** Builds a <MenuItem>/<Separator> DOM element from a design-time node (`depth` guards nesting). */
 function menuElementFor(model: XamlModel, node: MenuTreeNode, depth: number): Element {
-    if (node.kind === 'Separator') return model.createElement('<Separator/>');
+    if (node.kind === 'Separator') {
+        // A top-level (bar) Separator carries the `MenuBarDivider` class so the Menu's vertical-
+        // divider Style targets ONLY it. Avalonia applies a control's Styles into sub-menu popups
+        // too (logical-tree inheritance), so without the class every Separator — including the
+        // sub-menu ones, which must stay horizontal — would be mis-styled.
+        return depth === 1
+            ? model.createElement('<Separator Classes="MenuBarDivider"/>')
+            : model.createElement('<Separator/>');
+    }
+    // An invisible top-bar gap: an inert MenuItem (no header/submenu) whose Width is the gap.
+    if (node.kind === 'Space') {
+        const w = Math.max(1, Math.min(500, Math.round(node.width && node.width > 0 ? node.width : 12)));
+        return model.createElement(`<MenuItem IsEnabled="False" Focusable="False" Width="${w}"/>`);
+    }
     const el = model.createElement('<MenuItem/>');
     const header = (node.header || '').trim();
     if (header !== '') el.setAttribute('Header', header);
@@ -547,8 +695,16 @@ function sanitizeMenuNodes(raw: unknown): MenuTreeNode[] {
         const o = n as Record<string, unknown>;
         let kind: MenuNodeKind = 'Item';
         const k = String(o.kind ?? 'Item');
-        if (k === 'CheckBox' || k === 'Radio' || k === 'ComboBox' || k === 'Separator') kind = k;
+        if (k === 'CheckBox' || k === 'Radio' || k === 'ComboBox' || k === 'Separator' || k === 'Space') kind = k;
         const node: MenuTreeNode = { kind };
+        if (kind === 'Space') {
+            // A Space is an invisible TOP-BAR gap (width in px) — never inside a submenu, and it
+            // has neither a header nor children.
+            if (depth !== 1) return null;
+            const w = parseInt(String(o.width ?? ''), 10);
+            node.width = Number.isFinite(w) && w > 0 ? Math.min(500, w) : 12;
+            return node;
+        }
         if (kind !== 'Separator') {
             const h = String(o.header ?? '').trim();
             if (h !== '') node.header = h;
@@ -561,24 +717,94 @@ function sanitizeMenuNodes(raw: unknown): MenuTreeNode[] {
     return raw.map((r) => clean(r, 1)).filter((x): x is MenuTreeNode => x !== null);
 }
 
+/** Avalonia's `Separator` draws a HORIZONTAL flyout line (its Fluent theme sets a short Height and
+ *  a full-width template), so a Separator placed on the top-level bar (a horizontal Menu stack)
+ *  reads as a horizontal dash instead of a vertical divider. The Menu therefore gets a scoped
+ *  Style (only while it actually HAS a top-level Separator) that swaps the Separator template for
+ *  a thin vertical line. It targets ONLY top-level separators — those carry the class
+ *  `MenuBarDivider` (see menuElementFor): Avalonia applies a control's Styles into sub-menu popups
+ *  too (logical-tree inheritance), so an un-scoped rule would turn every sub-menu Separator into
+ *  the same vertical stub. Sub-menu Separators (no class) keep the normal horizontal flyout look. */
+function syncMenuSeparatorStyle(model: XamlModel, menuEl: Element, hasTopSeparator: boolean): void {
+    const findStyles = () => elementChildren(menuEl).find((c) => localName(c.tagName) === 'Menu.Styles');
+    // Ours = a Style that (re)shapes Separators — matches the class-scoped rule we write today and
+    // the older un-scoped 'Separator' rule an earlier version may have saved.
+    const findOurs = (styles?: Element) => styles && elementChildren(styles).find((s) =>
+        localName(s.tagName) === 'Style' && /^Separator(\.MenuBarDivider)?$/.test(s.getAttribute('Selector') || ''));
+    const styles = findStyles();
+    const ours = findOurs(styles);
+    if (!hasTopSeparator) {
+        // No top-level Separator any more — drop the verticalising rule (and the empty Styles
+        // element) so the saved XAML stays tidy.
+        if (styles && ours) {
+            styles.removeChild(ours);
+            if (elementChildren(styles).length === 0) menuEl.removeChild(styles);
+        }
+        return;
+    }
+    if (ours) return; // already in place
+    const style = model.createElement(
+        '<Style Selector="Separator.MenuBarDivider">' +
+        '<Setter Property="Width" Value="1"/>' +
+        '<Setter Property="Height" Value="16"/>' +
+        '<Setter Property="Margin" Value="6,3"/>' +
+        '<Setter Property="HorizontalAlignment" Value="Center"/>' +
+        '<Setter Property="VerticalAlignment" Value="Center"/>' +
+        '<Setter Property="Template">' +
+        '<ControlTemplate TargetType="Separator">' +
+        '<Border Width="1" VerticalAlignment="Stretch" HorizontalAlignment="Center" ' +
+        'Background="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"/>' +
+        '</ControlTemplate>' +
+        '</Setter>' +
+        '</Style>'
+    );
+    let st = styles;
+    if (!st) {
+        st = model.createElement('<Menu.Styles/>');
+        menuEl.appendChild(st);
+    }
+    st.appendChild(style);
+}
+
 // ---------------------------------------------------------------- status bar items
 // The Status Bar tool is a DOCKPANEL strip (docked Bottom). Its 'Status Items' editor manages the
 // child controls of the bar; each child is pinned LEFT or RIGHT (DockPanel.Dock) and stretches to
 // the bar's height. Kinds map onto real Avalonia elements:
-//   TextBlock (label) / TextBox / Button / ProgressBar / Separator (a gap) / StatusDate (live clock)
-type StatusKind = 'TextBlock' | 'TextBox' | 'Button' | 'ProgressBar' | 'Separator' | 'StatusDate';
+//   TextBlock (label) / TextBox / Button / ProgressBar / Separator (a gap) / StatusDate (live
+//   clock) / XYTracker (live WxH of the form — Classes="XYTracker" marks it)
+type StatusKind = 'TextBlock' | 'TextBox' | 'Button' | 'ProgressBar' | 'Separator' | 'StatusDate' | 'XYTracker';
 interface StatusItem { kind: StatusKind; text: string; position: 'Left' | 'Right'; }
-const STATUS_KINDS = new Set<string>(['TextBlock', 'TextBox', 'Button', 'ProgressBar', 'Separator', 'StatusDate']);
+const STATUS_KINDS = new Set<string>(['TextBlock', 'TextBox', 'Button', 'ProgressBar', 'Separator', 'StatusDate', 'XYTracker']);
 
 /** Maps an existing bar child element to its Status-kind (or null if it isn't one we manage). */
 function statusKindOf(el: Element): StatusKind | null {
     const t = localName(el.tagName);
-    if (t === 'TextBlock') return el.hasAttribute('Loaded') ? 'StatusDate' : 'TextBlock';
+    if (t === 'TextBlock') {
+        // An XYTracker is a TextBlock carrying Classes="XYTracker" (it also has a Loaded handler,
+        // so it must be checked BEFORE the StatusDate heuristic, which keys on `Loaded` alone).
+        const cls = (el.getAttribute('Classes') || '').split(/\s+/);
+        if (cls.indexOf('XYTracker') >= 0) return 'XYTracker';
+        return el.hasAttribute('Loaded') ? 'StatusDate' : 'TextBlock';
+    }
     if (t === 'TextBox') return 'TextBox';
     if (t === 'Button') return 'Button';
     if (t === 'ProgressBar') return 'ProgressBar';
     if (t === 'Border' && elementChildren(el).length === 0 && !el.hasAttribute('Content')) return 'Separator';
     return null;
+}
+/** True when `el` sits inside a Status Bar strip — the designer then treats a tracker placed there as
+ *  showing the FORM's size rather than its parent. A strip is either the legacy Status Bar (a
+ *  DockPanel named StatusBarN) or the new GrumpyStatus bar (a chrome:GrumpyPanel DOCKED BOTTOM —
+ *  GrumpyStatus's snippet pins it to the bottom edge, and any later bottom-docked GrumpyPanel band is
+ *  a status strip too). */
+function isWithinStatusBar(el: Element | null): boolean {
+    for (let d = 0, cur = el; cur && d < 4; d++, cur = cur.parentNode as Element | null) {
+        if (!cur || cur.nodeType !== 1) return false;
+        const n = cur.getAttribute('x:Name') || cur.getAttribute('Name') || '';
+        if (/^StatusBar\d+$/.test(n)) return true;
+        if (isGrumpyRoot(cur) && (cur.getAttribute('DockPanel.Dock') || '').trim().toLowerCase() === 'bottom') return true;
+    }
+    return false;
 }
 function statusTextOf(el: Element, kind: StatusKind): string {
     if (kind === 'Button') return (el.getAttribute('Content') || '').trim();
@@ -632,6 +858,99 @@ function splitDefSizes(el: Element, kind: 'cols' | 'rows'): string[] {
     const attr = kind === 'cols' ? 'Width' : 'Height';
     return elementChildren(defs).map((d) => d.getAttribute(attr) || '*');
 }
+/** The RowDefinition/ColumnDefinition element at `index` in a SplitPanel's grid, if any. */
+function splitDefAt(grid: Element, kind: 'cols' | 'rows', index: number): Element | null {
+    const prop = kind === 'cols' ? 'Grid.ColumnDefinitions' : 'Grid.RowDefinitions';
+    const defs = elementChildren(grid).find((k) => localName(k.tagName) === prop);
+    if (!defs) return null;
+    return elementChildren(defs)[index] || null;
+}
+/** Parses a plain pixel number ('45'); returns 0 for empty / '*' / '2*' / non-numeric. */
+function pxOf(s: string | null | undefined): number {
+    const t = String(s ?? '').trim();
+    if (!/^\d+(\.\d+)?$/.test(t)) return 0;
+    const n = parseFloat(t);
+    return Number.isFinite(n) ? n : 0;
+}
+/** The top/right/bottom/left margins of a control (thickness shorthand supported). */
+function marginExtents(el: Element): { top: number; right: number; bottom: number; left: number } {
+    const parts = (el.getAttribute('Margin') || '').trim().split(/\s*,\s*/).map((p) => parseFloat(p));
+    if (parts.length === 4 && parts.every((n) => !Number.isNaN(n))) return { top: parts[0], right: parts[1], bottom: parts[2], left: parts[3] };
+    if (parts.length === 2 && parts.every((n) => !Number.isNaN(n))) return { top: parts[0], right: parts[1], bottom: parts[0], left: parts[1] };
+    const single = parts.length === 1 && !Number.isNaN(parts[0]) ? parts[0] : 0;
+    return { top: single, right: single, bottom: single, left: single };
+}
+/** The smallest extent (px) a SplitPanel's grid needs along an axis before it starts clipping:
+ *  fixed rows/cols + Auto gutters (the GridSplitter thickness) + star rows/cols clamped by their
+ *  MinHeight/MinWidth (0 when no minimum is set, i.e. fully flexible). */
+function splitGridMin(grid: Element, kind: 'cols' | 'rows'): number {
+    const prop = kind === 'cols' ? 'Grid.ColumnDefinitions' : 'Grid.RowDefinitions';
+    const defs = elementChildren(grid).find((k) => localName(k.tagName) === prop);
+    if (!defs) return 0;
+    const sizeAttr = kind === 'cols' ? 'Width' : 'Height';
+    const minAttr = kind === 'cols' ? 'MinWidth' : 'MinHeight';
+    const indexAttr = kind === 'cols' ? 'Grid.Column' : 'Grid.Row';
+    const barAttr = kind === 'cols' ? 'Width' : 'Height';
+    const autoSize = new Map<number, number>();
+    for (const c of elementChildren(grid)) {
+        if (localName(c.tagName) !== 'GridSplitter') continue;
+        const idx = parseInt(c.getAttribute(indexAttr) || '-1', 10);
+        if (idx >= 0) autoSize.set(idx, pxOf(c.getAttribute(barAttr)));
+    }
+    let total = 0;
+    elementChildren(defs).forEach((d, i) => {
+        const size = (d.getAttribute(sizeAttr) || '*').trim();
+        if (/^\d+(\.\d+)?$/.test(size)) { total += parseFloat(size); return; }
+        if (/auto/i.test(size)) { total += autoSize.get(i) ?? 0; return; }
+        total += pxOf(d.getAttribute(minAttr));
+    });
+    return total;
+}
+/** The layout "floor" of a Window-rooted form: the smallest client size at which its fixed bars and
+ *  minimum-constrained panes stop clipping (flexible star pieces may shrink to their minimums; free
+ *  Canvas content is not counted). Returns 0 on an axis nothing constrains. This is what the form's
+ *  own MinWidth/MinHeight must be kept at, because only the Window minimum stops the OS/window
+ *  manager from letting the user shrink below the content (RowDefinition mins alone would clip). */
+function formFloorOf(root: Element): { minWidth: number; minHeight: number } {
+    let minWidth = 0;
+    let minHeight = 0;
+    if (localName(root.tagName) === 'ChromeWindow') minHeight += pxOf(root.getAttribute('TitleBarHeight')) || 44;
+    const content = elementChildren(root).find((c) => c.nodeType === 1);
+    if (!content) return { minWidth, minHeight };
+    const contentMin = (el: Element): { w: number; h: number } => {
+        const grid = splitGridOf(el);
+        if (grid) return { w: splitGridMin(grid, 'cols'), h: splitGridMin(grid, 'rows') };
+        return { w: pxOf(el.getAttribute('MinWidth')), h: pxOf(el.getAttribute('MinHeight')) };
+    };
+    if (localName(content.tagName) === 'DockPanel') {
+        const kids = elementChildren(content).filter((c) => c.nodeType === 1);
+        let fillMin = { w: 0, h: 0 };
+        kids.forEach((c, i) => {
+            const isLast = i === kids.length - 1;
+            const dock = (c.getAttribute('DockPanel.Dock') || (isLast ? '' : 'Left')).trim().toLowerCase();
+            const m = marginExtents(c);
+            if (isLast || dock === '' || dock === 'fill') {
+                const cm = contentMin(c);
+                fillMin = { w: Math.max(fillMin.w, cm.w + m.left + m.right), h: Math.max(fillMin.h, cm.h + m.top + m.bottom) };
+                return;
+            }
+            if (dock === 'top' || dock === 'bottom') {
+                const base = pxOf(c.getAttribute('Height')) || pxOf(c.getAttribute('MinHeight'));
+                minHeight += base + m.top + m.bottom;
+            } else {
+                const base = pxOf(c.getAttribute('Width')) || pxOf(c.getAttribute('MinWidth'));
+                minWidth += base + m.left + m.right;
+            }
+        });
+        minWidth += fillMin.w;
+        minHeight += fillMin.h;
+    } else {
+        const cm = contentMin(content);
+        minWidth += cm.w;
+        minHeight += cm.h;
+    }
+    return { minWidth, minHeight };
+}
 /** A SplitPanel container name (SplitPanel1, ...) — its element is a Border (new) or a Grid (old). */
 function isSplitName(name: string | null | undefined): boolean {
     return /^SplitPanel\d+$/.test(name || '');
@@ -639,6 +958,56 @@ function isSplitName(name: string | null | undefined): boolean {
 /** A SplitPanel pane-body name (SplitPanel1Pane0, ...). */
 function isSplitPaneName(name: string | null | undefined): boolean {
     return /^SplitPanel\d+Pane\d+$/.test(name || '');
+}
+// ---------------- GrumpyPanel / Grumpy* bars (Border-based docking region) ----------------
+/** The x:Name/Name of an element. */
+function elName(el: Element): string {
+    return el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+}
+/** True if `el` is a GrumpyPanel-based root (the <chrome:GrumpyPanel> element) — GrumpyPanel1,
+ *  GrumpyStatus1, ... whatever the name. */
+function isGrumpyRoot(el: Element): boolean {
+    return el.nodeType === 1 && localName(el.tagName) === 'GrumpyPanel' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(elName(el));
+}
+/**
+ * If `el` is the structural inner DockPanel or the body Canvas of a GrumpyPanel-based root,
+ * returns { root, part: 'dock' | 'body' }; else null. The parts are recognised STRUCTURALLY
+ * (a DockPanel directly under the root named `<root>Dock`, or that DockPanel's `<root>Body` Canvas
+ * child), so any GrumpyPanel-based bar — GrumpyPanel, GrumpyStatus, ... — is covered whatever its
+ * name prefix.
+ */
+function grumpyPartOf(el: Element): { root: Element; part: 'dock' | 'body' } | null {
+    const nm = elName(el);
+    if (!nm || !el.parentNode) return null;
+    if (localName(el.tagName) === 'DockPanel' && nm.endsWith('Dock')) {
+        const root = el.parentNode as Element | null;
+        if (root && isGrumpyRoot(root) && elName(root) === nm.slice(0, -4)) {
+            return { root, part: 'dock' };
+        }
+    }
+    if (localName(el.tagName) === 'Canvas' && nm.endsWith('Body')) {
+        const dock = el.parentNode as Element | null;
+        const root = dock && dock.parentNode ? (dock.parentNode as Element | null) : null;
+        if (dock && localName(dock.tagName) === 'DockPanel' && root && isGrumpyRoot(root)
+            && elName(dock) === elName(root) + 'Dock' && nm === elName(root) + 'Body') {
+            return { root, part: 'body' };
+        }
+    }
+    return null;
+}
+/**
+ * Docks `el` INSIDE a GrumpyPanel-based bar (whose free body canvas is `bodyEl`): the control is
+ * moved from the free body into the bar's inner DockPanel, BEFORE the body canvas, so the body
+ * stays the DockPanel's fill child and the docked control pins to the bar's edge (real dock band).
+ * Returns the inner DockPanel, or null when `bodyEl` isn't a GrumpyPanel-based bar's body. */
+function dockIntoGrumpy(model: XamlModel, el: Element, bodyEl: Element): Element | null {
+    const gp = grumpyPartOf(bodyEl);
+    if (!gp || gp.part !== 'body') return null;
+    const dock = bodyEl.parentNode as Element | null;
+    if (!dock || dock.nodeType !== 1 || localName(dock.tagName) !== 'DockPanel') return null;
+    model.moveTo(el, dock);
+    dock.insertBefore(el, bodyEl); // keep the body canvas LAST = the DockPanel's fill child
+    return dock;
 }
 /** The inner Grid that owns a SplitPanel's row/column definitions + panes: the element itself when
  *  it's a Grid, else the direct Grid child of a Border wrapper. */
@@ -777,6 +1146,71 @@ function normalizeHexColor(color: string): string | null {
         return c.toLowerCase();
     }
     return null;
+}
+
+// ---------------- Design-time splitter drag: divider geometry ----------------
+/** One draggable divider between two SplitPanel panes, in WINDOW/design coordinates. `pane` is the
+ *  pane whose size the divider drives (the LEFT pane for a vertical divider, the TOP one for a
+ *  horizontal divider — its stored Width/Height IS the divider position); `other` is the pane on
+ *  the far side (used to clamp the drag so it can't shrink that pane below its minimum). */
+interface SplitBar {
+    pane: string;
+    other: string;
+    axis: 'v' | 'h';
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+
+/**
+ * Derives every draggable divider of every SplitPanel from the measured pane-body rects in a frame.
+ * Pure geometry: two pane bodies of the SAME SplitPanel that are edge-adjacent across a small gutter
+ * (the splitter bar) form a bar — vertical when they sit side-by-side, horizontal when stacked. The
+ * measured body rects already include the Auto splitter gutter, so the bar is the gap between them.
+ */
+function splitBarsOf(controls: { name: string | null; x: number; y: number; width: number; height: number }[]): SplitBar[] {
+    const pane = new Map<string, { prefix: string; x: number; y: number; w: number; h: number }>();
+    const order: string[] = [];
+    for (const c of controls) {
+        const m = /^(SplitPanel\d+)Pane(\d+)$/.exec(c.name || '');
+        if (!m) continue;
+        const nm = c.name || ''; // m matched → non-empty
+        if (!pane.has(nm)) {
+            pane.set(nm, { prefix: m[1], x: c.x, y: c.y, w: c.width, h: c.height });
+            order.push(nm);
+        }
+    }
+    const bars: SplitBar[] = [];
+    const MAX_GAP = 60; // anything wider isn't a splitter gutter (a hidden/collapsed pane)
+    for (let i = 0; i < order.length; i++) {
+        const nameA = order[i];
+        const a = pane.get(nameA)!;
+        for (let j = i + 1; j < order.length; j++) {
+            const nameB = order[j];
+            const b = pane.get(nameB)!;
+            if (a.prefix !== b.prefix) continue; // panes of the same SplitPanel only
+            const gapX = b.x - (a.x + a.w);
+            const gapY = b.y - (a.y + a.h);
+            // Vertical divider: B is to the RIGHT of A (a small x gap) and they overlap vertically.
+            if (gapX >= 0 && gapX <= MAX_GAP && a.y < b.y + b.h - 2 && b.y < a.y + a.h - 2) {
+                const x = a.x + a.w;
+                bars.push({
+                    pane: nameA, other: nameB, axis: 'v', x, y: Math.max(a.y, b.y),
+                    w: Math.max(1, b.x - x), h: Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+                });
+            }
+            // Horizontal divider: B is BELOW A (a small y gap) and they overlap horizontally.
+            else if (gapY >= 0 && gapY <= MAX_GAP && a.x < b.x + b.w - 2 && b.x < a.x + a.w - 2) {
+                const y = a.y + a.h;
+                bars.push({
+                    pane: nameA, other: nameB, axis: 'h', x: Math.max(a.x, b.x), y,
+                    w: Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), h: Math.max(1, b.y - y)
+                });
+            }
+        }
+    }
+    return bars;
 }
 
 // ---------------------------------------------------------------- DataGrid decoration
@@ -1030,6 +1464,83 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     }
                     return;
                 }
+                case 'refresh': {
+                    // The toolbar's ⟳ Refresh: re-read the .axaml (so edits made in a text editor tab
+                    // or outside VS Code are picked up) and re-render. Re-rendering also re-queries
+                    // the design-time SQLite preview (designGridData), so rows added by a RUNNING app
+                    // appear without reopening the form. Unsaved designer edits are never clobbered —
+                    // the file is only re-read while the designer is clean.
+                    if (!doc.dirty) {
+                        const text = await this.sourceTextOf(doc);
+                        // Compare header-normalised: the file on disk carries the "do not edit" notice
+                        // (the model drops comments on serialize), so a plain string compare would report
+                        // a change on every refresh and needlessly rebuild the model.
+                        if (text != null && withDesignerHeader(text) !== withDesignerHeader(doc.model.serialize(true))) {
+                            try {
+                                doc.model = new XamlModel(text);
+                                doc.markSaved();
+                            } catch {
+                                /* keep the current model if the file is mid-edit / temporarily invalid */
+                            }
+                        }
+                    }
+                    await this.render(doc, panel);
+                    await this.postStatus(panel, 'Refreshed');
+                    return;
+                }
+                case 'codeCheck': {
+                    await this.runCodeCheck(doc, panel);
+                    return;
+                }
+                case 'codeFix': {
+                    // Re-analyse so the fix works on the CURRENT file (the user may have edited it in
+                    // between) and so its line/occurrence payload is accurate.
+                    const projFix = findProject(doc.uri);
+                    const run = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
+                    const issue = run.issues.find((i) => i.id === msg.id);
+                    if (!issue) { await this.runCodeCheck(doc, panel); return; }
+                    this.backupCodeOnce(doc, run.codeFile);
+                    let what: string;
+                    try {
+                        what = await this.applyCodeIssue(doc, projFix, panel, issue);
+                    } catch (e) {
+                        what = `Fix failed: ${e instanceof Error ? e.message : String(e)}`;
+                    }
+                    await this.runCodeCheck(doc, panel, false);
+                    await this.postStatus(panel, what);
+                    return;
+                }
+                case 'codeFixAll': {
+                    const projAll = findProject(doc.uri);
+                    const done = new Set<string>();
+                    let applied = 0;
+                    // Re-analyse after every fix: one fix can expose/erase the next problem. The pass
+                    // cap is a guard against a finding whose fix cannot change its own detection.
+                    for (let pass = 0; pass < 25; pass++) {
+                        const run = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
+                        const next = run.issues.find((i) => i.kind !== 'report-only' && !done.has(i.id));
+                        if (!next) break;
+                        done.add(next.id);
+                        this.backupCodeOnce(doc, run.codeFile);
+                        await this.applyCodeIssue(doc, projAll, panel, next);
+                        applied++;
+                    }
+                    await this.runCodeCheck(doc, panel, false);
+                    await this.postStatus(panel, applied === 0
+                        ? 'Code Fix: nothing fixable'
+                        : `Code Fix: applied ${applied} fix(es)`);
+                    return;
+                }
+                case 'codeOpen': {
+                    const run = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
+                    const file = msg.file === 'axaml' ? doc.uri.fsPath : run.codeFile;
+                    if (!file || !fs.existsSync(file)) return;
+                    const td = await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false });
+                    const pos = new vscode.Position(Math.max(0, (Number(msg.line) || 1) - 1), 0);
+                    td.selection = new vscode.Selection(pos, pos);
+                    td.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+                    return;
+                }
                 case 'select': {
                     // Selecting a TabItem makes that tab the ACTIVE tab: re-render with it
                     // selected so its body Canvas is laid out (real bounds) and the user can
@@ -1039,7 +1550,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         this.setActiveTab(doc, sel);
                         await this.render(doc, panel);
                     }
-                    await this.sendProperties(doc, panel, msg.name);
+                    // Multi-select (Ctrl+Click): show the properties common to every selected
+                    // control; otherwise the single control's properties as before.
+                    const multiSel: string[] = Array.isArray(msg.multi) ? msg.multi.map(String) : [];
+                    if (multiSel.length >= 2) {
+                        await this.sendMultiProperties(doc, panel, multiSel);
+                    } else {
+                        await this.sendProperties(doc, panel, msg.name);
+                    }
                     return;
                 }
                 case 'requestFonts': {
@@ -1053,6 +1571,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     return;
                 }
                 case 'setProperty': {
+                    // Bulk multi-select edit: the webview sends `names` (>= 2). Every change to the
+                    // common properties applies to ALL selected controls as ONE undo step.
+                    if (Array.isArray(msg.names) && msg.names.length >= 2) {
+                        await this.multiSetProperty(doc, panel, msg.names.map(String), String(msg.key ?? ''), msg.value);
+                        return;
+                    }
                     const el = msg.name ? doc.model.findByName(msg.name) : doc.model.root;
                     if (!el || msg.key === '__type__') return;
                     // The structural Body canvas / root layout panel must keep its name (the lock
@@ -1068,6 +1592,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     const splitPaneName = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
                     if (isSplitPaneName(splitPaneName) && (msg.key === 'Width' || msg.key === 'Height')) {
                         await this.setSplitPaneSize(doc, panel, el, msg.key === 'Width' ? 'cols' : 'rows', String(msg.value ?? ''));
+                        return;
+                    }
+                    // ...and its Min/Max go on the Row/Column definition too (a MinHeight attribute on
+                    // the pane body is ignored by the Grid's star sizing, so the pane would shrink
+                    // below its minimum when the form is resized).
+                    if (isSplitPaneName(splitPaneName)
+                        && (msg.key === 'MinWidth' || msg.key === 'MinHeight' || msg.key === 'MaxWidth' || msg.key === 'MaxHeight')) {
+                        await this.setSplitPaneMinMax(doc, panel, el, msg.key, String(msg.value ?? ''));
                         return;
                     }
                     const before = doc.model.serialize(true);
@@ -1106,6 +1638,18 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         const ctrl = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
                         await this.setUndoRedoDepth(doc, ctrl, String(msg.value ?? ''));
                         await this.sendProperties(doc, panel, ctrl || null);
+                        return;
+                    } else if (msg.key === 'StatusDate.Date' || msg.key === 'StatusDate.Time') {
+                        // The StatusDate clock's Date/Time formats aren't XAML attributes — they are
+                        // written into its generated `_Loaded` handler (rewriting the tick line).
+                        const clockName = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+                        const cur = clockName ? await getStatusDateSettings(doc.uri, clockName) : { date: 'System date', time: 'System time' };
+                        const next = { date: cur.date, time: cur.time };
+                        if (msg.key === 'StatusDate.Date') next.date = String(msg.value ?? cur.date);
+                        else next.time = String(msg.value ?? cur.time);
+                        if (clockName) await setStatusDateSettings(doc.uri, clockName, next.date, next.time);
+                        await this.render(doc, panel);
+                        await this.sendProperties(doc, panel, clockName || null);
                         return;
                     } else if (msg.key === '__theme__') {
                         // 'System' backs up + clears every explicitly-set colour so the control
@@ -1171,7 +1715,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                                 // auto-fill the remaining space (that is what 'Fill' is for).
                                 value = '';
                                 const parent = el.parentNode as Element | null;
-                                if (parent && localName(parent.tagName) === 'DockPanel') {
+                                // Inside a GrumpyPanel-based bar: Dock=None means "back to the free
+                                // body" — move the control out of the bar's dock band into its body.
+                                const gpPart = parent && parent.nodeType === 1 ? grumpyPartOf(parent) : null;
+                                if (gpPart && gpPart.part === 'dock') {
+                                    const body = doc.model.findByName(elName(gpPart.root) + 'Body');
+                                    if (body) doc.model.moveTo(el, body, { x: 8, y: 8 }); // strips DockPanel.* (Canvas target)
+                                } else if (parent && localName(parent.tagName) === 'DockPanel') {
                                     let isLastChild = true;
                                     for (let sib = el.nextSibling; sib; sib = sib.nextSibling) {
                                         if (sib.nodeType === 1) { isLastChild = false; break; }
@@ -1240,6 +1790,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         // namespace is needed then.)
                         if (msg.key === 'chrome:AnchorHelper.Anchor' && value) {
                             doc.model.ensureChromeNamespace();
+                            // A Status Bar item (or any DockPanel child) has no Dock property of its
+                            // own — an edge Anchor docks it to that edge; mirror it into the XAML so
+                            // the design preview matches runtime.
+                            mirrorAnchorDock(el, value);
+                            // An older bundled AnchorHelper (Canvas-only) won't dock the strip item at
+                            // runtime — refresh a stale copy so the Anchor actually works.
+                            this.ensureBundledComponentsCurrent(doc);
                             // Older (pre-Anchor) projects don't have the helper yet — warn the
                             // user once per document so they know the XAML won't compile until
                             // AnchorHelper.cs/.vb is copied in.
@@ -1255,6 +1812,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                                     );
                                 }
                             }
+                        }
+                        // The ChromeWindow title-bar properties (Title Bar Text/Icon/Height) live on
+                        // the bundled ChromeWindow component. A project created before that component
+                        // gained the settable Title Bar Height still carries the old copy — writing
+                        // e.g. TitleBarHeight="…" into it would not compile ("Unable to resolve …"),
+                        // so refresh the stale bundled copy before saving.
+                        if (value && CHROME_ROOT_PROPS.has(msg.key) && localName(el.tagName) === 'ChromeWindow') {
+                            this.ensureBundledComponentsCurrent(doc);
                         }
                         doc.model.setProperty(el, msg.key, value);
                     }
@@ -1283,7 +1848,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     let name = snip.name;
                     const unique = doc.model.nextName(snip.name);
                     if (unique !== snip.name) {
-                        xaml = replaceFragmentName(snip.xaml, snip.name, unique);
+                        // GrumpyPanel-based snippets ship a structural family — the root plus inner
+                        // names that share its prefix ({n}Dock/{n}Body; GrumpyStatus also adds
+                        // {n}Label/{n}Date). Rename the WHOLE family so the inner names stay unique
+                        // too (and never leave stale `OldName…` parts behind).
+                        xaml = (msg.tag === 'GrumpyPanel' || msg.tag === 'GrumpyStatus')
+                            ? replaceFragmentFamilyName(xaml, snip.name, unique)
+                            : replaceFragmentName(snip.xaml, snip.name, unique);
                         name = unique;
                     }
                     const parent = msg.parentName ? doc.model.findByName(msg.parentName) : doc.model.root;
@@ -1368,6 +1939,52 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         try { await insertStatusDateClock(doc.uri, name); }
                         catch { /* best-effort */ }
                     }
+                    // XY-Tracker: a TextBlock that live-reports Width × Height. Inside a Status Bar
+                    // (a DockPanel strip) it shows the FORM's size and hugs the right edge like the
+                    // other bar items; anywhere else it tracks its immediate container. Wire the
+                    // code-behind Loaded handler that keeps the text current.
+                    if (msg.tag === 'XYTracker' && name && placedEl) {
+                        const mode: XyTrackerMode = isWithinStatusBar(placedEl) ? 'form' : 'container';
+                        if (mode === 'form') {
+                            // A GrumpyStatus bar (a chrome:GrumpyPanel) is the new Status Bar: dropping
+                            // the tracker onto its body — or straight onto a label/date — must end up
+                            // as a real right-pinned band item, like the legacy StatusBar (whose items
+                            // lived directly in its DockPanel). Whatever strip part the tracker landed
+                            // on, relocate it into the strip's inner dock band, BEFORE the body (which
+                            // stays the DockPanel's fill child) so Dock=Right can actually act.
+                            const partParent = placedEl.parentNode as Element | null;
+                            if (partParent && partParent.nodeType === 1) {
+                                const gp = grumpyPartOf(partParent); // the strip's body canvas OR inner dock
+                                if (gp) {
+                                    const rootName = elName(gp.root);
+                                    const dock = rootName ? doc.model.findByName(`${rootName}Dock`) : undefined;
+                                    const body = rootName ? doc.model.findByName(`${rootName}Body`) : undefined;
+                                    if (dock && body) {
+                                        if (placedEl.parentNode !== dock) doc.model.moveTo(placedEl, dock);
+                                        dock.insertBefore(placedEl, body);
+                                        dock.setAttribute('LastChildFill', 'True');
+                                    }
+                                }
+                            }
+                            placedEl.setAttribute('DockPanel.Dock', 'Right');
+                            placedEl.setAttribute('HorizontalAlignment', 'Right');
+                        }
+                        placedEl.setAttribute('VerticalAlignment', 'Center');
+                        try { await insertXyTrackerClock(doc.uri, name, mode); }
+                        catch { /* best-effort */ }
+                    }
+                    // GrumpyPanel / GrumpyStatus: an existing project may predate the bundled
+                    // GrumpyPanel.cs/.vb helper — copy it in (next to ChromeWindow) so the saved
+                    // <chrome:GrumpyPanel> actually compiles and renders. GrumpyStatus also embeds
+                    // a live StatusDate ({name}Date) whose Loaded handler + per-second timer the
+                    // designer wires for you, exactly like the StatusDate tool.
+                    if (msg.tag === 'GrumpyPanel' || msg.tag === 'GrumpyStatus') {
+                        this.ensureGrumpyPanelHelpers(doc);
+                    }
+                    if (msg.tag === 'GrumpyStatus' && name) {
+                        try { await insertStatusDateClock(doc.uri, `${name}Date`); }
+                        catch { /* best-effort — the status clock must not fail the placement */ }
+                    }
                     // Generate the code-behind immediately: wire the control's default event
                     // handler (creating the code-behind file if needed) right after placement,
                     // instead of waiting for a middle-click. Middle-click now just opens it.
@@ -1382,7 +1999,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 }
                 case 'move': {
                     const el = doc.model.findByName(msg.name);
-                    if (!el || isLockedStructure(doc.model, msg.name)) return;
+                    if (!el || isLockedStructure(doc.model, msg.name) || isSplitPaneName(msg.name)) return;
                     const before = doc.model.serialize(true);
                     const bounds = this.boundsOf(doc, msg.name) ?? { x: 0, y: 0, width: 0, height: 0 };
                     doc.model.move(el, msg.dx ?? 0, msg.dy ?? 0, bounds);
@@ -1390,14 +2007,88 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.render(doc, panel);
                     return;
                 }
+                case 'nudge': {
+                    // Arrow-key move: shifts the WHOLE selection (anchor + every Ctrl+clicked
+                    // control) by the same delta in ONE undo step + ONE render. Only free-placed
+                    // controls (direct Canvas children) nudge — a Grid/DockPanel lays its children
+                    // out, so arrow keys don't fight the layout.
+                    const names = Array.isArray(msg.names) ? msg.names : (msg.name ? [msg.name] : []);
+                    const dx = Math.round(Number(msg.dx) || 0);
+                    const dy = Math.round(Number(msg.dy) || 0);
+                    if (names.length === 0 || (dx === 0 && dy === 0)) return;
+                    const before = doc.model.serialize(true);
+                    let moved = false;
+                    for (const nm of names) {
+                        if (!nm) continue;
+                        const el = doc.model.findByName(nm);
+                        if (!el || el === doc.model.root || isLockedStructure(doc.model, nm) || isSplitPaneName(nm)) continue;
+                        const parent = el.parentNode as Element | null;
+                        if (!parent || parent.nodeType !== 1 || localName(parent.tagName) !== 'Canvas') continue;
+                        const bounds = this.boundsOf(doc, nm) ?? { x: 0, y: 0, width: 0, height: 0 };
+                        doc.model.move(el, dx, dy, bounds);
+                        moved = true;
+                    }
+                    if (!moved) return;
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    return;
+                }
                 case 'resize': {
                     const el = doc.model.findByName(msg.name);
-                    if (!el || isLockedStructure(doc.model, msg.name)) return;
+                    if (!el || isLockedStructure(doc.model, msg.name) || isSplitPaneName(msg.name)) return;
                     const before = doc.model.serialize(true);
                     const bounds = this.boundsOf(doc, msg.name) ?? { x: 0, y: 0, width: 0, height: 0 };
                     doc.model.resize(el, msg.dx ?? 0, msg.dy ?? 0, bounds, msg.corner ?? 'se');
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
+                    return;
+                }
+                case 'setSplitter': {
+                    // A design-time SplitPanel divider was dragged to `pos` (design coords along the
+                    // bar's axis). Convert pos to a pixel size for the dragged pane and reuse
+                    // setSplitDividerPixels: that keeps the whole axis ALL-STAR (Avalonia's model) so
+                    // ONLY the dragged divider moves here AND at runtime, and the neighbour absorbs
+                    // the difference (form minimum + one undo step + re-render all handled there).
+                    const paneEl = msg.pane ? doc.model.findByName(msg.pane) : undefined;
+                    const otherEl = msg.other ? doc.model.findByName(msg.other) : undefined;
+                    if (!paneEl || !isSplitPaneName(msg.pane) || !otherEl || !isSplitPaneName(msg.other)) return;
+                    const kind: 'cols' | 'rows' = msg.axis === 'h' ? 'rows' : 'cols';
+                    const pos = Number(msg.pos);
+                    const frame = this.frames.get(doc.uri.toString());
+                    const c = frame?.controls ? frame.controls.find((x) => x.name === msg.pane) : undefined;
+                    const oc = frame?.controls ? frame.controls.find((x) => x.name === msg.other) : undefined;
+                    if (!frame || !c || !oc || !Number.isFinite(pos)) return;
+                    // The pane BODY sits inside its pane Border, so its cell starts ~borderThickness
+                    // px before the body's reported left/top (and its body width excludes the borders).
+                    const borderEl = paneEl.parentNode as Element | null;
+                    let bt = 1;
+                    if (borderEl && borderEl.nodeType === 1) {
+                        const f = parseFloat(String(borderEl.getAttribute('BorderThickness') || '').split(',')[0]);
+                        if (Number.isFinite(f)) bt = Math.max(0, f);
+                    }
+                    const cellStart = kind === 'cols' ? c.x - bt : c.y - bt;
+                    const root = splitRootOf(paneEl);
+                    const grid = root ? splitGridOf(root) : null;
+                    const defMinOf = (modelName: string): number => {
+                        if (!grid || !modelName) return 1;
+                        const me = doc.model.findByName(modelName);
+                        if (!me) return 1;
+                        const geo = paneGeometry(grid, me);
+                        if (!geo) return 1;
+                        const idx = kind === 'cols' ? geo.col : geo.row;
+                        const d = splitDefAt(grid, kind, idx);
+                        const mn = d ? (kind === 'cols' ? d.getAttribute('MinWidth') : d.getAttribute('MinHeight')) : null;
+                        const n = mn ? pxOf(mn) : 0;
+                        return n > 0 ? n : 1;
+                    };
+                    const minAllowed = Math.max(1, defMinOf(msg.pane));
+                    const farEnd = kind === 'cols'
+                        ? (oc.x - bt) + oc.width + 2 * bt
+                        : (oc.y - bt) + oc.height + 2 * bt;
+                    const maxAllowed = Math.max(minAllowed, farEnd - cellStart - Math.max(1, defMinOf(msg.other)));
+                    const px = Math.round(Math.min(maxAllowed, Math.max(minAllowed, pos - cellStart)));
+                    if (px <= 0) return;
+                    await this.setSplitDividerPixels(doc, panel, paneEl, otherEl, kind, px);
                     return;
                 }
                 case 'delete': {
@@ -1414,6 +2105,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     // Collect event-handler attrs from the element AND all its descendants,
                     // so deleting a container also cleans up child controls' handlers.
                     const handlers = doc.model.eventHandlersOfSubtree(el);
+                    // The names of the removed control + everything inside it — orphaned handler
+                    // methods named after them are swept from code-behind too (their XAML attribute
+                    // may have pointed at a different handler, e.g. a second StatusDate reusing the
+                    // first clock's Loaded, so the normal stale check never collects them).
+                    const removedNames = doc.model.namesInSubtree(el);
                     const ctrlName = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
                     doc.model.remove(el);
                     // Drop the deleted control's colour backup too.
@@ -1423,6 +2119,19 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     // Remove code-behind stubs that no control references any more.
                     const stale = [...new Set(handlers.filter((h) => !doc.model.hasHandler(h)))];
                     if (stale.length > 0) await removeHandlersFromCodeBehind(doc.uri, stale);
+                    // Sweep orphaned `<removedName>_<Event>` methods that no remaining event
+                    // attribute references (e.g. StatusDate2_Loaded after StatusDate2 is deleted).
+                    if (removedNames.length > 0) {
+                        const referenced = new Set<string>();
+                        for (const ce of doc.model.controlElements()) {
+                            for (const h of doc.model.eventHandlersOf(ce)) referenced.add(h);
+                        }
+                        await removeOrphanedHandlersForControls(doc.uri, removedNames, referenced);
+                    }
+                    // A pane body that was auto-converted to a DockPanel to host a docked/filled
+                    // control reverts to its Canvas base once deleting leaves it empty — so a pane
+                    // doesn't stay a DockPanel after its control is removed (rides the same undo).
+                    revertEmptyPaneBodies(doc.model);
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
                     await panel.webview.postMessage({ type: 'properties', properties: null });
@@ -1442,6 +2151,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         xaml: doc.model.elementXaml(el)
                     };
                     doc.model.remove(el);
+                    // Same pane-body tidy-up as delete: an emptied (auto-converted) pane body goes
+                    // back to its Canvas base instead of lingering as a DockPanel.
+                    revertEmptyPaneBodies(doc.model);
                     await panel.webview.postMessage({ type: 'clipboard', has: true });
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
@@ -1554,6 +2266,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     if (!this.isAutoSizeOff(doc, msg.name)) {
                         doc.model.sizeElementToGridCell(el, this.gridCellsFor(doc, el));
                     }
+                    // Moving the last control out of a pane also restores an emptied pane body.
+                    revertEmptyPaneBodies(doc.model);
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
                     await this.sendProperties(doc, panel, msg.name);
@@ -1743,13 +2457,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 }
                 case 'saveMenuItems': {
                     // 'Menu Items' tree editor on a <Menu>: replace its whole item tree with the
-                    // structure the user built (kinds map onto MenuItem/ToggleType/Separator).
+                    // structure the user built (kinds map onto MenuItem/ToggleType/Separator and an
+                    // inert fixed-width MenuItem for a top-level Space gap).
                     const el = msg.name ? doc.model.findByName(msg.name) : undefined;
                     if (!el || localName(el.tagName) !== 'Menu') return;
                     const nodes = sanitizeMenuNodes(msg.items);
                     const before = doc.model.serialize(true);
                     for (const kid of menuItemEls(el)) el.removeChild(kid);
                     for (const n of nodes) el.appendChild(menuElementFor(doc.model, n, 1));
+                    // A top-level Separator must read as a vertical divider on the bar, not the
+                    // horizontal flyout line Avalonia's Separator draws by default.
+                    syncMenuSeparatorStyle(doc.model, el, nodes.some((n) => n.kind === 'Separator'));
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
                     await this.sendProperties(doc, panel, msg.name);
@@ -1873,7 +2591,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         })).filter((x) => {
                             const el = x.el!;
                             const par = el && el.parentNode && el.parentNode.nodeType === 1 ? (el.parentNode as Element) : null;
-                            return !!el && !!x.b && !isLockedStructure(doc.model, x.n) && !(par && localName(par.tagName) === 'Grid');
+                            return !!el && !!x.b && !isLockedStructure(doc.model, x.n) && !isSplitPaneName(x.n) && !(par && localName(par.tagName) === 'Grid');
                         });
                         if (items.length < 3) return;
                         items.sort((a, c) => vert ? a.b!.y - c.b!.y : a.b!.x - c.b!.x);
@@ -1901,7 +2619,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         if (n === anchor) continue;
                         const el = doc.model.findByName(n);
                         if (!el) continue;
-                        if (isLockedStructure(doc.model, n)) continue;
+                        if (isLockedStructure(doc.model, n) || isSplitPaneName(n)) continue;
                         const parent = el.parentNode as Element | null;
                         if (parent && parent.nodeType === 1 && localName(parent.tagName) === 'Grid') continue;
                         const b = this.boundsOf(doc, n);
@@ -2070,13 +2788,23 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     // The control's CURRENT binding, whichever side created it (DataSet table or code asset).
                     const dsBinding = dataSetBindingFor(projectFolder, ctrlName);
                     const codeBinding = dsBinding ? undefined : findItemsSourceBinding(doc.uri, ctrlName);
+                    // "Follower": a control that only DISPLAYS data (ComboBox / ListBox / ItemsControl)
+                    // can list one TEXT column of a table a DataGrid owns — live, without owning the
+                    // table itself (which is what the "bound to another control" rule refuses).
+                    const followRecord = findFollowerRecord(projectFolder, ctrlName);
+                    const canFollow = controlType === 'ComboBox' || controlType === 'ListBox' || controlType === 'ItemsControl';
                     const assets = listAssets(projectFolder, formClass);
-                    type PickEntry = vscode.QuickPickItem & { clear?: 'dataset' | 'code'; asset?: number };
+                    type PickEntry = vscode.QuickPickItem & { clear?: 'dataset' | 'code' | 'follower'; asset?: number };
                     const items: PickEntry[] = [];
                     if (dsBinding) {
                         items.push({
                             label: '$(close) Un-bind DataSet table', alwaysShow: true, clear: 'dataset',
                             description: `stop showing ${dsBinding.value} on ${ctrlName} — the table keeps its schema/data`
+                        });
+                    } else if (followRecord) {
+                        items.push({
+                            label: '$(close) Un-bind follower', alwaysShow: true, clear: 'follower',
+                            description: `stop listing ${followRecord.info.tableName}.${followRecord.info.column} (${followRecord.info.owner}) on ${ctrlName}`
                         });
                     } else if (codeBinding) {
                         items.push({
@@ -2084,20 +2812,33 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                             description: `currently ${ctrlName}.ItemsSource = ${codeBinding}`
                         });
                     }
-                    if (dsBinding) {
+                    if (followRecord) {
+                        items.push({
+                            label: `$(link) follows ${followRecord.info.owner} → ${followRecord.info.tableName}.${followRecord.info.column}`,
+                            description: 'current binding (unchanged)', alwaysShow: true, picked: true
+                        });
+                    } else if (dsBinding) {
                         items.push({ label: dsBinding.value, description: 'current binding (unchanged)', alwaysShow: true, picked: true });
                     }
                     assets.forEach((a, i) => {
+                        // Followers only make sense for a control that merely displays data — never for
+                        // the DataGrid that OWNS the table.
+                        if (a.kind === 'follower' && !canFollow) return;
                         // The table already bound to this control is shown above as the current entry.
                         if (dsBinding && a.kind === 'dataset' && a.datasetName === dsBinding.datasetName && a.tableName === dsBinding.tableName) return;
+                        // The column it already follows is shown above too.
+                        if (a.kind === 'follower' && followRecord
+                            && followRecord.info.tableName === a.tableName && followRecord.info.column === a.column) return;
                         items.push({
                             label: a.label,
                             description: a.detail,
                             detail: a.kind === 'code'
                                 ? `writes ${ctrlName}.ItemsSource = ${a.value}`
-                                : (this.isDatasetTableClaimed(a, ctrlName)
-                                    ? 'bound to another control — un-bind it there first'
-                                    : `binds ${ctrlName}.ItemsSource to this table (SQLite)`),
+                                : a.kind === 'follower'
+                                    ? `writes ${ctrlName}.ItemsSource = a live ColumnFollower of ${a.tableName}.${a.column} (read-only)`
+                                    : (this.isDatasetTableClaimed(a, ctrlName)
+                                        ? 'bound to another control — un-bind it there first (or follow it from its column entries instead)'
+                                        : `binds ${ctrlName}.ItemsSource to this table (SQLite)`),
                             asset: i
                         });
                     });
@@ -2118,9 +2859,23 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         await this.sendProperties(doc, panel, msg.name ?? null);
                         return;
                     }
+                    if (picked.clear === 'follower' && followRecord) {
+                        await removeItemsSourceBinding(doc.uri, ctrlName);
+                        this.dropFollowerRecord(followRecord.info.adsetPath, followRecord.info.tableName, ctrlName);
+                        void vscode.window.showInformationMessage(
+                            `Cleared the follower binding on ${ctrlName} (${followRecord.info.tableName}.${followRecord.info.column}).`);
+                        await this.render(doc, panel);
+                        await this.sendProperties(doc, panel, msg.name ?? null);
+                        return;
+                    }
                     const asset = (typeof picked.asset === 'number') ? assets[picked.asset] : undefined;
                     if (!asset) {
                         // Selected the "current binding" entry — nothing to do.
+                        await this.sendProperties(doc, panel, msg.name ?? null);
+                        return;
+                    }
+                    if (asset.kind === 'follower') {
+                        await this.bindFollowerColumn(doc, proj, panel, el, ctrlName, asset);
                         await this.sendProperties(doc, panel, msg.name ?? null);
                         return;
                     }
@@ -2395,6 +3150,20 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         return out;
     }
 
+    /** The .axaml's current text: the open editor buffer (unsaved text edits included) when the file
+     *  is open as text, else the file on disk. undefined when neither can be read. */
+    private async sourceTextOf(doc: DesignerDocument): Promise<string | undefined> {
+        const key = doc.uri.toString();
+        const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === key);
+        if (open) return open.getText();
+        try {
+            const data = await vscode.workspace.fs.readFile(doc.uri);
+            return Buffer.from(data).toString('utf8');
+        } catch {
+            return undefined;
+        }
+    }
+
     private async render(doc: DesignerDocument, panel: vscode.WebviewPanel, followUp = false): Promise<void> {
         const host = await this.host.getClient();
         // Render the tab the user last selected as the ACTIVE tab (so its body Canvas is laid
@@ -2462,7 +3231,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             const el = c.name ? doc.model.findByName(c.name) : undefined;
             return {
                 ...c,
+                // The host (Avalonia 11) renders Avalonia-12-only controls through stand-in types
+                // (GroupBox→Border, CommandBar→Border, HyperlinkButton→Button, …). Report the REAL
+                // design tag from the model so the control list / type reads e.g. "GroupBox", not
+                // the stand-in type. For everything else the model tag equals the host type.
+                type: el ? localName(el.tagName) : c.type,
                 locked: isLockedStructure(doc.model, c.name),
+                // A SplitPanel pane body must always FILL its pane — it can be selected (to edit
+                // its properties) but never resized/moved with the mouse (the webview shows no
+                // resize handles and blocks dragging it). A GrumpyPanel-based bar's structural
+                // inner parts ({name}Dock + {name}Body) are treated the same way.
+                paneBody: isSplitPaneName(c.name) || (el ? !!grumpyPartOf(el) : false),
                 handles: this.shapeHandlesFor(doc, c),
                 zIndex: el ? (parseInt(el.getAttribute('ZIndex') || '0', 10) || 0) : 0
             };
@@ -2483,6 +3262,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         }
         await panel.webview.postMessage({
             type: 'frame', ...frame, controls, menus, previewTheme, formTitle,
+            // Every SplitPanel divider (as a draggable bar in design coords) so the webview can hit
+            // it and drag it to resize the panes at design time.
+            splitBars: splitBarsOf(controls),
             dotGrid: this.dotGridConfig(), crosshair: this.crosshairConfig()
         });
         await panel.webview.postMessage({ type: 'clipboard', has: !!clipboard });
@@ -2531,6 +3313,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         if (/^StatusBar\d*$/.test(name)) return 'StatusBar';
         // Split Panels are a Border (new 3-zone frame) or a Grid (older docs) named SplitPanelN.
         if (/^SplitPanel\d*$/.test(name)) return 'SplitPanel';
+        // GrumpyStatus is a GrumpyPanel (chrome:GrumpyPanel tag) — show its own help, not the
+        // generic GrumpyPanel one.
+        if (/^GrumpyStatus\d*$/.test(name)) return 'GrumpyStatus';
         return localName(el.tagName);
     }
 
@@ -2605,7 +3390,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             if (controlType === 'DataGrid') ensureDataGridAutoGenerateColumns(doc.uri.fsPath, ctrlName);
             // VB: named controls are not auto-generated fields — ensure the FindControl accessor
             // exists (defensive; the form designer normally syncs these when a control is placed).
-            if (proj.language === 'vb') await syncVbAccessors(doc.uri, namedControlsInAxaml(doc.uri));
+            if (proj.language === 'vb') await syncVbAccessors(doc.uri, unionNamedControls(namedControlsInAxaml(doc.uri), doc.model.namedControls()));
             try { fs.writeFileSync(asset.adsetPath, serializeDataSet(spec), 'utf8'); } catch { /* handled below */ }
             // Regenerate the DataSet class + .xsd, make sure the SQLite packages are present (as
             // the DataSet designer's Generate Code does), then repaint any open .adset panel so
@@ -2694,6 +3479,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             };
             const filePath = await bindImageToGrid(doc.uri, ref);
             if (!filePath) { void vscode.window.showErrorMessage(`Could not write the code-behind for ${controlName}.`); return; }
+            // The generated code-behind calls ExifImageLoader.LoadImageOriented — copy the bundled
+            // helper in when this project predates it (new projects already ship it).
+            this.ensureExifImageLoader(proj);
             const owner = tableForGrid(projectFolder, tgt.gridName);
             if (owner) {
                 if (!owner.table.boundImages) owner.table.boundImages = [];
@@ -2703,13 +3491,165 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 fs.writeFileSync(owner.adsetPath, serializeDataSet(owner.spec), 'utf8');
             }
             // VB: named controls are not auto fields — ensure Image/DataGrid accessors exist.
-            if (proj.language === 'vb') await syncVbAccessors(doc.uri, namedControlsInAxaml(doc.uri));
+            if (proj.language === 'vb') await syncVbAccessors(doc.uri, unionNamedControls(namedControlsInAxaml(doc.uri), doc.model.namedControls()));
             void vscode.window.showInformationMessage(
                 `Image ${controlName} now shows ${tgt.gridName}.${tgt.column} for the selected row (${path.basename(filePath)}).`
             );
         } catch (e) {
             void vscode.window.showErrorMessage('Data Image bind failed: ' + (e instanceof Error ? e.message : String(e)));
         }
+    }
+
+    /** Stops a read-only control following a table column: code-behind line + the `.adset` record. */
+    private dropFollowerRecord(adsetPath: string, tableName: string, controlName: string): void {
+        try {
+            const spec = parseDataSet(fs.readFileSync(adsetPath, 'utf8'));
+            const t = spec.tables.find((x) => x.name === tableName);
+            if (t && t.followers) {
+                t.followers = t.followers.filter((f) => f.control !== controlName);
+                fs.writeFileSync(adsetPath, serializeDataSet(spec), 'utf8');
+                void reloadDataSetPanel(vscode.Uri.file(adsetPath));
+            }
+        } catch { /* best-effort: the code-behind line is what actually breaks the build */ }
+    }
+
+    /** Number of inline item children (e.g. `<ComboBoxItem>`) — Avalonia refuses an ItemsSource
+     *  while these exist (“Items collection must be empty before using ItemsSource.”), so a bind
+     *  over them throws at RUNTIME. */
+    private inlineItemCount(el: Element): number {
+        let n = 0;
+        for (const child of Array.from(el.childNodes ?? [])) if ((child as Element).nodeType === 1) n++;
+        return n;
+    }
+
+    /** Copies the bundled ColumnFollower helper next to the project when it is missing (a project
+     *  created before the follower feature). Mirrors ensureExifImageLoader. */
+    private ensureColumnFollowerHelper(proj: ProjectInfo): boolean {
+        try {
+            const file = proj.language === 'vb' ? 'ColumnFollower.vb' : 'ColumnFollower.cs';
+            const p = path.join(path.dirname(proj.projectUri.fsPath), file);
+            if (fs.existsSync(p)) return false;
+            const src = path.join(this.context.extensionUri.fsPath, 'resources', file);
+            if (!fs.existsSync(src)) return false;
+            fs.copyFileSync(src, p);
+            void vscode.window.showInformationMessage(
+                `Added ${file} — the helper that keeps a read-only control's list in step with the grid.`);
+            return true;
+        } catch { return false; }
+    }
+
+    /** Binds a read-only control (ComboBox / ListBox / ItemsControl) to ONE text column of a table a
+     *  DataGrid owns. The grid keeps the editable row collection (and the “+ Add row…” placeholder);
+     *  this control lists the column's values live and skips that placeholder. */
+    private async bindFollowerColumn(
+        doc: DesignerDocument,
+        proj: ProjectInfo,
+        panel: vscode.WebviewPanel,
+        el: Element,
+        ctrlName: string,
+        target: Extract<Asset, { kind: 'follower' }>
+    ): Promise<void> {
+        const projectFolder = path.dirname(proj.projectUri.fsPath);
+        const controlType = localName(el.tagName);
+        // 1) Inline items would make Avalonia throw as soon as ItemsSource is set — clear them first.
+        if (this.inlineItemCount(el) > 0) {
+            const choice = await vscode.window.showWarningMessage(
+                `${ctrlName} still contains inline items. Avalonia cannot use both an Items list and an ` +
+                'ItemsSource (it throws “Items collection must be empty before using ItemsSource.”), ' +
+                'so the inline items have to be removed to bind it.',
+                { modal: true }, 'Clear them and bind');
+            if (choice !== 'Clear them and bind') return;
+            const before = doc.model.serialize(true);
+            for (const child of Array.from(el.childNodes ?? [])) if ((child as Element).nodeType === 1) el.removeChild(child as Element);
+            this.notifyEdit(doc, panel, before);
+        }
+        // 2) One binding per control: drop whatever it has now (a table it owns, a code asset, an
+        //    older follower column).
+        const currentTable = dataSetBindingFor(projectFolder, ctrlName);
+        if (currentTable) await this.unbindCurrentDataSetBinding(doc, proj, ctrlName, controlType);
+        const oldFollow = findFollowerRecord(projectFolder, ctrlName);
+        if (oldFollow && !(oldFollow.info.tableName === target.tableName && oldFollow.info.column === target.column)) {
+            this.dropFollowerRecord(oldFollow.info.adsetPath, oldFollow.info.tableName, ctrlName);
+        }
+        await removeItemsSourceBinding(doc.uri, ctrlName);
+        // 3) The helper must exist in the project, then the binding line goes in (after the grid's
+        //    Wire line, so the row collection is there when the follower is built).
+        this.ensureColumnFollowerHelper(proj);
+        const filePath = await bindFollowerToColumn(doc.uri, {
+            datasetName: target.datasetName,
+            tableName: target.tableName,
+            controlName: ctrlName,
+            column: target.column,
+            ownerGrid: target.owner
+        });
+        if (!filePath) {
+            void vscode.window.showErrorMessage(`Could not write the code-behind for ${ctrlName}.`);
+            return;
+        }
+        // 4) Record it on the table (.adset), like boundImages — so the DataSet designer, the picker
+        //    and 🩺 Code Fix all know this control follows it.
+        try {
+            const spec = parseDataSet(fs.readFileSync(target.adsetPath, 'utf8'));
+            const t = spec.tables.find((x) => x.name === target.tableName);
+            if (t) {
+                if (!t.followers) t.followers = [];
+                const existing = t.followers.find((f) => f.control === ctrlName);
+                if (existing) { existing.column = target.column; existing.type = controlType; }
+                else t.followers.push({ control: ctrlName, type: controlType, column: target.column });
+                fs.writeFileSync(target.adsetPath, serializeDataSet(spec), 'utf8');
+                void reloadDataSetPanel(vscode.Uri.file(target.adsetPath));
+            }
+        } catch { /* the code-behind binding is the important part */ }
+        await this.render(doc, panel);
+        void vscode.window.showInformationMessage(
+            `${ctrlName} now lists ${target.tableName}.${target.column} — live, following ${target.owner} ` +
+            '(the “+ Add row…” row is skipped).');
+    }
+
+    /** The bundled ColumnFollower helper, in case a fix or the checker needs it too. */
+    private ensureColumnFollowerForDoc(doc: DesignerDocument): void {
+        const proj = findProject(doc.uri);
+        if (proj) this.ensureColumnFollowerHelper(proj);
+    }
+
+    /** The Data-Image code-behind now loads via ExifImageLoader (EXIF-aware), which is bundled with
+     *  every NEW project. A project created before this helper existed needs the file next to the
+     *  project (or its code-behind won't compile) — copy it in from the extension's resources when
+     *  it's missing. Returns true when it was added. */
+    private ensureExifImageLoader(proj: ProjectInfo): boolean {
+        try {
+            const file = proj.language === 'vb' ? 'ExifImageLoader.vb' : 'ExifImageLoader.cs';
+            const p = path.join(path.dirname(proj.projectUri.fsPath), file);
+            if (fs.existsSync(p)) return false;
+            const src = path.join(this.context.extensionUri.fsPath, 'resources', file);
+            if (!fs.existsSync(src)) return false;
+            fs.copyFileSync(src, p);
+            void vscode.window.showInformationMessage(
+                `Added ${file} so the bound Image loads JPEGs with their EXIF orientation (portrait photos stay upright).`
+            );
+            return true;
+        } catch { return false; }
+    }
+
+    /** GrumpyPanel is a bundled AvaloniaChrome.GrumpyPanel (a Border-based docking region) that
+     *  ships with every NEW project (like ChromeWindow). A project created before this helper
+     *  existed needs the file next to ChromeWindow — otherwise the saved <chrome:GrumpyPanel>
+     *  won't compile. Copy it in from the extension's resources when it's missing. */
+    private ensureGrumpyPanelHelpers(doc: DesignerDocument): boolean {
+        try {
+            const proj = findProject(doc.uri);
+            if (!proj) return false;
+            const file = proj.language === 'vb' ? 'GrumpyPanel.vb' : 'GrumpyPanel.cs';
+            const p = path.join(path.dirname(proj.projectUri.fsPath), file);
+            if (fs.existsSync(p)) return false;
+            const src = path.join(this.context.extensionUri.fsPath, 'resources', file);
+            if (!fs.existsSync(src)) return false;
+            fs.copyFileSync(src, p);
+            void vscode.window.showInformationMessage(
+                `Added ${file} (GrumpyPanel is bundled with new projects — copied it in so this one compiles).`
+            );
+            return true;
+        } catch { return false; }
     }
 
     /** Removes an Image's Data-Image binding: code-behind handlers + the .adset boundImages entry. */
@@ -2797,6 +3737,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const before = doc.model.serialize(true);
         const title = root.getAttribute('Title') || 'My Window';
         if (!doc.model.convertRootToChromeWindow(title)) return;
+        // The ChromeWindow root + code-behind need the bundled ChromeWindow component — a project
+        // that predates it (or the settable TitleBarHeight) is healed here so the app still compiles.
+        this.ensureBundledComponentsCurrent(doc);
         // Switch the code-behind base class (C# `: Window` / VB `Inherits Window` → ChromeWindow),
         // awaited so the undo snapshot captures the converted code-behind.
         try { await convertCodeBehindToChrome(doc.uri); } catch { /* best-effort */ }
@@ -2806,6 +3749,56 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         void vscode.window.showInformationMessage(
             'Custom title bar applied. Edit the title text via Properties → Title Bar Text; press Ctrl+Z to revert to the default bar.'
         );
+    }
+
+    /**
+     * Keeps an existing project's BUNDLED component files (ChromeWindow.cs/.vb + AnchorHelper.cs/.vb)
+     * current before chrome properties are written. A project created by an older extension keeps its
+     * OLD copy, so writing `TitleBarHeight="…"` (or converting a root) no longer compiles — the XAML
+     * compiler can't find a property the old ChromeWindow never had. Only provably-old bundled copies
+     * (bundled header present, current member missing) are refreshed, and a missing ChromeWindow is
+     * copied in; a genuinely customised copy is left alone. Returns the names of the files touched.
+     */
+    private ensureBundledComponentsCurrent(doc: DesignerDocument): string[] {
+        const proj = findProject(doc.uri);
+        if (!proj) return [];
+        const vb = proj.language === 'vb';
+        const resourceRoot = path.join(this.context.extensionUri.fsPath, 'resources');
+        const updated: string[] = [];
+        for (const spec of bundledComponentSpecs(vb)) {
+            // The component lives next to the project file (where New Project writes it); older
+            // layouts sometimes put it next to the .axaml — check both.
+            const dirs = [path.dirname(proj.projectUri.fsPath), path.dirname(doc.uri.fsPath)];
+            for (const dir of dirs) {
+                const p = path.join(dir, spec.file);
+                if (!fs.existsSync(p)) {
+                    // A ChromeWindow-rooted form can't compile without its ChromeWindow component.
+                    if (spec.kind === 'ChromeWindow') {
+                        try {
+                            fs.copyFileSync(path.join(resourceRoot, spec.file), p);
+                            updated.push(spec.file);
+                        } catch { /* leave it; the code-behind change is best-effort too */ }
+                    }
+                    break;
+                }
+                try {
+                    const text = fs.readFileSync(p, 'utf8');
+                    if (spec.bundled.test(text) && !text.includes(spec.marker)) {
+                        fs.writeFileSync(p, fs.readFileSync(path.join(resourceRoot, spec.file), 'utf8'), 'utf8');
+                        updated.push(spec.file);
+                    }
+                } catch { /* never fail an edit over a stale helper */ }
+                break; // only the first directory that contains the file
+            }
+        }
+        if (updated.length > 0) {
+            void vscode.window.showInformationMessage(
+                `Updated ${updated.join(' + ')} to the current bundled version ` +
+                `(this project was created before that component gained the settable Title Bar Height / ` +
+                `Canvas-only anchoring).`
+            );
+        }
+        return updated;
     }
 
     /** Writes the 'Undo-Redo' depth to the bound table's .adset and regenerates the DataSet class. */
@@ -2835,6 +3828,79 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         }
     }
 
+    /** Builds + sends the multi-select Properties rows: only keys EVERY selected control supports,
+     *  with a value shown only when all selected controls agree (an empty box means they differ). */
+    private async sendMultiProperties(doc: DesignerDocument, panel: vscode.WebviewPanel, names: string[]): Promise<void> {
+        const els = names.map((n) => doc.model.findByName(n)).filter((e) => !!e) as any[];
+        if (els.length < 2) {
+            await this.sendProperties(doc, panel, els.length === 1 ? (els[0].getAttribute('x:Name') || els[0].getAttribute('Name') || null) : (names[0] ?? null));
+            return;
+        }
+        const rows = multiCommonProps(els);
+        await panel.webview.postMessage({
+            type: 'properties',
+            multi: true,
+            names,
+            properties: rows,
+            info: {
+                label: `${els.length} controls selected`,
+                desc: 'The properties shown are common to every selected control. A value appears only when all selected controls have the same value; an empty box means their values differ (leave it empty to keep each control\'s own value).',
+                use: 'Type or pick a value to set that property on ALL selected controls at once — one Ctrl+Z undoes the whole batch.'
+            }
+        });
+    }
+
+    /** Applies one property value to every selected control as a single undo step (multi-select edit). */
+    private async multiSetProperty(doc: DesignerDocument, panel: vscode.WebviewPanel, names: string[], key: string, value: unknown): Promise<void> {
+        if (key === '__name__' || key === '__type__' || key === 'UndoRedoDepth' || key === 'ItemsSource') return;
+        // Resolve the target elements; skip locked structural elements and SplitPanel pane bodies
+        // (a pane's Width/Height are divider positions, not a size).
+        const els: any[] = [];
+        for (const n of names) {
+            const el = doc.model.findByName(n);
+            if (!el) continue;
+            const nm = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+            if (isLockedStructure(doc.model, nm)) continue;
+            if (isSplitPaneName(nm) && (key === 'Width' || key === 'Height')) continue;
+            els.push(el);
+        }
+        if (els.length === 0) return;
+        const before = doc.model.serialize(true);
+        if (key === '__theme__') {
+            // 'System' backs up + clears every set colour on EACH control; 'Custom' restores.
+            for (const el of els) {
+                const tName = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+                if (String(value ?? '') === 'System') {
+                    const colors: Record<string, string> = {};
+                    for (const k of THEME_COLOR_KEYS) { const v = el.getAttribute(k); if (v) colors[k] = v; }
+                    await this.saveThemeBackup(doc, tName, colors);
+                    for (const k of THEME_COLOR_KEYS) el.removeAttribute(k);
+                } else {
+                    const hasAny = THEME_COLOR_KEYS.some((k) => el.getAttribute(k));
+                    if (!hasAny) {
+                        const colors = await this.restoreThemeBackup(doc, tName);
+                        if (colors) for (const k of Object.keys(colors)) el.setAttribute(k, colors[k]);
+                    }
+                }
+            }
+        } else {
+            for (const el of els) {
+                let v = String(value ?? '');
+                if (key === 'Opacity') v = opacityToXaml(v);
+                const def = defaultFor(key);
+                if (def !== undefined && v === def) v = '';
+                if (key === 'chrome:AnchorHelper.Anchor' && v) {
+                    doc.model.ensureChromeNamespace();
+                    mirrorAnchorDock(el, String(v));
+                }
+                doc.model.setProperty(el, key, v);
+            }
+        }
+        this.notifyEdit(doc, panel, before);
+        await this.render(doc, panel);
+        await this.sendMultiProperties(doc, panel, names);
+    }
+
     private async sendProperties(doc: DesignerDocument, panel: vscode.WebviewPanel, name: string | null | undefined): Promise<void> {
         const el = name ? doc.model.findByName(name) : doc.model.root;
         if (!el) {
@@ -2855,7 +3921,15 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             ? { value: String(dsBinding.undoRedoDepth ?? 5) }
             : undefined;
         await this.ensureAutoSizeOff();
-        const props = propertyDefsFor(el, this.effectiveFor(doc, name), itemSourceOverride, undoRedoOverride, this.isAutoSizeOff(doc, ctrlName));
+        // A StatusDate clock's Date/Time formats live in its generated code-behind handler — read
+        // them (plus a live preview of how the clock looks right now) so the Properties pickers +
+        // preview row show the current settings.
+        let statusClockOverride: { date?: string; time?: string; preview?: string } | undefined;
+        if (ctrlName && isStatusClock(el)) {
+            const sc = await getStatusDateSettings(doc.uri, ctrlName);
+            statusClockOverride = { date: sc.date, time: sc.time, preview: statusClockSample(sc.date, sc.time) };
+        }
+        const props = propertyDefsFor(el, this.effectiveFor(doc, name), itemSourceOverride, undoRedoOverride, this.isAutoSizeOff(doc, ctrlName), statusClockOverride);
         // A SplitPanel pane body's Width/Height are its divider positions (the pane fills its grid
         // cell) — re-present them as the grid size and drop the axis that isn't a real divider.
         this.adjustSplitPaneProps(doc, el, ctrlName, props);
@@ -2954,10 +4028,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         void panel.webview.postMessage({ type: 'fonts', fonts: this.systemFonts });
     }
 
-    /** A SplitPanel pane body fills its grid cell, so its Width/Height ARE the divider positions
-     *  (the neighbouring pane flexes). Show the current size from the grid definitions (the
-     *  host-measured pixels when the definition is star-sized) and drop the dimension that isn't a
-     *  real divider on that axis (e.g. Width on the full-width bottom pane). */
+    /** A SplitPanel pane body fills its grid cell, so its Width/Height/Min/Max are NOT attributes on
+     *  the pane — they belong on the matching Row/Column definition (that is what really sizes the
+     *  cell AND what clamps a star row/column when the window is resized; a MinHeight on the pane
+     *  body itself is ignored by the Grid layout). Show the size from the grid definitions (the
+     *  host-measured pixels when star-sized) and hide the whole dimension family on the axis the
+     *  pane does not drive (e.g. Width/Min-Width/Max-Width on the full-width bottom pane). */
     private adjustSplitPaneProps(doc: DesignerDocument, el: Element, ctrlName: string | null, props: any[]): void {
         const root = splitRootOf(el);
         if (!root) return;
@@ -2966,22 +4042,47 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const geo = paneGeometry(grid, el);
         if (!geo) return;
         const b = this.boundsOf(doc, ctrlName);
-        const showOrDrop = (kind: 'cols' | 'rows', split: boolean, span: number, index: number, measured: number | undefined): void => {
-            const key = kind === 'cols' ? 'Width' : 'Height';
-            const p = props.find((x) => x && x.key === key);
-            if (!p) return;
-            if (!(split && span === 1)) {
-                const i = props.indexOf(p);
-                if (i >= 0) props.splice(i, 1);
-                return;
-            }
-            p.value = paneSizeDisplay(grid, kind, index, measured ?? 0);
-            p.desc = kind === 'cols'
-                ? 'Width of this pane (its neighbour stretches to fill the rest). 0 hides the pane; the splitter can be dragged at runtime.'
-                : 'Height of this pane (the rest of the split stretches to fill). 0 hides the pane; the splitter can be dragged at runtime.';
+        const families: Record<'cols' | 'rows', { size: string; min: string; max: string }> = {
+            cols: { size: 'Width', min: 'MinWidth', max: 'MaxWidth' },
+            rows: { size: 'Height', min: 'MinHeight', max: 'MaxHeight' }
         };
-        showOrDrop('cols', geo.colSplit, geo.colSpan, geo.col, b ? b.width : undefined);
-        showOrDrop('rows', geo.rowSplit, geo.rowSpan, geo.row, b ? b.height : undefined);
+        const applyAxis = (kind: 'cols' | 'rows', driven: boolean, index: number, measured: number | undefined): void => {
+            const fam = families[kind];
+            const drop = (key: string): void => {
+                const p = props.find((x) => x && x.key === key);
+                if (p) {
+                    const i = props.indexOf(p);
+                    if (i >= 0) props.splice(i, 1);
+                }
+            };
+            if (!driven) { drop(fam.size); drop(fam.min); drop(fam.max); return; }
+            const def = splitDefAt(grid, kind, index);
+            const size = props.find((x) => x && x.key === fam.size);
+            if (size) {
+                size.value = paneSizeDisplay(grid, kind, index, measured ?? 0);
+                size.desc = kind === 'cols'
+                    ? 'Width of this pane (its neighbour stretches to fill the rest). 0 hides the pane; the splitter can be dragged at runtime.'
+                    : 'Height of this pane (the rest of the split stretches to fill). 0 hides the pane; the splitter can be dragged at runtime.';
+            }
+            for (const key of [fam.min, fam.max]) {
+                const p = props.find((x) => x && x.key === key);
+                if (!p) continue;
+                const defVal = def ? (def.getAttribute(key) ?? '') : '';
+                // A value typed before this fix landed on the pane body (meaningless there) — still
+                // show it so it isn't silently lost; the next edit moves it onto the definition.
+                const legacy = el.getAttribute(key) ?? '';
+                p.value = defVal || legacy || (key === fam.max ? '' : '0');
+                p.desc = kind === 'cols'
+                    ? (key === fam.min
+                        ? 'This pane\'s column can never be narrower than this when the form resizes.'
+                        : 'This pane\'s column can never be wider than this when the form resizes.')
+                    : (key === fam.min
+                        ? 'This pane\'s row can never be shorter than this when the form resizes.'
+                        : 'This pane\'s row can never be taller than this when the form resizes.');
+            }
+        };
+        applyAxis('cols', geo.colSplit && geo.colSpan === 1, geo.col, b ? b.width : undefined);
+        applyAxis('rows', geo.rowSplit && geo.rowSpan === 1, geo.row, b ? b.height : undefined);
     }
 
     private boundsOf(doc: DesignerDocument, name: string | null): HostControlInfo | undefined {
@@ -3159,7 +4260,163 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
 
     /** Keeps VB code-behind named-control accessors in sync with the XAML. */
     private async syncAccessors(doc: DesignerDocument): Promise<void> {
-        await syncVbAccessors(doc.uri, doc.model.namedControls());
+        await syncVbAccessors(doc.uri, unionNamedControls(namedControlsInAxaml(doc.uri), doc.model.namedControls()));
+    }
+
+    // ---------------- Code Fix… (code-behind checker) ----------------
+
+    /** Code-behind file the checker worked on, so a fix can be applied to the same file. */
+    private codeBackups = new Map<string, string>();
+
+    /** What `analyzeCodeBehind` needs: the DESIGNER's live XAML plus the project's DataSet facts
+     *  (the checker verifies Data-Image / ItemsSource bindings against the .adset specs). */
+    private checkOptions(doc: DesignerDocument): CheckOptions {
+        const axamlText = doc.model.serialize(true);
+        const proj = findProject(doc.uri);
+        return {
+            axamlText,
+            controls: controlsForCheck(doc.uri, axamlText, doc.model.namedControls()),
+            dataSet: proj ? this.codeCheckDataSetContext(path.dirname(proj.projectUri.fsPath)) : undefined
+        };
+    }
+
+    /** Every table that is bound to a control of this project — with the row type and columns the
+     *  code-behind has to match, plus the image bindings recorded on those tables. */
+    private codeCheckDataSetContext(projectFolder: string): DataSetContext {
+        const grids: DataSetGridInfo[] = [];
+        const images: DataSetImageInfo[] = [];
+        const followers: DataSetFollowerInfo[] = [];
+        const datasetClasses: string[] = [];
+        for (const f of readDataSetFiles(projectFolder)) {
+            datasetClasses.push(f.spec.name);
+            for (const t of f.spec.tables) {
+                const rowType = `${t.name}Row`;
+                if (t.boundTo && t.boundToType === 'DataGrid') {
+                    grids.push({
+                        datasetName: f.spec.name, datasetClass: f.spec.name, tableName: t.name,
+                        rowType, columns: t.columns.map((c) => c.name), gridName: t.boundTo
+                    });
+                }
+                if (!t.boundTo) continue;
+                for (const b of t.boundImages ?? []) {
+                    images.push({
+                        datasetName: f.spec.name, datasetClass: f.spec.name, tableName: t.name,
+                        rowType, controlName: b.control, gridName: t.boundTo, column: b.column
+                    });
+                }
+                for (const fl of t.followers ?? []) {
+                    followers.push({
+                        datasetName: f.spec.name, tableName: t.name, rowType, column: fl.column,
+                        controlName: fl.control, ownerGrid: t.boundTo, adsetPath: f.adsetPath
+                    });
+                }
+            }
+        }
+        return { datasetClasses, grids, images, followers };
+    }
+
+    /** Takes ONE backup of the code-behind per "Code Fix…" run (kept in the extension's storage, so
+     *  the project folder stays clean). */
+    private backupCodeOnce(doc: DesignerDocument, codeFile: string | undefined): void {
+        const key = doc.uri.toString();
+        if (!codeFile || this.codeBackups.has(key)) return;
+        const dest = backupCodeBehind(codeFile, path.join(this.context.globalStorageUri.fsPath, 'code-backups'));
+        if (dest) this.codeBackups.set(key, dest);
+    }
+
+    /** Runs the checker, publishes the findings to the PROBLEMS pane and lists them in the panel.
+     *  `fresh` = a new run from the toolbar button (starts a new backup). */
+    private async runCodeCheck(doc: DesignerDocument, panel: vscode.WebviewPanel, fresh = true): Promise<void> {
+        if (fresh) this.codeBackups.delete(doc.uri.toString());
+        const result = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
+        publishIssues(doc.uri, result, result.issues);
+        const errors = result.issues.filter((i) => i.severity === 'error').length;
+        const warnings = result.issues.length - errors;
+        await panel.webview.postMessage({
+            type: 'codeIssues',
+            file: result.codeFile ? path.basename(result.codeFile) : '',
+            errors,
+            warnings,
+            backup: this.codeBackups.get(doc.uri.toString()) ?? '',
+            issues: result.issues.map((i) => ({
+                id: i.id,
+                severity: i.severity,
+                title: i.title,
+                detail: i.detail,
+                line: i.line ?? 0,
+                file: i.file ?? 'code',
+                fixable: i.kind !== 'report-only'
+            }))
+        });
+        await this.postStatus(panel, result.issues.length === 0
+            ? 'Code Fix: no problems found'
+            : `Code Fix: ${errors} error(s), ${warnings} warning(s)`);
+    }
+
+    /** Applies one finding. DataSet-dependent fixes (re-generate a binding) are done here because
+     *  they need the .adset spec; everything else is a plain file edit in the checker module. */
+    private async applyCodeIssue(doc: DesignerDocument, proj: ProjectInfo | undefined, panel: vscode.WebviewPanel, issue: CodeIssue): Promise<string> {
+        const projectFolder = proj ? path.dirname(proj.projectUri.fsPath) : '';
+        const control = issue.data?.control ?? issue.member ?? '';
+        switch (issue.kind) {
+            case 'regenerate-binding': {
+                // The binding is recorded on the table; re-generating it from there fixes both a
+                // missing/partial block and a column that was renamed since the code was written.
+                const found = findImageBinding(projectFolder, control);
+                if (!found || !proj) return `No Data-Image binding is recorded for "${control}" — bind the Image again from the Properties pane.`;
+                await this.bindDataImage(doc, proj, panel, control, {
+                    datasetName: found.info.datasetName, tableName: found.info.tableName,
+                    gridName: found.info.gridName, column: found.info.column
+                });
+                return `Re-generated the Data-Image binding of ${control} from ${found.info.tableName}.${found.info.column}.`;
+            }
+            case 'rebind-grid': {
+                if (!proj) return 'No project found for this form.';
+                const binding = dataSetBindingFor(projectFolder, control);
+                if (!binding) return `No DataSet binding is recorded for "${control}".`;
+                const el = doc.model.findByName(control);
+                const formClass = (doc.model.root.getAttribute('x:Class') || '').split('.').pop() || '';
+                const asset = listAssets(projectFolder, formClass).find((a) => a.kind === 'dataset'
+                    && a.datasetName === binding.datasetName && a.tableName === binding.tableName);
+                if (!asset || asset.kind !== 'dataset') return `Table "${binding.datasetName}.${binding.tableName}" no longer exists — bind ${control} again.`;
+                await this.bindDataSetAsset(doc, proj, control, localName(el?.tagName ?? 'DataGrid'), asset);
+                return `Re-generated the binding of ${control} from ${binding.datasetName}.${binding.tableName}.`;
+            }
+            case 'copy-bundled-helper': {
+                const helper = issue.data?.helper ?? '';
+                if (!proj) return 'No project found for this form.';
+                if (helper === 'ExifImageLoader') this.ensureExifImageLoader(proj);
+                else if (helper === 'GrumpyPanel') this.ensureGrumpyPanelHelpers(doc);
+                else if (helper === 'ColumnFollower') this.ensureColumnFollowerHelper(proj);
+                else this.ensureBundledComponentsCurrent(doc);
+                return `${helper} copied into the project.`;
+            }
+            case 'remove-inline-items': {
+                // Edit the MODEL (not the file) — the designer owns the XAML and would otherwise save
+                // its stale copy over a direct file edit.
+                const el = doc.model.findByName(issue.data?.control ?? issue.member ?? '');
+                if (!el) return `"${issue.member}" is gone — re-run the check.`;
+                const before = doc.model.serialize(true);
+                let removed = 0;
+                for (const child of Array.from(el.childNodes ?? [])) {
+                    if ((child as Element).nodeType === 1) { el.removeChild(child as Element); removed++; }
+                }
+                if (removed === 0) return 'The inline items were already removed.';
+                this.notifyEdit(doc, panel, before);
+                await this.render(doc, panel);
+                return `Removed ${removed} inline item(s) from ${issue.member}.`;
+            }
+            case 'drop-follower': {
+                const control = issue.data?.control ?? issue.member ?? '';
+                await removeItemsSourceBinding(doc.uri, control);
+                const adsetPath = issue.data?.adsetPath ?? '';
+                const tableName = issue.data?.tableName ?? '';
+                if (adsetPath && tableName) this.dropFollowerRecord(adsetPath, tableName, control);
+                return `Removed the stale follower binding of ${control}.`;
+            }
+            default:
+                return applyLocalFix(doc.uri, issue, this.checkOptions(doc));
+        }
     }
 
     /** Signature of the named controls in a serialized XAML string (for change detection). */
@@ -3250,6 +4507,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const used = new Set<Element>();
         const kept: Element[] = [];
         const newClocks: string[] = [];
+        const newTrackers: string[] = [];
         const make = (item: StatusItem): Element => {
             const kind = item.kind;
             // '<Kind>Item' (never the bare type name, which could collide in code-behind).
@@ -3270,6 +4528,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 el.setAttribute('Text', new Date().toLocaleString());
                 el.setAttribute('Loaded', `${name}_Loaded`);
                 newClocks.push(name);
+            } else if (kind === 'XYTracker') {
+                // A TextBlock that live-reports the FORM's size (Status Bar items always show the
+                // form's dimensions). Classes="XYTracker" distinguishes it from a StatusDate.
+                el = doc.model.createElement('<TextBlock/>');
+                el.setAttribute('Text', '0 x 0 px');
+                el.setAttribute('Classes', 'XYTracker');
+                el.setAttribute('Loaded', `${name}_Loaded`);
+                newTrackers.push(name);
             } else {
                 el = doc.model.createElement('<TextBlock/>');
             }
@@ -3285,7 +4551,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 return;
             }
             el.setAttribute('HorizontalAlignment', item.position === 'Right' ? 'Right' : 'Left');
-            if (item.kind === 'TextBlock' || item.kind === 'StatusDate') el.setAttribute('VerticalAlignment', 'Center');
+            if (item.kind === 'TextBlock' || item.kind === 'StatusDate' || item.kind === 'XYTracker') el.setAttribute('VerticalAlignment', 'Center');
             else el.removeAttribute('VerticalAlignment');
             if (item.kind === 'Button') {
                 if (item.text) el.setAttribute('Content', item.text); else el.removeAttribute('Content');
@@ -3328,6 +4594,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         for (const nm of newClocks) {
             try { await insertStatusDateClock(doc.uri, nm); } catch { /* best-effort */ }
         }
+        for (const nm of newTrackers) {
+            try { await insertXyTrackerClock(doc.uri, nm, 'form'); } catch { /* best-effort */ }
+        }
         const barName = bar.getAttribute('x:Name') || bar.getAttribute('Name') || null;
         this.notifyEdit(doc, panel, before);
         await this.render(doc, panel);
@@ -3348,9 +4617,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     }
 
     /** A SplitPanel pane's Width/Height set the DIVIDER, not a size on the pane itself (the pane
-     *  fills its grid cell). A number pins that row/column to that many pixels; 0 collapses/hides
-     *  the pane; '*' or empty makes it flex again. The neighbouring content row/column keeps a star
-     *  so the split still auto-resizes with the form and the splitters have something to drag. */
+     *  fills its grid cell). A number pins that divider so the pane is that many pixels wide; 0
+     *  collapses/hides the pane; '*' or empty makes it flex again. A pixel value is applied the
+     *  same way a design-time divider drag is (setSplitDividerPixels): the pane's cell takes the
+     *  pixels, the neighbour on the divider's far side absorbs the difference, and the WHOLE axis
+     *  stays all-star (value = pixel width) so the real GridSplitters keep their correct
+     *  star 'Split' resize behaviour at runtime. */
     private async setSplitPaneSize(doc: DesignerDocument, panel: vscode.WebviewPanel, paneBody: Element, kind: 'cols' | 'rows', rawValue: string): Promise<void> {
         const root = splitRootOf(paneBody);
         const grid = root ? splitGridOf(root) : null;
@@ -3376,6 +4648,24 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             await this.sendProperties(doc, panel, name);
             return;
         }
+        // A positive pixel size moves THIS pane's divider (its right/bottom edge). Apply it the same
+        // way a divider drag is applied — the pane on the divider's far side absorbs the difference
+        // and the axis stays all-star — so only THIS divider moves (and runtime GridSplitters keep
+        // working). Falls back to the plain value only when there is no far-side pane to absorb
+        // (rightmost/bottom-most pane) or no measured geometry.
+        if (!/[*]/.test(newSize) && parseFloat(newSize) > 0) {
+            const content = contentDefs(grid, kind);
+            const farIdx = content.find((i) => i > index);
+            if (farIdx !== undefined) {
+                const farBody = this.splitBodyInCell(grid, kind, farIdx);
+                const curL = this.splitCellPx(doc, paneBody, kind);
+                const curR = farBody ? this.splitCellPx(doc, farBody, kind) : 0;
+                if (farBody && curL > 0 && curR > 0) {
+                    await this.setSplitDividerPixels(doc, panel, paneBody, farBody, kind, parseFloat(newSize));
+                    return;
+                }
+            }
+        }
         const sizes = splitDefSizes(grid, kind);
         if (index < 0 || index >= sizes.length) return;
         this.refreshHistoryCode(doc);
@@ -3389,9 +4679,168 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             if (sibling !== undefined) sizes[sibling] = '*';
         }
         doc.model.setGridDefinitions(grid, kind, sizes);
+        // Keep the FORM's minimum in sync with this new divider size.
+        this.applyFormMinimum(doc);
         this.notifyEdit(doc, panel, before);
         await this.render(doc, panel);
         await this.sendProperties(doc, panel, name);
+    }
+
+    /** The measured pixel size of a pane body's grid CELL (its body rect plus both pane-border
+     *  thicknesses) from the last preview frame — matches what the grid definition actually holds. */
+    private splitCellPx(doc: DesignerDocument, bodyEl: Element, kind: 'cols' | 'rows'): number {
+        const nm = elName(bodyEl);
+        if (!nm) return 0;
+        const frame = this.frames.get(doc.uri.toString());
+        const fc = frame?.controls ? frame.controls.find((x) => x.name === nm) : undefined;
+        if (!fc) return 0;
+        let bt = 0;
+        const borderEl = bodyEl.parentNode as Element | null;
+        if (borderEl && borderEl.nodeType === 1) {
+            const f = parseFloat(String(borderEl.getAttribute('BorderThickness') || '').split(',')[0]);
+            if (Number.isFinite(f)) bt = Math.max(0, f);
+        }
+        return Math.max(0, Math.round((kind === 'cols' ? fc.width : fc.height) + 2 * bt));
+    }
+
+    /** The pane body that occupies a given content row/column of a SplitPanel's grid (or undefined
+     *  when no single-cell pane is there — e.g. the full-width Zones bottom pane on the cols axis). */
+    private splitBodyInCell(grid: Element, kind: 'cols' | 'rows', idx: number): Element | undefined {
+        for (const b of elementChildren(grid)) {
+            if (b.nodeType !== 1 || localName(b.tagName) !== 'Border') continue;
+            const body = elementChildren(b).find((k) => k.nodeType === 1);
+            if (!body || body.nodeType !== 1 || !isSplitPaneName(elName(body))) continue;
+            const geo = paneGeometry(grid, body);
+            if (!geo) continue;
+            if (kind === 'cols' && geo.col === idx && geo.colSpan === 1) return body;
+            if (kind === 'rows' && geo.row === idx && geo.rowSpan === 1) return body;
+        }
+        return undefined;
+    }
+
+    /**
+     * Applies a design-time divider drag the way Avalonia's GridSplitter does, so ONLY the dragged
+     * divider moves — in the designer, AND (because the saved XAML stays ALL-STAR) at runtime too:
+     *
+     *   - the dragged pane's cell takes the new pixel size,
+     *   - its immediate neighbour absorbs the difference (the pair's total is conserved, so every
+     *     divider beyond the neighbour stays put),
+     *   - EVERY content cell on the axis is stored as a STAR whose value equals its current pixel
+     *     size (Avalonia's own model after a runtime drag). This heals any older fixed-pixel
+     *     columns, and keeps the real GridSplitters working: a fixed + star mix makes Avalonia's
+     *     GridSplitter resize only the FIXED neighbour while the star absorbs (so the dragged
+     *     divider doesn't move / the far divider does), whereas two star neighbours are resized
+     *     together with a conserved sum — exactly the "only the dragged splitter shifts" behaviour.
+     */
+    private async setSplitDividerPixels(
+        doc: DesignerDocument, panel: vscode.WebviewPanel,
+        draggedBody: Element, otherBody: Element,
+        kind: 'cols' | 'rows', newPx: number
+    ): Promise<void> {
+        const root = splitRootOf(draggedBody);
+        const grid = root ? splitGridOf(root) : null;
+        if (!root || !grid) return;
+        const dg = paneGeometry(grid, draggedBody);
+        const og = paneGeometry(grid, otherBody);
+        if (!dg || !og) return;
+        const name = elName(draggedBody);
+        const sizes = splitDefSizes(grid, kind);
+        const content = contentDefs(grid, kind);
+        const draggedIdx = kind === 'cols' ? dg.col : dg.row;
+        const otherIdx = kind === 'cols' ? og.col : og.row;
+        if (draggedIdx < 0 || draggedIdx >= sizes.length || otherIdx < 0 || otherIdx >= sizes.length) return;
+        if (!content.includes(draggedIdx) || !content.includes(otherIdx)) return;
+        // Current pixel size of every content cell (measured — star cells have no intrinsic px).
+        const measured = new Map<number, number>();
+        for (const i of content) {
+            const body = i === draggedIdx ? draggedBody : (i === otherIdx ? otherBody : this.splitBodyInCell(grid, kind, i));
+            const px = body ? this.splitCellPx(doc, body, kind) : 0;
+            if (px > 0) measured.set(i, px);
+        }
+        const curL = measured.get(draggedIdx);
+        const curR = measured.get(otherIdx);
+        if (curL === undefined || curR === undefined) return; // no measured geometry → leave it alone
+        const newL = Math.max(1, Math.round(newPx));
+        const newR = Math.max(1, Math.round(curL + curR - newL));
+        const out = sizes.slice();
+        for (let i = 0; i < out.length; i++) {
+            if (!content.includes(i)) continue; // Auto splitter gutters stay Auto
+            const px = i === draggedIdx ? newL : (i === otherIdx ? newR : (measured.get(i) ?? 1));
+            out[i] = `${Math.max(1, px)}*`;
+        }
+        this.refreshHistoryCode(doc);
+        const before = doc.model.serialize(true);
+        doc.model.setGridDefinitions(grid, kind, out);
+        this.applyFormMinimum(doc);
+        this.notifyEdit(doc, panel, before);
+        await this.render(doc, panel);
+        await this.sendProperties(doc, panel, name);
+    }
+
+    /** A SplitPanel pane's Min/Max Height/Width live on its Row/Column definition — that is what
+     *  actually clamps a star row/column when the window is resized (a MinHeight attribute on the
+     *  pane body is ignored by the Grid layout, so the pane would shrink below its minimum). Maps
+     *  exactly like the Width/Height divider: only the axis the pane drives applies (the full-width
+     *  bottom pane drives its ROW height; a side-by-side pane drives its COLUMN width). Also clears
+     *  a legacy Min/Max attribute that an older build wrote onto the pane body. */
+    private async setSplitPaneMinMax(doc: DesignerDocument, panel: vscode.WebviewPanel, paneBody: Element, key: string, rawValue: string): Promise<void> {
+        const kind: 'cols' | 'rows' = (key === 'MinWidth' || key === 'MaxWidth') ? 'cols' : 'rows';
+        const root = splitRootOf(paneBody);
+        const grid = root ? splitGridOf(root) : null;
+        if (!root || !grid) return;
+        const geo = paneGeometry(grid, paneBody);
+        if (!geo) return;
+        const name = paneBody.getAttribute('x:Name') || paneBody.getAttribute('Name') || null;
+        const driven = kind === 'cols' ? (geo.colSplit && geo.colSpan === 1) : (geo.rowSplit && geo.rowSpan === 1);
+        if (!driven) {
+            const friendly = key === 'MinWidth' || key === 'MaxWidth' ? 'Min/Max Width' : 'Min/Max Height';
+            void vscode.window.showInformationMessage(
+                `This pane fills the whole ${kind === 'cols' ? 'width' : 'height'} of the split — its ${friendly} isn't a divider. Use Min/Max ${kind === 'cols' ? 'Height' : 'Width'} instead.`
+            );
+            await this.sendProperties(doc, panel, name);
+            return;
+        }
+        const def = splitDefAt(grid, kind, kind === 'cols' ? geo.col : geo.row);
+        if (!def) return;
+        let v = String(rawValue).trim();
+        const isMax = key === 'MaxWidth' || key === 'MaxHeight';
+        if (!(v === '' || (!isMax && v === '0') || /^\d+(\.\d+)?$/.test(v))) {
+            void vscode.window.showInformationMessage('Enter a size in pixels (e.g. 40), or empty for automatic.');
+            await this.sendProperties(doc, panel, name);
+            return;
+        }
+        // Snapshot BEFORE mutating so Undo restores the whole change (definition + form minimum).
+        this.refreshHistoryCode(doc);
+        const before = doc.model.serialize(true);
+        if (v === '' || (!isMax && v === '0')) {
+            def.removeAttribute(key);
+        } else {
+            def.setAttribute(key, v);
+        }
+        // Clear a legacy Min/Max attribute an older build may have put on the pane body itself.
+        paneBody.removeAttribute(key);
+        // With a pane now pinned at this minimum, the window itself must not shrink below the
+        // layout floor (a RowDefinition min alone can't stop the OS letting the user clip it).
+        this.applyFormMinimum(doc);
+        this.notifyEdit(doc, panel, before);
+        await this.render(doc, panel);
+        await this.sendProperties(doc, panel, name);
+    }
+
+    /** Keeps the form's own MinWidth/MinHeight at (at least) the computed layout floor so the OS
+     *  won't let the window be resized below the point where a min-constrained pane or a fixed bar
+     *  starts clipping. Only raises the minimum — a larger value the user typed is kept. Pure model
+     *  mutation; callers snapshot the document first so the change is part of the same undo step. */
+    private applyFormMinimum(doc: DesignerDocument): void {
+        const root = doc.model.root;
+        const floor = formFloorOf(root);
+        const set = (key: 'MinWidth' | 'MinHeight', val: number): void => {
+            if (val <= 0) return; // nothing constrains this axis — leave whatever is there
+            const want = Math.max(val, pxOf(root.getAttribute(key)));
+            if (pxOf(root.getAttribute(key)) !== want) root.setAttribute(key, String(Math.round(want)));
+        };
+        set('MinWidth', floor.minWidth);
+        set('MinHeight', floor.minHeight);
     }
 
     /** Applies a new Split Layout (shape + pane count) to a SplitPanel, keeping each pane's
@@ -3696,13 +5145,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     }
 
     async saveCustomDocument(document: DesignerDocument): Promise<void> {
-        const text = document.model.serialize(true);
+        const text = withDesignerHeader(document.model.serialize(true));
         await vscode.workspace.fs.writeFile(document.uri, Buffer.from(text, 'utf8'));
         document.markSaved();
     }
 
     async saveCustomDocumentAs(document: DesignerDocument, destination: vscode.Uri): Promise<void> {
-        const text = document.model.serialize(true);
+        const text = withDesignerHeader(document.model.serialize(true));
         await vscode.workspace.fs.writeFile(destination, Buffer.from(text, 'utf8'));
         document.markSaved();
     }
@@ -3715,7 +5164,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     }
 
     async backupCustomDocument(document: DesignerDocument, context: vscode.CustomDocumentBackupContext): Promise<vscode.CustomDocumentBackup> {
-        const data = Buffer.from(document.model.serialize(true), 'utf8');
+        const data = Buffer.from(withDesignerHeader(document.model.serialize(true)), 'utf8');
         await vscode.workspace.fs.writeFile(context.destination, data);
         return {
             id: context.destination.toString(),
@@ -3779,9 +5228,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     }
 
     /**
-     * Wires the control's default event into the XAML (e.g. `Click="Button1_Click"`) and
-     * inserts the handler stub into the code-behind. When `openEditor` is true (middle-click)
-     * it also opens the code-behind with the cursor placed in the handler body.
+     * Wires the control's default event into the XAML (e.g. `Click="Button1_Click"`) and inserts
+     * the handler stub into the code-behind. Placement calls this (openEditor=false) to create the
+     * stub at drop time. Middle-click calls it with openEditor=true — that path is NAVIGATE-FIRST:
+     * if the handler method already exists it just opens the code-behind at it and writes nothing
+     * (placement owns creation now); it only creates the stub as a fallback when the method is
+     * genuinely missing (legacy forms / hand-written XAML).
      */
     private async wireDefaultHandler(
         doc: DesignerDocument,
@@ -3810,14 +5262,21 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const eventName = defaultEventFor(localName(el.tagName));
         const handler = `${elName}_${eventName}`;
 
-        // Insert the code-behind stub FIRST so we never persist a XAML event that has no method.
-        if (el.getAttribute(eventName) === handler) {
-            if (openEditor) {
-                const result = await insertHandlerIntoCodeBehind(doc.uri, handler, eventName);
-                if (result) await this.openCodeBehindAt(result);
+        // MIDDLE-CLICK = navigate first. If the handler stub is already in the code-behind
+        // (placement wrote it), just jump there — do NOT re-insert, do NOT touch the XAML.
+        if (openEditor) {
+            const existing = findHandlerInCodeBehind(doc.uri, handler);
+            if (existing) {
+                await this.openCodeBehindAt(existing);
+                return;
             }
+        }
+        // Placement re-entry: already wired and the stub is present -> nothing to do.
+        if (!openEditor && el.getAttribute(eventName) === handler) {
             return;
         }
+        // Fallback / first placement: create the code-behind stub FIRST so we never persist a
+        // XAML event that has no method, then wire the attribute if it isn't already.
         const result = await insertHandlerIntoCodeBehind(doc.uri, handler, eventName);
         if (!result) {
             if (openEditor) {
@@ -3827,12 +5286,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             }
             return;
         }
-
-        el.setAttribute(eventName, handler);
-        await vscode.workspace.fs.writeFile(doc.uri, Buffer.from(doc.model.serialize(true), 'utf8'));
-        doc.markSaved();
-        if (promoted) await this.render(doc, panel);
-
+        if (el.getAttribute(eventName) !== handler) {
+            el.setAttribute(eventName, handler);
+            await vscode.workspace.fs.writeFile(doc.uri, Buffer.from(withDesignerHeader(doc.model.serialize(true)), 'utf8'));
+            doc.markSaved();
+            if (promoted) await this.render(doc, panel);
+        }
         if (openEditor) {
             await this.openCodeBehindAt(result);
         }
@@ -3890,6 +5349,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
       <button id="btnRedo" title="Redo the last undone change (Ctrl+Shift+Z / Ctrl+Y)" disabled>↷</button>
       <span class="sep"></span>
       <button id="btnNewForm" title="Create a new Avalonia form">+ New Form</button>
+      <button id="btnRefresh" title="Reload the form from disk and re-read the database preview (e.g. rows added while the app was running)">⟳ Refresh</button>
+      <button id="btnCodeFix" title="Check the code-behind against the form and the DataSet: missing VB accessors, duplicate methods, leftover handlers of deleted controls, broken Data-Image / ItemsSource bindings, missing Imports or bundled helper files — with a one-click fix per problem">🩺 Code Fix…</button>
       <span class="sep"></span>
       <button id="btnZoomOut" title="Zoom out">−</button>
       <input id="zoomValue" readonly value="100%"/>
@@ -3932,6 +5393,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
           <div id="multiSel"></div>
           <div id="marquee" hidden></div>
           <div id="radiusGuide" hidden></div>
+          <div id="splitGuide" hidden></div>
           <div id="selection" class="sel" hidden></div>
           <div id="cellHighlight" class="cell-highlight" hidden></div>
           <div id="crosshair" hidden><i id="chH"></i><i id="chV"></i></div>
@@ -3981,7 +5443,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     <div id="menuModal" class="modal" hidden>
       <div class="modal-box modal-wide">
         <h3 id="menuTitle">Menu Items</h3>
-        <p class="modal-hint">Build the menu: the top row is the menu bar. Each item can hold a submenu up to 5 levels deep. Kinds: <b>Item</b> (submenu if it has children), <b>CheckBox</b>/<b>Radio</b> (checkable/radio items), <b>ComboBox</b> (its children are its options), <b>Separator</b>.</p>
+        <p class="modal-hint">Build the menu: the top row is the menu bar. Each item can hold a submenu up to 5 levels deep. Kinds: <b>Item</b> (submenu if it has children), <b>CheckBox</b>/<b>Radio</b> (checkable/radio items), <b>ComboBox</b> (its children are its options), <b>Separator</b>, and <b>Space</b> (an invisible gap between top-level items — set its width in px).</p>
         <div id="menuBody" class="menu-tree"></div>
         <div class="modal-buttons menu-toolbar">
           <button id="menuAddTop" type="button" class="modal-btn">+ Add menu item</button>
@@ -4003,6 +5465,18 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         <div class="modal-buttons">
           <button id="statusCancel" type="button" class="modal-btn">Cancel</button>
           <button id="statusSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="codeModal" class="modal" hidden>
+      <div class="modal-box modal-wide">
+        <h3>Code Fix</h3>
+        <p class="modal-hint" id="codeHint">Checks the code-behind against the form and the DataSet.</p>
+        <div id="codeBody" class="code-list"></div>
+        <div class="modal-buttons">
+          <button id="codeRecheck" type="button" class="modal-btn">Re-check</button>
+          <button id="codeFixAll" type="button" class="modal-btn">Fix all</button>
+          <button id="codeClose" type="button" class="modal-btn primary">Close</button>
         </div>
       </div>
     </div>

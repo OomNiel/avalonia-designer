@@ -7,7 +7,8 @@
 // Stack (user decision 2026-08-24): net10.0 + Avalonia 12.1.1. New projects now use the
 // DEFAULT Avalonia title bar (plain <Window> root). The ChromeWindow.cs/.vb + AnchorHelper
 // files are still bundled (copy-always, user decision 2026-08-30) so the designer's
-// "Custom Title Bar" tool can convert a form later without a copy step.
+// "Custom Title Bar" tool can convert a form later without a copy step. ExifImageLoader.cs/.vb
+// is bundled the same way (2026-09-08) so a Data-Image bound Image can load JPEGs upright.
 // ===========================================================================
 
 import {
@@ -17,6 +18,7 @@ import {
     buildVbCodeBehind,
     sanitize
 } from './formTemplates';
+import { withDesignerHeader } from './xamlHeader';
 
 const AVALONIA_VERSION = '12.1.1';
 const TARGET_FRAMEWORK = 'net10.0';
@@ -31,6 +33,24 @@ export interface ScaffoldOptions {
     chromeVb: string;      // contents of ChromeWindow.vb (bundled resource)
     anchorCs: string;      // contents of AnchorHelper.cs (bundled resource)
     anchorVb: string;      // contents of AnchorHelper.vb (bundled resource)
+    /** Contents of ExifImageLoader.cs (bundled resource — EXIF-aware image loading used by
+     *  Data-Image bound Images). Optional: when omitted the file is not written, so tests that
+     *  don't care about images keep generating exactly the old file set. */
+    exifCs?: string;
+    /** Contents of ExifImageLoader.vb (bundled resource — see exifCs). Optional. */
+    exifVb?: string;
+    /** Contents of GrumpyPanel.cs (bundled resource — the GrumpyPanel docking-region Border
+     *  control). Optional: when omitted the file is not written (tests without GrumpyPanel stay
+     *  byte-identical to before). */
+    grumpyCs?: string;
+    /** Contents of GrumpyPanel.vb (bundled resource — see grumpyCs). Optional. */
+    grumpyVb?: string;
+    /** Contents of ColumnFollower.cs (bundled resource — the live one-column view a read-only
+     *  control follows a bound DataGrid with). Optional: when omitted the file is not written, so
+     *  tests that don't care about followers keep generating exactly the old file set. */
+    followerCs?: string;
+    /** Contents of ColumnFollower.vb (bundled resource — see followerCs). Optional. */
+    followerVb?: string;
     /** Absolute path to the VB.NET Companion LanguageServer.dll found on THIS machine (may be
      *  undefined). When set, VB projects get a .vscode/settings.json that wires the language
      *  bridge to it; when absent, no settings.json is written — so a generated project never
@@ -40,7 +60,7 @@ export interface ScaffoldOptions {
 
 /** Writes a complete, ready-to-run Avalonia project into projectPath. */
 export function generateProjectScaffold(opts: ScaffoldOptions): void {
-    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, vbBridgeDll } = opts;
+    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, followerCs, followerVb, vbBridgeDll } = opts;
     const rootNamespace = sanitize(name);
     const formName = MAIN_FORM_NAME;
 
@@ -50,6 +70,9 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         write(projectPath, 'Program.cs', programCs(rootNamespace));
         write(projectPath, 'ChromeWindow.cs', chromeCs);
         write(projectPath, 'AnchorHelper.cs', anchorCs);
+        if (exifCs) write(projectPath, 'ExifImageLoader.cs', exifCs);
+        if (grumpyCs) write(projectPath, 'GrumpyPanel.cs', grumpyCs);
+        if (followerCs) write(projectPath, 'ColumnFollower.cs', followerCs);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.cs', buildCsCodeBehind(formName, 'Window', rootNamespace, tpl.handlers));
     } else {
@@ -58,6 +81,9 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         write(projectPath, 'Program.vb', programVb());
         write(projectPath, 'ChromeWindow.vb', chromeVb);
         write(projectPath, 'AnchorHelper.vb', anchorVb);
+        if (exifVb) write(projectPath, 'ExifImageLoader.vb', exifVb);
+        if (grumpyVb) write(projectPath, 'GrumpyPanel.vb', grumpyVb);
+        if (followerVb) write(projectPath, 'ColumnFollower.vb', followerVb);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.vb', buildVbCodeBehind(formName, 'Window', tpl.handlers));
         // VB.NET Companion language-server bridge. Written ONLY when the generator located the
@@ -132,6 +158,10 @@ function vbproj(ns: string): string {
 }
 
 function appAxaml(ns: string): string {
+    return withDesignerHeader(appAxamlBody(ns));
+}
+
+function appAxamlBody(ns: string): string {
     return `<Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="${ns}.App"

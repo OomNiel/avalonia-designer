@@ -6,6 +6,8 @@
 // plain Node so we can verify every generated template builds.
 // ===========================================================================
 
+import { withDesignerHeader } from './xamlHeader';
+
 export interface FormHandler {
     name: string;    // control name, e.g. "btnLogin"
     event: string;   // event, e.g. "Click" -> handler "btnLogin_Click"
@@ -125,6 +127,10 @@ export const TEMPLATES: FormTemplate[] = [
 ];
 
 export function buildAxaml(tpl: FormTemplate, name: string, kind: string, rootNamespace: string, displayName?: string): string {
+    return withDesignerHeader(buildAxamlBody(tpl, name, kind, rootNamespace, displayName));
+}
+
+function buildAxamlBody(tpl: FormTemplate, name: string, kind: string, rootNamespace: string, displayName?: string): string {
     // VB's root namespace is applied to global-namespace classes, so x:Class is fully
     // qualified in both languages (e.g. DevHelper.frmTest).
     const xClass = `${rootNamespace}.${name}`;
@@ -159,6 +165,10 @@ ${tpl.body(dn, tpl.size)}
 export const CHROME_TITLEBAR_HEIGHT = 44;
 
 export function buildChromeAxaml(tpl: FormTemplate, formName: string, rootNamespace: string, displayName: string): string {
+    return withDesignerHeader(buildChromeAxamlBody(tpl, formName, rootNamespace, displayName));
+}
+
+function buildChromeAxamlBody(tpl: FormTemplate, formName: string, rootNamespace: string, displayName: string): string {
     const xClass = `${rootNamespace}.${formName}`;
     const extra = tpl.extraRoot ? ' ' + tpl.extraRoot : '';
     const title = tpl.title(displayName);

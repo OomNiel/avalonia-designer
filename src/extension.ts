@@ -6,7 +6,13 @@ import { createNewForm } from './newForm';
 import { createNewProject, openLastProject, maybeRunFirstBuild } from './projectCreator';
 import { ProjectViewProvider, setActiveContext } from './projectView';
 import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor';
+import { disposeIssues } from './codeBehindCheck';
 import * as logger from './logger';
+
+/** The shared PreviewerHost manager, kept module-level so `deactivate` can kill the C# host
+ *  process explicitly (a reloaded/killed extension host does not always get to run disposables,
+ *  which used to leave orphaned PreviewerHost processes behind). */
+let sharedHost: PreviewerHostManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
     const log = (m: string) => logger.log(m);
@@ -43,6 +49,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
         // Previewer Host lifecycle (spawns the C# headless renderer on demand).
         const host = new PreviewerHostManager(context);
+        sharedHost = host;
         context.subscriptions.push(host);
 
         // Custom editor provider: opens .axaml files in the designer tab.
@@ -114,5 +121,11 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-    // The PreviewerHostManager disposes the host process via its disposable.
+    // VS Code disposes `context.subscriptions`, but a window reload / crashed extension host can
+    // skip that — so kill the C# host here too. The host ALSO exits by itself as soon as its
+    // WebSocket client disconnects (host/Program.cs), which covers even a SIGKILLed host.
+    try { sharedHost?.dispose(); } catch { /* already gone */ }
+    sharedHost = undefined;
+    // The Code Fix diagnostics collection (PROBLEMS pane) is created lazily on first use.
+    try { disposeIssues(); } catch { /* never fail a shutdown over this */ }
 }

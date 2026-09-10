@@ -4,6 +4,7 @@ import * as net from 'net';
 import * as path from 'path';
 import * as fs from 'fs';
 import WebSocket from 'ws';
+import { logError } from './logger';
 
 /** A draggable shape-editing point (Line ends / Arc centre + ends), in DESIGN coords. */
 export interface ShapeHandle {
@@ -130,7 +131,13 @@ export class HostClient {
             if (typeof msg.id === 'number' && this.pending.has(msg.id)) {
                 const p = this.pending.get(msg.id)!;
                 this.pending.delete(msg.id);
-                if (msg.error) p.reject(new Error(msg.error));
+                if (msg.error) {
+                    // Log it in OUR channel (View → Output → "Avalonia Designer") first: an
+                    // unhandled rejection would otherwise dump a raw [Extension Host] stack into
+                    // the shared output pane instead of a readable one-line error.
+                    logError(`PreviewerHost: ${String(msg.error)}`);
+                    p.reject(new Error(msg.error));
+                }
                 else p.resolve(msg);
             }
         });
@@ -257,13 +264,27 @@ export class PreviewerHostManager implements vscode.Disposable {
                 if (!/\.(cs|csproj)$/i.test(f)) continue;
                 if (fs.statSync(path.join(hostDir, f)).mtimeMs > binTime) return true;
             }
+            // The host COMPILES shared helpers from resources/ via <Compile Link> entries
+            // (outside hostDir) — watch them too, or a helper fix would never trigger the
+            // auto-rebuild.
+            for (const linked of ['ExifImageLoader.cs', 'GrumpyPanel.cs']) {
+                const p = path.join(hostDir, '..', 'resources', linked);
+                if (fs.existsSync(p) && fs.statSync(p).mtimeMs > binTime) return true;
+            }
         } catch { return true; }
         return false;
     }
 
     dispose(): void {
-        this.proc?.kill();
+        // Kill the child BEFORE dropping the socket: the host exits on disconnect anyway, but
+        // an explicit SIGTERM is immediate — and without it every window reload leaked one
+        // PreviewerHost process (~25 MB each) that was reparented to systemd and never reaped.
+        const proc = this.proc;
+        this.proc = undefined;
         this.client?.dispose();
+        if (proc && !proc.killed) {
+            try { proc.kill(); } catch { /* already gone */ }
+        }
     }
 }
 
