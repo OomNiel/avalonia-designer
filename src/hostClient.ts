@@ -267,7 +267,7 @@ export class PreviewerHostManager implements vscode.Disposable {
             // The host COMPILES shared helpers from resources/ via <Compile Link> entries
             // (outside hostDir) — watch them too, or a helper fix would never trigger the
             // auto-rebuild.
-            for (const linked of ['ExifImageLoader.cs', 'GrumpyPanel.cs']) {
+            for (const linked of ['ExifImageLoader.cs', 'GrumpyPanel.cs', 'PathPicker.cs']) {
                 const p = path.join(hostDir, '..', 'resources', linked);
                 if (fs.existsSync(p) && fs.statSync(p).mtimeMs > binTime) return true;
             }

@@ -83,6 +83,17 @@ public class ControlFactory
             // StatusDate (which is also a TextBlock with a Loaded handler). The code-behind handler
             // (insertXyTrackerClock) keeps the text current on a short timer.
             ["XYTracker"] = n => $"<TextBlock x:Name=\"{n}\" Classes=\"XYTracker\" Text=\"800 x 494 px\" FontSize=\"13\" Loaded=\"{n}_Loaded\"/>",
+            // PathPicker (Input & text editors): the bundled AvaloniaChrome.PathPicker — a path row
+            // (a TextBox showing the chosen path plus a "…" Browse button) that opens the platform's
+            // OWN file/folder dialog and stores the result in SelectedPath (two-way bindable) — the
+            // WinForms OpenFileDialog / FolderBrowserDialog pair as a droppable CONTROL.
+            // Two toolbox tools share this element and differ only in PathType: "File Selector"
+            // (File) and "Folder Selector" (Folder); PathType also accepts SaveFile, so a save-as
+            // dialog is one dropdown change away. The `chrome:` prefix
+            // (xmlns:chrome="using:AvaloniaChrome") is declared by the extension when placing it
+            // (PathPicker.cs/.vb are bundled into every generated project, like GrumpyPanel).
+            ["PathPicker"] = n => $"<chrome:PathPicker x:Name=\"{n}\" Width=\"230\" Height=\"24\" PathType=\"File\" Title=\"Select a file\" Filter=\"All files|*.*\"/>",
+            ["PathPickerFolder"] = n => $"<chrome:PathPicker x:Name=\"{n}\" Width=\"230\" Height=\"24\" PathType=\"Folder\" Title=\"Select a folder\"/>",
             // GrumpyPanel (Layout panels): a Border-based docking REGION — a Border frame (its own
             // clickable chrome: BorderBrush/Background/BorderThickness/CornerRadius) whose single
             // Child is a DockPanel whose LAST child is the named free-placement body Canvas
@@ -182,6 +193,9 @@ public class ControlFactory
         // The bundled GrumpyPanel (a Border subclass in AvaloniaChrome) — linked into the host
         // from resources/GrumpyPanel.cs so the programmatic builder can realise it for real.
         ["GrumpyPanel"] = typeof(GrumpyPanel),
+        // The bundled PathPicker (a UserControl in AvaloniaChrome: path TextBox + Browse button) —
+        // also linked in from resources/PathPicker.cs so the builder realises the real control.
+        ["PathPicker"] = typeof(PathPicker),
         ["Line"] = typeof(Line),
         ["Rectangle"] = typeof(Rectangle),
         ["Ellipse"] = typeof(Ellipse),

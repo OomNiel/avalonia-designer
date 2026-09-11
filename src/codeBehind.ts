@@ -201,15 +201,50 @@ function removeCsMethod(text: string, handler: string): string {
     return text.slice(0, start) + text.slice(end);
 }
 
+/** The rest of the line after `from`, with a trailing VB `'` comment removed (strings respected). */
+function vbCodeToComment(text: string, from: number): string {
+    const lineEnd = text.indexOf('\n', from);
+    const line = text.slice(from, lineEnd < 0 ? text.length : lineEnd);
+    let code = '', inStr = false;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inStr) {
+            if (ch === '"') { if (line[i + 1] === '"') i++; else inStr = false; }
+            continue;
+        }
+        if (ch === '"') { inStr = true; continue; }
+        if (ch === "'") break;
+        code += ch;
+    }
+    return code;
+}
+
+/**
+ * Does the `Sub`/`Function` keyword whose declaration starts right after `from` open a block that is
+ * closed by `End Sub`/`End Function`?
+ *  - a declaration (`Sub New(…)`, `Private Sub Foo(…) Handles …`) always does — even the rare
+ *    one-liner `Sub Foo() : DoIt() : End Sub`, whose own `End Sub` closes it;
+ *  - an anonymous lambda (`Sub()`, `Function(x)`) does when its body starts on a LATER line;
+ *  - a SINGLE-LINE lambda (`AddHandler t.Tick, Sub(s, e) DoIt()`, `Function(x) x + 1`) does not:
+ *    VB prescribes no `End` for it, so counting one unbalanced everything that follows.
+ */
+function vbOpensBlock(text: string, from: number): boolean {
+    const rest = vbCodeToComment(text, from);
+    if (!/^\s*\(/.test(rest)) return true;                                        // `Sub Foo(…)`
+    return /^\s*\([^)]*\)\s*(?:As\s+[\w.$()[\]]+\s*)?$/.test(rest);               // `Sub()` alone vs. `Sub() body`
+}
+
 /**
  * The index just past the `End Sub`/`End Function` that MATCHES a VB method whose body begins at
  * `from`. VB anonymous `Sub`/`Function` blocks nested inside a body (e.g. the
  * `AddHandler timer.Tick, Sub(s2, e2) … End Sub` inside a generated XY-Tracker / StatusDate clock
- * handler) are counted, so their inner `End Sub` no longer truncates the outer method early. VB
- * `'` comments and `"…"` strings are skipped so a stray keyword in one can't unbalance the count.
+ * handler) are counted, so their inner `End Sub` no longer truncates the outer method early.
+ * Single-line lambdas are NOT counted (they have no `End`), otherwise the enclosing method's own
+ * terminator was consumed by the phantom level and the span ran long or collapsed to the signature.
+ * VB `'` comments and `"…"` strings are skipped so a stray keyword in one can't unbalance the count.
  * Returns -1 when the body never closes (no matching terminator found).
  */
-function vbMatchingEnd(text: string, from: number): number {
+export function vbMatchingEnd(text: string, from: number): number {
     let depth = 1; // the method's own Sub/Function
     // Order matters: a `"` string is matched before a `'` comment so an apostrophe inside a string
     // isn't misread as a comment; both are skipped. Then `End Sub`/`End Function` close a level,
@@ -222,7 +257,7 @@ function vbMatchingEnd(text: string, from: number): number {
         if (m[3]) {
             depth--;
             if (depth <= 0) return m.index + m[3].length;
-        } else {
+        } else if (vbOpensBlock(text, m.index + m[4].length)) {
             depth++;
         }
     }
@@ -301,7 +336,7 @@ const VB_SHAPES_NS = new Set(['Line', 'Rectangle', 'Ellipse', 'Arc', 'Sector', '
 /** Bundled AvaloniaChrome types that can appear as a NAMED control (so a VB accessor like
  *  `… As GrumpyPanel` needs `Imports AvaloniaChrome` to compile — same reason shape types need
  *  the Shapes import). */
-const VB_CHROME_NS_TYPES = new Set(['GrumpyPanel', 'ChromeWindow']);
+const VB_CHROME_NS_TYPES = new Set(['GrumpyPanel', 'ChromeWindow', 'PathPicker']);
 
 /** Rebuilds the accessor block: strips old accessors, adds one per named control before `End Class`. */
 export function applyAccessors(text: string, controls: { name: string; type: string }[]): string {

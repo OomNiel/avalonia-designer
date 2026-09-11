@@ -15,7 +15,7 @@ const DESIGNER_JS = path.join(__dirname, '..', '..', 'media', 'designer.js');
 const DESIGNER_CSS = path.join(__dirname, '..', '..', 'media', 'designer.css');
 
 const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomValue', 'canvasWrap',
-    'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
+    'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnBackup', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
     'menuDummies',
     'contextMenu', 'ctxDelete', 'ctxCut', 'ctxCopy', 'ctxPaste', 'ctxMoveToContainer',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
@@ -91,8 +91,14 @@ function setup() {
         window.document.body.appendChild(make(id));
     }
 
+    // In-memory stand-in for the webview's VS Code state (the Properties fold memory lives here).
+    const vscodeState = {};
     const posted = [];
-    window.acquireVsCodeApi = () => ({ postMessage: (m) => posted.push(m) });
+    window.acquireVsCodeApi = () => ({
+        postMessage: (m) => posted.push(m),
+        getState: () => vscodeState,
+        setState: (next) => { for (const k of Object.keys(vscodeState)) delete vscodeState[k]; Object.assign(vscodeState, next); }
+    });
 
     // Deterministic layout: wrap 848x498 → fit() gives exactly scale 1 for an 800x450 form.
     wrap.getBoundingClientRect = () => ({ left: 0, top: 0, right: 848, bottom: 498, width: 848, height: 498, x: 0, y: 0 });
@@ -120,7 +126,7 @@ function setup() {
         gridCells
     });
 
-    return { dom, window, posted, $, dispatch, msg, frame };
+    return { dom, window, posted, $, dispatch, msg, frame, vscodeState };
 }
 
 module.exports = async (t) => {
@@ -150,7 +156,7 @@ module.exports = async (t) => {
     t.ok(/#propsToggleRow\s*\{[^}]*flex:\s*0\s+0\s+auto/s.test(css), 'css', 'Show advanced row stays pinned');
 
     const s = setup();
-    const { $, dispatch, msg, frame, posted } = s;
+    const { $, dispatch, msg, frame, posted, vscodeState } = s;
 
     const controls = [
         { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450 },
@@ -339,6 +345,77 @@ module.exports = async (t) => {
     posted.length = 0;
     lbRow.querySelector('.prop-browse').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
     t.equal(posted[posted.length - 1], { type: 'pickItemsSource', name: 'lb1' }, 'props', 'pickItemsSource posted');
+
+    // --- Properties SECTIONS: headings in order, fold on click, fold remembered per control type ---
+    const sectionMsg = () => ({
+        type: 'properties', name: 'dg1',
+        properties: [
+            { key: '__name__', label: 'Name', kind: 'text', value: 'dg1' },
+            { key: '__type__', label: 'Type', kind: 'text', value: 'DataGrid' },
+            { key: 'Rows', label: 'Rows', kind: 'button', value: 'Edit rows…', section: 'Editors', sectionId: 'editors' },
+            { key: 'Width', label: 'Width', kind: 'number', value: '200', section: 'Layout & size', sectionId: 'layout' },
+            { key: 'Background', label: 'Background', kind: 'color', value: '#333333', section: 'Appearance', sectionId: 'appearance' },
+            { key: 'ItemsSource', label: 'Items Source', kind: 'text', value: '', section: 'Data', sectionId: 'data' },
+            { key: 'IsReadOnly', label: 'Read Only', kind: 'dropdown', value: 'False', options: ['True', 'False'], section: 'Data', sectionId: 'data' },
+            { key: 'IsEnabled', label: 'Enabled', kind: 'dropdown', value: 'True', options: ['True', 'False'], section: 'Behavior', sectionId: 'behavior' }
+        ],
+        info: null, tabItems: [], listItems: []
+    });
+    const heads = () => [...$('propsBody').children].filter((r) => r.classList.contains('prop-section'));
+    const headLabels = () => heads().map((h) => h.textContent.replace(/[▾▸]/g, '').trim());
+    const hasRow = (text) => [...$('propsBody').children].some((r) => r.textContent.includes(text));
+
+    msg(sectionMsg());
+    t.equal(headLabels(), ['Editors', 'Layout & size', 'Appearance', 'Data', 'Behavior'], 'sections', 'headings render in the canonical order');
+    t.equal(heads()[0].getAttribute('aria-expanded'), 'true', 'sections', 'sections start expanded');
+    const kids = [...$('propsBody').children];
+    t.ok(kids.indexOf(heads()[0]) < kids.findIndex((r) => r.textContent.includes('Rows')), 'sections', 'a heading sits above its first row');
+    t.equal(kids[0].textContent.includes('Name'), true, 'sections', 'the pinned Name row still comes first');
+    t.ok(kids.indexOf(heads()[0]) > 1, 'sections', 'pinned rows precede the first section');
+
+    // Fold 'Data': heading stays (with the folded arrow), its two rows disappear
+    heads().find((h) => h.textContent.includes('Data')).dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(headLabels().length, 5, 'sections', 'a folded section keeps its heading');
+    t.equal(heads().find((h) => h.textContent.includes('Data')).getAttribute('aria-expanded'), 'false', 'sections', 'the folded state is announced');
+    t.ok(heads().find((h) => h.textContent.includes('Data')).textContent.includes('▸'), 'sections', 'the folded heading shows the ▸ arrow');
+    t.equal(hasRow('Items Source'), false, 'sections', 'a folded section hides its rows');
+    t.equal(hasRow('Read Only'), false, 'sections', 'and its other rows');
+    t.equal(hasRow('Width'), true, 'sections', 'other sections are untouched');
+    t.ok(vscodeState.collapsed && vscodeState.collapsed.DataGrid && vscodeState.collapsed.DataGrid.data === true, 'sections', 'the fold is persisted in the webview state');
+
+    // Remembered per control TYPE: a re-render keeps it folded, another type starts expanded
+    msg(sectionMsg());
+    t.equal(hasRow('Items Source'), false, 'sections', 'the fold survives a re-render');
+    msg({
+        type: 'properties', name: 'btn9',
+        properties: [
+            { key: '__name__', label: 'Name', kind: 'text', value: 'btn9' },
+            { key: '__type__', label: 'Type', kind: 'text', value: 'Button' },
+            { key: 'Content', label: 'Content', kind: 'text', value: 'Go', section: 'Text & font', sectionId: 'text' },
+            { key: 'ItemsSource', label: 'Items Source', kind: 'text', value: '', section: 'Data', sectionId: 'data' }
+        ],
+        info: null, tabItems: [], listItems: []
+    });
+    t.equal(hasRow('Items Source'), true, 'sections', 'another control TYPE keeps its Data section open');
+    // Fold the Button's Data section too (independent memory per type)…
+    heads().find((h) => h.textContent.includes('Data')).dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(vscodeState.collapsed.Button.data, true, 'sections', 'the fold now belongs to the Button type');
+    // …then un-fold the DataGrid's again, which both proves the toggle and leaves the panel open
+    // for the checks that follow.
+    msg(sectionMsg());
+    t.equal(hasRow('Read Only'), false, 'sections', 'the DataGrid fold is still remembered');
+    heads().find((h) => h.textContent.includes('Data')).dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(hasRow('Read Only'), true, 'sections', 'un-folding brings the rows back');
+    t.equal(!!(vscodeState.collapsed.DataGrid && vscodeState.collapsed.DataGrid.data), false, 'sections', 'the un-fold is persisted too');
+
+    // --- Toolbar: 'Project Backup' asks the extension to save everything and copy the project ---
+    {
+        posted.length = 0;
+        $('btnBackup').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1], { type: 'projectBackup' }, 'toolbar', 'Project Backup posts projectBackup');
+        t.ok(/back(ing)? up/i.test($('status').textContent), 'toolbar', 'the status line says a backup is running',
+            $('status').textContent);
+    }
 
     // --- colour palette popup: lists EVERY preset colour (not just the current one), then a pick
     //     posts setProperty and closes. The old <datalist> filtered options to the typed value,
@@ -1121,6 +1198,71 @@ module.exports = async (t) => {
         t.ok(!!sp, 'menu-space', 'saved tree carries a Space node');
         t.equal(sp.width, 30, 'menu-space', 'Space width in px is carried to the extension');
         t.equal(sp.header, '', 'menu-space', 'a Space has no header');
+    }
+
+    // --- File / Folder Selector kinds: a path row ON the menu (the bundled <chrome:PathPicker>) ---
+    {
+        msg(Object.assign(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'selMenu', type: 'Menu', x: 0, y: 0, w: 800, h: 26, parent: 'Root' }
+        ]), {
+            menus: {
+                selMenu: [
+                    { kind: 'Item', header: 'File', children: [{ kind: 'FileSelector', pathType: 'File', header: 'Open image…', width: 180 }] },
+                    { kind: 'FolderSelector', pathType: 'Folder', header: 'Pick folder', width: 150 },
+                    { kind: 'Item', header: 'Help' }
+                ]
+            }
+        }));
+        const dm2 = $('menuDummies');
+        t.equal(dm2.children.length, 4, 'menu-picker', 'dummies = File, folder row, Help + trailing “+”');
+        // Open the editor on the File item (clicking a bar dummy) so the tree above is loaded.
+        dm2.children[0].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('menuModal').hidden, false, 'menu-picker', 'clicking the dummy opens the Menu Items editor');
+
+        const rows2 = [...$('menuBody').querySelectorAll('.mn-row')];
+        const fileRow2 = rows2.find((r) => r.dataset.path === '0');
+        const pickerRow2 = rows2.find((r) => r.dataset.path === '0.0');
+        const folderRow2 = rows2.find((r) => r.dataset.path === '1');
+        const kinds2 = [...fileRow2.querySelector('.mn-kind').options].map((o) => o.value);
+        t.ok(kinds2.includes('FileSelector') && kinds2.includes('FolderSelector'), 'menu-picker', 'the kind list offers File Selector and Folder Selector');
+        const kindLabels2 = [...fileRow2.querySelector('.mn-kind').options].map((o) => o.textContent);
+        t.ok(kindLabels2.includes('File Selector') && kindLabels2.includes('Folder Selector'), 'menu-picker', 'with friendly labels');
+        t.equal(folderRow2.querySelector('.mn-kind').value, 'FolderSelector', 'menu-picker', 'a Folder Selector row round-trips its kind');
+        const nested2 = [...pickerRow2.querySelector('.mn-kind').options].map((o) => o.value);
+        t.ok(nested2.includes('FileSelector'), 'menu-picker', 'selectors are offered inside a submenu too');
+        t.ok(!nested2.includes('Space'), 'menu-picker', 'the submenu still excludes Space');
+        t.equal(pickerRow2.querySelector('.mn-header').value, 'Open image…', 'menu-picker', 'the dialog title round-trips into the text field');
+        t.equal(pickerRow2.querySelector('.mn-header').placeholder, 'Dialog title', 'menu-picker', 'the field is labelled as a dialog title');
+        t.equal(pickerRow2.querySelector('.mn-width').value, '180', 'menu-picker', 'the row width round-trips');
+        t.equal(pickerRow2.querySelector('.mn-caret').disabled, true, 'menu-picker', 'a selector row is a leaf (no submenu)');
+        t.equal([...pickerRow2.querySelectorAll('.mn-act')].some((b) => b.className.includes('mn-addc') && b.disabled === false), false, 'menu-picker', 'and offers no “add child”');
+
+        // Turn the plain Help item into a File Selector, then Save.
+        const helpRow2 = rows2.find((r) => r.dataset.path === '2');
+        const hsel2 = helpRow2.querySelector('.mn-kind');
+        hsel2.value = 'FileSelector';
+        hsel2.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        const afterRows = [...$('menuBody').querySelectorAll('.mn-row')];
+        const newPick = afterRows.find((r) => r.dataset.path === '2');
+        t.equal(newPick.querySelector('.mn-width').value, '160', 'menu-picker', 'a new selector row gets a sensible default width');
+        const titleInp2 = newPick.querySelector('.mn-header');
+        titleInp2.value = 'Choose a file';
+        titleInp2.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        posted.length = 0;
+        $('menuSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const savPick = posted[posted.length - 1];
+        t.equal(savPick.type, 'saveMenuItems', 'menu-picker', 'Save posts saveMenuItems');
+        const fp = savPick.items[2];
+        t.equal(fp.kind, 'FileSelector', 'menu-picker', 'the saved node carries the File Selector kind');
+        t.equal(fp.pathType, 'File', 'menu-picker', 'and its PathType');
+        t.equal(fp.header, 'Choose a file', 'menu-picker', 'and the dialog title');
+        t.equal(fp.width, 160, 'menu-picker', 'and the row width');
+        t.equal(Array.isArray(fp.children) ? fp.children.length : 0, 0, 'menu-picker', 'a selector row has no children');
+        const nestedPick = savPick.items[0].children[0];
+        t.equal(nestedPick.kind, 'FileSelector', 'menu-picker', 'the nested selector round-trips through the editor');
+        t.equal(nestedPick.pathType, 'File', 'menu-picker', 'including its PathType');
     }
 
     // --- Status Items editor (the Status Bar is a DockPanel; items are kind + text + Left/Right) ---

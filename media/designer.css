@@ -602,6 +602,41 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     color: var(--fg);
 }
 
+/* Properties panel section headings (Editors / Layout & size / Appearance / Text & font / Data /
+   Behavior). Clicking one folds that group away; the folded set is remembered per control type. */
+.prop-section {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 12px 0 7px;
+    padding: 3px 4px 3px 2px;
+    border-bottom: 1px solid var(--border);
+    color: var(--fg);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    cursor: pointer;
+    user-select: none;
+}
+
+.prop-section:first-child {
+    margin-top: 6px;
+}
+
+.prop-section:hover {
+    color: var(--accent, #4ea1ff);
+}
+
+.prop-section-arrow {
+    font-size: 9px;
+    opacity: 0.75;
+}
+
+.prop-section.collapsed {
+    opacity: 0.7;
+}
+
 .prop-row {
     display: flex;
     align-items: center;

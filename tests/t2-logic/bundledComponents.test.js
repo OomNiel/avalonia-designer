@@ -64,6 +64,37 @@ private static Dock AnchorDockEdge(string anchor) { return Dock.Left; }`;
     t.equal(isStaleBundledCopy(oldCsAnchor, false, 'AnchorHelper'), true, 'detect', 'old bundled AnchorHelper.cs is stale');
     t.equal(isStaleBundledCopy(curCsAnchor, false, 'AnchorHelper'), false, 'detect', 'current AnchorHelper.cs is current');
 
+    // --- PathPicker.vb / .cs (the file/folder selector) ---
+    // beta.6 added the left-edge file/folder icon (+ the ShowIcon switch). Older copies are a bare
+    // path row, so a File Selector and a Folder Selector look identical on the form.
+    const oldVbPicker = `' PathPicker.vb — BUNDLED RESOURCE (the C# twin is resources/PathPicker.cs). Copied into every
+' generated project, next to GrumpyPanel.vb / ExifImageLoader.vb.
+Namespace Global.AvaloniaChrome
+    Public Class PathPicker
+        Inherits UserControl
+        Public Shared ReadOnly PathTypeProperty As StyledProperty(Of PathPickerKind) = Nothing
+    End Class
+End Namespace`;
+    const curVbPicker = `' PathPicker.vb — BUNDLED RESOURCE (the C# twin is resources/PathPicker.cs). Copied into every
+' generated project, next to GrumpyPanel.vb / ExifImageLoader.vb.
+Namespace Global.AvaloniaChrome
+    Public Class PathPicker
+        Inherits UserControl
+        Public Shared ReadOnly ShowIconProperty As StyledProperty(Of Boolean) = Nothing
+        Private ReadOnly _icon As New Avalonia.Controls.Shapes.Path()
+    End Class
+End Namespace`;
+    t.equal(isStaleBundledCopy(oldVbPicker, true, 'PathPicker'), true, 'detect', 'old bundled PathPicker.vb is stale (no icon)');
+    t.equal(isStaleBundledCopy(curVbPicker, true, 'PathPicker'), false, 'detect', 'current PathPicker.vb is current');
+    const oldCsPicker = `// PathPicker.cs — BUNDLED RESOURCE (the VB twin is resources/PathPicker.vb).
+public class PathPicker : UserControl { public string? SelectedPath { get; set; } }`;
+    const curCsPicker = `// PathPicker.cs — BUNDLED RESOURCE (the VB twin is resources/PathPicker.vb).
+public class PathPicker : UserControl { public bool ShowIcon { get; set; } }`;
+    t.equal(isStaleBundledCopy(oldCsPicker, false, 'PathPicker'), true, 'detect', 'old bundled PathPicker.cs is stale (no ShowIcon)');
+    t.equal(isStaleBundledCopy(curCsPicker, false, 'PathPicker'), false, 'detect', 'current PathPicker.cs is current');
+    t.equal(isStaleBundledCopy(`${oldVbPicker}\n' customised by hand — do not touch`, true, 'PathPicker'), true,
+        'detect', 'a stale picker with extra hand-edits still refreshes (the header is the bundled one)');
+
     // --- A customised copy (bundled header removed) is NEVER touched ---
     t.equal(isStaleBundledCopy('public class ChromeWindow : Window { }  // heavily customised, no header', false, 'ChromeWindow'), false,
         'detect', 'customised ChromeWindow (no bundled header) is left alone');
@@ -74,6 +105,6 @@ private static Dock AnchorDockEdge(string anchor) { return Dock.Left; }`;
     // --- The language picks the right file names ---
     const vb = bundledComponentSpecs(true).map((s) => s.file).sort();
     const cs = bundledComponentSpecs(false).map((s) => s.file).sort();
-    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb"]', 'spec', 'VB spec file names');
-    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs"]', 'spec', 'C# spec file names');
+    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","PathPicker.vb"]', 'spec', 'VB spec file names');
+    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","PathPicker.cs"]', 'spec', 'C# spec file names');
 };

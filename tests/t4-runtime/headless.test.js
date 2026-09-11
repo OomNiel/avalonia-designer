@@ -73,7 +73,16 @@ module.exports = async (t) => {
     t.note('harness ProjectReference had been stripped — rewritten before the build');
   }
 
-  // 4) run the driver (dotnet run builds + executes the harness)
+  // 4) Build the REFERENCED project first. `dotnet run` builds both together, and on a cold suite
+  //    run that has twice produced a harness compile against a not-yet-existing reference assembly
+  //    ("CS0246: the type or namespace name 'HeadlessApp' could not be found") while the referenced
+  //    project itself compiled fine — a build-order race. Building it up front makes the layer
+  //    deterministic (its own errors are now reported here, not as a missing reference).
+  const appProj = path.join(OUT_DIR, 'HeadlessApp', 'HeadlessApp.csproj');
+  const pre = t.run(`dotnet build "${appProj}" -c Debug`, { cwd: HEADLESS_DIR });
+  t.ok(pre.ok, 'runtime', 'referenced HeadlessApp project builds', pre.ok ? '' : String(pre.output).slice(-600));
+
+  // 5) run the driver (dotnet run builds + executes the harness)
   t.note('dotnet run HeadlessHarness (first build restores packages — can take a minute)…');
   const r = t.run('dotnet run --project "Harness.csproj" -c Debug', { cwd: HARNESS_DIR });
 

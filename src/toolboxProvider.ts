@@ -41,6 +41,12 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'Command Bar Toggle Button', tag: 'CommandBarToggleButton', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'Command Bar Separator', tag: 'CommandBarSeparator', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'Image', tag: 'Image', group: TOOLBOX_CATEGORY_INPUT },
+    // File / folder selection dialogs, as droppable controls (the bundled AvaloniaChrome.PathPicker:
+    // a path row + a “…” Browse button that opens the platform's own dialog). Both tools insert the
+    // same <chrome:PathPicker> element and differ only in PathType; set Path Type to SaveFile in the
+    // Properties panel for a save-as dialog.
+    { label: 'File Selector', tag: 'PathPicker', group: TOOLBOX_CATEGORY_INPUT },
+    { label: 'Folder Selector', tag: 'PathPickerFolder', group: TOOLBOX_CATEGORY_INPUT },
     { label: 'Panel', tag: 'Panel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'Grid', tag: 'Grid', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'StackPanel', tag: 'StackPanel', group: TOOLBOX_CATEGORY_LAYOUT },

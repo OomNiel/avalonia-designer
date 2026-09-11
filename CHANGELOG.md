@@ -5,6 +5,76 @@ All notable changes to the **Avalonia Designer for VS Code** extension.
 Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [1.0.0-beta.6] - 2026-09-11
+
+### Added
+- **File Selector / Folder Selector tools (file & folder dialog controls)** — two new entries in the
+  **Input & text editors** toolbox group. Each drops a path row (a box showing the chosen path + a
+  **“…”** button) onto the form; the button opens the **platform's own** dialog (Windows / macOS /
+  Linux, no extra package). Both insert the same `<chrome:PathPicker>` control and differ only in the
+  shipped `Path Type`: `File` for the file selector, `Folder` for the folder selector — and `SaveFile`
+  is one dropdown change away for a save-as dialog. The properties are **Path Type**, **Selected
+  Path** (two-way: pre-fill it or bind/read it), **Dialog Title**, **File Filter**
+  (`Images|*.png;*.jpg|All files|*.*`), **Initial Folder**, **Read Only Path** and **Browse Text**.
+  The bundled **`PathPicker.cs`/`.vb`** helper is copied into the project the first time a selector is
+  placed (and reported/re-copied by 🩺 **Code Fix…** for projects that predate it), exactly like
+  `ChromeWindow` / `GrumpyPanel`.
+- **A menu item can now be a File Selector or a Folder Selector.** The **Menu Items** editor offers the
+  two new kinds next to **Item**, **CheckBox**, **Radio**, **ComboBox**, **Separator** and **Space**.
+  A selector row is a **leaf** (no children) with its own **px width** and **dialog title** fields, and
+  saving writes a real `<chrome:PathPicker PathType="File|Folder" …>` inside the `<MenuItem>` — so a
+  menu can offer “Open file…” / “Choose folder…” without a line of code. Existing picker rows are read
+  back into the editor when it reopens, and an unknown or garbled kind is normalised rather than
+  corrupting the tree.
+- **The path rows show which kind they are.** `<chrome:PathPicker>` draws a small **page** or **folder**
+  glyph at its left edge (page for `File`/`SaveFile`, folder for `Folder`, tinted with the control's
+  `Foreground` so it follows the theme), and the new **Show Icon** property (default `True`) turns it
+  off — useful when a form has several pickers, or pickers inside a menu.
+- **💾 Project Backup (designer toolbar)** — one click makes a dated copy of the whole project: it
+  first **saves everything that is unsaved** (the open form, every open DataSet document and any other
+  dirty editor) and then copies the project folder into its **parent** folder as
+  **`<Project>_<YYYY-MM-DD>_<HH-MM-SS>`** (`MyApp_2026-09-11_14-32-05`, which sorts by date); if that
+  name is taken, `-2`, `-3`, … is appended. `bin`, `obj`, `.vs`, `node_modules` and `.git` are skipped
+  **at any depth** — a backup is the project's own files, never build output or a git history — and if
+  a save fails, **nothing** is copied (the status line names the file that could not be saved).
+
+### Changed
+- **The Properties sidebar is now grouped into sections — with the same order for every toolbox
+  control.** Instead of one long list whose order depended on the control, rows are filed under
+  **Editors**, **Layout & size**, **Appearance**, **Text & font**, **Data** and **Behavior**, so
+  related settings sit together (all colour/brush rows in Appearance; size, position, dock, anchor
+  and alignment in Layout & size; content and font in Text & font; item sources and edit
+  permissions in Data) and a given row is always in the same place whichever control you select.
+  Inside a section the order is canonical too (Width → Height → Left/Top → Margin → Padding →
+  Dock → Anchor → Alignments), and the designer's popup editors (Rows/Columns, Split Layout, Items,
+  Menu Items, Status Items) are collected in a leading **Editors** group. Section headings are
+  **collapsible** — the folded state is remembered **per control type** (in the panel's own state, so
+  it survives reopening), and **Show advanced** still reveals the advanced rows inside their sections.
+
+### Fixed
+- **🩺 Code Fix… no longer reports a C# form as having no constructor.** The checker recognised C#
+  methods by their `void` return type — and a constructor has **none** — so a perfectly good
+  `public MainWindow() { InitializeComponent(); … }` was flagged with the **warning** *“No
+  constructor / InitializeComponent”*. That warning is published into the **PROBLEMS** pane, so it
+  looked like a compiler warning while `dotnet build` reported 0 warnings / 0 errors — and the fix it
+  offered would have inserted a **second** constructor (`CS0111`) instead of using the existing one.
+  Constructors are now parsed (any access modifier, attributes, `: base()`/`: this()` initialisers),
+  the fix calls into the **existing** constructor, and a safety net makes a duplicate constructor
+  impossible even for a layout the parser cannot read.
+- **…and VB code-behind with a one-line lambda is read correctly.** A single-line
+  `Function(r) r.Name` or `AddHandler x, Sub(s, e) DoIt()` has no `End Sub`/`End Function` in VB, but
+  the checker counted it as a block — so the method's own `End Sub` closed the phantom level and the
+  span collapsed or ran long. That produced a false *“InitializeComponent() is missing from the
+  constructor”* **error** on any form with a follower or a status clock, and it could make the *remove
+  leftover handler* fix delete the wrong lines. Single-line lambdas are skipped, multi-line ones are
+  still counted, so a fix now cuts exactly the method it names.
+- **🩺 Code Fix… inserts its statements inside the body.** Adding `InitializeComponent()` /
+  `BindImage_X()` to a constructor put the line after the **signature** — in front of an Allman-style
+  `{` on the next line, which is invalid C# — and a missing VB constructor was inserted **above**
+  `Inherits`, which VB requires to come first in the class body. The call now lands after the opening
+  `{` (C#) or after the `Inherits …` line (VB), and a Data-Image call goes **after**
+  `InitializeComponent()` — before it, the grid the binding wires up does not exist yet.
+
 ## [1.0.0-beta.5] - 2026-09-11
 
 ### Fixed

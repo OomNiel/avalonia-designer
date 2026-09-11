@@ -28,6 +28,9 @@
     <!-- GrumpyPanel (a Border subclass, also bundled into generated projects) is linked so the
          programmatic builder can realise <chrome:GrumpyPanel> elements in the preview. -->
     <Compile Include="../resources/GrumpyPanel.cs" Link="GrumpyPanel.cs" />
+    <!-- PathPicker (a UserControl subclass, also bundled into generated projects) is linked so the
+         builder can realise <chrome:PathPicker> elements — the file/folder selection row. -->
+    <Compile Include="../resources/PathPicker.cs" Link="PathPicker.cs" />
   </ItemGroup>
 
 </Project>

@@ -1009,6 +1009,93 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   (`int`/`long`/`double`/`decimal`/`bool`/`System.DateTime`/`System.Guid`); re-binding rewrites the
   line, so existing projects get fixed on the next bind. Proven by building a real ported project:
   with the old spelling `dotnet build` reports CS8603, with the generated one 0 warnings / 0 errors.
+- §77 **File / Folder Selector tools (2026-09-11)** — new bundled helper `resources/PathPicker.cs|.vb`
+  (an `AvaloniaChrome` UserControl: fill TextBox bound to `SelectedPath` + right-docked “…” Button)
+  exposed as TWO toolbox tools that share the element and differ only by the `PathType` in the
+  snippet: tag `PathPicker` (File) and `PathPickerFolder` (Folder) — the same trick as
+  GrumpyStatus→`chrome:GrumpyPanel`. Wiring: `controlInfo` (both tags), `propertyCatalog`
+  (`CONTROL_PROPS.PathPicker` + `PATH_TYPE`), `ControlFactory` snippet + `TypeMapType` entry,
+  `PreviewerHost.csproj` `<Compile Link>` (+ the `hostSourceIsNewer` watch list so a helper edit
+  rebuilds the host), `xamlModel` 'needs xmlns:chrome' check, `codeBehind` `VB_CHROME_NS_TYPES`,
+  `codeBehindCheck` bundled-helper + Imports rules, `ensurePathPickerHelper` (on drop and via Code
+  Fix) and the scaffold/creator so new projects ship the file.
+- §77a **VB trap (BC30002, cost one build):** a bundled VB helper must declare
+  `Namespace Global.AvaloniaChrome`, NOT `Namespace AvaloniaChrome`. With `<RootNamespace>` set, the
+  latter becomes `<Project>.AvaloniaChrome`, which `Imports AvaloniaChrome` does not reach as a bare
+  type name — the generated `Private ReadOnly Property PathPicker1 As PathPicker` then fails with
+  "Type 'PathPicker' is not defined" while `AvaloniaChrome.PathPicker` (fully qualified) compiles.
+  GrumpyPanel.vb/AnchorHelper.vb use `Global.` for exactly this reason; ChromeWindow.vb does not and
+  is the source of the older "VB companion" gotcha.
+- §77b **The T5 matrix finds new toolbox tools by itself** — it enumerates `TOOLBOX_CATEGORIES` +
+  `controlsForGroup` and asserts the placeable-control **count** (33 → 35 with these tools) and
+  builds a VB project containing every one of them, so a new tool is compile-verified automatically;
+  `tests/helpers/build.js` had to pass `pathPickerCs/pathPickerVb` for the helper to land in the
+  generated project.
+- §78 **Properties sidebar sections (2026-09-11)** — `src/propertyCatalog.ts` gained
+  `PROP_SECTIONS` (ordered `{ id, label, keys }`: editors → layout → appearance → text → data →
+  behavior) and `groupPropertyRows()`, which stamps `section`/`sectionId` on every `PropDef` and
+  sorts the list: pinned identity rows (`__name__`/`__type__`) first, then sections in that order,
+  then the canonical key order inside a section (unknown/dynamic rows keep their relative order at
+  the end of their section, so a Grid-cell or SplitPanel row never disappears). Both
+  `propertyDefsFor` and `multiCommonProps` end with it. Editor buttons (`kind: 'button'`) are forced
+  into Editors even when a future control adds an unlisted one, and **T2 asserts every catalog key
+  is listed somewhere**, so a new property can't silently land in the wrong group.
+- §78a **Webview side** — `renderProperties` inserts a `.prop-section` heading whenever `p.section`
+  changes, skips the rows of a folded section (`state.collapsed[controlType][sectionId]`), and the
+  fold is persisted with `vscode.setState({collapsed})` (loaded once at startup by `loadCollapsed()`).
+  The scope key comes from the payload's own `__type__` row, so no protocol change was needed; the
+  T3 harness stub had to grow `getState`/`setState` (it only had `postMessage`).
+- §78b **Two ordering decisions worth keeping** — the Text section lists `TitleBarTitle` before
+  `Title` (a ChromeWindow form shows its bar caption first — the old chromeProps assertion demanded
+  the chrome rows lead) and Layout lists Dock/Anchor **before** the alignments, matching the order
+  agreed with the user.
+- §78c **T4 was flaky, not broken** — the headless harness intermittently failed with
+  `CS0246 … 'HeadlessApp' could not be found` while the referenced project itself compiled: a
+  build-order race inside `dotnet run`. The layer now builds the referenced `HeadlessApp.csproj`
+  first (it asserts that build), which made it deterministic.
+- §79 **Project Backup toolbar button (2026-09-11)** — new `src/projectBackup.ts`, a pure-`fs`
+  module (no `vscode`), so the naming/skip/copy logic is unit-testable: `backupStamp()` →
+  `2026-09-11_14-32-05` (Windows-safe, a `:` is not allowed in a path), `backupFolderName()` →
+  `<Project>_<stamp>`, `freeBackupPath()` appends `-2`/`-3` on a clash, `backupProject()` walks the
+  tree with `statSync` (follows symlinks) and skips `BACKUP_SKIP_DIRS = ['bin','obj','.vs',
+  'node_modules','.git']` **at any depth**; it returns `{ path, files, skipped }`. The designer's
+  `projectBackup()` case saves FIRST — the open form (`saveCustomDocument`), every open DataSet
+  document (via the new `saveOpenDataSetDocuments()` in `dataSetEditor.ts`, a `Map<string, () =>
+  Promise<boolean>>` of per-panel “save if dirty” closures registered next to `liveReloaders`, plus
+  `vscode.workspace.saveAll(false)`) — and aborts **without copying** if a save fails. T2
+  `projectBackup.test.js` (**33**) asserts the naming, the collision suffix, the skip list, a real
+  copy against a temp project, and (source-level, because the T3 fixture's buttons carry no labels)
+  the `💾 Project Backup` toolbar button.
+- §80 **Menu items as file/folder pickers (2026-09-11)** — `MenuNodeKind` grew `FileSelector` /
+  `FolderSelector`. Two traps: ① `menuItemEls()` must map `<chrome:PathPicker>` children back to the
+  tree, otherwise a save silently DROPS them — the picker is the first menu child that is not a
+  `<MenuItem>`; ② `menuElementFor()` sets attributes with `element.setAttribute('PathType', …)`
+  rather than string-concatenating XAML (escaping), and calls `model.ensureChromeNamespace()`. The
+  row is a **leaf** (`canHaveKids` false) with a px-width field (clamped ≤600) and a “Dialog title”
+  field; `sanitizeMenuNodes()` normalises unknown kinds to `Item`. T2 `menuItems.test.js` (**34**)
+  covers read-back, the new kinds, `Space` only at depth 1, and every sanitiser rejection.
+- §80a **PathPicker kind icon** — the helper draws a 14×14 `Avalonia.Controls.Shapes.Path` docked left
+  (`Geometry.Parse`, page for `File`/`SaveFile`, folder for `Folder`), `Fill` bound to `Foreground`
+  with `TargetNullValue=Brushes.Gray`, and `UpdateIcon()` re-runs from `OnPropertyChanged` when
+  `PathType`/`ShowIcon` change. `ShowIcon` (default `True`) is a new property in
+  `CONTROL_PROPS.PathPicker` **and** in the Appearance key list — the T2 property-coverage test fails
+  if a catalog key is listed nowhere, which is what caught it.
+- §81 **Code Fix false positives — the warning was ours (2026-09-11)** — a user-visible **warning** on
+  `MainWindow.axaml.cs` came from `codeBehindCheck.ts`, not the compiler (`dotnet build` 0/0, the
+  language server silent): `parseCode` found C# methods with `(?:…)*void\s+name(...)`, and a
+  **constructor has no return type**, so `ctors` was empty → rule 6 emitted *“No constructor /
+  InitializeComponent”* as a `DiagnosticSeverity.Warning` (published by `publishIssues` → PROBLEMS),
+  and `insert-initialize` would have inserted a SECOND ctor (CS0111). A second, VB-side false
+  *error* came from `vbMatchingEnd` counting **single-line** lambdas as blocks — VB gives them no
+  `End`, so the method's own `End Sub` closed the phantom level and the span collapsed (or ran long →
+  wrong-line deletion). Fixes: a C# ctor pass (`<ClassName>(…) … {`, `: base()`/`: this()`, any
+  modifier) + a duplicate-ctor safety net; `vbOpensBlock()` (a lambda opens a block only when its
+  body starts on a later line) with **one shared** `vbMatchingEnd` exported from `codeBehind.ts`;
+  line-anchored C# class-name detection (`// class Dummy` can't hijack it); insertion points inside
+  the body (`{` line for C#, after `Inherits …` for VB — VB requires it first) and Data-Image calls
+  after `InitializeComponent()`. Lesson: when a user reports a “warning in my file”, run the pure
+  analyser first — `node -e "require('./out/codeBehindCheck.js').analyzeCodeBehind({fsPath:…},{})"` —
+  a finding published as a diagnostic is indistinguishable from a compiler warning in the pane.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

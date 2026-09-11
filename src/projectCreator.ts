@@ -184,6 +184,8 @@ function generateProject(opts: GenerateOptions): void {
         exifVb: readResource(context, 'resources/ExifImageLoader.vb'),
         grumpyCs: readResource(context, 'resources/GrumpyPanel.cs'),
         grumpyVb: readResource(context, 'resources/GrumpyPanel.vb'),
+        pathPickerCs: readResource(context, 'resources/PathPicker.cs'),
+        pathPickerVb: readResource(context, 'resources/PathPicker.vb'),
         followerCs: readResource(context, 'resources/ColumnFollower.cs'),
         followerVb: readResource(context, 'resources/ColumnFollower.vb'),
         vbBridgeDll: vbBridgeDllPath()

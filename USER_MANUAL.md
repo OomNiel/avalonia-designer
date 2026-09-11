@@ -8,7 +8,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-06)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-11)
 
 ---
 
@@ -25,6 +25,7 @@
    - [Tab Items (TabControl)](#tab-items-tabcontrol)
    - [List Items (ListBox)](#list-items-listbox)
    - [Items (ComboBox / ListBox / ItemsControl)](#items-combobox--listbox--itemscontrol)
+   - [Menu Items (Menu)](#menu-items-menu)
 9. [The "About this control" help panel](#9-the-about-this-control-help-panel)
 10. [The right-click menu (Cut / Copy / Paste / Move / Delete)](#10-the-right-click-menu)
 11. [Creating a new form (templates)](#11-creating-a-new-form-templates)
@@ -57,6 +58,8 @@
 - **DataSet designer** — design ADO.NET `DataSet` tables and columns visually, then generate a
   runtime class (C#/VB) that builds the DataSet, plus an `.xsd` schema.
 - **Clean-up helpers** — Delete and Clear Canvas remove the control *and* its code references.
+- **Project Backup** — one toolbar click saves everything that is unsaved and copies the whole
+  project into its parent folder as `<Project>_<date>_<time>` (no build output, caches or `.git`).
 
 ---
 
@@ -129,8 +132,9 @@ automatically whenever the host source code changes.
 The designer opens in a custom tab with:
 
 - A **canvas** (the form's design surface) in the middle.
-- A **toolbar** at the top (**New Form**, **⟳ Refresh**, **🩺 Code Fix…**, zoom in/out, fit, clear
-  selection). **⟳ Refresh** re-reads the form from disk and re-renders it (see §12 for **Code Fix…**).
+- A **toolbar** at the top (**New Form**, **⟳ Refresh**, **🩺 Code Fix…**, **💾 Project Backup**,
+  zoom in/out, fit, clear selection). **⟳ Refresh** re-reads the form from disk and re-renders it
+  (see §12 for **Code Fix…**; **Project Backup** is described below).
 - The **Properties panel** on the right.
 - The **Toolbox** in the sidebar (revealed automatically).
 
@@ -145,6 +149,25 @@ The designer opens in a custom tab with:
 > indentation, and hand-made structural edits are the usual cause of a code-behind that no longer
 > matches — see §12, **Code Fix…**). If you *must* edit the `.axaml` by hand, do it while the
 > designer tab is closed, then press **⟳ Refresh**; the designer will not clobber unsaved work.
+
+### 💾 Project Backup — a dated copy of the whole project
+
+Click **💾 Project Backup** in the designer toolbar and the extension
+
+1. **saves everything that is unsaved** — the form you are designing, every open DataSet document
+   and any other editor with unsaved changes — and then
+2. copies the **whole project folder** into that folder's **parent** as
+   **`<Project>_<YYYY-MM-DD>_<HH-MM-SS>`** (e.g. `MyApp_2026-09-11_14-32-05`, which sorts by date).
+   If a folder with that name is already there, `-2`, `-3`, … is appended, so two clicks in the same
+   second can't overwrite each other.
+
+`bin`, `obj`, `.vs`, `node_modules` and `.git` are **never copied** (at any depth), so a backup is
+only the project's own files — a few hundred KB instead of gigabytes of build output, and nobody's
+git history. The status line and a notification tell you the folder and how many files were copied.
+
+> It backs up the **project the form belongs to** (the folder holding the `.csproj`/`.vbproj`), so
+> have the form open in the designer when you click. If a save fails, **nothing** is copied — the
+> message names the file that could not be saved, so you can fix it and click again.
 
 ---
 
@@ -164,6 +187,8 @@ place:
 | CheckBox | A tick box |
 | RadioButton | A round option (one per group) |
 | Image | Displays a picture |
+| File Selector | A path row with a “…” button that opens the system's file dialog |
+| Folder Selector | The same row, set up to pick a folder |
 | Panel | A simple layered container |
 | Grid | Rows and columns layout |
 | UniformGrid | Equal-sized grid tiles (rows/columns) |
@@ -187,6 +212,49 @@ place:
 > and time (in your OS's date/time format) and updates itself every second. The designer writes
 > the small timer code-behind for you, so no code is needed; put one in a Status Bar's `Border`
 > for a classic status-bar clock.
+
+### File / Folder Selector — the “…” dialog row
+
+The **File Selector** and **Folder Selector** tools drop a **path row** on the form: a box showing the
+chosen path plus a **“…”** button that opens the **platform's own dialog** (Windows / macOS / Linux —
+no extra package and no code from you). Both tools insert the same control, `chrome:PathPicker`; they
+differ only in its **Path Type**:
+
+| Path Type | What the “…” button opens |
+|---|---|
+| `File` | The open-file dialog (the default for the **File Selector** tool) |
+| `Folder` | The folder picker (the default for the **Folder Selector** tool) |
+| `SaveFile` | A save-as dialog — the file need not exist yet |
+
+Properties (all in the Properties panel):
+
+| Property | Meaning |
+|---|---|
+| Path Type | Which dialog opens: `File`, `Folder` or `SaveFile` |
+| Selected Path | The chosen path — **two-way**: pre-fill it, or read it from your code |
+| Dialog Title | Caption of the dialog window |
+| File Filter | Which files are offered, WinForms style: `Images|*.png;*.jpg|All files|*.*` |
+| Initial Folder | Where the dialog opens when nothing is picked yet |
+| Read Only Path | `True` (default) = pick-only; `False` = the user may also type/paste a path |
+| Browse Text | Caption of the button (“…” by default) |
+| Show Icon | `True` (default) draws a small **page** (File/Save File) or **folder** (Folder) glyph at the left edge so you can tell pickers apart at a glance; `False` hides it |
+
+The chosen value lands in **Selected Path**, which your code reads:
+
+```vb
+Dim photo As String = PathPicker1.SelectedPath
+```
+```csharp
+string? photo = PathPicker1.SelectedPath;
+```
+
+The row is a bundled helper (**`PathPicker.cs|.vb`**, copied into the project the first time you place
+the tool — next to `ChromeWindow`), and **🩺 Code Fix…** reports/copies it if the project is missing
+it. `Selected Path` can also be written to before the dialog is ever opened (handy for a default
+folder or file), and with `Read Only Path = False` the box itself becomes an editable field.
+
+The **kind icon** at the left edge is tinted with the control's **Foreground**, so it follows the
+form's font colour (and disappears with **Show Icon = False**).
 
 > **⚠️ Menu items shown in the designer are DUMMY PLACEHOLDERS — they don't look like the real
 > thing.** Avalonia only draws the items of a menu when the menu is actually **opened at runtime**,
@@ -245,7 +313,26 @@ are locked in place and cannot be moved/resized directly.)
 
 Selecting a control shows its properties on the right. At the very top there is a
 **control drop-down list** showing every control on the form — pick one to **focus/select it**
-(useful when controls overlap or are hard to click).
+(useful when controls overlap or are hard to click); just below it the control's **Name** and
+**Type** are pinned.
+
+The rest of the rows are grouped into **sections**, always in this order and with a given row in the
+same place whatever control you select:
+
+| Section | What is in it |
+|---|---|
+| **Editors** | The designer's popup editors for the control (DataGrid **Rows**/**Columns**, Grid **Rows & Columns**, ComboBox/ListBox **Items**, Menu **Menu Items**, Status Bar **Status Items**, SplitPanel **Split Layout**/**Splitters**) |
+| **Layout & size** | Width/Height, Min/Max, Left/Top, Margin, Padding, **Dock**, **Anchor**, H./V. Align and H./V. Content Align, the Grid cell, Orientation, window sizing (state, startup location, size-to-content, resize) |
+| **Appearance** | Every colour/brush — Background, Text Color (Foreground), Border Brush/Thickness, Corner Radius, Opacity, Theme, the ChromeWindow title-bar colours — plus shape Fill/Stroke/geometry, images and icons |
+| **Text & font** | What the control shows (Content, Text, Header, Label, Placeholder Text, …) and how the text is rendered or entered (Font Family/Size/Weight/Style, alignment, wrapping, letter spacing, line height, edit options) |
+| **Data** | Item/row sources and the selected item, the grid's user-edit permissions (Read Only, sort/reorder/resize columns), Undo-Redo, and the File/Folder selector's dialog settings |
+| **Behavior** | State and interaction: Visible, Enabled, Hit-Test, Tab Stop/Focusable/Tab Index, Z-Index, IsChecked, Click/Selection mode, Command, scroll-bar visibility, window flags (Topmost, Taskbar, decorations) |
+
+**Click a section heading** to fold that group away (the arrow turns ▸); click it again to open it.
+The designer **remembers what you folded per control type** — fold **Data** on a DataGrid and every
+DataGrid you open afterwards starts with Data folded too (it is stored with the panel's own state, so
+it survives reopening the designer). **Show advanced** still reveals the hidden rows, inside their
+section.
 
 Every property has:
 
@@ -371,6 +458,39 @@ area where you type **one item per line**:
 
 The **Items** property is disabled when the control's items come from a bound **DataSet table** or
 an **ItemsSource** — use the DataSet designer to manage those instead.
+
+### Menu Items (Menu)
+
+Select a **Menu** and click **Menu Items** (in the **Editors** group) to edit the menu as a **tree**
+— or simply click one of the placeholder labels the designer draws over the bar. Each row has:
+
+- A **kind** dropdown: **Item** (an ordinary command), **CheckBox**, **Radio**, **ComboBox**
+  (its children are the options), **Separator** (a line) and — at the top level only — **Space** (an
+  invisible gap on the bar). Two more kinds turn the item into a **picker**:
+  - **File Selector** — the item holds a path row whose “…” button opens the **open-file** dialog,
+  - **Folder Selector** — the same row, set up to pick a **folder**.
+
+  A selector row is a **leaf** (it cannot have sub-items) and gains two extra fields: the **px width**
+  of the row and the **dialog title** shown by the dialog.
+- A **Header** — the text shown in the menu (`_` marks the access key: `_Open` underlines the **O**).
+- Buttons to add a **sub-item**, add a **sibling**, move the row up/down and delete it.
+
+**Save** writes real `<MenuItem>` XAML; a selector item becomes a `PathPicker` inside its
+`<MenuItem>`:
+
+```xml
+<MenuItem Header="File">
+  <MenuItem>
+    <chrome:PathPicker PathType="File" Width="230" Title="Open a file"/>
+  </MenuItem>
+</MenuItem>
+```
+
+**Cancel** (or **Esc**) discards your edits, and reopening the editor shows what is really in the
+form — including a tree you hand-wrote or saved in an earlier version.
+
+> A picker item shows the **whole path row** (the box plus the “…” button) inside the menu, exactly
+> like the toolbox File/Folder Selector does on a form; Avalonia sizes the menu item to its content.
 
 ### DataGrid — Rows & Columns editors
 
@@ -520,7 +640,7 @@ What it checks and can fix:
 | **Data-Image binding** | block half-deleted, or its `' DataImage:` marker lost, or the Image/grid was deleted | regenerates it from the DataSet, re-stamps the marker, or un-binds it |
 | **DataSet drift** | a column/table was renamed (`row.Image`, `LoadCustomers()`) | re-generates that binding from the DataSet |
 | **`ItemsSource` on a deleted control** | the ComboBox was removed | deletes the statement |
-| **Bundled helper missing** | `ExifImageLoader` / `ChromeWindow` / `AnchorHelper` / `GrumpyPanel` not in the project | copies the file in |
+| **Bundled helper missing** | `ExifImageLoader` / `ChromeWindow` / `AnchorHelper` / `GrumpyPanel` / `PathPicker` not in the project | copies the file in |
 | **Missing `Imports`** | `BC30002 'Line' is not defined'` | adds the `Imports`/`using` |
 | **ChromeWindow mismatch** | root is `<chrome:ChromeWindow>` but the class still `Inherits Window` | changes the base class |
 
@@ -528,6 +648,16 @@ A few findings come without a Fix button on purpose, because they need your deci
 control name that isn't a valid identifier (`x:Name="Button-1"`), the same name used twice, a
 `x:Class` that doesn't match the class in the file, or a control name that is **still used** by
 hand-written code (deleting its accessor would only move the error).
+
+Two things worth knowing when you read a finding:
+
+- Findings are (also) published into the **PROBLEMS** pane, so one can look like a compiler warning
+  or error even though it comes from this checker. Fixing the cause — or pressing the button again
+  after the code changed — clears it; `dotnet build` stays the ground truth for the compiler.
+- The checker knows a **C# constructor** (which has no return type) and VB **one-line lambdas**
+  (`Function(r) r.Name`), and everything it inserts goes **inside** the body: after the opening `{`
+  for C#, after the `Inherits …` line for VB, and a Data-Image call **after**
+  `InitializeComponent()` — before it, the grid the binding wires up does not exist yet.
 
 The check runs **only when you press the button** (it never repairs anything behind your back), and
 running it does not change your form or your code-behind.

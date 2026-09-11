@@ -19,7 +19,7 @@
  * current version ships. A genuinely customised file (header changed/removed) is left alone.
  */
 
-export type BundledKind = 'ChromeWindow' | 'AnchorHelper';
+export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker';
 
 export interface BundledSpec {
     kind: BundledKind;
@@ -51,6 +51,15 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // The current helper also DOCKs an edge-anchored control inside a DockPanel (a Status
             // Bar strip); older copies only ever tracked Canvas children via Canvas.Left/Top.
             marker: 'AnchorDockEdge'
+        },
+        {
+            kind: 'PathPicker',
+            file: vb ? 'PathPicker.vb' : 'PathPicker.cs',
+            bundled: /BUNDLED RESOURCE/,
+            // The current picker draws a FILE / FOLDER icon at its left edge (and grew the
+            // ShowIcon switch); older copies are a bare path row, so a File Selector and a Folder
+            // Selector look identical on the form.
+            marker: 'ShowIcon'
         }
     ];
 }

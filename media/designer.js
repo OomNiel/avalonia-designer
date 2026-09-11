@@ -20,6 +20,7 @@
         btnNewForm: $('btnNewForm'),
         btnRefresh: $('btnRefresh'),
         btnCodeFix: $('btnCodeFix'),
+        btnBackup: $('btnBackup'),
         btnZoomIn: $('btnZoomIn'),
         btnZoomOut: $('btnZoomOut'),
         btnFit: $('btnFit'),
@@ -143,6 +144,9 @@
         lastFitSize: null,
         pendingTag: null,
         showAdvanced: false,
+        // Which Properties sections the user folded away, per control TYPE (e.g. { DataGrid: { data: true } }).
+        // Remembered across designer reopens via the webview state (see loadCollapsed/persistCollapsed).
+        collapsed: {},
         helpOpen: true,
         lastProps: null,
         clipboard: false,
@@ -1531,6 +1535,63 @@
         }
     }
 
+    // ---------- Properties panel sections (grouping + fold memory) ----------
+    /** Which sections the user folded, keyed by control TYPE — restored from the last session
+     *  through the webview state (VS Code keeps it per panel, so reopening a form remembers it). */
+    function loadCollapsed() {
+        try {
+            const saved = typeof vscode.getState === 'function' ? vscode.getState() : null;
+            if (saved && saved.collapsed && typeof saved.collapsed === 'object') state.collapsed = saved.collapsed;
+        } catch (e) { /* no state support: everything starts expanded */ }
+    }
+
+    function persistCollapsed() {
+        try {
+            if (typeof vscode.setState !== 'function') return;
+            const prev = (typeof vscode.getState === 'function' ? vscode.getState() : null) || {};
+            const next = Object.assign({}, prev);
+            next.collapsed = state.collapsed;
+            vscode.setState(next);
+        } catch (e) { /* ignore */ }
+    }
+
+    function isSectionCollapsed(scope, id) {
+        if (!scope || !id) return false;
+        const forType = state.collapsed[scope];
+        return !!(forType && forType[id]);
+    }
+
+    function toggleSection(scope, id) {
+        if (!scope || !id) return;
+        if (!state.collapsed[scope]) state.collapsed[scope] = {};
+        if (state.collapsed[scope][id]) delete state.collapsed[scope][id];
+        else state.collapsed[scope][id] = true;
+        persistCollapsed();
+    }
+
+    /** A clickable group heading (▾ open / ▸ folded) for the Properties list. */
+    function sectionHeader(labelText, id, scope) {
+        const folded = isSectionCollapsed(scope, id);
+        const head = document.createElement('div');
+        head.className = 'prop-section' + (folded ? ' collapsed' : '');
+        head.dataset.sectionId = id || '';
+        head.setAttribute('role', 'button');
+        head.setAttribute('aria-expanded', folded ? 'false' : 'true');
+        head.title = folded ? 'Click to expand this group' : 'Click to collapse this group';
+        const arrow = document.createElement('span');
+        arrow.className = 'prop-section-arrow';
+        arrow.textContent = folded ? '▸' : '▾';
+        const name = document.createElement('span');
+        name.textContent = labelText;
+        head.appendChild(arrow);
+        head.appendChild(name);
+        head.addEventListener('click', () => {
+            toggleSection(scope, id);
+            if (state.lastProps) renderProperties(state.lastProps);
+        });
+        return head;
+    }
+
     function renderProperties(msg) {
         // Every property edit triggers a properties refresh that rebuilds the rows;
         // remember which field the user is editing so we can restore focus + caret.
@@ -1601,6 +1662,12 @@
                 }, 400);
             });
         };
+        // Properties are grouped into sections (Editors / Layout & size / Appearance / Text & font /
+        // Data / Behavior). The groups come from the extension in order; the fold state is per
+        // control type, so folding "Data" on one DataGrid folds it on every DataGrid.
+        const typeRow = (msg.properties || []).find((p) => p.key === '__type__');
+        const scopeKey = (typeRow && typeRow.value) || (isMulti ? 'multi' : (msg.name || ''));
+        let currentSection = null;
         for (const p of msg.properties) {
             const row = document.createElement('div');
             row.className = 'prop-row';
@@ -1613,6 +1680,13 @@
             const options = p.options || [];
             // Beginner mode hides advanced properties until "Show advanced" is ticked.
             if (p.advanced && !state.showAdvanced) continue;
+            // A section starts once (rows arrive grouped), and a FOLDED section keeps its heading
+            // but none of its rows.
+            if (p.section && p.section !== currentSection) {
+                currentSection = p.section;
+                els.propsBody.appendChild(sectionHeader(p.section, p.sectionId, scopeKey));
+            }
+            if (p.section && isSectionCollapsed(scopeKey, p.sectionId)) continue;
             const onText = (el) => {
                 let timer = null;
                 el.addEventListener('input', () => {
@@ -2082,6 +2156,12 @@
         els.status.textContent = 'Refreshing\u2026';
         post({ type: 'refresh' });
     });
+    // Project Backup: the extension saves what is unsaved, then copies the project folder next to
+    // itself as <Project>_<date>_<time>.
+    els.btnBackup.addEventListener('click', () => {
+        els.status.textContent = 'Saving and backing up the project\u2026';
+        post({ type: 'projectBackup' });
+    });
     // Code Fix…: check the code-behind against the form / DataSet and list what is wrong with it.
     els.btnCodeFix.addEventListener('click', () => {
         els.status.textContent = 'Checking the code-behind\u2026';
@@ -2384,12 +2464,18 @@
     let menuEdit = null;           // { name, tree } working copy while the modal is open
     let menuExpanded = new Set();  // paths ("0", "0.1", …) expanded in the editor
     const MENU_MAX_DEPTH_UI = 5;
-    const MENU_KIND_OPTIONS = ['Item', 'CheckBox', 'Radio', 'ComboBox', 'Separator'];
+    // [value, label] — the value is the node kind the extension understands.
+    const MENU_KIND_OPTIONS = [
+        ['Item', 'Item'], ['CheckBox', 'CheckBox'], ['Radio', 'Radio'], ['ComboBox', 'ComboBox'],
+        ['Separator', 'Separator'],
+        ['FileSelector', 'File Selector'], ['FolderSelector', 'Folder Selector']
+    ];
     /** Kind choices for one row. 'Space' — an invisible gap on the top bar — is a TOP-LEVEL kind
-     *  (a submenu uses Separators for gaps), so it is only offered at depth 1. */
+     *  (a submenu uses Separators for gaps), so it is only offered at depth 1. The two selector
+     *  kinds are offered at any depth (they are leaf rows, like a Separator). */
     function menuKindOptions(depth, current) {
         const list = MENU_KIND_OPTIONS.slice();
-        if (depth === 1 || current === 'Space') list.push('Space');
+        if (depth === 1 || current === 'Space') list.push(['Space', 'Space']);
         return list;
     }
     function menuKey(path) { return path.join('.'); }
@@ -2398,6 +2484,7 @@
             kind: (n && n.kind) || 'Item',
             header: n && n.header != null ? String(n.header) : '',
             width: n && n.width != null ? Number(n.width) : undefined,
+            pathType: n && n.pathType ? String(n.pathType) : undefined,
             children: Array.isArray(n && n.children) ? n.children.map(menuCopy) : []
         };
     }
@@ -2444,7 +2531,9 @@
             row.style.paddingLeft = (10 + (depth - 1) * 24) + 'px';
             const isSep = node.kind === 'Separator';
             const isSpace = node.kind === 'Space';
-            const canHaveKids = !isSep && !isSpace && depth < MENU_MAX_DEPTH_UI;
+            // A File/Folder Selector row is a leaf that holds the bundled <chrome:PathPicker>.
+            const isPicker = node.kind === 'FileSelector' || node.kind === 'FolderSelector';
+            const canHaveKids = !isSep && !isSpace && !isPicker && depth < MENU_MAX_DEPTH_UI;
             const hasKids = !!node.children && node.children.length > 0;
             const isOpen = menuExpanded.has(key);
             // Expand/collapse caret (leaf items show a dot).
@@ -2462,26 +2551,42 @@
             // Kind (maps to real MenuItem semantics on save). 'Space' is only a top-level bar gap.
             const sel = document.createElement('select');
             sel.className = 'mn-kind';
-            for (const k of menuKindOptions(depth, node.kind)) {
-                const o = document.createElement('option'); o.value = k; o.textContent = k;
+            for (const [k, label] of menuKindOptions(depth, node.kind)) {
+                const o = document.createElement('option'); o.value = k; o.textContent = label;
                 sel.appendChild(o);
             }
             sel.value = node.kind;
             sel.title = 'Item kind (how it behaves at runtime)';
             sel.addEventListener('change', () => {
                 const to = sel.value;
+                const toPicker = to === 'FileSelector' || to === 'FolderSelector';
                 if (to === 'Space') {
                     node.kind = 'Space';
                     node.header = '';
                     node.children = [];
+                    delete node.pathType;
                     if (!(Number(node.width) > 0)) node.width = 12;
                 } else if (node.kind === 'Space') {
                     node.kind = to;
                     delete node.width;
-                    if (to !== 'Separator' && !node.header) node.header = 'New Item';
+                    if (toPicker) {
+                        // A selector row: a dialog caption + a row width, never a submenu.
+                        node.children = [];
+                        node.pathType = to === 'FolderSelector' ? 'Folder' : 'File';
+                        node.width = 160;
+                    } else if (to !== 'Separator' && !node.header) node.header = 'New Item';
                 } else {
+                    const wasPicker = node.kind === 'FileSelector' || node.kind === 'FolderSelector';
                     if (to === 'Separator') node.header = '';
-                    else if (node.kind === 'Separator' && !node.header) node.header = 'New Item';
+                    else if ((wasPicker || node.kind === 'Separator') && !node.header) node.header = 'New Item';
+                    if (toPicker) {
+                        node.children = [];
+                        node.pathType = to === 'FolderSelector' ? 'Folder' : 'File';
+                        if (!(Number(node.width) > 0)) node.width = 160;
+                    } else if (wasPicker) {
+                        delete node.pathType;
+                        delete node.width;
+                    }
                     node.kind = to;
                 }
                 renderMenuTree();
@@ -2493,29 +2598,33 @@
                 lbl.className = 'mn-sep-label';
                 lbl.textContent = '—— separator ——';
                 row.appendChild(lbl);
-            } else if (isSpace) {
-                const span = document.createElement('span');
-                span.className = 'mn-space';
-                const inp = document.createElement('input');
-                inp.type = 'number'; inp.className = 'mn-width';
-                inp.min = '1'; inp.max = '500';
-                inp.value = String(Number(node.width) > 0 ? Number(node.width) : 12);
-                inp.title = 'Width of the invisible gap between items, in pixels';
-                inp.addEventListener('input', () => {
-                    const w = parseInt(inp.value, 10);
-                    node.width = Number.isFinite(w) && w > 0 ? Math.min(500, w) : 12;
-                });
-                inp.addEventListener('keydown', (e) => { e.stopPropagation(); });
-                span.appendChild(inp);
-                const px = document.createElement('span');
-                px.className = 'mn-sep-label'; px.textContent = 'px gap';
-                span.appendChild(px);
-                row.appendChild(span);
             } else {
+                if (isSpace || isPicker) {
+                    const span = document.createElement('span');
+                    span.className = 'mn-space';
+                    const inp = document.createElement('input');
+                    inp.type = 'number'; inp.className = 'mn-width';
+                    inp.min = '1'; inp.max = '500';
+                    inp.value = String(Number(node.width) > 0 ? Number(node.width) : (isPicker ? 160 : 12));
+                    inp.title = isPicker
+                        ? 'Width of the picker row on the menu, in pixels'
+                        : 'Width of the invisible gap between items, in pixels';
+                    inp.addEventListener('input', () => {
+                        const w = parseInt(inp.value, 10);
+                        node.width = Number.isFinite(w) && w > 0 ? Math.min(500, w) : (isPicker ? 160 : 12);
+                    });
+                    inp.addEventListener('keydown', (e) => { e.stopPropagation(); });
+                    span.appendChild(inp);
+                    const px = document.createElement('span');
+                    px.className = 'mn-sep-label'; px.textContent = isPicker ? 'px wide' : 'px gap';
+                    span.appendChild(px);
+                    row.appendChild(span);
+                }
                 const inp = document.createElement('input');
                 inp.type = 'text'; inp.className = 'mn-header';
-                inp.value = node.header || ''; inp.placeholder = 'Item text';
-                inp.title = 'Item text (Header)';
+                inp.value = node.header || '';
+                inp.placeholder = isPicker ? 'Dialog title' : 'Item text';
+                inp.title = isPicker ? 'Caption of the file/folder dialog' : 'Item text (Header)';
                 inp.addEventListener('input', () => { node.header = inp.value; });
                 inp.addEventListener('keydown', (e) => { e.stopPropagation(); });
                 row.appendChild(inp);
@@ -3058,7 +3167,10 @@
                     cursor += 12;
                     return;
                 }
-                const header = it.header || '';
+                // A File/Folder Selector row shows its dialog caption; with none set, name the kind
+                // so the bar chip is never blank.
+                const header = it.header
+                    || (it.kind === 'FileSelector' ? 'File Selector' : it.kind === 'FolderSelector' ? 'Folder Selector' : '');
                 const w = Math.max(34, header.length * EST + 28);
                 mk('item', c.name, header, cursor * scale, w * scale, top, h, i);
                 cursor += w;
@@ -3082,6 +3194,7 @@
 
     applyDotGrid(); // initial toolbar state (overlay follows the first frame message)
     applyCrosshair(); // initial crosshair style (the frame message carries the saved settings)
+    loadCollapsed(); // restore the Properties sections the user folded last time
 
     // tell the extension the webview is ready (triggers the first render)
     post({ type: 'ready' });

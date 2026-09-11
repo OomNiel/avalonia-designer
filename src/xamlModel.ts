@@ -326,9 +326,10 @@ export class XamlModel {
         if (localName(el.tagName) === 'DataGrid') {
             this.ensureXmlns('dg', 'using:Avalonia.Controls');
         }
-        // GrumpyPanel is the bundled AvaloniaChrome.GrumpyPanel (like ChromeWindow) — its snippet
-        // uses the `chrome` prefix, so the root must declare xmlns:chrome for the XAML to compile.
-        if (localName(el.tagName) === 'GrumpyPanel') {
+        // GrumpyPanel / PathPicker are the bundled AvaloniaChrome controls (like ChromeWindow) —
+        // their snippets use the `chrome` prefix, so the root must declare xmlns:chrome for the
+        // XAML to compile.
+        if (localName(el.tagName) === 'GrumpyPanel' || localName(el.tagName) === 'PathPicker') {
             this.ensureChromeNamespace();
         }
 

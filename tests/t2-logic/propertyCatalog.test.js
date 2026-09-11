@@ -5,7 +5,10 @@
  * Dock property, so an edge Anchor docks it; Grid/StackPanel children get no Anchor). */
 'use strict';
 const { DOMParser } = require('@xmldom/xmldom');
-const { propertyDefsFor } = require('../../out/propertyCatalog.js');
+const {
+    propertyDefsFor, PROP_SECTIONS, CONTROL_PROPS, COMMON_PROPS, FONT_PROPS, ANCHOR_PROPS,
+    GRUMPY_ANCHOR_PROPS, CHROME_WINDOW_PROPS
+} = require('../../out/propertyCatalog.js');
 
 const NS = 'xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:chrome="using:AvaloniaChrome"';
 
@@ -221,5 +224,70 @@ module.exports = async (t) => {
         t.ok(keyOf(p, 'Stroke') && keyOf(p, 'StrokeThickness'), 'shapes', 'Arc line props');
         t.ok(!keyOf(p, 'Fill'), 'shapes', 'Arc has NO Backcolor (stroked)');
         t.ok(keyOf(p, 'Width') && keyOf(p, 'Height'), 'shapes', 'Arc keeps Width/Height (resizable box)');
+    }
+
+    // --- Properties panel SECTIONS: one canonical grouping + order for every control ---
+    {
+        const onCanvas2 = elFrom('<Canvas><Button x:Name="b2" Content="Go" Background="#333333" Foreground="White" FontSize="14"/></Canvas>');
+        const p = propertyDefsFor(childEls(onCanvas2)[0]);
+        const secOf = (k) => { const r = keyOf(p, k); return r ? r.sectionId : undefined; };
+        t.equal(secOf('__name__'), undefined, 'sections', 'Name is pinned above the sections');
+        t.equal(secOf('__type__'), undefined, 'sections', 'Type is pinned above the sections');
+        t.equal(secOf('Width'), 'layout', 'sections', 'Width is Layout & size');
+        t.equal(secOf('Canvas.Left'), 'layout', 'sections', 'Left is Layout & size');
+        t.equal(secOf('chrome:AnchorHelper.Anchor'), 'layout', 'sections', 'Anchor is Layout & size');
+        t.equal(secOf('HorizontalAlignment'), 'layout', 'sections', 'H. Align is Layout & size');
+        t.equal(secOf('Background'), 'appearance', 'sections', 'Background is Appearance');
+        t.equal(secOf('Foreground'), 'appearance', 'sections', 'Text colour is Appearance (not Text)');
+        t.equal(secOf('CornerRadius'), 'appearance', 'sections', 'Corner Radius is Appearance');
+        t.equal(secOf('__theme__'), 'appearance', 'sections', 'Theme is Appearance');
+        t.equal(secOf('Content'), 'text', 'sections', 'Content is Text & font');
+        t.equal(secOf('FontSize'), 'text', 'sections', 'Font Size is Text & font');
+        t.equal(secOf('ClickMode'), 'behavior', 'sections', 'Click Mode is Behavior');
+        t.equal(secOf('IsEnabled'), 'behavior', 'sections', 'Enabled is Behavior');
+        t.equal(secOf('IsVisible'), 'behavior', 'sections', 'Visible is Behavior');
+        // Pinned identity rows first, then the sections in their canonical order.
+        t.equal(p[0].key, '__name__', 'sections', 'Name is the first row');
+        t.equal(p[1].key, '__type__', 'sections', 'Type is the second row');
+        const seen = [...new Set(p.map((r) => r.sectionId).filter(Boolean))];
+        const canonical = PROP_SECTIONS.map((s) => s.id).filter((id) => seen.indexOf(id) >= 0);
+        t.equal(seen, canonical, 'sections', 'sections appear in the canonical order');
+        // Inside a section the canonical key order holds: size → position → margin → anchor → align.
+        const layout = p.filter((r) => r.sectionId === 'layout').map((r) => r.key);
+        t.ok(layout.indexOf('Width') < layout.indexOf('Height'), 'sections', 'Width before Height');
+        t.ok(layout.indexOf('Height') < layout.indexOf('Canvas.Left'), 'sections', 'size before position');
+        t.ok(layout.indexOf('Canvas.Left') < layout.indexOf('Margin'), 'sections', 'position before Margin');
+        t.ok(layout.indexOf('chrome:AnchorHelper.Anchor') < layout.indexOf('HorizontalAlignment'), 'sections', 'Anchor before the alignments');
+    }
+
+    // --- Designer editor buttons are ALWAYS in the first section ('Editors') ---
+    {
+        const p = propertyDefsFor(elFrom('<DataGrid x:Name="d1"/>'));
+        t.equal(keyOf(p, 'Rows').sectionId, 'editors', 'sections', 'DataGrid Rows editor is in Editors');
+        t.equal(keyOf(p, 'Columns').sectionId, 'editors', 'sections', 'DataGrid Columns editor is in Editors');
+        t.equal(p.filter((r) => r.sectionId)[0].sectionId, 'editors', 'sections', 'Editors is the very first section');
+        t.equal(keyOf(p, 'Rows').section, 'Editors', 'sections', 'the row carries the section label too');
+    }
+
+    // --- Coverage guard: every property the catalog can emit is filed in a section ---
+    {
+        const listed = new Set();
+        for (const s of PROP_SECTIONS) for (const k of s.keys) listed.add(k);
+        const missing = [];
+        for (const [tag, list] of Object.entries(CONTROL_PROPS)) {
+            for (const t of list) if (!listed.has(t.key)) missing.push(`${tag}.${t.key}`);
+        }
+        for (const t of COMMON_PROPS.concat(FONT_PROPS, ANCHOR_PROPS, GRUMPY_ANCHOR_PROPS, CHROME_WINDOW_PROPS)) {
+            if (!listed.has(t.key)) missing.push(`shared.${t.key}`);
+        }
+        t.equal(missing, [], 'sections', 'every catalog key has a section (add new props to PROP_SECTIONS)');
+        const els = ['<CheckBox x:Name="c1"/>', '<Window x:Name="w1"/>', '<TextBlock x:Name="t1"/>', '<Canvas><Image x:Name="i1"/></Canvas>'];
+        for (const xml of els) {
+            const el = elFrom(xml);
+            const target = childEls(el).length ? childEls(el)[0] : el;
+            const p = propertyDefsFor(target);
+            const unsectioned = p.filter((r) => !r.section && r.key !== '__name__' && r.key !== '__type__').map((r) => r.key);
+            t.equal(unsectioned, [], 'sections', `${target.tagName}: every row is pinned or sectioned`);
+        }
     }
 };

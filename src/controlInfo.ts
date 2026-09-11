@@ -134,6 +134,16 @@ const INFO: Record<string, ControlInfo> = {
         desc: 'A dark status strip built on the GrumpyPanel base: docked to the bottom with a live clock on the right and a status label on the left.',
         use: 'Drop it on the form — it docks to the bottom edge. The label on the left shows "Ready" (edit its Text); the right side shows the live date/time. Add more items like any GrumpyPanel: drop them inside, or Dock a control (Left/Right/Bottom/Top) to pin it to a strip edge. Edit the dark-grey background, the light label/clock text colours, and the strip height from Properties.'
     },
+    PathPicker: {
+        label: 'File Selector',
+        desc: 'A path row: a box showing the chosen file plus a "…" button that opens the platform\'s own Open dialog.',
+        use: 'Drop it on the form, size it, and set Path Type (File / Folder / Save File) to choose which dialog opens. Filter limits the file types shown (WinForms style: "Images|*.png;*.jpg|All files|*.*"). Title is the dialog caption, Initial Folder is where it opens when nothing is picked yet, and Selected Path is the result — bind it to a code-behind field (or read it in a Click handler) to use the choice. Read Only Path (default True) means the user must pick, not type.'
+    },
+    PathPickerFolder: {
+        label: 'Folder Selector',
+        desc: 'A path row pre-set to Folder: a box showing the chosen folder plus a "…" button that opens the platform\'s own folder dialog.',
+        use: 'Same control as File Selector, with Path Type = Folder, so the Browse button opens a folder picker (like the WinForms FolderBrowserDialog). The picked folder lands in Selected Path; Title is the dialog caption and Initial Folder is where it opens first.'
+    },
     XYTracker: {
         label: 'XY-Tracker',
         desc: 'A live read-out of the current Width × Height in pixels.',

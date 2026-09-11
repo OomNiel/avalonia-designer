@@ -39,7 +39,8 @@ import {
     insertHandlerIntoCodeBehind,
     unbindImageFromGrid,
     removeItemsSourceBinding,
-    convertCodeBehindToChrome
+    convertCodeBehindToChrome,
+    vbMatchingEnd
 } from './codeBehind';
 
 // ---------------- model ----------------
@@ -168,26 +169,11 @@ function matchingBrace(text: string, open: number): number {
 
 /**
  * Index just past the `End Sub`/`End Function` matching the method body starting at `from`.
- * Nested anonymous `Sub`/`Function` blocks (the `AddHandler timer.Tick, Sub(…) … End Sub` inside a
- * generated clock handler) are counted, so an inner `End Sub` can't truncate the outer method —
- * that is exactly the bug that used to leave `timer.Start()` / `End Sub` behind.
+ * Shared with the code-behind edits (see `vbMatchingEnd` in ./codeBehind): nested blocks are
+ * counted, single-line `Sub(…) stmt` / `Function(x) expr` lambdas are not — that is exactly the bug
+ * that used to make a generated follower / status-clock line run an enclosing method's span past its
+ * own `End Sub` (or collapse it), which in turn reported a bogus `InitializeComponent()` error.
  */
-function vbMatchingEnd(text: string, from: number): number {
-    let depth = 1;
-    const re = /("(?:[^"]|"")*")|('[^\r\n]*)|(\bEnd\s+(?:Sub|Function)\b)|(\b(?:Sub|Function)\b)/gi;
-    re.lastIndex = from;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) {
-        if (m[1] || m[2]) continue;
-        if (m[3]) {
-            depth--;
-            if (depth <= 0) return m.index + m[3].length;
-        } else {
-            depth++;
-        }
-    }
-    return -1;
-}
 
 // ---------------- XAML facts ----------------
 
@@ -399,10 +385,13 @@ function parseCode(codeFile: string, text: string): CodeFacts {
         let m: RegExpExecArray | null;
         while ((m = impRe.exec(body))) f.imports.push(m[1]);
     } else {
-        const clsM = /\bclass\s+([A-Za-z_]\w*)/.exec(body);
-        if (clsM) f.className = clsM[1];
-        const inh = /class\s+[A-Za-z_]\w*\s*:\s*([\w.]+)/.exec(body);
-        if (inh) f.baseType = inh[1];
+        // Line-anchored so a `// class Dummy is unrelated` comment cannot be mistaken for the form's
+        // own class — the constructor lookup below relies on this name being right.
+        const clsM = /^[ \t]*(?:(?:public|internal|private|protected|sealed|abstract|partial|static)\s+)*class\s+([A-Za-z_]\w*)(?:\s*:\s*([\w.]+))?/m.exec(body);
+        if (clsM) {
+            f.className = clsM[1];
+            if (clsM[2]) f.baseType = clsM[2];
+        }
         const impRe = /^[ \t]*using\s+([\w.]+)\s*;/gm;
         let m: RegExpExecArray | null;
         while ((m = impRe.exec(body))) f.imports.push(m[1]);
@@ -444,6 +433,33 @@ function parseCode(codeFile: string, text: string): CodeFacts {
         counts.set(name, n);
         f.methods.push({ name, params, start, end, line: lineAt(body, d.index), occurrence: n });
         if (name === 'New' || name === f.className) f.ctors.push(f.methods[f.methods.length - 1]);
+    }
+
+    // C# constructors have no return type, so the `void`-based declaration regex above cannot see
+    // them. Without this pass a C# form with a perfectly good constructor looked constructor-less:
+    // a bogus "No constructor / InitializeComponent" warning, and fixes that added a SECOND
+    // constructor (CS0111) instead of calling into the existing one.
+    // Matching the class name plus a body brace keeps ordinary call statements out (`Foo();` ends
+    // with a semicolon, which the `[^;{]*` before the brace rejects).
+    if (language === 'cs' && f.className) {
+        const ctorRe = new RegExp(
+            '^[ \\t]*(?:(?:public|private|protected|internal|static|extern|unsafe|partial)\\s+)*' +
+            escapeRe(f.className) + '\\s*(\\([^)]*\\))[^;{]*\\{', 'gm');
+        let c: RegExpExecArray | null;
+        while ((c = ctorRe.exec(body))) {
+            const open = c.index + c[0].length - 1;
+            const close = matchingBrace(body, open);
+            let end = close < 0 ? c.index + c[0].length : close + 1;
+            while (end < body.length && (body[end] === '\r' || body[end] === '\n')) end++;
+            const n = (counts.get(f.className) ?? 0) + 1;
+            counts.set(f.className, n);
+            const method: CodeMethod = {
+                name: f.className, params: c[1], start: body.lastIndexOf('\n', c.index) + 1,
+                end, line: lineAt(body, c.index), occurrence: n
+            };
+            f.methods.push(method);
+            f.ctors.push(method);
+        }
     }
 
     // Data-Image markers.
@@ -889,6 +905,7 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
     const usesChrome = /AvaloniaChrome\.ChromeWindow|\bChromeWindow\b/.test(code.body) || /\bchrome:ChromeWindow\b/.test(ax.text);
     needsHelper('ChromeWindow', usesChrome && (ax.rootLocal === 'ChromeWindow' || /ChromeWindow/.test(code.baseType)));
     needsHelper('GrumpyPanel', /\bGrumpyPanel\b/.test(code.body) || /\bchrome:GrumpyPanel\b/.test(ax.text));
+    needsHelper('PathPicker', /\bPathPicker\b/.test(code.body) || /\bchrome:PathPicker\b/.test(ax.text));
     needsHelper('AnchorHelper', /\bAnchorHelper\b/.test(code.body) || /\bchrome:AnchorHelper\b/.test(ax.text));
     needsHelper('ColumnFollower', /\bColumnFollower\b/.test(code.body));
 
@@ -907,7 +924,7 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
     };
     needImport('Avalonia.Controls.Shapes',
         /\bAs\s+(?:Line|Rectangle|Ellipse|Arc|Sector|Polygon|Polyline|Path|Shape)\b/.test(code.body));
-    needImport('AvaloniaChrome', /\bAs\s+(?:GrumpyPanel|ChromeWindow)\b/.test(code.body));
+    needImport('AvaloniaChrome', /\bAs\s+(?:GrumpyPanel|ChromeWindow|PathPicker)\b/.test(code.body));
     needImport('Avalonia.Platform.Storage', /\b(?:FilePickerFileTypes|StorageProvider|FilePickerOpenOptions)\b/.test(code.body));
     needImport('System.Data', /\bAs\s+(?:DataTable|DataRow|DataSet)\b/.test(code.body));
     needImport('Avalonia.Input', /\bAs\s+(?:PointerEventArgs|KeyEventArgs|TappedEventArgs)\b/.test(code.body));
@@ -989,6 +1006,25 @@ export function backupCodeBehind(codeFile: string, backupRoot: string): string |
     } catch { return undefined; }
 }
 
+/** Index of the newline that ends the line a position sits on (or the end of the text). */
+function lineEndFrom(text: string, pos: number): number {
+    const lineEnd = text.indexOf('\n', pos);
+    return lineEnd < 0 ? text.length : lineEnd;
+}
+
+/**
+ * Where a statement may be inserted into a C# method body: just past the line that carries the
+ * body's opening `{`. Inserting after the signature line instead would put the statement in front of
+ * an Allman-style brace sitting on its own line — invalid C#.
+ */
+function csBodyLineEnd(text: string, declIndex: number): number {
+    const paren = text.indexOf(')', declIndex);
+    let open = paren < 0 ? -1 : text.indexOf('{', paren);
+    if (open < 0) open = text.indexOf('{', declIndex);
+    if (open < 0) return -1;
+    return lineEndFrom(text, open);
+}
+
 /** Removes one method by its analysed span (line-start .. past the terminator). */
 function removeMethodAt(text: string, start: number, end: number): string {
     return text.slice(0, start) + text.slice(end);
@@ -1041,22 +1077,65 @@ export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts
             const facts = parseCode(codeFile, read());
             let body = facts.body;
             if (facts.ctors.length === 0) {
-                // Insert a constructor right after the class declaration.
                 const clsRe = language === 'vb'
                     ? /^[ \t]*(?:Public\s+|Friend\s+|Partial\s+)*Class\s+[A-Za-z_]\w*/mi
                     : /\bclass\s+[A-Za-z_]\w*(?:\s*:\s*[\w.]+)?/;
                 const m = clsRe.exec(body);
                 if (!m) return 'Could not find the class declaration.';
-                const lineEnd = body.indexOf('\n', m.index);
-                const at = lineEnd < 0 ? body.length : lineEnd;
+                // Safety net: a constructor the analyser could not parse (an unusual attribute or
+                // modifier layout) must never be duplicated — CS0111 would break the build. If the
+                // class name is followed by a parameter list anywhere, treat THAT as the constructor
+                // and only insert the missing call into it.
+                const ctorLook = facts.className
+                    ? new RegExp('^[ \\t]*(?:(?:public|private|protected|internal)\\s+)*' +
+                        escapeRe(facts.className) + '\\s*\\([^)]*\\)', 'm').exec(body)
+                    : null;
+                let at: number;
+                const insertAtLineEndAfter = (from: number, brace: boolean): number => {
+                    let pos = from;
+                    if (brace) {
+                        const open = body.indexOf('{', from);
+                        if (open < 0) return -1;
+                        pos = open;
+                    }
+                    const lineEnd = body.indexOf('\n', pos);
+                    return lineEnd < 0 ? body.length : lineEnd;
+                };
+                if (ctorLook) {
+                    const guarded = insertAtLineEndAfter(ctorLook.index, false);
+                    if (guarded >= 0) {
+                        const indent = (body.slice(ctorLook.index).match(/^[ \t]*/)?.[0] ?? '') + '    ';
+                        const call = language === 'vb'
+                            ? `\n${indent}InitializeComponent()`
+                            : `\n${indent}InitializeComponent();`;
+                        body = body.slice(0, guarded) + call + body.slice(guarded);
+                        write(facts.hadBom ? '\uFEFF' + body : body);
+                        return 'Initialized the form in the existing constructor.';
+                    }
+                }
+                // VB: insert below the `Class …` line — but after its `Inherits …` statement, which
+                // VB requires to be the first declaration in the class body (BC30125/BC30246).
+                // C#: the body opens with `{` — the constructor has to go INSIDE it.
+                if (language === 'vb') {
+                    at = insertAtLineEndAfter(m.index + m[0].length, false);
+                    for (let guard = 0; guard < 3 && at >= 0; guard++) {
+                        const lineStart = at + (body[at] === '\n' ? 1 : 0);
+                        const line = (body.slice(lineStart).match(/^[^\r\n]*/) ?? [''])[0];
+                        if (!/^[ \t]*Inherits\b/i.test(line)) break;
+                        at = insertAtLineEndAfter(lineStart, false);
+                    }
+                } else {
+                    at = insertAtLineEndAfter(m.index + m[0].length, true);
+                }
+                if (at < 0) return 'Could not find the class body.';
                 const ctor = language === 'vb'
                     ? `\n    Public Sub New()\n        InitializeComponent()\n    End Sub\n`
                     : `\n    public ${facts.className}()\n    {\n        InitializeComponent();\n    }\n`;
                 body = body.slice(0, at) + ctor + body.slice(at);
             } else {
                 const ctor = facts.ctors[0];
-                const lineEnd = body.indexOf('\n', ctor.start);
-                const at = lineEnd < 0 ? body.length : lineEnd;
+                const at = language === 'vb' ? lineEndFrom(body, ctor.start) : csBodyLineEnd(body, ctor.start);
+                if (at < 0) return 'Could not find the constructor body.';
                 const indent = (body.slice(ctor.start).match(/^[ \t]*/)?.[0] ?? '') + '    ';
                 const call = language === 'vb'
                     ? `\n${indent}InitializeComponent()`
@@ -1070,11 +1149,17 @@ export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts
             const facts = parseCode(codeFile, read());
             const ctor = facts.ctors[0];
             if (!ctor) return 'No constructor to add the call to.';
-            const at = facts.body.indexOf('\n', ctor.start);
+            // After InitializeComponent(): the grid this binding wires up does not exist before it
+            // (a Data-Image call placed above it would throw a NullReferenceException at runtime).
+            const ctorBody = facts.body.slice(ctor.start, ctor.end);
+            const ic = /^[ \t]*InitializeComponent\s*\(\s*\)\s*;?[ \t]*$/m.exec(ctorBody);
+            const at = ic
+                ? lineEndFrom(facts.body, ctor.start + ic.index)
+                : (language === 'vb' ? lineEndFrom(facts.body, ctor.start) : csBodyLineEnd(facts.body, ctor.start));
+            if (at < 0) return 'Could not find the constructor body.';
             const indent = (facts.body.slice(ctor.start).match(/^[ \t]*/)?.[0] ?? '') + '    ';
             const call = language === 'vb' ? `\n${indent}BindImage_${data.control}()` : `\n${indent}BindImage_${data.control}();`;
-            const at2 = at < 0 ? facts.body.length : at;
-            const body = facts.body.slice(0, at2) + call + facts.body.slice(at2);
+            const body = facts.body.slice(0, at) + call + facts.body.slice(at);
             write(facts.hadBom ? '\uFEFF' + body : body);
             return `Called BindImage_${data.control}() from the constructor.`;
         }

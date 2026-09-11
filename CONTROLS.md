@@ -88,6 +88,7 @@ internal/template parts have no published summary and are described by role inst
 | Label | `Label` | A label that moves focus to a target on click / access-key. | ✓ |
 | AccessText | `AccessText` | A text block that underlines a character (prefixed with `_`) as a keyboard access key. | ✓ |
 | Image | `Image` | Displays a picture (`Source` = file path or `avares://` URI). | ✅ Toolbox |
+| PathPicker | `chrome:PathPicker` | A path row (box + “…” button) that opens the platform's file / folder dialog and stores the result in `SelectedPath`. The **File Selector** / **Folder Selector** tools. | ✅ Toolbox |
 | PathIcon | `PathIcon` | An icon drawn from a `Geometry`/path data. | ✓ |
 | IconElement | `IconElement` | Base class for icon elements drawn in XAML. | — (base class) |
 
@@ -401,6 +402,24 @@ Drawing shapes that render as vector graphics on the design surface.
 
 ## Special behaviors
 
+### Properties panel sections (all controls)
+
+The Properties sidebar groups every control's rows into six sections, in a fixed order and with a
+canonical order inside each one (`PROP_SECTIONS` in `src/propertyCatalog.ts`):
+
+**Editors** (the designer's popup editors) → **Layout & size** (W/H, Min/Max, Left/Top, Margin,
+Padding, Dock, Anchor, Alignments, Grid cell, window sizing) → **Appearance** (all colours/brushes,
+borders, corners, opacity, Theme, shape geometry, images/icons) → **Text & font** (content/captions
++ font, alignment, wrapping, edit options) → **Data** (item sources, selected item, edit permissions,
+Undo-Redo, the File/Folder picker's dialog settings) → **Behavior** (visibility, focus, check state,
+click/selection modes, scroll bars, window flags).
+
+**Name** and **Type** stay pinned above the sections. Section headings are **collapsible** and the
+folded set is remembered per control TYPE (webview state); rows whose `advanced` flag is set appear
+only with **Show advanced** ticked, inside their section. A key that is not listed in a section falls
+into Behavior — a T2 test asserts the catalog has no such rows, so new properties must be added to
+`PROP_SECTIONS`.
+
 ### Custom Title Bar (ChromeWindow)
 New projects and new forms use the **default Avalonia title bar** (a plain `<Window>` root). The
 toolbox's **Custom Title Bar** converts a Window-rooted form to the bundled **ChromeWindow** custom
@@ -456,6 +475,38 @@ reads right now:
 The chosen formats are written into the generated code-behind handler (the clock's per-second tick
 line), so the designer keeps working and the change is reflected live at runtime.
 
+### File / Folder Selector (the bundled `PathPicker`)
+
+The **File Selector** and **Folder Selector** tools insert the same element,
+`<chrome:PathPicker>` — the bundled **`PathPicker.cs|.vb`** helper (an `AvaloniaChrome` UserControl,
+like `ChromeWindow` / `GrumpyPanel`) — and differ only in the `PathType` they ship with:
+
+```xml
+<chrome:PathPicker x:Name="PathPicker1" Width="230" Height="24"
+                   PathType="File" Title="Select a file"
+                   Filter="Images|*.png;*.jpg|All files|*.*"
+                   InitialFolder="" IsPathReadOnly="True" BrowseText="…"
+                   SelectedPath="{Binding PhotoPath, Mode=TwoWay}"/>
+```
+
+| Property | Type | Notes |
+|---|---|---|
+| `PathType` | `File` \| `Folder` \| `SaveFile` | Which `IStorageProvider` dialog the button opens (OpenFile / OpenFolder / SaveFile) |
+| `SelectedPath` | `string?` | The result. **Two-way bindable** — set it to pre-fill, bind it to read |
+| `Title` | `string?` | Dialog caption |
+| `Filter` | `string?` | WinForms-style filter (`"Images|*.png;*.jpg|All files|*.*"`); files only. `*.*` is normalised to `*` |
+| `InitialFolder` | `string?` | Used when `SelectedPath` is empty; the last folder picked is also remembered per session |
+| `IsPathReadOnly` | `bool` (default `True`) | `False` makes the path box editable |
+| `BrowseText` | `string?` (default `…`) | The button's caption |
+| `ShowIcon` | `bool` (default `True`) | A 14×14 kind glyph docked at the left edge — a **page** for `File`/`SaveFile`, a **folder** for `Folder` — filled with the control's `Foreground` (so it follows the theme); `ShowIcon="False"` hides it |
+
+It renders as a fill `TextBox` + a right-docked `Button`, plus the **kind icon** above (drawn from
+`Geometry.Parse` path data and refreshed when `PathType`/`ShowIcon` change), so
+`Width`/`Height`/`Margin` behave like any other control. The dialog is the **platform's own** (no extra package) via `TopLevel.StorageProvider`,
+and with no `TopLevel` around (design preview) the click is simply a no-op. **Designer:** the tool
+auto-copies the helper into the project on first placement; **Code Fix…** reports it as a missing
+bundled helper if the project predates it.
+
 ### XY-Tracker (Dev Helpers)
 The **XY-Tracker** tool places a `TextBlock` (marked with `Classes="XYTracker"`) that shows the live
 size of its context as **W x H px** (updated every 200 ms by a `Loaded` handler + `DispatcherTimer`
@@ -477,6 +528,26 @@ other status items (a right edge anchor keeps it hugging the right edge as the w
 The **Menu** tool inserts a `Menu` docked to the top with one starter `MenuItem` ("File"). Add more
 `MenuItem`s as children, each with a `Header`. There is no separate `MenuBar` control in Avalonia —
 `Menu` is itself, the bar.
+
+Avalonia only draws the items of a menu when it is **opened at runtime**, so the designer draws plain
+placeholder labels over the bar; selecting the Menu and using the **Menu Items** property (Editors
+group) opens the **tree editor** that writes the real XAML. Kinds (`src/designerPanel.ts`,
+`MenuNodeKind`):
+
+| Kind | Writes | Notes |
+|---|---|---|
+| `Item` | `<MenuItem Header="…"/>` | An ordinary command item (children become its submenu) |
+| `CheckBox` | `<MenuItem Header="…" ToggleType="CheckBox"/>` | A checkable item |
+| `Radio` | `<MenuItem Header="…" ToggleType="Radio"/>` | A radio item |
+| `ComboBox` | `<MenuItem>` whose children are its options | A drop-down row: the options are real submenu items |
+| `Separator` | `<Separator/>` | A line; on the **bar** it gets `Classes="MenuBarDivider"` so the top divider stays horizontal |
+| `Space` | `<MenuItem IsEnabled="False" Focusable="False" Width="…"/>` | An invisible gap on the **bar** — inert, no header/submenu; width defaults to 12 px (1–500). Offered at depth 1 only |
+| `FileSelector` / `FolderSelector` | `<chrome:PathPicker Width="…" Height="24" PathType="File|Folder" Title="…"/>` inside the `<MenuItem>` | A **leaf** row that IS the bundled picker: width defaults to 160 px (40–600) and the row's text field is the dialog **Title** (defaulted to *Select a file* / *Select a folder* / *Save file*). A hand-written `PathType="SaveFile"` is carried through, not downgraded |
+
+The tree editor nests up to **5** item levels below the bar (`MENU_MAX_DEPTH`). Reading the tree back
+(`menuTreeOf`) recognises those picker children — otherwise replacing the tree would silently drop a
+picker — and `sanitizeMenuNodes` normalises an unknown kind to `Item`, drops a bogus `PathType` / the
+children of a leaf, and clamps the widths, so a hand-edited or older file can't corrupt the tree.
 
 ### DataSet (toolbox) — schema designer
 The **DataSet** item (under **Data & Grid**) is **not a form control** — clicking it opens the
@@ -535,6 +606,14 @@ every mechanical repair. A finding that needs a human decision (invalid/duplicat
 `x:Class` mismatch, a stale name still used in hand-written code) is listed without a Fix button.
 Before the first fix of a run the code-behind is copied into the extension's storage; the checker
 itself is read-only.
+
+**Parsing limits it used to have (fixed in beta.6, pinned by `tests/t2-logic/codeFix.test.js`):** a
+C# **constructor** has no return type, so a `void`-based method scan did not see it (a bogus *“No
+constructor / InitializeComponent”* warning, and a fix that added a **second** constructor); VB
+**one-line lambdas** (`Function(r) r.Name`, `Sub(s, e) DoIt()`) were counted as blocks and unbalanced
+the enclosing method's span; and an inserted call landed after the signature (before an Allman `{`)
+or above `Inherits`. Constructors are now parsed, one-line lambdas are skipped, statements go inside
+the body, and a Data-Image call goes after `InitializeComponent()`.
 
 ---
 

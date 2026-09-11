@@ -350,6 +350,66 @@ module.exports = async (t) => {
             t.ok(lightBg / 6400 > 0.85, 'theme', 'light theme renders a light design background', `light=${((lightBg / 6400) * 100).toFixed(0)}%`);
             t.ok(darkBg / 6400 > 0.85, 'theme', 'dark theme renders a dark design background (OS-dark echo)', `dark=${((darkBg / 6400) * 100).toFixed(0)}%`);
         }
+
+        // 12) A Menu may hold File/Folder Selector rows (the Menu Items editor's FileSelector /
+        //     FolderSelector kinds write the bundled <chrome:PathPicker> as a Menu child). Avalonia
+        //     wraps a non-MenuItem item in its own MenuItem container, so this must RENDER — a
+        //     top-level row on the bar and one nested in a submenu.
+        {
+            const CH = `<Window ${NS} xmlns:chrome="using:AvaloniaChrome" Width="800" Height="450">\n` +
+                `  <Window.Styles><FluentTheme/></Window.Styles>\n` +
+                '  <DockPanel>\n' +
+                '    <Menu x:Name="m1" DockPanel.Dock="Top" Height="26" Background="#202020">\n' +
+                '      <chrome:PathPicker x:Name="pickTop" PathType="File" Width="160" Height="24" Title="Select a file"/>\n' +
+                '      <MenuItem Header="File">\n' +
+                '        <chrome:PathPicker x:Name="pickSub" PathType="Folder" Width="160" Height="24" Title="Select a folder"/>\n' +
+                '      </MenuItem>\n' +
+                '    </Menu>\n' +
+                '    <Canvas Name="Body"/>\n' +
+                '  </DockPanel>\n' +
+                '</Window>';
+            const { frame, img } = await renderPng(host, CH, 800, 450);
+            t.ok(!frame.error, 'menu-picker', 'a PathPicker row inside a Menu renders (no error)', frame.error || '');
+            // The bar itself renders (its dark background occupies the top strip)…
+            const bar = countIn(img, 0, 400, 2, 24, (r, g, b) => r < 90 && g < 90 && b < 90);
+            t.ok(bar > 4000, 'menu-picker', 'the menu bar is drawn', `dark px=${bar}`);
+            // …a TOP-LEVEL row is realised (Avalonia wraps the non-MenuItem item in its own
+            // MenuItem container, so the picker is a real control on the bar)…
+            const topPick = byName(frame, 'pickTop');
+            t.ok(!!topPick, 'menu-picker', 'the top-level selector row is realised');
+            if (topPick) {
+                t.ok(near(topPick.width, 160, 12) && near(topPick.height, 24, 8), 'menu-picker',
+                    'at its own size', `${topPick.width.toFixed(0)}x${topPick.height.toFixed(0)}`);
+                t.ok(topPick.y >= -1 && topPick.y <= 27, 'menu-picker', 'inside the bar strip', `y=${topPick.y.toFixed(0)}`);
+            }
+            // …while a SUBMENU row is not realised until the menu is opened — the designer shows
+            // those as placeholder chips instead (the Menu Items editor's dummy labels).
+            t.ok(!byName(frame, 'pickSub'), 'menu-picker', 'a submenu selector row is not realised until the menu opens');
+        }
+
+        // 13) The picker's left-edge kind icon: a File Selector and a Folder Selector draw different
+        //     glyphs (clause = tell them apart at a glance), and ShowIcon="False" removes it.
+        {
+            const CH = `<Window ${NS} xmlns:chrome="using:AvaloniaChrome" Width="800" Height="450">\n` +
+                `  <Window.Styles><FluentTheme/></Window.Styles>\n` +
+                '  <Canvas>\n' +
+                '    <chrome:PathPicker x:Name="pickFile" Canvas.Left="40" Canvas.Top="40" Width="220" Height="26" PathType="File"/>\n' +
+                '    <chrome:PathPicker x:Name="pickFolder" Canvas.Left="40" Canvas.Top="90" Width="220" Height="26" PathType="Folder"/>\n' +
+                '    <chrome:PathPicker x:Name="pickNoIcon" Canvas.Left="40" Canvas.Top="140" Width="220" Height="26" PathType="Folder" ShowIcon="False"/>\n' +
+                '  </Canvas>\n' +
+                '</Window>';
+            const { frame, img } = await renderPng(host, CH, 800, 450);
+            t.ok(!frame.error, 'picker-icon', 'no render error', frame.error || '');
+            const glyph = (y) => countIn(img, 41, 60, y + 4, y + 22, (r, g, b) => r < 170 && g < 170 && b < 170);
+            const fileGlyph = glyph(40);
+            const folderGlyph = glyph(90);
+            const offGlyph = glyph(140);
+            t.ok(fileGlyph > 12, 'picker-icon', 'the File Selector draws its icon', `dark px=${fileGlyph}`);
+            t.ok(folderGlyph > 12, 'picker-icon', 'the Folder Selector draws its icon', `dark px=${folderGlyph}`);
+            t.ok(Math.abs(fileGlyph - folderGlyph) > 2, 'picker-icon', 'the two glyphs differ (still told apart)',
+                `file=${fileGlyph} folder=${folderGlyph}`);
+            t.ok(offGlyph < 4, 'picker-icon', 'ShowIcon="False" leaves the icon area empty', `dark px=${offGlyph}`);
+        }
     } finally {
         host.close();
     }

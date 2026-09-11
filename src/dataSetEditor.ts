@@ -234,6 +234,25 @@ export class DataSetDocument implements vscode.CustomDocument {
 const liveReloaders = new Map<string, () => Promise<void>>();
 
 /**
+ * Per-open-DataSet "save if dirty" hooks (keyed by document URI). A custom editor's unsaved state is
+ * invisible to `vscode.workspace.saveAll`, so the form designer's **Project Backup** button asks
+ * here first — otherwise the backup would miss schema edits sitting in the DataSet designer.
+ */
+const dirtySavers = new Map<string, () => Promise<boolean>>();
+
+/** Saves every open DataSet document that has unsaved changes; returns their file names (empty when
+ *  nothing was dirty). A failed save is skipped, so one bad file can't abort a backup. */
+export async function saveOpenDataSetDocuments(): Promise<string[]> {
+    const saved: string[] = [];
+    for (const [key, save] of [...dirtySavers]) {
+        try {
+            if (await save()) saved.push(vscode.Uri.parse(key).path.split('/').pop() || key);
+        } catch { /* keep going — the caller reports what it saved */ }
+    }
+    return saved;
+}
+
+/**
  * If the .adset at `uri` is currently open in a DataSet designer panel, reloads it from disk
  * and repaints the panel (and resets its undo history, since an external change can't be
  * meaningfully undone). Returns true when a panel was refreshed.
@@ -296,8 +315,18 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
             } catch { /* keep the current in-memory state on failure */ }
         });
 
+        // Register this panel's "save if dirty" hook too, so Project Backup writes the schema the
+        // designer still holds in memory (see saveOpenDataSetDocuments).
+        dirtySavers.set(key, async () => {
+            if (!document.dirty) return false;
+            await vscode.workspace.fs.writeFile(document.uri, Buffer.from(serializeDataSet(document.spec), 'utf8'));
+            document.markSaved();
+            return true;
+        });
+
         webviewPanel.onDidDispose(() => {
             liveReloaders.delete(key);
+            dirtySavers.delete(key);
             this.panels.delete(key);
             this.docs.delete(key);
             this.history.delete(key);

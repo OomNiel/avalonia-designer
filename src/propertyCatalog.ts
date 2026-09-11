@@ -22,6 +22,12 @@ export interface PropDef {
     dataImage?: boolean;
     /** Multi-select row: the selected controls' values for this key DIFFER (shown as an empty box). */
     mixed?: boolean;
+    /** Section header this row is filed under in the Properties panel (`undefined` = pinned above
+     *  every section — the control's Name/Type identity rows). */
+    section?: string;
+    /** Stable id of that section — the webview remembers which sections the user collapsed per
+     *  control TYPE with it (labels could be translated/reworded, ids should not). */
+    sectionId?: string;
 }
 
 interface PropTemplate {
@@ -48,6 +54,9 @@ const STRETCH = ['None', 'Fill', 'Uniform', 'UniformToFill'];
 const STRETCH_DIR = ['UpOnly', 'DownOnly', 'Both'];
 const ORIENTATION = ['Vertical', 'Horizontal'];
 const DOCK_OPTIONS = ['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom'];
+// PathPicker.PathType — which platform dialog the Browse button opens. SaveFile need not exist yet
+// (it is the “choose where to save” variant).
+const PATH_TYPE = ['File', 'Folder', 'SaveFile'];
 const CLICK_MODE = ['Release', 'Press', 'Hover'];
 const LINE_CAPS = ['Flat', 'Round', 'Square'];
 // CommandBar label/overflow position enums (verified against Avalonia 12.1.1).
@@ -496,6 +505,20 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
         { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
         { key: 'Padding', label: 'Padding', kind: 'text' }
+    ],
+    // PathPicker (the bundled AvaloniaChrome.PathPicker — a path TextBox + Browse button that opens
+    // the platform's file/folder dialog). Path Type picks WHICH dialog; Selected Path is the result
+    // (two-way — set it to pre-fill, read it in code).
+    PathPicker: [
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
+        { key: 'PathType', label: 'Path Type', kind: 'dropdown', options: PATH_TYPE, desc: 'Which dialog the Browse button opens: File (pick an existing file), Folder (pick a folder) or SaveFile (choose where to save — the file need not exist yet).' },
+        { key: 'SelectedPath', label: 'Selected Path', kind: 'text', desc: 'The chosen path. Two-way: set it to pre-fill the box (or clear it), read it in your code to use the pick.' },
+        { key: 'Title', label: 'Dialog Title', kind: 'text', desc: 'Caption of the dialog window.' },
+        { key: 'Filter', label: 'File Filter', kind: 'text', desc: 'File types offered by the dialog, WinForms style: "Images|*.png;*.jpg|All files|*.*". Ignored when Path Type is Folder.' },
+        { key: 'InitialFolder', label: 'Initial Folder', kind: 'text', desc: 'Folder the dialog opens in when Selected Path is empty.' },
+        { key: 'IsPathReadOnly', label: 'Read Only Path', kind: 'dropdown', options: BOOL, desc: 'True (default): the path can only come from the dialog. False: the user may also type or paste into the box.' },
+        { key: 'ShowIcon', label: 'Show Icon', kind: 'dropdown', options: BOOL, desc: 'Show the small file/folder icon at the left edge, so a File Selector is told apart from a Folder Selector at a glance.' },
+        { key: 'BrowseText', label: 'Browse Text', kind: 'text', desc: 'Caption of the Browse button (“…” by default — use "Browse…" for a wider button).' }
     ],
     WrapPanel: [
         { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
@@ -1105,6 +1128,136 @@ function splitPaneBorderOf(el: Element): string {
  * Custom Window-derived roots (e.g. `chrome:ChromeWindow`) are treated as a Window
  * so all form-manipulation properties (Title, size, CanResize, position, ...) appear.
  */
+// ---------------- Properties panel sections ----------------
+/**
+ * The Properties panel files its rows into these sections — ALWAYS in this order, for every
+ * toolbox control: the popup editors first, then layout/size, appearance, text, data and behavior.
+ * Inside a section the keys listed here also fix the order, so a colour row, a size row or the
+ * Anchor row is always in the same place whichever control is selected. Every key the catalog can
+ * produce must be listed somewhere (a test asserts it) — anything unmapped falls back to the last
+ * section, and a designer editor button always lands in `editors`.
+ */
+export type PropSectionId = 'editors' | 'layout' | 'appearance' | 'text' | 'data' | 'behavior';
+
+export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }[] = [
+    {
+        id: 'editors', label: 'Editors',
+        // Everything the designer edits through a popup editor (`kind: 'button'`) — whether it is
+        // pushed as a "top action" (DataGrid Rows/Columns, SplitPanel Split Layout/Splitters) or
+        // lives in the control's own list (Items, Grid.Defs, MenuItems, StatusItems).
+        keys: ['Rows', 'Columns', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems']
+    },
+    {
+        id: 'layout', label: 'Layout & size',
+        // Size, position, docking/anchoring and alignment — everything that says WHERE the control
+        // is and how big it is, from the element's own size to its cell/dock/anchor in the parent.
+        keys: [
+            'Width', 'Height', 'MinWidth', 'MinHeight', 'MaxWidth', 'MaxHeight',
+            'Canvas.Left', 'Canvas.Top', 'Margin', 'Padding',
+            'DockPanel.Dock', 'chrome:AnchorHelper.Anchor',
+            'HorizontalAlignment', 'VerticalAlignment', 'HorizontalContentAlignment', 'VerticalContentAlignment',
+            'Grid.Row', 'Grid.Column',
+            'Orientation', 'Spacing', 'ItemWidth', 'ItemHeight', 'LastChildFill',
+            'MaxDropDownHeight', 'SizeToContent', 'CanResize', 'AutoSizeToCell', 'TitleBarHeight',
+            'WindowState', 'WindowStartupLocation'
+        ]
+    },
+    {
+        id: 'appearance', label: 'Appearance',
+        // Every colour/brush plus the other visual styling: borders, corners, opacity, the theme row,
+        // shape geometry (fill/stroke/angle/radius) and images/icons.
+        keys: [
+            '__theme__', 'Background', 'Foreground', 'BorderBrush', 'BorderThickness', 'CornerRadius',
+            'Opacity', 'SplitPanelPaneBorder', 'ShowGridLines',
+            'CaretBrush', 'SelectionBrush', 'Fill', 'Stroke', 'StrokeThickness', 'StrokeLineCap',
+            'Radius', 'Angle', 'StartPoint', 'EndPoint', 'StartAngle', 'SweepAngle',
+            'Source', 'Stretch', 'StretchDirection', 'Icon', 'TitleBarIcon', 'ShowIcon',
+            'TitleBarBackground', 'TitleBarForeground'
+        ]
+    },
+    {
+        id: 'text', label: 'Text & font',
+        // What the control SHOWS (content/caption/labels) and how that text is rendered or entered.
+        keys: [
+            // A ChromeWindow form shows the bar's caption before the window's own Title (the
+            // title-bar rows come first for a custom-title-bar form).
+            'TitleBarTitle', 'Title',
+            'Content', 'Text', 'Header', 'Label', 'PlaceholderText', 'PasswordChar',
+            'BrowseText', 'NavigateUri',
+            'FontFamily', 'FontSize', 'FontWeight', 'FontStyle',
+            'TextAlignment', 'TextWrapping', 'TextTrimming', 'LetterSpacing', 'LineHeight',
+            'MaxLength', 'MaxLines', 'AcceptsReturn', 'AcceptsTab',
+            'WrapSelection', 'SelectionStart', 'SelectionEnd',
+            'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview'
+        ]
+    },
+    {
+        id: 'data', label: 'Data',
+        // The control's data payload and how it is edited: item/row sources, the selected item,
+        // the grid's user-edit permissions and the file/folder picker's settings.
+        keys: [
+            'ItemsSource', 'SelectedItem', 'SelectedIndex',
+            'PathType', 'SelectedPath', 'Filter', 'InitialFolder', 'IsPathReadOnly',
+            'AutoGenerateColumns', 'IsReadOnly',
+            'CanUserSortColumns', 'CanUserReorderColumns', 'CanUserResizeColumns',
+            'FirstRow', 'FirstColumn', 'IsUndoEnabled', 'UndoRedoDepth'
+        ]
+    },
+    {
+        id: 'behavior', label: 'Behavior',
+        // State, interaction and window/control capabilities — the "everything else that makes it
+        // work" rows (visibility, focus, check state, click/selection modes, window chrome flags).
+        keys: [
+            'IsVisible', 'IsEnabled', 'IsHitTestVisible', 'IsTabStop', 'Focusable', 'TabIndex', 'ZIndex',
+            'IsChecked', 'IsThreeState', 'GroupName', 'IsDefault', 'IsCancel', 'IsVisited',
+            'IsDropDownOpen', 'IsOpen', 'IsSticky', 'IsCompact', 'ClickMode', 'SelectionMode',
+            'Command', 'CommandParameter', 'IsTextSearchEnabled', 'IsScrollInertiaEnabled',
+            'AllowAutoHide', 'HorizontalScrollBarVisibility', 'VerticalScrollBarVisibility',
+            'LabelPosition', 'DefaultLabelPosition', 'OverflowButtonVisibility',
+            'IsDynamicOverflowEnabled', 'TabStripPlacement',
+            'Topmost', 'ShowInTaskbar', 'ShowActivated', 'SystemDecorations',
+            'ExtendClientAreaToDecorationsHint'
+        ]
+    }
+];
+
+/** Rows pinned ABOVE every section — the control's identity, exactly as before. */
+const PINNED_PROP_KEYS = new Set(['__name__', '__type__']);
+
+const SECTION_OF_KEY = (() => {
+    const map = new Map<string, { id: PropSectionId; label: string; index: number; order: number }>();
+    PROP_SECTIONS.forEach((s, index) => {
+        s.keys.forEach((key, order) => {
+            if (!map.has(key)) map.set(key, { id: s.id, label: s.label, index, order });
+        });
+    });
+    return map;
+})();
+
+const LAST_SECTION = PROP_SECTIONS[PROP_SECTIONS.length - 1];
+
+/**
+ * Files every row into its section and orders the whole list: the pinned identity rows first, then
+ * the sections in `PROP_SECTIONS` order, and inside a section the canonical key order. Rows a
+ * control adds dynamically (an editor button, a Grid-cell row, a SplitPanel pane border, …) that
+ * aren't listed anywhere keep their relative order at the end of their section, so nothing is lost.
+ */
+export function groupPropertyRows(rows: PropDef[]): PropDef[] {
+    const entries = rows.map((row, i) => {
+        const hit = SECTION_OF_KEY.get(row.key);
+        const pinned = PINNED_PROP_KEYS.has(row.key);
+        // A designer editor button is ALWAYS in 'Editors', even one a future control adds unlisted.
+        const section = hit ?? (row.kind === 'button'
+            ? { id: PROP_SECTIONS[0].id, label: PROP_SECTIONS[0].label, index: 0, order: 500 }
+            : { id: LAST_SECTION.id, label: LAST_SECTION.label, index: PROP_SECTIONS.length - 1, order: 500 });
+        return { row, i, pinned, index: pinned ? -1 : section.index, order: pinned ? 0 : section.order, section };
+    });
+    entries.sort((a, b) => (a.index - b.index) || (a.order - b.order) || (a.i - b.i));
+    return entries.map((e) => e.pinned
+        ? { ...e.row, section: undefined, sectionId: undefined }
+        : { ...e.row, section: e.section.label, sectionId: e.section.id });
+}
+
 export function propertyDefsFor(
     el: Element,
     effective?: Record<string, string>,
@@ -1403,7 +1556,7 @@ export function propertyDefsFor(
             desc: 'Keep this Image sized to its Grid cell (follows the cell when it changes). Off = the Image keeps the size you set; the cell no longer resizes it.'
         });
     }
-    return topActions.concat(props);
+    return groupPropertyRows(topActions.concat(props));
 }
 
 /** Property rows NEVER offered for bulk multi-select editing: identity (name/type), things handled
@@ -1431,5 +1584,5 @@ export function multiCommonProps(els: Element[]): PropDef[] {
         const same = per.every((x) => (x.value ?? '') === v0);
         rows.push({ ...per[0], value: same ? v0 : '', mixed: !same });
     }
-    return rows;
+    return groupPropertyRows(rows);
 }

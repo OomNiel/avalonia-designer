@@ -136,7 +136,7 @@ module.exports = async (t) => {
     // renders a stand-in (Border/Button/ToggleButton). Their real-tag XAML + every listed property
     // are still compile-verified against Avalonia 12.1.1 in Phase D (the authoritative gate).
     const AV12_PREVIEW = new Set(['GroupBox', 'HyperlinkButton', 'CommandBar', 'CommandBarButton', 'CommandBarToggleButton', 'CommandBarSeparator']);
-    t.equal(controls.length, 33, 'toolbox', 'all placeable controls enumerated',
+    t.equal(controls.length, 35, 'toolbox', 'all placeable controls enumerated',
         `${controls.length}: ${controls.map((c) => c.tag).join(', ')}`);
     const tags = controls.map((c) => c.tag);
 
@@ -267,6 +267,19 @@ module.exports = async (t) => {
         const xy2Name = 'XYTracker2';
         model.addControl(body, sXy.xaml.split(sXy.name).join(xy2Name), { x: 1200, y: 0 });
         model.ensureChromeNamespace();
+        // Menu Items editor's File/Folder Selector kinds: the bundled <chrome:PathPicker> written as
+        // a Menu child (top-level bar row + a submenu row) must COMPILE in the same project.
+        const menuBox = model.addControl(body, '<Menu x:Name="MatrixMenu" Width="300" Height="26"><MenuItem Header="File"/></Menu>', { x: 0, y: 1200 });
+        if (menuBox) {
+            for (const [pt, title, w] of [['File', 'Select a file', 160], ['Folder', 'Select a folder', 150]]) {
+                const picker = model.createElement(`<chrome:PathPicker PathType="${pt}" Width="${w}" Height="24"/>`);
+                picker.setAttribute('Title', title);
+                menuBox.appendChild(picker);
+            }
+            model.ensureChromeNamespace();
+        } else {
+            t.fail('PathPicker', 'menu-picker', 'could not add the Menu for the selector kinds');
+        }
         fs.writeFileSync(axamlPath, model.serialize(true), 'utf8');
 
         // StatusDate Loaded handler (the snippet references `StatusDate1_Loaded`).

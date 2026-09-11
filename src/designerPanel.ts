@@ -14,10 +14,11 @@ import { withDesignerHeader } from './xamlHeader';
 import { controlInfoFor } from './controlInfo';
 import { findProject, ProjectInfo } from './projectParser';
 import { listAssets, Asset } from './assetCatalog';
-import { ensureDataGridAutoGenerateColumns, ensureSqlitePackages, defaultDbFile, reloadDataSetPanel } from './dataSetEditor';
+import { ensureDataGridAutoGenerateColumns, ensureSqlitePackages, defaultDbFile, reloadDataSetPanel, saveOpenDataSetDocuments } from './dataSetEditor';
+import { backupProject } from './projectBackup';
 import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTableName } from './dataSetModel';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
-import { bundledComponentSpecs } from './bundledComponents';
+import { bundledComponentSpecs, isStaleBundledCopy } from './bundledComponents';
 
 const DEFAULT_SIZE = { width: 800, height: 450 };
 
@@ -615,20 +616,32 @@ function tabItemXaml(tabControlName: string, page: number): string {
 //   CheckBox  → <MenuItem Header="…" ToggleType="CheckBox">
 //   Radio     → <MenuItem Header="…" ToggleType="Radio">
 //   ComboBox  → a <MenuItem> whose submenu holds its option items
+//   FileSelector   → the bundled <chrome:PathPicker PathType="File" …/>   — a path row ON the menu:
+//   FolderSelector → the same with PathType="Folder"                       pick a file / a folder
 //   Separator → <Separator/>
 //   Space     → an invisible gap on the TOP bar: saved as an inert, fixed-width <MenuItem
 //               IsEnabled="False" Focusable="False" Width="…"/> (no header/submenu)
 // The same shape travels to/from the webview (the tree editor + the bar dummies). Nesting is
 // capped at MENU_MAX_DEPTH item levels below the Menu bar (top-level item = level 1).
-type MenuNodeKind = 'Item' | 'CheckBox' | 'Radio' | 'ComboBox' | 'Separator' | 'Space';
-interface MenuTreeNode { kind: MenuNodeKind; header?: string; width?: number; children?: MenuTreeNode[]; }
+type MenuNodeKind = 'Item' | 'CheckBox' | 'Radio' | 'ComboBox' | 'Separator' | 'Space' | 'FileSelector' | 'FolderSelector';
+interface MenuTreeNode {
+    kind: MenuNodeKind;
+    header?: string;
+    width?: number;
+    /** FileSelector/FolderSelector only: the picker's PathType. Carried so a hand-written
+     *  `PathType="SaveFile"` picker inside a menu is not downgraded when the tree is re-saved. */
+    pathType?: 'File' | 'Folder' | 'SaveFile';
+    children?: MenuTreeNode[];
+}
 const MENU_MAX_DEPTH = 5;
 
-/** Direct child <MenuItem>/<Separator> elements of a Menu or of a MenuItem's submenu. */
+/** Direct child <MenuItem>/<Separator>/<chrome:PathPicker> elements of a Menu or of a MenuItem's
+ *  submenu. A PathPicker counts as an item row here, so the Menu Items editor round-trips it
+ *  (and replacing the tree doesn't silently drop it). */
 function menuItemEls(el: Element): Element[] {
     return elementChildren(el).filter((k) => {
         const t = localName(k.tagName);
-        return t === 'MenuItem' || t === 'Separator';
+        return t === 'MenuItem' || t === 'Separator' || t === 'PathPicker';
     });
 }
 
@@ -636,6 +649,19 @@ function menuItemEls(el: Element): Element[] {
 function menuNodeOf(el: Element): MenuTreeNode | null {
     const t = localName(el.tagName);
     if (t === 'Separator') return { kind: 'Separator' };
+    // A file/folder selector row (the bundled <chrome:PathPicker>): Width is the row's size and
+    // Title is the dialog caption, which the editor shows in its text field.
+    if (t === 'PathPicker') {
+        const raw = (el.getAttribute('PathType') || 'File').trim();
+        const lower = raw.toLowerCase();
+        const pathType: MenuTreeNode['pathType'] = lower === 'folder' ? 'Folder' : lower === 'savefile' ? 'SaveFile' : 'File';
+        const node: MenuTreeNode = { kind: pathType === 'Folder' ? 'FolderSelector' : 'FileSelector', pathType };
+        const title = (el.getAttribute('Title') || '').trim();
+        if (title !== '') node.header = title;
+        const w = parseFloat(el.getAttribute('Width') || '0');
+        if (Number.isFinite(w) && w > 0) node.width = Math.round(w);
+        return node;
+    }
     if (t !== 'MenuItem') return null;
     // A Space gap is saved as an inert, empty, fixed-width MenuItem (IsEnabled=False, Focusable=
     // False, no Header, no children) — recognise it again on re-read so the editor round-trips.
@@ -655,13 +681,19 @@ function menuNodeOf(el: Element): MenuTreeNode | null {
     return node;
 }
 
+/* ---------------------------------------------------------------------------------------------
+ * Menu Items conversion — exported so the round-trip (XAML → design-time tree → XAML, incl. the
+ * File/Folder Selector kinds) is unit-tested without driving the whole editor panel.
+ * ------------------------------------------------------------------------------------------- */
+
 /** The design-time tree (top-level items) of a Menu element. */
-function menuTreeOf(el: Element): MenuTreeNode[] {
+export function menuTreeOf(el: Element): MenuTreeNode[] {
     return menuItemEls(el).map(menuNodeOf).filter((x): x is MenuTreeNode => x !== null);
 }
 
-/** Builds a <MenuItem>/<Separator> DOM element from a design-time node (`depth` guards nesting). */
-function menuElementFor(model: XamlModel, node: MenuTreeNode, depth: number): Element {
+/** Builds a <MenuItem>/<Separator>/<chrome:PathPicker> DOM element from a design-time node
+ *  (`depth` guards nesting). */
+export function menuElementFor(model: XamlModel, node: MenuTreeNode, depth: number): Element {
     if (node.kind === 'Separator') {
         // A top-level (bar) Separator carries the `MenuBarDivider` class so the Menu's vertical-
         // divider Style targets ONLY it. Avalonia applies a control's Styles into sub-menu popups
@@ -676,6 +708,22 @@ function menuElementFor(model: XamlModel, node: MenuTreeNode, depth: number): El
         const w = Math.max(1, Math.min(500, Math.round(node.width && node.width > 0 ? node.width : 12)));
         return model.createElement(`<MenuItem IsEnabled="False" Focusable="False" Width="${w}"/>`);
     }
+    // A file/folder selector row on the menu: the bundled AvaloniaChrome.PathPicker. Width is the
+    // row's size, Title is the dialog caption (the row's text field) — never a submenu.
+    if (node.kind === 'FileSelector' || node.kind === 'FolderSelector') {
+        const pathType = node.pathType ?? (node.kind === 'FolderSelector' ? 'Folder' : 'File');
+        const w = Math.max(40, Math.min(600, Math.round(node.width && node.width > 0 ? node.width : 160)));
+        const title = (node.header || '').trim()
+            || (pathType === 'Folder' ? 'Select a folder' : pathType === 'SaveFile' ? 'Save file' : 'Select a file');
+        // Set the attributes through the DOM (a Title with quotes/& stays escaped in the XAML).
+        const picker = model.createElement('<chrome:PathPicker Width="160" Height="24"/>');
+        picker.setAttribute('PathType', pathType);
+        picker.setAttribute('Width', String(w));
+        picker.setAttribute('Title', title);
+        // The element uses the `chrome` prefix, so the document root must declare it.
+        model.ensureChromeNamespace();
+        return picker;
+    }
     const el = model.createElement('<MenuItem/>');
     const header = (node.header || '').trim();
     if (header !== '') el.setAttribute('Header', header);
@@ -688,15 +736,27 @@ function menuElementFor(model: XamlModel, node: MenuTreeNode, depth: number): El
 }
 
 /** Validates a tree that came from the webview (structure only; never trusts its input). */
-function sanitizeMenuNodes(raw: unknown): MenuTreeNode[] {
+export function sanitizeMenuNodes(raw: unknown): MenuTreeNode[] {
     if (!Array.isArray(raw)) return [];
     const clean = (n: unknown, depth: number): MenuTreeNode | null => {
         if (depth > MENU_MAX_DEPTH || !n || typeof n !== 'object') return null;
         const o = n as Record<string, unknown>;
         let kind: MenuNodeKind = 'Item';
         const k = String(o.kind ?? 'Item');
-        if (k === 'CheckBox' || k === 'Radio' || k === 'ComboBox' || k === 'Separator' || k === 'Space') kind = k;
+        if (k === 'CheckBox' || k === 'Radio' || k === 'ComboBox' || k === 'Separator' || k === 'Space'
+            || k === 'FileSelector' || k === 'FolderSelector') kind = k;
         const node: MenuTreeNode = { kind };
+        // A file/folder selector row: caption in `header`, size in `width`, PathType kept when the
+        // payload names one (a hand-written SaveFile picker). It never has children.
+        if (kind === 'FileSelector' || kind === 'FolderSelector') {
+            const pt = String(o.pathType ?? '');
+            if (pt === 'File' || pt === 'Folder' || pt === 'SaveFile') node.pathType = pt;
+            const h = String(o.header ?? '').trim();
+            if (h !== '') node.header = h;
+            const w = parseInt(String(o.width ?? ''), 10);
+            if (Number.isFinite(w) && w > 0) node.width = Math.min(600, w);
+            return node;
+        }
         if (kind === 'Space') {
             // A Space is an invisible TOP-BAR gap (width in px) — never inside a submenu, and it
             // has neither a header nor children.
@@ -1464,6 +1524,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     }
                     return;
                 }
+                case 'projectBackup': {
+                    await this.projectBackup(doc, panel);
+                    return;
+                }
                 case 'refresh': {
                     // The toolbar's ⟳ Refresh: re-read the .axaml (so edits made in a text editor tab
                     // or outside VS Code are picked up) and re-render. Re-rendering also re-queries
@@ -1980,6 +2044,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     // designer wires for you, exactly like the StatusDate tool.
                     if (msg.tag === 'GrumpyPanel' || msg.tag === 'GrumpyStatus') {
                         this.ensureGrumpyPanelHelpers(doc);
+                    }
+                    // File / Folder Selector: same story — a project created before the PathPicker
+                    // helper existed needs PathPicker.cs/.vb next to ChromeWindow, or the saved
+                    // <chrome:PathPicker> will not compile.
+                    if (msg.tag === 'PathPicker' || msg.tag === 'PathPickerFolder') {
+                        this.ensurePathPickerHelper(doc);
                     }
                     if (msg.tag === 'GrumpyStatus' && name) {
                         try { await insertStatusDateClock(doc.uri, `${name}Date`); }
@@ -3652,6 +3722,42 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         } catch { return false; }
     }
 
+    /** PathPicker (the bundled AvaloniaChrome.PathPicker behind the File / Folder Selector tools)
+     *  ships with every NEW project, like GrumpyPanel. A project created before it existed needs
+     *  the file next to ChromeWindow — otherwise the saved <chrome:PathPicker> won't compile.
+     *  Copy it in from the extension's resources when it's missing. */
+    private ensurePathPickerHelper(doc: DesignerDocument): boolean {
+        try {
+            const proj = findProject(doc.uri);
+            if (!proj) return false;
+            const vb = proj.language === 'vb';
+            const file = vb ? 'PathPicker.vb' : 'PathPicker.cs';
+            const p = path.join(path.dirname(proj.projectUri.fsPath), file);
+            const src = path.join(this.context.extensionUri.fsPath, 'resources', file);
+            if (!fs.existsSync(src)) return false;
+            if (fs.existsSync(p)) {
+                // An outdated bundled copy (one that predates the file/folder icon, so the two
+                // selector kinds look identical) is refreshed. A copy the user has customised is
+                // left alone — isStaleBundledCopy only refreshes provable bundled boilerplate.
+                try {
+                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'PathPicker')) {
+                        fs.copyFileSync(src, p);
+                        void vscode.window.showInformationMessage(
+                            `Updated ${file} to the current bundled version (the pickers now show a file/folder icon).`
+                        );
+                        return true;
+                    }
+                } catch { /* unreadable — leave the file alone */ }
+                return false;
+            }
+            fs.copyFileSync(src, p);
+            void vscode.window.showInformationMessage(
+                `Added ${file} (PathPicker is bundled with new projects — copied it in so this one compiles).`
+            );
+            return true;
+        } catch { return false; }
+    }
+
     /** Removes an Image's Data-Image binding: code-behind handlers + the .adset boundImages entry. */
     private async unbindDataImage(
         doc: DesignerDocument,
@@ -4388,6 +4494,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 if (helper === 'ExifImageLoader') this.ensureExifImageLoader(proj);
                 else if (helper === 'GrumpyPanel') this.ensureGrumpyPanelHelpers(doc);
                 else if (helper === 'ColumnFollower') this.ensureColumnFollowerHelper(proj);
+                else if (helper === 'PathPicker') this.ensurePathPickerHelper(doc);
                 else this.ensureBundledComponentsCurrent(doc);
                 return `${helper} copied into the project.`;
             }
@@ -5144,6 +5251,49 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         void panel.webview.postMessage({ type: 'historyState', canUndo, canRedo });
     }
 
+    /**
+     * Toolbar **Project Backup**: write everything that is unsaved, then copy the project folder
+     * into its PARENT folder as `<Project>_<date>_<time>` (naming + skip list: projectBackup.ts).
+     * Saving comes first — a backup of a half-saved tree is worthless — and it covers the three
+     * kinds of dirty state: this designer's document, the DataSet designer's documents (custom
+     * editors, invisible to `saveAll`) and every ordinary unsaved text editor.
+     */
+    private async projectBackup(doc: DesignerDocument, panel: vscode.WebviewPanel): Promise<void> {
+        const proj = findProject(doc.uri);
+        if (!proj) {
+            void vscode.window.showWarningMessage(
+                'Project Backup: this form is not inside a project folder yet — nothing to back up.'
+            );
+            return;
+        }
+        const folder = path.dirname(proj.projectUri.fsPath);
+        const describe = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+        try {
+            if (doc.dirty) await this.saveCustomDocument(doc);
+            const savedDataSets = await saveOpenDataSetDocuments();
+            await vscode.workspace.saveAll(false);
+            await this.postStatus(panel, savedDataSets.length > 0
+                ? `Saved ${savedDataSets.join(', ')} — backing up…`
+                : 'Backing up the project…');
+        } catch (e) {
+            void vscode.window.showErrorMessage(
+                `Project Backup: could not save everything first (${describe(e)}). Nothing was copied.`
+            );
+            return;
+        }
+        try {
+            const res = backupProject(folder);
+            await this.postStatus(panel, `Backed up to ${path.basename(res.path)}`);
+            void vscode.window.showInformationMessage(
+                `Project Backup: ${res.files} file${res.files === 1 ? '' : 's'} copied to ${res.path}`
+                + (res.skipped.length > 0 ? ` (skipped ${res.skipped.join(', ')})` : '') + '.'
+            );
+        } catch (e) {
+            await this.postStatus(panel, 'Backup failed');
+            void vscode.window.showErrorMessage(`Project Backup failed: ${describe(e)}`);
+        }
+    }
+
     async saveCustomDocument(document: DesignerDocument): Promise<void> {
         const text = withDesignerHeader(document.model.serialize(true));
         await vscode.workspace.fs.writeFile(document.uri, Buffer.from(text, 'utf8'));
@@ -5351,6 +5501,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
       <button id="btnNewForm" title="Create a new Avalonia form">+ New Form</button>
       <button id="btnRefresh" title="Reload the form from disk and re-read the database preview (e.g. rows added while the app was running)">⟳ Refresh</button>
       <button id="btnCodeFix" title="Check the code-behind against the form and the DataSet: missing VB accessors, duplicate methods, leftover handlers of deleted controls, broken Data-Image / ItemsSource bindings, missing Imports or bundled helper files — with a one-click fix per problem">🩺 Code Fix…</button>
+      <button id="btnBackup" title="Save everything that is unsaved, then copy this whole project into the parent folder as &lt;Project&gt;_&lt;date&gt;_&lt;time&gt; (no bin/obj, caches or .git)">💾 Project Backup</button>
       <span class="sep"></span>
       <button id="btnZoomOut" title="Zoom out">−</button>
       <input id="zoomValue" readonly value="100%"/>
@@ -5443,7 +5594,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     <div id="menuModal" class="modal" hidden>
       <div class="modal-box modal-wide">
         <h3 id="menuTitle">Menu Items</h3>
-        <p class="modal-hint">Build the menu: the top row is the menu bar. Each item can hold a submenu up to 5 levels deep. Kinds: <b>Item</b> (submenu if it has children), <b>CheckBox</b>/<b>Radio</b> (checkable/radio items), <b>ComboBox</b> (its children are its options), <b>Separator</b>, and <b>Space</b> (an invisible gap between top-level items — set its width in px).</p>
+        <p class="modal-hint">Build the menu: the top row is the menu bar. Each item can hold a submenu up to 5 levels deep. Kinds: <b>Item</b> (submenu if it has children), <b>CheckBox</b>/<b>Radio</b> (checkable/radio items), <b>ComboBox</b> (its children are its options), <b>Separator</b>, <b>Space</b> (an invisible gap between top-level items — set its width in px), and <b>File Selector</b>/<b>Folder Selector</b> (the item IS a path row: set its dialog title and width).</p>
         <div id="menuBody" class="menu-tree"></div>
         <div class="modal-buttons menu-toolbar">
           <button id="menuAddTop" type="button" class="modal-btn">+ Add menu item</button>
