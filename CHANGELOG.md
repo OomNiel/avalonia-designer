@@ -5,6 +5,20 @@ All notable changes to the **Avalonia Designer for VS Code** extension.
 Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [1.0.0-beta.5] - 2026-09-11
+
+### Fixed
+- **A follower binding no longer makes a C# project warn (`CS8603`).** The generated line was
+  `ComboBox2.ItemsSource = new ColumnFollower<CustomersRow, string>(…)`, but the DataSet generator
+  writes the row property as `public string? Name` — and the project template sets
+  `<Nullable>enable</Nullable>` — so the selector lambda `r => r.Name` returned a maybe-null value
+  into a non-nullable `TValue` (*warning CS8603: Possible null reference return*) in **every**
+  generated C# project. The follower's value type now matches the generated row property exactly:
+  `string?` / `byte[]?` for the reference-type columns, plain `int`, `long`, `double`, `decimal`,
+  `bool`, `System.DateTime`, `System.Guid` for the value-type ones. VB.NET has no nullable reference
+  types, so its `String` spelling is unchanged. Re-binding a follower rewrites the line, so a project
+  that already carries the old spelling is corrected by the next bind.
+
 ## [1.0.0-beta.4] - 2026-09-10
 
 ### Added

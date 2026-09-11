@@ -1054,10 +1054,18 @@ export interface FollowerBindingRef {
     columnType?: string;  // .adset column type (only String is offered today)
 }
 
-/** The bundled helper's type argument for an .adset column type. */
+/** The bundled helper's type argument for an .adset column type.
+ *
+ *  C#: the value type must match the row property the DataSet generator writes (`csRowClass`), which
+ *  is nullable-annotated for the reference types (`string?`, `byte[]?`) and plain for the value
+ *  types (`int`, `bool`, `DateTime`, …). Writing `<CustomersRow, string>` for a `string?` property
+ *  makes the selector lambda `r => r.Name` return a maybe-null value into a non-nullable `TValue`,
+ *  i.e. `warning CS8603: Possible null reference return` — in every generated project, because the
+ *  scaffold always sets `<Nullable>enable</Nullable>`. VB.NET has no nullable reference types, so
+ *  the VB map stays plain. */
 function followerValueType(language: 'cs' | 'vb', columnType?: string): string {
-    const cs: Record<string, string> = { String: 'string', Int32: 'int', Int64: 'long', Double: 'double', Boolean: 'bool', DateTime: 'System.DateTime' };
-    const vb: Record<string, string> = { String: 'String', Int32: 'Integer', Int64: 'Long', Double: 'Double', Boolean: 'Boolean', DateTime: 'Date' };
+    const cs: Record<string, string> = { String: 'string?', 'Byte[]': 'byte[]?', Int32: 'int', Int64: 'long', Double: 'double', Decimal: 'decimal', Boolean: 'bool', DateTime: 'System.DateTime', Guid: 'System.Guid' };
+    const vb: Record<string, string> = { String: 'String', 'Byte[]': 'Byte()', Int32: 'Integer', Int64: 'Long', Double: 'Double', Decimal: 'Decimal', Boolean: 'Boolean', DateTime: 'Date', Guid: 'Guid' };
     const map = language === 'cs' ? cs : vb;
     return map[columnType ?? 'String'] ?? map.String;
 }
@@ -1074,7 +1082,7 @@ function ownerRowsField(text: string, r: FollowerBindingRef): string {
 
 /** The binding statement, e.g.
  *  VB: `ComboBox2.ItemsSource = New ColumnFollower(Of CustomersRow, String)(_customers, Function(r) r.Name, Function(r) r.IsPlaceholder)`
- *  C#: `ComboBox2.ItemsSource = new ColumnFollower<CustomersRow, string>(_customers, r => r.Name, r => r.IsPlaceholder);` */
+ *  C#: `ComboBox2.ItemsSource = new ColumnFollower<CustomersRow, string?>(_customers, r => r.Name, r => r.IsPlaceholder);` */
 function followerStatement(language: 'cs' | 'vb', r: FollowerBindingRef, field: string): string {
     const rowType = `${r.tableName}Row`;
     const value = followerValueType(language, r.columnType);

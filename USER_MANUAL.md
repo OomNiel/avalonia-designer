@@ -822,7 +822,10 @@ Picking one binds the control to that column:
 - The binding is recorded on the table (`.adset`), so the picker shows it as the current binding and
   you can **Un-bind follower** from the same place.
 - The generated line lives in the code-behind, right after the grid wiring, e.g.
-  `ComboBox2.ItemsSource = New ColumnFollower(Of CustomersRow, String)(_customers, Function(r) r.Name, Function(r) r.IsPlaceholder)`;
+  `ComboBox2.ItemsSource = New ColumnFollower(Of CustomersRow, String)(_customers, Function(r) r.Name, Function(r) r.IsPlaceholder)`
+  (C#: `new ColumnFollower<CustomersRow, string?>(_customers, r => r.Name, r => r.IsPlaceholder)` —
+  the `?` matches the generated row property, so a `<Nullable>enable</Nullable>` project stays
+  warning-free);
   the bundled **`ColumnFollower.vb`/`.cs`** helper does the mirroring (it's added to the project the
   first time you use this).
 

@@ -999,6 +999,16 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   `withDesignerHeader` before comparing. `t2-logic/xamlHeader.test.js` (33 checks) golden-guards the
   text, idempotency/de-duplication, `<?xml?>`+BOM order, all four producers, every designer write
   site and the parse/save round-trip.
+- §75d **The C# follower value type must mirror the generated row property (beta.5)** —
+  `csRowClass`/`csGridRowClass` annotate **reference-type** columns (`String`, `Byte[]`) as nullable
+  (`public string? Name`) *regardless of `allowNull`*, while the scaffold always sets
+  `<Nullable>enable</Nullable>`. The follower generator used to write `ColumnFollower<CustomersRow,
+  string>`, so its selector `r => r.Name` returned `string?` into a non-nullable `TValue` →
+  **warning CS8603** in every generated C# project (invisible in VB, which has no NRT).
+  `followerValueType` now maps `String → string?`, `Byte[] → byte[]?` and the value types unchanged
+  (`int`/`long`/`double`/`decimal`/`bool`/`System.DateTime`/`System.Guid`); re-binding rewrites the
+  line, so existing projects get fixed on the next bind. Proven by building a real ported project:
+  with the old spelling `dotnet build` reports CS8603, with the generated one 0 warnings / 0 errors.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

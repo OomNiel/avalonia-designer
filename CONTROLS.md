@@ -498,6 +498,8 @@ strongly-typed codegen):
   can **follow** a grid-bound table's **text column** instead: the form designer's **Items Source**
   picker lists those columns as `DataSet.Table.Column` entries and writes
   `Control.ItemsSource = New ColumnFollower(Of <Table>Row, String)(<rows>, Function(r) r.<Column>, Function(r) r.IsPlaceholder)`
+  (C#: `new ColumnFollower<<Table>Row, string?>(<rows>, r => r.<Column>, r => r.IsPlaceholder)` — a
+  text column's value type is nullable-annotated to match the generated row property)
   using the bundled `ColumnFollower.cs|.vb` helper. The list is **live** (add/edit/delete in the grid
   updates it, values replaced in place), keeps the grid's row order and skips the “+ Add row…”
   placeholder. The binding is recorded on the table's `.adset` (`followers`). A control that still has

@@ -13,6 +13,7 @@ const {
 } = require('../../out/codeBehind.js');
 const { listAssets } = require('../../out/assetCatalog.js');
 const { analyzeCodeBehind } = require('../../out/codeBehindCheck.js');
+const { generateCs } = require('../../out/dataSetGenerator.js');
 
 const NS = 'xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"';
 
@@ -121,9 +122,45 @@ module.exports = async (t) => {
     const cs = makeProject('cs', { 'TestForm.axaml': VB_AXAML, 'TestForm.axaml.cs': CS_BEHIND });
     const csFile = await bindFollowerToColumn(cs.uri, ref);
     const csText = fs.readFileSync(csFile, 'utf8');
-    t.ok(csText.includes('ComboBox2.ItemsSource = new ColumnFollower<CustomersRow, string>(_customers, r => r.Name, r => r.IsPlaceholder);'),
+    t.ok(csText.includes('ComboBox2.ItemsSource = new ColumnFollower<CustomersRow, string?>(_customers, r => r.Name, r => r.IsPlaceholder);'),
         'codegen', 'C# line uses the helper with the same shape');
     t.equal(findFollowerBinding(cs.uri, 'ComboBox2').rowType, 'CustomersRow', 'codegen', 'C# binding is readable back');
+    t.equal(findFollowerBinding(cs.uri, 'ComboBox2').valueType, 'string?', 'codegen',
+        'C# binding is readable back even with a nullable-annotated value type');
+
+    // ---------- 3a) the C# value type must match the generated row property ----------
+    // The DataSet generator writes `public string? Name { get; set; }` for a String column
+    // (csRowClass: reference types are nullable-annotated), while the scaffold always sets
+    // <Nullable>enable</Nullable>. A plain `string` value type therefore makes `r => r.Name` a
+    // maybe-null return into a non-nullable TValue => warning CS8603 in EVERY generated project.
+    const generated = generateCs(parseDataSet(JSON.stringify({
+        version: 1, name: 'MyData',
+        tables: [{
+            name: 'Customers', x: 0, y: 0,
+            columns: [
+                { name: 'Name', type: 'String', caption: 'Name', allowNull: false },   // nullable anyway
+                { name: 'Id', type: 'Int32', caption: 'ID', allowNull: false },
+                { name: 'Blob', type: 'Byte[]', caption: 'Blob', allowNull: true }
+            ],
+            boundTo: 'DataGrid3', boundToType: 'DataGrid'
+        }]
+    })), 'MyData');
+    t.ok(generated.includes('public string? Name'), 'codegen',
+        'a String row property is nullable-annotated even when the column is NOT NULL');
+    t.ok(generated.includes('public int Id'), 'codegen', 'a value-type row property is not');
+    t.ok(generated.includes('public byte[]? Blob'), 'codegen', 'a Byte[] row property is');
+    t.ok(csText.includes(`ColumnFollower<CustomersRow, ${'string?'}>`), 'codegen',
+        'so the String follower value type is nullable-annotated too (CS8603 guard)');
+    await bindFollowerToColumn(cs.uri, { ...ref, columnType: 'Int32' });
+    t.ok(fs.readFileSync(csFile, 'utf8').includes('ColumnFollower<CustomersRow, int>'), 'codegen',
+        'an Int32 column stays a non-nullable value type (nullability is per column type)');
+    await bindFollowerToColumn(cs.uri, ref);
+    t.ok(fs.readFileSync(csFile, 'utf8').includes('ColumnFollower<CustomersRow, string?>'), 'codegen',
+        're-binding restores the String spelling');
+    const vbByte = makeProject('vb', { 'TestForm.axaml': VB_AXAML, 'TestForm.axaml.vb': VB_BEHIND });
+    await bindFollowerToColumn(vbByte.uri, { ...ref, columnType: 'Byte[]', column: 'Blob' });
+    t.ok(fs.readFileSync(path.join(vbByte.dir, 'TestForm.axaml.vb'), 'utf8').includes('ColumnFollower(Of CustomersRow, Byte())'),
+        'codegen', 'VB spells a Byte[] column as Byte()');
 
     // ---------- 4) picker entries ----------
     const proj = makeProject('vb', {
