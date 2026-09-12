@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest a feature, a control, a missing property or a workflow improvement.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome — this is a hobby project and the roadmap follows what people actually need.
+        Please describe the **problem** first; the solution I can usually guess from it.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Toolbox / a new control
+        - Properties / a missing property
+        - Designer interaction (selection, layout, aligning, rulers, zoom)
+        - Code-behind generation (C#, VB.NET, another .NET language)
+        - Events (picker, wiring, handlers)
+        - 🩺 Code Fix… / the code-behind check
+        - DataSet designer, data binding, database access
+        - Project and form templates / scaffolding
+        - Documentation
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or the annoyance — and how you work around it today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should the extension do?
+      description: Optional — a rough sketch is enough (a menu entry, a property row, a dialog…).
+    validations:
+      required: false
+  - type: input
+    id: comparison
+    attributes:
+      label: Any tool that already does this well?
+      description: A designer, an IDE, a screenshot — anything that shows the idea.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the README, the roadmap and `USER_MANUAL.md` — the feature may already be there.
+          required: true

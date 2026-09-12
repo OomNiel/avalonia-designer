@@ -12,6 +12,12 @@ host/bin/**
 # The automated test suite (runner, jsdom, generated test projects) is not part of the runtime extension.
 tests/**
 TEST_PLAN.md
+# Maintainer-only release guide (publisher + PAT setup) — not for extension users.
+PUBLISHING.md
+# Repo infrastructure: CI workflows and the issue templates are for GitHub, not for users.
+# (vsce's own default-ignore list contains a bare `.github`, but default patterns are NOT
+# folder-expanded the way `.vscodeignore` entries are, so they never match nested files.)
+.github/**
 # Dev-only docs (kept out of the package; README/USER_MANUAL/CONTROLS stay in).
 NOTES.md
 NOTES_ARCHIVE.md

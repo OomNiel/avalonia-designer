@@ -104,6 +104,17 @@ module.exports = async (t) => {
         'the publish script pins the vsce version (a release must be reproducible)');
     t.ok(pkg.scripts['vscode:prepublish'].includes('compile'), 'release',
         'packaging always compiles first (vsce runs vscode:prepublish)');
+    // The maintainer guide and the workflow have to agree: a renamed secret would only fail at
+    // publish time, which is the worst moment to find out.
+    t.ok(has('PUBLISHING.md'), 'release', 'the publisher/PAT walkthrough is in the repo');
+    const guide = read('PUBLISHING.md');
+    t.ok(/VSCE_PAT/.test(guide), 'release', 'and names the same secret the workflow reads (VSCE_PAT)');
+    t.ok(/Marketplace/.test(guide) && /Manage/.test(guide), 'release',
+        'including the PAT scope that actually grants publishing');
+    t.ok(/verify-pat/.test(guide), 'release', 'and the pre-flight command that tests a token first');
+    t.ok(/^PUBLISHING\.md$/m.test(ignore), 'packaging', 'the maintainer guide stays out of the VSIX');
+    t.ok(/^\.github\/\*\*$/m.test(ignore), 'packaging',
+        'and so does repo infrastructure (.github: CI workflows + issue templates)');
 
     // ---------- 7) first-run friendliness: name the missing .NET SDK ----------
     const host = read('src/hostClient.ts');

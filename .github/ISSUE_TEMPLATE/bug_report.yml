@@ -1,0 +1,128 @@
+name: Bug report
+description: Something in the designer, the preview, the generated code or a generated project went wrong.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. The extension is a **beta**, so please include enough
+        for me to reproduce it — the fields below are the ones I always end up asking for.
+
+        Before filing: `USER_MANUAL.md` documents every feature, and `Events per Control.md` lists every
+        event of every control.
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      description: Extensions view → Avalonia Designer, or the `.vsix` file name you installed.
+      placeholder: 1.0.0-beta.7
+    validations:
+      required: true
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code version
+      description: Help → About (or `code --version`).
+      placeholder: 1.85.0
+    validations:
+      required: true
+  - type: input
+    id: dotnet
+    attributes:
+      label: .NET SDK
+      description: Output of `dotnet --list-sdks` — the preview host is built with it.
+      placeholder: 10.0.110 [C:/Program Files/dotnet/sdk]
+    validations:
+      required: false
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: language
+    attributes:
+      label: Project language
+      options:
+        - C#
+        - VB.NET
+        - Not applicable / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does it go wrong?
+      options:
+        - Design surface / preview (rendering, selection, drag, resize)
+        - Toolbox, drag-and-drop or placing a control
+        - Properties panel
+        - Event wiring (picker, handlers)
+        - 🩺 Code Fix… / the code-behind check
+        - Creating a project or a new form
+        - DataSet designer / data binding
+        - Packaging, install or start-up
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open MainWindow.axaml in the designer
+        2. Drag a Button onto the Body canvas
+        3. Type in the Properties panel, press Ctrl+S
+        4. …
+    validations:
+      required: true
+  - type: textarea
+    id: build
+    attributes:
+      label: What does `dotnet build` say?
+      description: |
+        The compiler is the ground truth: if the generated project builds 0/0 then the problem is in the
+        designer; if it fails, paste the error with its code (e.g. BC30451, AVLN:0004).
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Designer log / messages
+      description: |
+        Anything the designer showed (status line, PROBLEMS entries, error dialog). The rest is in
+        Output → "Avalonia Designer".
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: xaml
+    attributes:
+      label: Smallest form that shows it (optional)
+      description: The relevant `.axaml` (or the code-behind, for a code-behind bug). Please strip anything private.
+      render: xml
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: I reloaded the VS Code window after installing or updating the extension.
+          required: false

@@ -1,0 +1,12 @@
+# Shown above the issue chooser, so people can help themselves first.
+blank_issues_enabled: true
+contact_links:
+  - name: User manual — how every feature works
+    url: https://github.com/OomNiel/avalonia-designer/blob/main/USER_MANUAL.md
+    about: New Project, toolbox, properties, docking, templates, code-behind, key bindings, known issues.
+  - name: Events per Control — every event, with handler signatures
+    url: https://github.com/OomNiel/avalonia-designer/blob/main/Events%20per%20Control.md
+    about: Which events each control exposes, and what the handler must take (EventArgs).
+  - name: Releases — download the latest VSIX
+    url: https://github.com/OomNiel/avalonia-designer/releases
+    about: Pre-release builds, changelogs and known fixes.
