@@ -112,6 +112,10 @@ module.exports = async (t) => {
     t.ok(/Marketplace/.test(guide) && /Manage/.test(guide), 'release',
         'including the PAT scope that actually grants publishing');
     t.ok(/verify-pat/.test(guide), 'release', 'and the pre-flight command that tests a token first');
+    t.ok(/1 December 2026/.test(guide), 'release',
+        'plus the global-PAT retirement deadline (the route this guide documents has an end date)');
+    t.ok(/--azure-credential/.test(guide) && /2\.26\.1/.test(guide), 'release',
+        'and the Entra ID replacement, with the vsce version it requires');
     t.ok(/^PUBLISHING\.md$/m.test(ignore), 'packaging', 'the maintainer guide stays out of the VSIX');
     t.ok(/^\.github\/\*\*$/m.test(ignore), 'packaging',
         'and so does repo infrastructure (.github: CI workflows + issue templates)');
