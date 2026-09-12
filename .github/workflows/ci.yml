@@ -42,6 +42,17 @@ jobs:
           name: vsix
           path: .artifacts/avalonia-designer.vsix
           if-no-files-found: error
+      # The runner writes the assertion details to tests/out/report.md rather than the console, so
+      # without this a red run says only "N passed, 1 failed" and nothing else.
+      - name: Test report (only when something failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: |
+            tests/out/report.md
+            tests/out/log.jsonl
+          if-no-files-found: ignore
 
   full-suite:
     name: Full suite (needs the .NET SDK)
@@ -69,3 +80,12 @@ jobs:
         run: npm run compile
       - name: Full test suite (layers t0–t5)
         run: node tests/runner.js
+      - name: Test report (only when something failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-suite-report
+          path: |
+            tests/out/report.md
+            tests/out/log.jsonl
+          if-no-files-found: ignore

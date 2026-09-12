@@ -29,7 +29,11 @@ module.exports = async (t) => {
     t.ok((pkg.keywords || []).length >= 5, 'manifest', 'and search keywords');
     t.ok(/^\^\d+\.\d+\.\d+$/.test(pkg.engines.vscode), 'manifest', 'the VS Code engine range is pinned');
     t.ok(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pkg.version), 'manifest', 'the version is valid semver');
-    t.ok(has(pkg.main.replace(/^\.\//, '')), 'manifest', 'the declared entry point exists (out/extension.js, tsc output)');
+    t.equal(pkg.main, './out/extension.js', 'manifest', 'the entry point is the compiled output');
+    t.ok(has('src/extension.ts'), 'manifest', 'which tsc builds from src/extension.ts');
+    // out/ is git-ignored and rebuilt by `npm run compile` (the package step runs it too), so a fresh
+    // clone legitimately has no out/ yet — only check the artefact when it is there.
+    if (has('out')) t.ok(has('out/extension.js'), 'manifest', 'and out/extension.js exists once compiled');
     t.ok(has(pkg.icon), 'manifest', 'the declared icon file exists (vsce refuses to package without it)');
 
     // ---------- 2) activation: from contributions, not on every window start ----------
@@ -58,7 +62,8 @@ module.exports = async (t) => {
 
     // ---------- 5) packaging hygiene: dev-only files must not reach the VSIX ----------
     t.ok(/^\.poolside\/\*\*/m.test(ignore), 'packaging', 'local tool state (.poolside) is excluded');
-    t.ok(has('.poolside/settings.local.yaml'), 'packaging', '…and that file does exist, so the rule matters');
+    // The file itself only exists on a developer machine — it is git-ignored, so a fresh clone (and
+    // therefore CI) never has it. Only the rule is required to be there.
     t.ok(/^tests\/\*\*/m.test(ignore), 'packaging', 'the test suite is excluded');
     t.ok(/^tsconfig\.json$/m.test(ignore), 'packaging', 'build metadata (tsconfig.json) is excluded');
     t.ok(/^GrumpyWhite\.png$/m.test(ignore) === false, 'packaging',

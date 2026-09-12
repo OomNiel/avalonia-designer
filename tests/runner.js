@@ -112,6 +112,11 @@ async function main() {
         const passes = ctx.results.filter((r) => r.result === 'PASS').length;
         const skips = ctx.results.filter((r) => r.result === 'SKIP').length;
         console.log(`  -> ${passes} passed, ${fails} failed, ${skips} skipped`);
+        // Spit the failures out too: the report file is not always at hand (CI), and a bare
+        // "1 failed" with no detail costs a whole round trip to diagnose.
+        for (const r of ctx.results.filter((r) => r.result === 'FAIL')) {
+            console.log(`  FAIL  ${r.feature} -> ${r.action}${r.detail ? `  (${r.detail})` : ''}`);
+        }
     }
 
     // ---- write log + report ----

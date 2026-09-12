@@ -221,7 +221,7 @@ Each step ends with the log green before the next begins.
   designer save site, plus a parse/save round-trip that proves the notice is dropped by the model
   and re-stamped on save.
 
-### Status 2026-09-12 — full suite green (2663 passed / 0 failed / 0 skipped, 40 s)
+### Status 2026-09-12 — full suite green (2664 passed / 0 failed / 0 skipped, 35 s)
 
 - **T2** gained three files:
   - `controlEvents.test.js` (**76** checks) — the generated catalog's shape, the default event and the
@@ -233,7 +233,7 @@ Each step ends with the log green before the next begins.
     one owns (a button inserted in the wrong place silently joins the wrong group, so membership is
     pinned per heading), the fold/unfold wiring, and the CSS that makes the chip's caret and a folded
     group's separator behave.
-  - `packaging.test.js` (**77** checks) — the marketplace manifest requirements (publisher, licence,
+  - `packaging.test.js` (**78** checks) — the marketplace manifest requirements (publisher, licence,
     repository, bugs, homepage, categories, keywords, engine range, semver, entry point), the icon
     really being a ≥128×128 PNG, the MIT licence text, the `.vscodeignore` rules **including the vsce
     negation trap**, both GitHub workflows, the missing-.NET-SDK message, and — after
