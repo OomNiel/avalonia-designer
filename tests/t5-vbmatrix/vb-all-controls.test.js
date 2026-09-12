@@ -314,6 +314,40 @@ module.exports = async (t) => {
             }
         } catch (e) { t.fail('ItemsSource', 'codebehind', `bind: ${e.message}`); }
 
+        // Event picker wiring: the extra events the catalog knows (NOT the default ones) are wired
+        // through the production path — attribute in the XAML + stub in the code-behind — and the
+        // combined build below is the authoritative VB gate: VB rejects a handler whose EventArgs
+        // does not match the delegate exactly (AVLN:0004), so a wrong entry in EVENT_ARGS fails here.
+        const { insertHandlerIntoCodeBehind } = require('../../out/codeBehind.js');
+        const eventChecks = [
+            ['ComboBox', 'DropDownOpened', 'System.EventArgs'],
+            ['Button', 'Tapped', 'Avalonia.Input.TappedEventArgs'],
+            ['TextBox', 'KeyDown', 'Avalonia.Input.KeyEventArgs'],
+            ['DataGrid', 'CellEditEnding', 'Avalonia.Controls.DataGridCellEditEndingEventArgs'],
+            ['Menu', 'Opened', 'Avalonia.Interactivity.RoutedEventArgs'],
+            ['CheckBox', 'Click', 'Avalonia.Interactivity.RoutedEventArgs'],
+            ['TabControl', 'DoubleTapped', 'Avalonia.Input.TappedEventArgs'],
+            ['ListBox', 'PointerPressed', 'Avalonia.Input.PointerPressedEventArgs']
+        ];
+        for (const [tag, ev, wantArgs] of eventChecks) {
+            const snip = snippets[tag];
+            if (!snip) { t.fail(tag, `event:${ev}`, 'no snippet for the control'); continue; }
+            const el = model.findByName(snip.name);
+            if (!el) { t.fail(tag, `event:${ev}`, `control ${snip.name} not in the model`); continue; }
+            const handler = `${snip.name}_${ev}`;
+            try { await insertHandlerIntoCodeBehind(Uri.file(axamlPath), handler, ev, tag); }
+            catch (e) { t.fail(tag, `event:${ev}`, `insertHandlerIntoCodeBehind: ${e.message}`); continue; }
+            el.setAttribute(ev, handler);
+            fs.writeFileSync(axamlPath, model.serialize(true), 'utf8');
+            const vbText = fs.readFileSync(vbPath, 'utf8');
+            const decl = new RegExp(`Sub\\s+${handler}\\s*\\(sender As Object, e As ([\\w.]+)\\)`);
+            const m = decl.exec(vbText);
+            t.ok(!!m, tag, `event:${ev}`, `handler stub inserted (${handler})`);
+            t.equal(m && m[1], wantArgs, tag, `event:${ev}`, 'stub takes the exact EventArgs type');
+            t.ok(new RegExp(`\\b${ev}="${handler}"`).test(fs.readFileSync(axamlPath, 'utf8')), tag, `event:${ev}`,
+                'the event attribute is wired in the XAML');
+        }
+
         // Combined build — the authoritative gate for every property.
         const r = dotnetBuild(dir);
         t.equal(r.errors, 0, 'compile', 'vb project (all controls + all props)', `errors=${r.errors} warnings=${r.warnings}`);

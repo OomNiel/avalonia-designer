@@ -19,12 +19,24 @@ A WYSIWYG form designer for the **Avalonia** framework with a drag-and-drop tool
 > **📗 Full user guide: `USER_MANUAL.md`** — documents every feature (New Project, toolbox,
 > properties, docking, templates, code-behind, keyboard shortcuts, known issues) in plain
 > language for beginners.
+>
+> **📗 Event reference: `Events per Control.md`** — every event each control exposes in
+> Avalonia 12.1.1, with the `EventArgs` a handler must take and the declaring class, generated from
+> the real assemblies.
 
 - Opens any existing `.axaml` file in a Designer editor tab (with a Source/Design toggle).
 - `Avalonia: New Form` command creates a new form (C# **or** VB.NET, `Window` or `UserControl`) and opens it in the designer.
 - Live preview is rendered by a headless **Avalonia Previewer Host** (C# / .NET) that speaks WebSocket to the extension.
 - Drag controls from the sidebar Toolbox onto the canvas; then **move** and **resize** them (where the layout allows).
 - Properties panel edits common properties with instant re-render.
+- **Event wiring, on your terms** — placing a control opens a chooser listing the events that control
+  actually has (its default event first): tick one or several to wire, **Skip** to leave it unwired,
+  or **Remember my choice** to stop being asked for that control type. **Right-click → Add event…**
+  wires more later, and **middle-click** jumps to a handler (asking which one when several are wired).
+- **Code-behind stays in step** — the designer re-checks the code-behind against the form by itself
+  (when you return to the designer tab by default; also on save / while typing / only on demand —
+  **⚙ Settings**), marks a control whose handler is missing with a **⚠ badge**, and offers
+  *“keep my edit”* alternatives so a deliberate hand-edit is accepted instead of silently restored.
 - **🩺 Code Fix…** — checks the form's code-behind against the `.axaml` and the project's DataSets,
   then repairs what hand-editing or control add/delete/rename broke: missing VB control accessors,
   duplicate methods, orphaned event handlers, broken Data-Image / ItemsSource bindings, missing
@@ -81,8 +93,9 @@ parent + Grid cell boundaries for drag-to-re-cell).
 ## Getting started
 
 Prerequisites: **Node.js** and the **.NET SDK**. A .NET 8+ SDK is enough to build and run the
-bundled preview host; **creating/running generated projects needs a .NET SDK that supports
-`net10.0`** (e.g. .NET 10 SDK). Works on Linux, macOS and Windows.
+bundled preview host (the extension tells you if it is missing); **creating/running generated
+projects needs a .NET SDK that supports `net10.0`** (e.g. .NET 10 SDK). Works on Linux, macOS and
+Windows.
 
 ```bash
 npm install          # ws, @xmldom/xmldom, typescript

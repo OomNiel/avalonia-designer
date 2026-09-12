@@ -1,5 +1,6 @@
 import { DOMParser } from '@xmldom/xmldom';
 import { CHROME_TITLEBAR_HEIGHT } from './formTemplates';
+import { EVENT_ARGS, EVENTS_BY_CONTROL } from './controlEvents';
 
 /** Local (namespace-stripped) name of a tag, e.g. "chrome:ChromeWindow" -> "ChromeWindow". */
 export function localName(tagName: string): string {
@@ -38,11 +39,15 @@ const NON_CONTROL = new Set([
 ]);
 
 /**
- * Event-handler attributes (e.g. `Click`, `TextChanged`). The headless preview
- * host cannot resolve code-behind handlers, so these are stripped from the XAML
- * used for the preview render but KEPT in the saved file.
+ * Event-handler attributes (e.g. `Click`, `TextChanged`, `DropDownOpened`). The headless preview
+ * host cannot resolve code-behind handlers, so these are stripped from the XAML used for the preview
+ * render but KEPT in the saved file.
+ *
+ * The set is the designer's base list PLUS every event the event picker can wire
+ * (src/controlEvents.ts) — a picker-wired `DropDownOpened` that stayed in the preview XAML would
+ * make the runtime loader fail with "no accessible method matches".
  */
-const EVENT_ATTRS = new Set([
+const EVENT_ATTRS = new Set<string>([
     'Click', 'DoubleTapped', 'Tapped', 'RightTapped', 'Holding',
     'PointerPressed', 'PointerReleased', 'PointerMoved', 'PointerEntered', 'PointerExited',
     'PointerCaptureLost', 'PointerWheelChanged', 'PointerTouchPadTiltChanged',
@@ -50,8 +55,15 @@ const EVENT_ATTRS = new Set([
     'TextChanged', 'SelectionChanged', 'IsCheckedChanged',
     'Loaded', 'Unloaded', 'SizeChanged', 'AttachedToVisualTree', 'DetachedFromVisualTree',
     'GotFocus', 'LostFocus', 'ScrollChanged', 'PropertyChanged', 'Opened', 'Closed',
-    'DragOver', 'Drop', 'DragEnter', 'DragLeave', 'DragStart', 'DragEnd'
+    'DragOver', 'Drop', 'DragEnter', 'DragLeave', 'DragStart', 'DragEnd',
+    ...Object.keys(EVENT_ARGS),
+    ...Object.values(EVENTS_BY_CONTROL).flat()
 ]);
+
+/** True when an attribute name is one of those event-handler attributes. */
+export function isEventAttribute(name: string): boolean {
+    return EVENT_ATTRS.has(name);
+}
 
 /**
  * Tags that are single-content containers (ContentControl / HeaderedContentControl

@@ -15,9 +15,13 @@ const DESIGNER_JS = path.join(__dirname, '..', '..', 'media', 'designer.js');
 const DESIGNER_CSS = path.join(__dirname, '..', '..', 'media', 'designer.css');
 
 const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomValue', 'canvasWrap',
+    'toolbar',
     'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnBackup', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
     'menuDummies',
-    'contextMenu', 'ctxDelete', 'ctxCut', 'ctxCopy', 'ctxPaste', 'ctxMoveToContainer',
+    'contextMenu', 'ctxDelete', 'ctxCut', 'ctxCopy', 'ctxPaste', 'ctxMoveToContainer', 'ctxAddEvent',
+    'eventModal', 'eventTitle', 'eventHint', 'eventList', 'eventRemember', 'eventRememberWrap', 'eventSkip', 'eventWire',
+    'handlerModal', 'handlerTitle', 'handlerHint', 'handlerList', 'handlerAdd', 'handlerClose',
+    'btnCodeSettings', 'settingsModal', 'settingsHint', 'settingsModes', 'settingsBadges', 'settingsSave', 'settingsCancel',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
@@ -50,6 +54,11 @@ function setup() {
         if (id === 'preview') return 'img';
         if (id === 'controlList') return 'select';
         if (id === 'itemsText') return 'textarea';
+        if (id === 'eventRemember') return 'input';
+        if (id === 'eventSkip' || id === 'eventWire') return 'button';
+        if (id === 'handlerAdd' || id === 'handlerClose') return 'button';
+        if (id === 'settingsBadges') return 'input';
+        if (id === 'settingsSave' || id === 'settingsCancel') return 'button';
         if (id.startsWith('dotGridSpacing') || id === 'dotGridColor' || id === 'dotGridDotSize') return 'input';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
             || id === 'dotGridSave' || id === 'dotGridCancel'
@@ -268,6 +277,221 @@ module.exports = async (t) => {
     posted.length = 0;
     $('canvas').dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
     t.ok(posted.every((m) => m.type !== 'delete'), 'locked-select', 'Delete does not fire on locked control');
+    // …but Add event… IS offered for the Body — a Canvas carries Loaded/pointer events like any control.
+    t.equal($('ctxAddEvent').disabled, false, 'locked-menu', 'Add event enabled for the Body');
+
+    // --- right-click → Add event… posts addEvent for a named control ---
+    dispatch('contextmenu', 'canvas', { clientX: 110, clientY: 60 }); // hits btn1
+    t.equal($('contextMenu').dataset.name, 'btn1', 'add-event', 'right-click selected btn1');
+    t.equal($('ctxAddEvent').disabled, false, 'add-event', 'Add event enabled');
+    posted.length = 0;
+    $('ctxAddEvent').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'addEvent', 'add-event', 'posts addEvent');
+    t.equal(posted[posted.length - 1].name, 'btn1', 'add-event', 'with the control name');
+    t.equal($('contextMenu').hidden, true, 'add-event', 'the context menu closes');
+
+    // --- the picker modal: place mode (default preselected, multi-select, remember) ---
+    msg({ type: 'openEventPicker', mode: 'place', name: 'btn1', tag: 'Button', label: 'Button', defaultEvent: 'Click', events: ['Click', 'Tapped', 'Loaded'], wired: [] });
+    t.equal($('eventModal').hidden, false, 'picker', 'the picker opens');
+    t.ok(/btn1/.test($('eventTitle').textContent), 'picker', 'the title names the control');
+    t.equal($('eventRememberWrap').hidden, false, 'picker', 'place mode offers the remember checkbox');
+    const pickRows = [...$('eventList').querySelectorAll('.event-row')];
+    t.equal(pickRows.length, 3, 'picker', 'one row per event');
+    t.equal(pickRows[0].querySelector('.event-name').textContent, 'Click', 'picker', 'the first row is the first event');
+    t.equal(pickRows[0].querySelector('input.event-pick').checked, true, 'picker', 'the default event is preselected');
+    t.equal(pickRows[1].querySelector('input.event-pick').checked, false, 'picker', 'the others are not');
+    t.equal(pickRows[0].querySelector('.event-handler').textContent, 'btn1_Click', 'picker', 'the handler name is previewed');
+    t.equal($('eventWire').disabled, false, 'picker', 'Wire is enabled with the default ticked');
+    pickRows[1].querySelector('input.event-pick').checked = true;
+    pickRows[1].querySelector('input.event-pick').dispatchEvent(new s.window.Event('change'));
+    t.equal($('eventWire').textContent, 'Wire 2 events', 'picker', 'the button reflects the count');
+    posted.length = 0;
+    $('eventWire').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    const wire = posted[posted.length - 1];
+    t.equal(wire.type, 'wireEvents', 'picker', 'posts wireEvents');
+    t.equal(wire.events.join(','), 'Click,Tapped', 'picker', 'both ticked events are sent');
+    t.equal(wire.remember, false, 'picker', 'remember is off until ticked');
+    t.equal($('eventModal').hidden, true, 'picker', 'the modal closes after wiring');
+
+    // Skip = place the control without a handler (and it can remember that choice)
+    msg({ type: 'openEventPicker', mode: 'place', name: 'btn2', tag: 'Button', label: 'Button', defaultEvent: 'Click', events: ['Click'], wired: [] });
+    $('eventRemember').checked = true;
+    posted.length = 0;
+    $('eventSkip').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'skipEventPicker', 'picker', 'Skip posts skipEventPicker');
+    t.equal(posted[posted.length - 1].remember, true, 'picker', 'the remember checkbox is carried');
+    t.equal($('eventModal').hidden, true, 'picker', 'Skip closes the modal');
+
+    // --- the picker modal: add mode (wired rows marked, ↗ Go to handler, Escape) ---
+    msg({ type: 'openEventPicker', mode: 'add', name: 'btn1', tag: 'Button', label: 'Button', defaultEvent: 'Click', events: ['Click', 'Tapped'], wired: [{ event: 'Click', handler: 'btn1_Click' }] });
+    const addRows = [...$('eventList').querySelectorAll('.event-row')];
+    t.equal(addRows[0].classList.contains('wired'), true, 'picker-add', 'the wired row is marked');
+    t.equal(addRows[0].querySelector('input.event-pick').disabled, true, 'picker-add', 'and cannot be picked again');
+    t.equal(addRows[0].querySelector('input.event-pick').checked, false, 'picker-add', 'add mode preselects nothing');
+    t.equal(addRows[0].querySelector('.event-wired').textContent, '✓ wired', 'picker-add', 'a ✓ wired badge is shown');
+    t.equal(addRows[0].querySelector('.event-handler').textContent, 'btn1_Click', 'picker-add', 'the existing handler is named');
+    t.equal($('eventRememberWrap').hidden, true, 'picker-add', 'remember is hidden when adding');
+    t.ok(/Add event/.test($('eventTitle').textContent), 'picker-add', 'the title says Add event');
+    posted.length = 0;
+    addRows[0].querySelector('.event-goto').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'openHandler', 'picker-add', '↗ posts openHandler');
+    t.equal(posted[posted.length - 1].handler, 'btn1_Click', 'picker-add', 'with the handler name');
+    posted.length = 0;
+    $('canvas').dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    t.equal($('eventModal').hidden, true, 'picker-add', 'Escape closes the picker');
+    t.ok(posted.some((m) => m.type === 'skipEventPicker'), 'picker-add', 'Escape counts as Skip');
+
+    // --- middle-click a control with SEVERAL wired handlers → the chooser lists them ---
+    msg({
+        type: 'openHandlerMenu', name: 'btn1', tag: 'Button', label: 'Button',
+        wired: [{ event: 'Click', handler: 'btn1_Click' }, { event: 'Tapped', handler: 'btn1_Tapped' }, { event: 'Loaded', handler: 'btn1_Loaded' }]
+    });
+    t.equal($('handlerModal').hidden, false, 'handler-menu', 'the chooser opens');
+    t.ok(/btn1/.test($('handlerTitle').textContent), 'handler-menu', 'the title names the control');
+    t.ok(/3 event handlers/.test($('handlerHint').textContent), 'handler-menu', 'the hint counts the handlers');
+    const handlerRows = [...$('handlerList').querySelectorAll('.handler-row')];
+    t.equal(handlerRows.length, 3, 'handler-menu', 'one row per wired event');
+    t.equal(handlerRows[0].querySelector('.event-name').textContent, 'Click', 'handler-menu', 'the event name is shown');
+    t.equal(handlerRows[0].querySelector('.event-handler').textContent, 'btn1_Click', 'handler-menu', 'with its handler');
+    t.equal(handlerRows[1].querySelector('.event-name').textContent, 'Tapped', 'handler-menu', 'order is kept');
+    posted.length = 0;
+    handlerRows[1].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    const jump = posted[posted.length - 1];
+    t.equal(jump.type, 'openHandler', 'handler-menu', 'clicking a row posts openHandler');
+    t.equal(jump.handler, 'btn1_Tapped', 'handler-menu', 'with the chosen handler');
+    t.equal(jump.event, 'Tapped', 'handler-menu', 'and its event name');
+    t.equal(jump.name, 'btn1', 'handler-menu', 'for the right control');
+    t.equal($('handlerModal').hidden, true, 'handler-menu', 'the chooser closes after the pick');
+
+    // …and it offers a shortcut to wire another event
+    msg({ type: 'openHandlerMenu', name: 'btn1', tag: 'Button', label: 'Button', wired: [{ event: 'Click', handler: 'btn1_Click' }, { event: 'Loaded', handler: 'btn1_Loaded' }] });
+    posted.length = 0;
+    $('handlerAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'addEvent', 'handler-menu', 'Add event… posts addEvent');
+    t.equal(posted[posted.length - 1].name, 'btn1', 'handler-menu', 'for the same control');
+    t.equal($('handlerModal').hidden, true, 'handler-menu', 'and closes the chooser');
+
+    // Escape closes it too
+    msg({ type: 'openHandlerMenu', name: 'btn1', tag: 'Button', label: 'Button', wired: [{ event: 'Click', handler: 'a' }, { event: 'Loaded', handler: 'b' }] });
+    $('canvas').dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    t.equal($('handlerModal').hidden, true, 'handler-menu', 'Escape closes the chooser');
+
+    // --- a wired handler whose method is gone is marked ⚠ (in the picker and the chooser) ---
+    msg({
+        type: 'openEventPicker', mode: 'add', name: 'btn1', tag: 'Button', label: 'Button', defaultEvent: 'Click',
+        events: ['Click', 'Tapped'],
+        wired: [{ event: 'Click', handler: 'btn1_Click', missing: true }, { event: 'Tapped', handler: 'btn1_Tapped' }]
+    });
+    const missRows = [...$('eventList').querySelectorAll('.event-row')];
+    t.equal(missRows[0].querySelector('.event-wired').textContent, '⚠ missing', 'missing-handler',
+        'a deleted handler is shown as ⚠ missing, not ✓ wired');
+    t.equal(missRows[0].querySelector('.event-wired').classList.contains('missing'), true, 'missing-handler',
+        'and styled as missing');
+    t.equal(missRows[1].querySelector('.event-wired').textContent, '✓ wired', 'missing-handler',
+        'an existing handler still shows ✓ wired');
+    $('eventSkip').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true })); // close (add mode)
+    msg({
+        type: 'openHandlerMenu', name: 'btn1', tag: 'Button', label: 'Button',
+        wired: [{ event: 'Click', handler: 'btn1_Click', missing: true }, { event: 'Tapped', handler: 'btn1_Tapped' }]
+    });
+    const missMenuRows = [...$('handlerList').querySelectorAll('.handler-row')];
+    t.equal(missMenuRows[0].querySelector('.event-wired').textContent, '⚠ recreate', 'missing-handler',
+        'the middle-click chooser offers to recreate a deleted handler');
+    t.equal(missMenuRows[1].querySelector('.event-wired').textContent, '↗', 'missing-handler',
+        'while a live handler keeps the plain jump arrow');
+    $('handlerClose').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+
+    // --- Code Fix… findings: the primary Fix, the "keep my edit" alternative, and Fix all ---
+    msg({
+        type: 'codeIssues', file: 'MainWindow.axaml.vb', errors: 1, warnings: 0, backup: '',
+        issues: [
+            {
+                id: 'insert-handler:Button1_Click:9', severity: 'error', fixable: true, line: 9, file: 'axaml',
+                title: 'Button Click="Button1_Click" has no handler',
+                detail: 'Insert an empty handler, or keep your delete and unwire the form.',
+                alternatives: [
+                    { label: 'Keep my delete — unwire it', detail: 'Removes Click="Button1_Click" from Button1.' },
+                    { label: 'Leave it — keep my code', detail: 'Nothing is changed.' }
+                ]
+            },
+            {
+                id: 'rebuild-accessors:Button1:0', severity: 'warning', fixable: true, line: 0, file: 'code',
+                title: 'Accessor for "Button1" is missing', detail: 'Rebuild it.',
+                alternatives: [{ label: 'Leave it — keep my code', detail: 'Nothing is changed.' }]
+            }
+        ]
+    });
+    t.equal($('codeModal').hidden, false, 'code-issues', 'the findings modal opens');
+    const codeRows = [...$('codeBody').querySelectorAll('.code-item')];
+    t.equal(codeRows.length, 2, 'code-issues', 'one row per finding');
+    const rowButtons = [...codeRows[0].querySelectorAll('.code-item-actions button')];
+    t.equal(rowButtons.map((b) => b.textContent).join(' | '),
+        'Go to line 9 | Fix | Keep my delete — unwire it | Leave it — keep my code', 'code-issues',
+        'Go to line + Fix + one button per alternative');
+    t.ok(/Removes Click/.test(rowButtons[2].title), 'code-issues', 'the alternative explains itself on hover');
+    posted.length = 0;
+    rowButtons[2].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    const altPost = posted[posted.length - 1];
+    t.equal(altPost.type, 'codeFix', 'code-issues', 'an alternative posts codeFix');
+    t.equal(altPost.alt, 0, 'code-issues', 'with the alternative index');
+    t.equal(altPost.id, 'insert-handler:Button1_Click:9', 'code-issues', 'for the right finding');
+    posted.length = 0;
+    rowButtons[1].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'codeFix', 'code-issues', 'the primary Fix posts codeFix');
+    t.equal('alt' in posted[posted.length - 1], false, 'code-issues', 'without an alternative index');
+    const row2Buttons = [...codeRows[1].querySelectorAll('.code-item-actions button')];
+    t.equal(row2Buttons.map((b) => b.textContent).join(' | '), 'Fix | Leave it — keep my code', 'code-issues',
+        'a finding with one alternative shows two buttons (no Go to line when it has no line)');
+    posted.length = 0;
+    $('codeFixAll').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'codeFixAll', 'code-issues', 'Fix all is unchanged');
+    $('codeClose').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal($('codeModal').hidden, true, 'code-issues', 'Close hides the findings');
+
+    const ovBadges = () => [...$('overlayLayer').querySelectorAll('.ov-badge')];
+    t.equal(ovBadges().length, 0, 'badges', 'no badges before any report');
+    msg({ type: 'codeMarkers', markers: [{ name: 'btn1', severity: 'error', title: 'Button Click="btn1_Click" has no handler' }] });
+    t.equal(ovBadges().length, 1, 'badges', 'one badge for the reported control');
+    t.equal(ovBadges()[0].textContent, '⚠', 'badges', 'the badge is a ⚠');
+    t.equal(ovBadges()[0].classList.contains('err'), true, 'badges', 'errors get the error style');
+    t.ok(/no handler/.test(ovBadges()[0].title), 'badges', 'the tooltip carries the reason');
+    const badgeHost = $('overlayLayer').querySelector('.ov[data-name="btn1"]');
+    t.equal(badgeHost.contains(ovBadges()[0]), true, 'badges', 'it sits on the control\'s own overlay');
+    t.equal($('overlayLayer').querySelector('.ov[data-name="btn2"]').querySelectorAll('.ov-badge').length, 0, 'badges',
+        'other controls stay clean');
+    msg({ type: 'codeMarkers', markers: [] });
+    t.equal(ovBadges().length, 0, 'badges', 'an empty report clears the badges');
+
+    // --- ⚙ Settings modal: four triggers + the badge switch, Save posts them ---
+    // The extension answers the ⚙ button with the stored settings.
+    const fillSettingsFromHost = () => msg({ type: 'codeSettings', mode: 'onReturn', badges: true });
+    posted.length = 0;
+    $('btnCodeSettings').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'openCodeSettings', 'settings', 'the button asks for the settings');
+    t.equal($('settingsModal').hidden, true, 'settings', 'the modal waits for the answer');
+    fillSettingsFromHost();
+    t.equal($('settingsModal').hidden, false, 'settings', 'the answer opens the modal');
+    const modeRadios = [...$('settingsModes').querySelectorAll('input')];
+    t.equal(modeRadios.length, 4, 'settings', 'four re-check triggers offered');
+    t.equal(modeRadios.map((r) => r.value).join(','), 'onReturn,onSave,onType,manual', 'settings', 'in trigger order');
+    t.equal(modeRadios[0].checked, true, 'settings', 'the current mode is preselected');
+    t.equal($('settingsBadges').checked, true, 'settings', 'badges on by default');
+    modeRadios[2].checked = true;
+    $('settingsBadges').checked = false;
+    posted.length = 0;
+    $('settingsSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    const savedSettings = posted[posted.length - 1];
+    t.equal(savedSettings.type, 'saveCodeSettings', 'settings', 'Save posts saveCodeSettings');
+    t.equal(savedSettings.mode, 'onType', 'settings', 'with the picked trigger');
+    t.equal(savedSettings.badges, false, 'settings', 'and the badge switch');
+    t.equal($('settingsModal').hidden, true, 'settings', 'and closes the modal');
+    // Cancel/Escape close without saving
+    fillSettingsFromHost();
+    posted.length = 0;
+    $('canvas').dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    t.equal($('settingsModal').hidden, true, 'settings', 'Escape closes the settings');
+    t.ok(posted.every((m) => m.type !== 'saveCodeSettings'), 'settings', 'without saving');
+
 
     // --- the FORM is selectable: first control-list entry "Form - <Title>", and clicking empty
     //     design space selects it (posts a select with name null → Window properties resize it). ---
@@ -1534,5 +1758,77 @@ module.exports = async (t) => {
         t.equal(colMsg.values.headerAlign, 'Center', 'dg-editor', 'header alignment carried');
         t.equal($('dgModal').hidden, true, 'dg-editor', 'Columns Save closes the editor');
     }
+    // --- foldable toolbar categories: click a heading to fold its buttons away, click again to
+    // bring them back (the REAL markup from the extension, not the fixture's bare buttons) ---
+    {
+        const panel = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'designerPanel.ts'), 'utf8');
+        const markup = panel.slice(panel.indexOf('<div id="toolbar">'), panel.indexOf('<div id="main">'));
+        const bar = $('toolbar');
+        bar.innerHTML = markup.slice(markup.indexOf('>') + 1, markup.lastIndexOf('</div>'));
+        const heads = () => [...bar.querySelectorAll('.tbg-head')];
+        const head = (grp) => heads().find((h) => h.dataset.grp === grp);
+        const click = (el) => el.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        // The fixture also keeps a plain copy of every toolbar button directly under <body>, so the
+        // injected markup produces DUPLICATE ids and getElementById resolves to that stale copy.
+        // Query inside the toolbar instead (the real webview has no duplicates).
+        const q = (id) => bar.querySelector('#' + id);
+        const membersOf = (h) => {
+            const out = [];
+            for (let el = h.nextElementSibling; el; el = el.nextElementSibling) {
+                if (el.classList.contains('tbg-head') || el.hasAttribute('data-stop')) break;
+                out.push(el);
+            }
+            return out;
+        };
+
+        t.equal(heads().length, 6, 'toolbar-groups', 'the real toolbar markup has six category headings');
+        t.equal(heads().filter((h) => h.getAttribute('aria-expanded') === 'true').length, 6, 'toolbar-groups',
+            'and all six start unfolded');
+        for (const id of ['btnUndo', 'btnBackup', 'btnZoomIn', 'zoomValue', 'btnSnapGrid', 'btnAlignLeft', 'btnEqualH', 'status']) {
+            t.ok(!!q(id), 'toolbar-groups', `the rendered toolbar still carries #${id}`);
+        }
+        const alignMembers = membersOf(head('align'));
+        t.equal(alignMembers.filter((el) => el.id).length, 9, 'toolbar-groups', 'Alignment owns its nine buttons');
+        t.equal(alignMembers.length, 10, 'toolbar-groups',
+            'plus the separator that closes the group (it folds away with it)');
+        t.equal(membersOf(head('space')).map((el) => el.id).join(','), 'btnEqualV,btnEqualH', 'toolbar-groups',
+            'Spacing stops at the data-stop marker (status + ⚙ Settings are never swallowed)');
+
+        // Fold "Alignment": its buttons vanish, the chip reports itself folded, the state is kept.
+        const align = head('align');
+        const collapsedBefore = JSON.stringify(vscodeState.collapsed || null);
+        click(align);
+        t.equal(align.getAttribute('aria-expanded'), 'false', 'toolbar-groups', 'clicking a heading folds the category');
+        t.equal(q('btnAlignLeft').hidden, true, 'toolbar-groups', 'its buttons are hidden');
+        t.equal(q('btnSameHeight').hidden, true, 'toolbar-groups', 'all of them');
+        t.equal(alignMembers[9].hidden, true, 'toolbar-groups', 'and so is the separator that ends the group');
+        t.equal(q('btnUndo').hidden, false, 'toolbar-groups', 'other categories are untouched');
+        t.equal(q('status').hidden, false, 'toolbar-groups', 'the status text stays');
+        t.equal(q('btnCodeSettings').hidden, false, 'toolbar-groups', 'and so does ⚙ Settings');
+        t.equal(vscodeState.toolbarFolds.align, true, 'toolbar-groups', 'the fold is remembered in the webview state');
+        t.equal(JSON.stringify(vscodeState.collapsed || null), collapsedBefore, 'toolbar-groups',
+            'and the Properties fold memory in the same state object survives');
+        t.ok(/click to unfold/.test(align.title), 'toolbar-groups', 'the tooltip now offers to unfold it');
+
+        // Click again → straight back.
+        click(align);
+        t.equal(align.getAttribute('aria-expanded'), 'true', 'toolbar-groups', 'clicking again unfolds the category');
+        t.equal(q('btnAlignLeft').hidden, false, 'toolbar-groups', 'the buttons are back');
+        t.ok(!('align' in vscodeState.toolbarFolds), 'toolbar-groups', 'and the remembered fold is cleared');
+
+        // Categories fold independently.
+        click(head('file'));
+        click(head('guides'));
+        t.equal(q('btnRefresh').hidden, true, 'toolbar-groups', 'File folds on its own');
+        t.equal(q('btnDotGrid').hidden, true, 'toolbar-groups', 'so does Guides');
+        t.equal(q('btnZoomIn').hidden, false, 'toolbar-groups', 'Zoom is unaffected');
+        t.equal(vscodeState.toolbarFolds.file, true, 'toolbar-groups', 'both folds are remembered');
+        t.equal(vscodeState.toolbarFolds.guides, true, 'toolbar-groups', '…');
+        click(head('file'));
+        click(head('guides'));
+        t.equal(q('btnRefresh').hidden, false, 'toolbar-groups', 'unfolding puts everything back');
+        t.equal(q('btnDotGrid').hidden, false, 'toolbar-groups', '…');
+    }
+
     t.note('T3 done');
 };

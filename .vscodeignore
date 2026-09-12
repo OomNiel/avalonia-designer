@@ -1,7 +1,10 @@
 .vscode/**
 **/*.map
 **/*.ts
-!out/**
+# Only the COMPILED output is re-included. vsce does not use gitignore's "last match wins": a
+# negated pattern beats every ignore pattern no matter where it sits (collectFiles() in vsce's
+# package.js), so negating the whole folder (`!out/**`) drags the source maps straight back in.
+!out/**/*.js
 host/obj/**
 host/bin/**
 **/node_modules/.cache/**
@@ -15,3 +18,9 @@ NOTES_ARCHIVE.md
 NOTES_2026-09-03.md
 NOTES_MEMORY_2026-09-03.md
 SESSION.md
+# Local tool state (e.g. the .poolside agent settings) is not part of the extension.
+.poolside/**
+# Repo artwork that no shipped code loads (the Marketplace icon is Grumpy.png).
+GrumpyWhite.png
+# Build metadata: VS Code only needs package.json plus the compiled out/ folder.
+tsconfig.json

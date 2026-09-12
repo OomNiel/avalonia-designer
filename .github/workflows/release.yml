@@ -1,0 +1,71 @@
+# Release to the Visual Studio Marketplace. Manual only, on purpose: a published version number can
+# never be reused, so a human decides when a build goes out.
+#
+# One-time setup:
+#   1. Create the publisher the manifest names (package.json → "publisher") at
+#      https://marketplace.visualstudio.com/manage
+#   2. Create an Azure DevOps Personal Access Token with the scope "Marketplace → Manage",
+#      then store it in this repository as the secret VSCE_PAT (Settings → Secrets → Actions).
+#   3. Bump "version" in package.json, commit and tag BEFORE running this workflow.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      pre_release:
+        description: Publish as a pre-release (keep this on while the version is a -beta)
+        type: boolean
+        default: true
+      dry_run:
+        description: Dry run — build, test and package, but do not publish
+        type: boolean
+        default: true
+
+jobs:
+  release:
+    name: Package and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Native libraries the headless renderer needs
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libfontconfig1 libice6 libsm6
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm install --prefix tests --no-audit --no-fund
+      - name: Compile the extension (tsc)
+        run: npm run compile
+      - name: Full test suite (never publish an untested build)
+        run: node tests/runner.js
+      - name: Package
+        run: |
+          mkdir -p .artifacts
+          npx --yes @vscode/vsce@2.15.0 package --out .artifacts/avalonia-designer.vsix
+      - name: Publish
+        if: ${{ inputs.dry_run == false }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "${VSCE_PAT}" ]; then
+            echo "::error::VSCE_PAT is not set. Add a Marketplace personal access token as a repository secret."
+            exit 1
+          fi
+          if [ "${{ inputs.pre_release }}" = "true" ]; then
+            npx --yes @vscode/vsce@2.15.0 publish --pre-release
+          else
+            npx --yes @vscode/vsce@2.15.0 publish
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: .artifacts/avalonia-designer.vsix
+          if-no-files-found: error

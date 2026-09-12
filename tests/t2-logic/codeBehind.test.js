@@ -8,7 +8,7 @@ const { Uri } = require('vscode');
 const {
     bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet,
     hasDataSetBinding, findItemsSourceBinding, removeItemsSourceBinding,
-    insertHandlerIntoCodeBehind, findHandlerInCodeBehind, convertCodeBehindToChrome, hasDefaultEvent, defaultEventFor,
+    insertHandlerIntoCodeBehind, findHandlerInCodeBehind, convertCodeBehindToChrome, hasDefaultEvent, defaultEventFor, handlerChoice,
     removeHandlersFromCodeBehind,
     applyAccessors,
     bindImageToGrid, hasDataImageBinding, unbindImageFromGrid
@@ -73,6 +73,23 @@ module.exports = async (t) => {
     t.equal(defaultEventFor('ListBox'), 'SelectionChanged', 'default-event', 'ListBox');
     t.equal(defaultEventFor('Panel'), 'DoubleTapped', 'default-event', 'fallback');
     t.ok(hasDefaultEvent('Button') && !hasDefaultEvent('Panel'), 'default-event', 'hasDefaultEvent');
+
+    // --- middle-click decision: nothing wired / one / several ---
+    t.equal(handlerChoice([]).mode, 'none', 'handler-choice', 'no wired handler → wire the default');
+    t.equal(handlerChoice([{ event: 'Click', handler: 'btn1_Click' }]).mode, 'one', 'handler-choice',
+        'a single handler → open it directly (no dialog)');
+    t.equal(handlerChoice([{ event: 'Click', handler: 'btn1_Click' }]).handler, 'btn1_Click', 'handler-choice',
+        'the single handler is returned');
+    t.equal(handlerChoice([{ event: 'Click', handler: 'a' }, { event: 'Loaded', handler: 'b' }]).mode, 'many',
+        'handler-choice', 'several handlers → let the user choose');
+    t.equal(handlerChoice([{ event: 'Click', handler: 'a' }, { event: 'Tapped', handler: 'b' }]).wired.length, 2,
+        'handler-choice', 'the chooser gets them all');
+    {
+        const list = [{ event: 'Click', handler: 'a' }, { event: 'Loaded', handler: 'b' }];
+        const choice = handlerChoice(list);
+        list.push({ event: 'KeyDown', handler: 'c' });
+        t.equal(choice.wired.length, 2, 'handler-choice', 'the choice is a snapshot, not a live view');
+    }
 
     // --- C# asset binding (ItemsSource = expr) ---
     {

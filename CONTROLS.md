@@ -620,8 +620,11 @@ the body, and a Data-Image call goes after `InitializeComponent()`.
 ## Default events & auto-wiring
 
 Interactive controls carry a **default event** that is wired **automatically when you place the
-control**: the handler attribute (e.g. `Click="Button1_Click"`) is written into the XAML **and**
-the code-behind stub is generated on the spot. Mapping in `src/codeBehind.ts`:
+control** (the handler attribute, e.g. `Click="Button1_Click"`, is written into the XAML **and** the
+code-behind stub is generated on the spot) — unless the event chooser is enabled, in which case
+placing the control asks which event(s) to wire (`avaloniaDesigner.askEventOnPlace`). The default
+events live in the generated catalog `src/controlEvents.ts` (the older hand-written mapping in
+`src/codeBehind.ts` now just delegates to it):
 
 | Control | Default event |
 |---------|----------------|
@@ -631,9 +634,14 @@ the code-behind stub is generated on the spot. Mapping in `src/codeBehind.ts`:
 | TextBox | `TextChanged` |
 | any other control | `DoubleTapped` (fallback) |
 
-> **Middle-click = jump to the handler.** Since placement already inserts the handler, middle-
-> clicking (the scroll wheel) a control just **opens the code-behind at that method** — it does not
-> write anything when the handler already exists. It only creates the stub as a fallback if the
+> **Every event per control — with its handler signature — is in `Events per Control.md`** (generated
+> from the real Avalonia 12.1.1 assemblies), together with the curated list the event picker offers
+> and the `EventArgs` each handler must take (VB.NET is strict about it: `AVLN:0004`).
+
+> **Middle-click = the handler menu.** Since placement already inserts the handler, middle-
+> clicking (the scroll wheel) a control lists the events wired on it and opens the one you pick — it
+> does not write anything when the handler already exists; a ⚠ marks an event whose handler was
+> deleted (recreate it from there), and **Add event…** wires another one. It only creates the stub as a fallback if the
 > method is somehow missing (e.g. a control placed before this behaviour, or hand-written XAML).
 > Layout containers and non-interactive types (`Image`, `Panel`, `Grid`, `StackPanel`, `DockPanel`,
 > `WrapPanel`, `Menu`, `StatusBar`, `StatusDate`) have **no** default event

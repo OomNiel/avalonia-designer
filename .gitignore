@@ -19,6 +19,9 @@ host/obj/
 # Local tooling (private settings, not for the repo)
 .poolside/
 
+# Office-suite lock files (e.g. `.~lock.README.md#` left by LibreOffice Writer)
+.~lock.*#
+
 # Local-only approved smoke harness + compliance snapshot (never released)
 tests/smoke/
 tests/compliance.json

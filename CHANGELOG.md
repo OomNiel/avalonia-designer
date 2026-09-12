@@ -5,6 +5,66 @@ All notable changes to the **Avalonia Designer for VS Code** extension.
 Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
+## [1.0.0-beta.7] - 2026-09-12
+
+### Added
+- **Event wiring you can see and choose.** Placing a control no longer silently picks an event for
+you: a chooser lists the events that make sense for that control (curated per control type, the
+default event first), you can **pick several at once**, and the handler stubs are created in one go.
+**Skip** places the control unwired, and **Remember my choice** makes that control type stop asking
+(settings: `avaloniaDesigner.askEventOnPlace`, `avaloniaDesigner.autoWireDefaultEvent`).
+- **`Events per Control.md`** — a generated reference listing every event each control actually
+exposes in Avalonia 12.1.1, with the `EventArgs` a handler must take, the declaring class, the
+events offered in the picker, and the default event per control. Copy-paste accurate for
+hand-written handlers.
+- **Right-click → “Add event…”** wires another event on a control that is already placed, from the
+same chooser. Events that are already wired are marked and cannot be selected twice.
+- **Middle-click chooses which handler to open.** When a control has several events wired, the
+middle-click now lists them so you can jump straight to the one you want (a single handler still
+opens directly).
+- **The code-behind check can run by itself.** The Code Fix… analysis can now run when you return to
+the designer tab (default), on save, while typing, or only when you press the button
+(`avaloniaDesigner.codeCheck.mode`). Findings are published to **PROBLEMS**, shown as a **⚠ badge**
+on the control in the canvas, and summarised in the toolbar (`avaloniaDesigner.codeCheck.badges`).
+The new **⚙ Settings** button opens these options in the designer.
+- **“Keep my manual edit” for every finding.** When a check reports something you removed on
+purpose, every fixable finding now offers an alternative that accepts your edit instead of undoing
+it: delete the handler from the form as if it had never been wired (`unwrap-handler`), or record the
+decision and stay quiet (`dismiss`).
+- **Re-pointing after a rename.** A handler you renamed by hand (`Button1_Click` →
+`Button1_Clicked`) is offered as a one-click **re-point** instead of an empty new stub, so the body
+you wrote is never lost. A rename is only proposed when exactly one candidate fits the signature.
+- **Foldable toolbar categories.** The designer toolbar is grouped into **Edit**, **File**,
+**Zoom**, **Guides**, **Alignment** and **Spacing**; clicking a category heading folds its buttons
+away and clicking it again brings them back. Categories start unfolded and the folded set is
+remembered per designer tab.
+- **CI and release workflows** (`.github/workflows/`). Every push compiles, runs the test layers
+that need no .NET SDK and proves the extension still packages; a second workflow runs the full suite
+and publishes to the Marketplace on demand.
+
+### Changed
+- **Toolbar tidy-up.** Every button is exactly 24 px tall, the toolbar wraps onto a second row
+instead of squeezing buttons (a separator left dangling at a row break is hidden), **⚙ Settings**
+sits at the far right, and all toolbar text is high-contrast.
+- **Toolbar icons are inline SVG** (13 buttons: undo/redo, the six alignments, text-centre, size and
+spacing) instead of font glyphs — identical on every machine, coloured by the button and readable
+while disabled. **Refresh** is text-only.
+- **Smaller package.** The VSIX no longer ships source maps, build metadata, unused artwork or local
+tool state: **90 files / 588 KB** (was 114 files / 700 KB).
+- **Activation is on demand.** The extension no longer activates at every VS Code start; the
+designer, toolbox, commands and views activate it when they are used.
+- **The event data is a generated catalog.** Default events, the picker lists and every handler
+signature now come from `src/controlEvents.ts`, generated from the real Avalonia assemblies, so the
+XAML stub, the C#/VB signature and the reference document cannot disagree any more.
+
+### Fixed
+- **A missing .NET SDK now says so.** Instead of the raw `spawn dotnet ENOENT`, the designer explains
+that its preview host is built with the .NET SDK and links to the download page.
+- The **Align horizontal/vertical centres** toolbar icons read as a star at 16 px; they now show two
+arrows converging on the centre line.
+- **Deeper high-contrast pass** on the alignment/spacing icons: they are drawn as paths (white,
+1.7 px strokes) rather than by a font.
+
 ## [1.0.0-beta.6] - 2026-09-11
 
 ### Added

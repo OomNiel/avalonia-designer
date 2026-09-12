@@ -35,6 +35,29 @@ module.exports = async (t) => {
     const port = await freePort();
     const host = await startHost(port);
     try {
+        // 0) event attributes the picker can wire (DropDownOpened, Opening, KeyDown, …) are stripped
+        // from the RENDER XAML — the host has no code-behind, so a handler attribute left in would
+        // fail the load. The saved file keeps them (asserted in t2-logic/controlEvents).
+        {
+            const { XamlModel } = require('../../out/xamlModel.js');
+            const model = new XamlModel(W(
+                `<Canvas Name="Body">` +
+                `<ComboBox x:Name="cb1" Width="160" Height="30" Canvas.Left="20" Canvas.Top="20"` +
+                ` DropDownOpened="cb1_DropDownOpened" DropDownClosed="cb1_DropDownClosed" Opening="cb1_Opening"/>` +
+                `<TextBox x:Name="tb1" Width="160" Height="30" Canvas.Left="20" Canvas.Top="70" TextChanging="tb1_TextChanging"/>` +
+                `</Canvas>`));
+            const previewXaml = model.serialize(false);
+            t.ok(previewXaml.includes('DropDownOpened') === false, 'event-strip', 'no handler attribute reaches the host',
+                previewXaml.includes('DropDownOpened') ? 'DropDownOpened still present' : '');
+            const { frame } = await renderPng(host, previewXaml, 800, 450);
+            t.ok(!frame.error, 'event-strip', 'a form wired with picker events renders', frame.error || '');
+            const cb = byName(frame, 'cb1');
+            t.ok(!!cb, 'event-strip', 'the wired ComboBox is reported');
+            if (cb) t.ok(near(cb.width, 160, 6), 'event-strip', 'and keeps its size', `w=${cb.width.toFixed(1)}`);
+            t.ok(model.serialize(true).includes('DropDownOpened="cb1_DropDownOpened"'), 'event-strip',
+                'the saved XAML still carries the wiring');
+        }
+
         // 1) placement: Button at (100,50) 120x36 renders at its Canvas position
         {
             const { frame, img } = await renderPng(host, W(

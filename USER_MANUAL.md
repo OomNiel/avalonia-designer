@@ -8,7 +8,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-11)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-12)
 
 ---
 
@@ -18,8 +18,10 @@
 2. [Creating a new project](#2-creating-a-new-project)
 3. [Installation & first run](#3-installation--first-run)
 4. [Opening a form in the designer](#4-opening-a-form-in-the-designer)
+   - [The designer toolbar](#the-designer-toolbar)
 5. [The Toolbox](#5-the-toolbox)
 6. [Adding a control to the canvas](#6-adding-a-control-to-the-canvas)
+   - [Choosing events when you place a control](#choosing-events-when-you-place-a-control)
 7. [Selecting, moving, resizing, deleting](#7-selecting-moving-resizing-deleting)
 8. [The Properties panel](#8-the-properties-panel)
    - [Tab Items (TabControl)](#tab-items-tabcontrol)
@@ -31,6 +33,9 @@
 11. [Creating a new form (templates)](#11-creating-a-new-form-templates)
 12. [Code-behind: events made easy](#12-code-behind-events-made-easy)
     - [Code Fix… — check and repair the code-behind](#code-fix--check-and-repair-the-code-behind)
+    - [When the check runs by itself](#when-the-check-runs-by-itself)
+    - [Keeping your manual edit instead of a fix](#keeping-your-manual-edit-instead-of-a-fix)
+    - [Wiring more events later](#wiring-more-events-later)
 13. [Clearing the canvas](#13-clearing-the-canvas)
 14. [Keyboard shortcuts](#14-keyboard-shortcuts)
 15. [Layout basics: containers](#15-layout-basics-containers)
@@ -105,10 +110,11 @@ Created Project**) reopens your most recent project any time.
 
 ## 3. Installation & first run
 
-The extension is installed as a `.vsix` file:
+The extension is installed as a `.vsix` file — take it from the
+[latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) and install it with:
 
 ```bash
-code --install-extension avalonia-designer-1.0.0.vsix --force
+code --install-extension avalonia-designer-1.0.0-beta.7.vsix --force
 ```
 
 After installing (or after any update), **reload the window** so the changes take effect:
@@ -118,7 +124,11 @@ The first time you open a form in the designer, the extension **auto-builds the 
 host** (this takes a few seconds — you'll see status messages). It also rebuilds the host
 automatically whenever the host source code changes.
 
-> You need the **.NET SDK** installed for the previewer host to build.
+> **You need the .NET SDK.** The previewer host is a small C# program that the extension builds with
+> `dotnet build` the first time a designer opens, so the .NET SDK must be installed and on your
+> `PATH`. If it is missing, the designer tells you so — *“The .NET SDK was not found on this
+> machine…”* — with a link to the download page, instead of failing silently.
+> (Generated projects additionally need a .NET SDK that supports `net10.0`, e.g. the .NET 10 SDK.)
 
 ---
 
@@ -132,9 +142,10 @@ automatically whenever the host source code changes.
 The designer opens in a custom tab with:
 
 - A **canvas** (the form's design surface) in the middle.
-- A **toolbar** at the top (**New Form**, **⟳ Refresh**, **🩺 Code Fix…**, **💾 Project Backup**,
-  zoom in/out, fit, clear selection). **⟳ Refresh** re-reads the form from disk and re-renders it
-  (see §12 for **Code Fix…**; **Project Backup** is described below).
+- A **toolbar** at the top, grouped into **foldable categories** (**Edit**, **File**, **Zoom**,
+  **Guides**, **Alignment**, **Spacing**). **Refresh** re-reads the form from disk and re-renders
+  it; **🩺 Code Fix…** and **⚙ Settings** are described in §12; **💾 Project Backup** below. The full
+  list is in [The designer toolbar](#the-designer-toolbar).
 - The **Properties panel** on the right.
 - The **Toolbox** in the sidebar (revealed automatically).
 
@@ -148,7 +159,31 @@ The designer opens in a custom tab with:
 > The reason is that the designer **re-formats** the form when it saves (attribute order,
 > indentation, and hand-made structural edits are the usual cause of a code-behind that no longer
 > matches — see §12, **Code Fix…**). If you *must* edit the `.axaml` by hand, do it while the
-> designer tab is closed, then press **⟳ Refresh**; the designer will not clobber unsaved work.
+> designer tab is closed, then press **Refresh**; the designer will not clobber unsaved work.
+
+### The designer toolbar
+
+The toolbar buttons are grouped into **categories** you can fold away: click a category heading
+(e.g. **Alignment**) to hide its buttons, click it again to bring them back. Every category starts
+**unfolded**, and the folded set is remembered for that designer tab.
+
+| Category | Buttons |
+|---|---|
+| **Edit** | Undo, Redo |
+| **File** | **+ New Form**, **Refresh**, **🩺 Code Fix…**, **💾 Project Backup** |
+| **Zoom** | **−**, zoom read-out (**100 %**), **+**, **Fit** |
+| **Guides** | **Grid** (dot grid on/off), **Snap** (snap-to-grid), **Grid…** (spacing, colour, dot size), **Crosshair** |
+| **Alignment** | **Align left / centre / right / top / middle / bottom**, **Align text**, **Same width**, **Same height** |
+| **Spacing** | **Equal V**, **Equal H** (equal gaps between 3 or more controls) |
+
+The alignment and spacing buttons take the **first-selected control** as the reference and become
+enabled once two or more controls are selected. **⚙ Settings** sits at the far right of the toolbar,
+next to the status text.
+
+> The toolbar **wraps onto a second row** when the panel is narrow — buttons are never squeezed, so
+a long form list or a small window may show two rows. The icons are drawn by the extension itself
+(inline SVG, no font needed), so they look the same on every machine and stay readable while a
+button is disabled.
 
 ### 💾 Project Backup — a dated copy of the whole project
 
@@ -277,12 +312,28 @@ The control is placed inside the container under your click. If the form's root 
 it gets `Canvas.Left`/`Canvas.Top` (free position). If it's a **StackPanel** or **Grid**, it's
 placed into that layout.
 
+### Choosing events when you place a control
+
 Interactive controls (Button, CheckBox, RadioButton, TextBox, ComboBox, ListBox, TabControl,
-DataGrid) have a **default event** (e.g. `Click` for a Button). When you **place** such a control,
-the extension **immediately wires it up**: it adds the event to the XAML (e.g. `Click="Button1_Click"`)
-and creates the handler method in your code-behind — you just fill in the body. Containers
-(Grid, StackPanel, Image, …) have no default event and are placed as-is. Middle-click a control
-any time to jump straight to its handler. See [Section 12](#12-code-behind-events-made-easy).
+DataGrid, …) expose a long list of events, so the designer asks which of them your form should
+handle. Placing such a control opens a chooser — the default event first (`Click` for a Button,
+`TextChanged` for a TextBox, `SelectionChanged` for a ComboBox / ListBox / TabControl / DataGrid):
+
+- **Tick one or more events** and press **Wire** — every ticked event is written into the form
+  (e.g. `Click="Button1_Click"`) and each handler method is created in your code-behind, so you only
+  fill in the bodies.
+- **Skip** places the control without wiring anything. You can add an event later from the
+  right-click menu (**Add event…**, §10).
+- **Remember my choice** stops the chooser from asking again for that control type — from then on the
+  control is wired silently with the event you picked.
+
+Containers and non-interactive types (Grid, StackPanel, Image, …) have no events to offer and are
+placed as-is.
+
+**Middle-click** a control any time to jump to a handler: the extension lists the events wired on
+that control (a ⚠ marks one whose handler has been deleted — recreate it from there) and offers
+**Add event…**. Pick one and the code-behind opens with the cursor inside the method. See
+[Section 12](#12-code-behind-events-made-easy).
 
 > Drag-and-drop from the toolbox also works, but on Linux/Xorg it can be unreliable — the
 > **click-then-click** method always works.
@@ -553,6 +604,9 @@ Right-click a control on the canvas for:
     free-placement Canvas), not as a raw item on the tab strip.
   - The XAML is kept tidy: moving out of a `Canvas` removes `Canvas.Left/Top`, out of a `Grid`
     removes `Grid.Row/Column`, etc.; moving *into* a `Canvas` sets `Left="0" Top="0"`.
+- **Add event…** — wire another event on this control (chosen from the same list as when you place a
+  control, and tick as many as you like). Events that are already wired are marked and cannot be
+  picked a second time, so this is also the way back for a control you placed with **Skip** (§12).
 - **Delete** — remove the control (and its now-unused code-behind methods).
 
 Right-clicking **empty canvas space** shows only **Paste** (and paste works there).
@@ -584,10 +638,11 @@ designer. Every template **builds and runs out of the box** in both C# and VB.NE
 
 ## 12. Code-behind: events made easy
 
-When you place an interactive control its default event is wired automatically (see above). To open
-the handler, **middle-click** (press the scroll wheel) the control — the extension opens the
-code-behind file with the cursor inside the handler body (the handler is created if it was somehow
-missing).
+When you place an interactive control the chooser wires the events you ticked (§6) and creates the
+handler methods for you. To open one, **middle-click** (press the scroll wheel) the control — the
+extension opens the code-behind file with the cursor inside the handler body (the handler is created
+if it was somehow missing). When the control has **several** events wired, the middle-click first
+lists them, so you choose which handler to jump to.
 
 Defaults per control:
 
@@ -659,8 +714,44 @@ Two things worth knowing when you read a finding:
   for C#, after the `Inherits …` line for VB, and a Data-Image call **after**
   `InitializeComponent()` — before it, the grid the binding wires up does not exist yet.
 
-The check runs **only when you press the button** (it never repairs anything behind your back), and
-running it does not change your form or your code-behind.
+### When the check runs by itself
+
+The check never repairs anything behind your back — every fix is a button you press. It *can* look on
+its own, though, so you hear about broken wiring without having to think of it. The **⚙ Settings**
+button at the far right of the designer toolbar decides when:
+
+| Mode (`avaloniaDesigner.codeCheck.mode`) | When the check runs |
+|---|---|
+| **onReturn** (default) | when you come back to the designer tab from the code-behind |
+| **onSave** | when the form or the code-behind is saved |
+| **onType** | while you edit the code-behind (shortly after you stop typing) |
+| **manual** | only when you press **🩺 Code Fix…** |
+
+The same dialog carries the **badges** switch (`avaloniaDesigner.codeCheck.badges`): with it on, a
+control with a missing or broken handler gets a **⚠ badge** on the canvas and the toolbar shows a
+hint — so the problem is visible where you are working, not only inside the Code Fix list. Findings
+are published to the **PROBLEMS** pane either way, and running a check never changes your form or
+your code.
+
+### Keeping your manual edit instead of a fix
+
+You know your code better than the checker does, so a finding that is really *your* decision does not
+have to be fixed:
+
+- **Leave it — keep my code** dismisses that finding for this session; the list stays short while you
+  work.
+- Where the designer can follow your lead it does more than stay quiet: if you deleted a handler on
+  purpose, **Keep my delete — unwire it** also removes the event from the form — as if the handler had
+  never been wired. The same choice appears for a rename you made by hand (**Keep my rename — unwire
+  it**) and for a signature you changed (**Keep my signature — unwire it**).
+- Anything else can simply be ignored: checks are read-only until you press a button.
+
+### Wiring more events later
+
+Right-click the control → **Add event…** to wire another event, using the same chooser as when you
+place a control (events that are already wired are marked and cannot be picked twice). This is also
+the way back for a control you placed with **Skip**, and the way to add a second handler to a control
+that already has one — e.g. a `KeyDown` next to a Button's `Click`.
 
 ---
 
@@ -860,7 +951,7 @@ as at runtime). Code-behind is discovered correctly even when the class lives in
 
 - **Changes need a reload** — after installing/updating the extension, reload the window.
 - **The designer does not reload itself when the file changes on disk** (e.g. you edited the XAML
-  in a text tab) — press **⟳ Refresh** in the designer toolbar to pull the file in again.
+  in a text tab) — press **Refresh** in the designer toolbar to pull the file in again.
 - **Previewer host builds on first open** — the first designer open builds the C# host; give it a
   few seconds.
 - **`StatusBar` doesn't exist in Avalonia** — the Status Bar tool inserts the standard

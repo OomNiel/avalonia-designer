@@ -27,12 +27,26 @@ dotnet build host/PreviewerHost.csproj -c Debug   # → host/bin/Debug/net8.0/Pr
 
 ### Packaging / installing
 ```bash
-rm -f avalonia-designer-1.0.0-beta.1.vsix && echo y | vsce package --out avalonia-designer-1.0.0-beta.1.vsix \
-  && code --install-extension avalonia-designer-1.0.0-beta.1.vsix --force
+npm run package                                              # vsce package (pinned @vscode/vsce@2.15.0)
+code --install-extension avalonia-designer-1.0.0-beta.7.vsix --force
+npm run publish:pre                                          # Marketplace pre-release (needs VSCE_PAT)
 ```
-- `vsce` needs an explicit `activationEvents` array when `main` is present.
-- The `.vsix` does **NOT** bundle the compiled host (only `host/*.cs` + `.csproj`) — the installed copy auto-builds.
-- `.vscodeignore` (NOT `.gitignore`) controls packaging; the `NOTES*.md`/`SESSION.md` dev docs are excluded (~425KB vsix).
+- `activationEvents` is **`[]`** (empty): contributed commands/views/custom editors activate the
+  extension on demand. Listing `onStartupFinished` made it load for every user at every window start.
+- The `.vsix` does **NOT** bundle the compiled host (only `host/*.cs`, `resources/*.cs` + the
+  `.csproj`) — the installed copy auto-builds it.
+- `.vscodeignore` (NOT `.gitignore`) controls packaging; dev docs (`NOTES*.md`/`SESSION.md`),
+  `tests/**`, `.poolside/**`, `tsconfig.json`, unused artwork and the source maps are excluded
+  (**90 files / 588 KB**).
+- **vsce is NOT gitignore** (verified in its `collectFiles()`): a negated pattern (`!x`) wins over
+  EVERY ignore pattern wherever it sits, and folder patterns are auto-expanded (`foo` → `foo/**`).
+  The old `!out/**` therefore re-included all 24 source maps no matter how they were excluded —
+  negate narrowly (`!out/**/*.js`) and check with `npx vsce ls | grep -c '\.map$'` (must be 0).
+- CI: `.github/workflows/ci.yml` (tsc + T2 + T3 + `vsce package` on every push; the T0–T5 suite is a
+  manual job because it needs the .NET SDK and native libs) and `.github/workflows/release.yml`
+  (manual, full suite → package → publish, dry-run by default, `VSCE_PAT` from the repo secrets).
+- A **missing .NET SDK** is reported by name (with the download link) instead of `spawn dotnet ENOENT`
+  — see `DOTNET_SDK_MISSING_MESSAGE` in `src/hostClient.ts`.
 - **Every extension change needs a VS Code window reload.** After a version change make sure no stale
   higher-semver copy lingers in `~/.vscode/extensions/` — it shadows the newly installed one.
 
@@ -45,7 +59,8 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 1605 passed, 0 failed** (2026-09-06). Layer map + gotchas: NOTES_2026-09-03.md §6.
+- **Current: 2646 passed, 0 failed / 0 skipped** (2026-09-12, ~41 s). Layer map: `TEST_PLAN.md` §2;
+  per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
 - **`node tests/smoke/smoke.js`** — an explicit user-approved exception to the "no automated app runs"
@@ -173,6 +188,21 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     (unreadable). Any dark webview with `<select>`s must pin `color-scheme: dark` and ideally give
     `option { background/color }` explicit contrast. Also fixed while in there: `.dg-input`/splitter
     fields referenced `--panel-1`, which was never defined in `:root`.
+20. **vsce `.vscodeignore` is not gitignore** — a negated pattern always wins (see §1). Adding
+    `out/**/*.map` *after* `!out/**` looks like a fix and silently ships every map: negate narrowly
+    (`!out/**/*.js`) and verify with `npx vsce ls`.
+21. **Folded toolbar categories must stay transparent to the wrap pass.** `layoutToolbar()` sets every
+    `.sep` back to visible and compares `offsetTop` to spot a separator left dangling by a wrap; a
+    folded group hides its buttons imperatively, so `foldedToolbarItems()` has to be consulted or the
+    folded group's separator reappears (and a hidden button then counts as an invisible "neighbour"
+    and hides the *next* group's separator).
+22. **T3's jsdom fixture also keeps a plain copy of every toolbar button under `<body>`**, so injecting
+    the real toolbar markup creates DUPLICATE ids and `getElementById` resolves to the stale copy.
+    Query inside the toolbar (`bar.querySelector('#id')`) in that layer.
+23. **CSS is occasionally re-formatted (spaces around `>` dropped: `#btnUndo>svg`)** — that broke
+    exact-text assertions in the suite. Write CSS assertions whitespace-tolerant (`\s*`). Related:
+    `#toolbar button{display:inline-flex}` beats the UA `[hidden]` rule, so folded groups need an
+    explicit `#toolbar [hidden]{display:none}`.
 
 ---
 
@@ -191,8 +221,33 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
 
 ---
 
-## 6. Current feature state (2026-09-05)
+## 6. Current feature state (2026-09-12)
 
+- **Events, code-behind sync, toolbar categories, packaging (2026-09-12, suite 2646/0, release
+  1.0.0-beta.7).** Five threads:
+  1. **Event catalog (generated, not hand-written).** A throwaway console app (`/tmp/eventdump`, its own
+     `EventDump.csproj` + `Program.cs`) reflects every public event per control out of the real
+     Avalonia 12.1.1 assemblies into `events.tsv`; `gen-data.js` curates the picker lists and validates
+     them against that dump (it caught invented events — `ComboBoxItem/ListBoxItem/TreeViewItem.
+     SelectionChanged` do not exist — and resolved conflicts), `gen-ts.js` writes
+     **`src/controlEvents.ts`** (DEFAULT_EVENT, EVENT_PICKER_TAGS, EVENTS_BY_CONTROL, GENERIC_EVENTS,
+     EVENT_ARGS, EVENT_ARGS_BY_CONTROL for the 5 names whose EventArgs differ per control) and
+     `gen-md.js` writes **`Events per Control.md`** from the *shipped* `out/controlEvents.js`, so the
+     reference cannot drift from the code. Regenerate all three after any Avalonia upgrade.
+  2. **Wiring UI.** Chooser on placement (curated list, default first, multi-select, **Skip**, "remember
+     my choice"), right-click **Add event…**, middle-click handler menu (wired events + ⚠ recreate +
+     Add event…). Settings: `askEventOnPlace`, `autoWireDefaultEvent`.
+  3. **Code-behind sync.** `codeCheck.mode` (onReturn default / onSave / onType / manual) +
+     `codeCheck.badges`, the ⚙ Settings modal, canvas ⚠ badges, PROBLEMS publishing, `repoint-handler`
+     for a hand-rename (only when exactly one candidate fits), and a `dismiss` /
+     `unwrap-handler` alternative on every fixable finding (dismissals are session-scoped per document,
+     `issueSignature()` is line-independent).
+  4. **Toolbar.** Foldable categories (`.tbg-head` chips + a `data-stop` marker; the folded set lives in
+     the webview state), uniform 24 px buttons, wrapping rows that hide a dangling separator, 13
+     inline-SVG icons (no font involved), text-only Refresh.
+  5. **Packaging/release.** Slimmer `.vscodeignore`, `activationEvents: []`, the .NET-SDK preflight
+     message, CI + release workflows, `npm run package|publish:pre|publish:stable`, and
+     `tests/t2-logic/packaging.test.js` locking the manifest/ignore/workflow rules.
 - **File browser in the generated add/edit row dialog (2026-09-09, suite 1842/0).** User spec: in the
   "Add row…" pop-up dialog add a file browser tool that selects a file from the system drive and
   fills the currently selected column box. Answers: every **String** column; a **Browse… button next

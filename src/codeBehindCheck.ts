@@ -42,6 +42,7 @@ import {
     convertCodeBehindToChrome,
     vbMatchingEnd
 } from './codeBehind';
+import { EVENT_ARGS, eventArgsFor } from './controlEvents';
 
 // ---------------- model ----------------
 
@@ -66,9 +67,32 @@ export type PanelFixKind = 'regenerate-binding' | 'rebind-grid' | 'copy-bundled-
     /** Inline `<ComboBoxItem>` children must go before an ItemsSource can be used. */
     | 'remove-inline-items'
     /** A follower binding whose grid/table/column is gone. */
-    | 'drop-follower';
+    | 'drop-follower'
+    /** The XAML wires a handler that was renamed in the code-behind: point the form at the new name. */
+    | 'repoint-handler'
+    /** The user deleted (or renamed) the handler on purpose: drop the event attribute from the form. */
+    | 'unwrap-handler'
+    /** "Leave my code alone": suppress this exact finding until the form is reopened. */
+    | 'dismiss';
 
 export type CodeFixKind = LocalFixKind | PanelFixKind | 'report-only';
+
+/**
+ * A SECOND way to resolve the same finding, offered as an extra button next to **Fix**. The first
+ * fix is always the one that repairs the form the way it was; an alternative is the "the edit was
+ * deliberate, follow it" route (e.g. a handler deleted by hand → unwire the form instead of
+ * re-creating the method).
+ */
+export interface CodeAlternative {
+    /** How the alternative would be applied — same dispatch as a primary fix kind. */
+    kind: CodeFixKind;
+    /** Button label, e.g. "Keep my delete — unwire it". */
+    label: string;
+    /** Tooltip: exactly what it will change. */
+    detail: string;
+    /** Payload for the alternative (merged over the finding's own `data`). */
+    data?: Record<string, string>;
+}
 
 export interface CodeIssue {
     /** Stable per-run id — used by the webview to request exactly this fix. */
@@ -87,6 +111,8 @@ export interface CodeIssue {
     member?: string;
     /** Fixer payload (handler name, occurrence index, grid, column, …). */
     data?: Record<string, string>;
+    /** Extra, equivalent-in-rank fixes the user may choose instead (see CodeAlternative). */
+    alternatives?: CodeAlternative[];
 }
 
 /** What the designer panel knows about the form's DataSets (used by the binding checks). */
@@ -193,14 +219,12 @@ const EVENTS = new Set([
 
 /** EventArgs per event, where the designer KNOWS the signature it generates. Events that are not
  *  listed here are never signature-checked (a wrong guess would break valid user code). */
+/** Where the EventArgs differs per control (Window.Opened = EventArgs, Menu.Opened = RoutedEventArgs),
+ *  `eventArgsFor` resolves it with the control tag; this is only the no-tag fallback. */
 const KNOWN_EVENT_ARGS: Record<string, string> = {
     Click: 'Avalonia.Interactivity.RoutedEventArgs',
     Loaded: 'Avalonia.Interactivity.RoutedEventArgs',
-    Unloaded: 'Avalonia.Interactivity.RoutedEventArgs',
-    DoubleTapped: 'Avalonia.Input.TappedEventArgs',
-    Tapped: 'Avalonia.Input.TappedEventArgs',
-    SelectionChanged: 'Avalonia.Controls.SelectionChangedEventArgs',
-    TextChanged: 'Avalonia.Controls.TextChangedEventArgs'
+    Unloaded: 'Avalonia.Interactivity.RoutedEventArgs'
 };
 
 const VB_ACCESSOR_DECL = /^[ \t]*Private\s+ReadOnly\s+Property\s+([A-Za-z_]\w*)\s+As\s+([\w.]+)\s*$/gmi;
@@ -211,6 +235,45 @@ export interface AxamlEvent {
     event: string;
     handler: string;
     line: number;
+}
+
+/**
+ * A stable identity for a finding, independent of its line number: the dismiss feature remembers it
+ * for the session, so "leave my code alone" keeps holding while the file is edited.
+ */
+export function issueSignature(issue: CodeIssue): string {
+    const d = issue.data ?? {};
+    return [issue.kind, issue.member ?? '', d.control ?? '', d.event ?? '', d.helper ?? '',
+    d.namespace ?? '', d.name ?? ''].join('|');
+}
+
+/**
+ * "The manual edit was deliberate" for a finding the designer could otherwise repair: it is not
+ * applied to any file, it just stops this one finding from being reported again while the form is
+ * open. Every fixable finding gets it, so a hand-edited code-behind never forces a repair.
+ */
+function dismissAlternative(): CodeAlternative {
+    return {
+        kind: 'dismiss',
+        label: 'Leave it — keep my code',
+        detail: 'Nothing is changed: this finding is hidden until you reopen the form. Use it when the ' +
+            'manual edit is what you want and Code Fix should stop asking.'
+    };
+}
+
+/**
+ * "The manual edit was deliberate" alternative for a wired-but-missing (or renamed) handler: drop
+ * the event attribute from the form so the control is not wired at all. The code-behind — whatever
+ * the user made of it — is never touched.
+ */
+function unwireAlternative(e: { control: string; tag: string; event: string; handler: string }, label: string): CodeAlternative {
+    return {
+        kind: 'unwrap-handler',
+        label,
+        detail: `Removes ${e.event}="${e.handler}" from ${e.control || 'the control'} in the form, so the ` +
+            'control is not wired for that event any more. The code-behind is left exactly as you wrote it.',
+        data: { control: e.control, event: e.event, handler: e.handler, tag: e.tag }
+    };
 }
 
 export interface AxamlFacts {
@@ -527,7 +590,15 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
     const language = code.language;
     const issues: CodeIssue[] = [];
     const add = (i: Omit<CodeIssue, 'id'> & { id?: string }): void => {
-        issues.push({ ...i, id: i.id ?? `${i.kind}:${i.member ?? i.title}:${i.line ?? 0}` });
+        // Every FIXABLE finding also offers "leave my code as it is" (a session dismissal) — the
+        // counterpart of the primary repair, for when the manual edit was the intention. Findings
+        // that describe a manual edit the designer can follow (a deleted handler → unwire the form)
+        // bring their own, more useful alternative and simply get this added as well.
+        const alternatives = [...(i.alternatives ?? [])];
+        if (i.kind !== 'report-only' && alternatives.some((a) => a.kind === 'dismiss') === false) {
+            alternatives.push(dismissAlternative());
+        }
+        issues.push({ ...i, alternatives, id: i.id ?? `${i.kind}:${i.member ?? i.title}:${i.line ?? 0}` });
     };
 
     const controls = unionNamedControls(opts.controls ?? [], ax.names);
@@ -596,18 +667,36 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
     const methodNames = new Set(code.methods.map((m) => m.name));
     for (const e of ax.events) {
         if (methodNames.has(e.handler)) continue;
+        // Renamed by hand? A method whose signature already fits this event and whose name is a
+        // near-miss of the wired one is offered as a RE-POINT (the code is left untouched).
+        const renamed = renameCandidates(e.handler, eventArgsFor(e.event, e.tag), code.methods);
+        if (renamed) {
+            add({
+                severity: 'error', kind: 'repoint-handler', member: e.handler, line: e.line, file: 'axaml',
+                title: `${e.tag} ${e.event}="${e.handler}" — renamed to "${renamed.name}"?`,
+                detail: `The form still wires "${e.handler}", but "${renamed.name}" takes the parameter ` +
+                    `list a ${e.event} handler needs. Fix: point the form's ${e.event} attribute at ` +
+                    `"${renamed.name}" — your code is left exactly as it is. If the rename was meant to ` +
+                    'get rid of the handler, use the second button instead.',
+                data: { handler: e.handler, event: e.event, tag: e.tag, control: e.control, found: renamed.name },
+                alternatives: [unwireAlternative(e, 'Keep my rename — unwire it')]
+            });
+            continue;
+        }
         add({
             severity: 'error', kind: 'insert-handler', member: e.handler, line: e.line, file: 'axaml',
             title: `${e.tag} ${e.event}="${e.handler}" has no handler`,
             detail: 'The XAML compiler fails with "no accessible method matches" while the handler is ' +
-                'missing. Fix: insert an empty handler with the correct signature.',
-            data: { handler: e.handler, event: e.event }
+                'missing. Fix: insert an empty handler with the correct signature. If you deleted the ' +
+                'handler on purpose, use the second button to drop the wiring from the form instead.',
+            data: { handler: e.handler, event: e.event, tag: e.tag },
+            alternatives: [unwireAlternative(e, 'Keep my delete — unwire it')]
         });
     }
 
     // ---- 4) handler signature doesn't match the event ----
     for (const e of ax.events) {
-        const expected = KNOWN_EVENT_ARGS[e.event];
+        const expected = EVENT_ARGS[e.event] ?? KNOWN_EVENT_ARGS[e.event];
         if (!expected) continue;
         const method = code.methods.find((m) => m.name === e.handler);
         if (!method) continue;
@@ -617,8 +706,10 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
             severity: 'error', kind: 'fix-handler-signature', member: e.handler, line: method.line,
             title: `${e.handler} has the wrong parameter type`,
             detail: `A ${e.event} handler must take (sender, ${want}). Fix: rewrite the signature ` +
-                '(the body is left untouched).',
-            data: { handler: e.handler, event: e.event, occurrence: String(method.occurrence) }
+                '(the body is left untouched). If the mismatch comes from YOUR edit and you want the ' +
+                'event gone instead, use the second button.',
+            data: { handler: e.handler, event: e.event, occurrence: String(method.occurrence), tag: e.tag },
+            alternatives: [unwireAlternative(e, 'Keep my signature — unwire it')]
         });
     }
 
@@ -1025,6 +1116,30 @@ function csBodyLineEnd(text: string, declIndex: number): number {
     return lineEndFrom(text, open);
 }
 
+/**
+ * The method a XAML-wired handler was most likely RENAMED to — the classic manual edit: the form
+ * still says `Click="Button1_Click"` while the code-behind now declares `Button1_Clicked` (or the
+ * other way round: the attribute was renamed and the method kept the old name). Only methods whose
+ * parameter list already matches the event's delegate are considered, and only when EXACTLY ONE
+ * candidate is plausible — this must never guess, or it would silently point a form at the wrong
+ * method (the alternative finding, "insert the missing handler", is always safe).
+ */
+export function renameCandidates(
+    wired: string,
+    expectedArgs: string,
+    methods: { name: string; params: string }[]
+): { name: string } | undefined {
+    const want = expectedArgs.split('.').pop()!;
+    // "Plausible rename": one name is a prefix/suffix of the other (Button1_Click ↔ Button1_Clicked)
+    // with enough shared characters that unrelated handlers (Button2_Click) can't match.
+    const related = (a: string, b: string): boolean => {
+        if (Math.min(a.length, b.length) < 6) return false;
+        return a.startsWith(b) || b.startsWith(a) || a.endsWith(b) || b.endsWith(a);
+    };
+    const hits = methods.filter((m) => m.name !== wired && m.params.includes(want) && related(wired, m.name));
+    return hits.length === 1 ? { name: hits[0].name } : undefined;
+}
+
 /** Removes one method by its analysed span (line-start .. past the terminator). */
 function removeMethodAt(text: string, start: number, end: number): string {
     return text.slice(0, start) + text.slice(end);
@@ -1055,14 +1170,14 @@ export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts
             return `Removed the duplicate/leftover "${data.name}".`;
         }
         case 'insert-handler': {
-            const r = await insertHandlerIntoCodeBehind(axamlUri, data.handler, data.event);
+            const r = await insertHandlerIntoCodeBehind(axamlUri, data.handler, data.event, data.tag);
             return r ? `Added the missing handler "${data.handler}".` : 'Could not insert the handler.';
         }
         case 'fix-handler-signature': {
             const facts = parseCode(codeFile, read());
             const method = facts.methods.filter((m) => m.name === data.handler)[Number(data.occurrence ?? '1') - 1];
             if (!method) return `Handler "${data.handler}" is gone.`;
-            const full = KNOWN_EVENT_ARGS[data.event] ?? 'Avalonia.Interactivity.RoutedEventArgs';
+            const full = eventArgsFor(data.event, data.tag);
             const params = language === 'vb'
                 ? `(sender As Object, e As ${full})`
                 : `(object? sender, ${full} e)`;

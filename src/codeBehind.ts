@@ -3,30 +3,33 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { findProject } from './projectParser';
 import { statusClockFormat, STATUS_CLOCK_DEFAULT } from './propertyCatalog';
-
-/** Default event per control type; falls back to DoubleTapped (valid on all input controls). */
-const DEFAULT_EVENT: Record<string, string> = {
-    Button: 'Click',
-    CheckBox: 'IsCheckedChanged',
-    RadioButton: 'IsCheckedChanged',
-    ComboBox: 'SelectionChanged',
-    ListBox: 'SelectionChanged',
-    TabControl: 'SelectionChanged',
-    DataGrid: 'SelectionChanged',
-    TextBox: 'TextChanged',
-    HyperlinkButton: 'Click',
-    CommandBarButton: 'Click',
-    CommandBarToggleButton: 'IsCheckedChanged'
-};
+import { defaultEventFor as catalogDefaultEvent, hasDefaultEvent as catalogHasDefaultEvent, eventArgsFor } from './controlEvents';
 
 /** The event handler VS Code will attach when you middle-click a control of this type. */
 export function defaultEventFor(tag: string): string {
-    return DEFAULT_EVENT[tag] ?? 'DoubleTapped';
+    return catalogDefaultEvent(tag);
 }
 
 /** True if the control type has a specific default event (interactive controls) worth auto-wiring on placement. */
 export function hasDefaultEvent(tag: string): boolean {
-    return tag in DEFAULT_EVENT;
+    return catalogHasDefaultEvent(tag);
+}
+
+/**
+ * What a middle-click on a control should do, given the handlers the form has wired for it:
+ *  - `none` — nothing wired yet: wire the control's default event and open that (the old behaviour);
+ *  - `one`  — a single handler: open it straight away, no pointless dialog;
+ *  - `many` — let the user pick which of the wired handlers to jump to.
+ */
+export type HandlerChoice =
+    | { mode: 'none' }
+    | { mode: 'one'; event: string; handler: string }
+    | { mode: 'many'; wired: { event: string; handler: string }[] };
+
+export function handlerChoice(wired: ReadonlyArray<{ event: string; handler: string }>): HandlerChoice {
+    if (wired.length === 0) return { mode: 'none' };
+    if (wired.length === 1) return { mode: 'one', event: wired[0].event, handler: wired[0].handler };
+    return { mode: 'many', wired: wired.slice() };
 }
 
 export interface InsertResult {
@@ -38,11 +41,14 @@ export interface InsertResult {
 /**
  * Finds (or creates) the code-behind for an .axaml file and inserts the event
  * handler method, then returns the file path and the cursor position.
+ * \`tag\` (the control type, e.g. 'Window', 'TextBox') resolves the EventArgs type — a few event
+ * names differ per control (`Opened`, `ValueChanged`, `SelectedDateChanged`).
  */
 export async function insertHandlerIntoCodeBehind(
     axamlUri: vscode.Uri,
     handler: string,
-    eventName: string
+    eventName: string,
+    tag?: string
 ): Promise<InsertResult | undefined> {
     const base = path.basename(axamlUri.fsPath, '.axaml');
     let filePath = findCodeBehindFile(axamlUri);
@@ -59,8 +65,8 @@ export async function insertHandlerIntoCodeBehind(
 
     const original = fs.readFileSync(filePath, 'utf8');
     const result = language === 'cs'
-        ? insertCsMethod(original, handler, base)
-        : insertVbMethod(original, handler, base, eventName);
+        ? insertCsMethod(original, handler, base, eventName, tag)
+        : insertVbMethod(original, handler, base, eventName, tag);
     if (!result) return undefined;
 
     if (result.text !== original) {
@@ -404,7 +410,7 @@ function findCsMethodDecl(text: string, handler: string): number {
     return idx >= 0 ? idx : m.index;
 }
 
-function insertCsMethod(text: string, handler: string, className?: string): { text: string; cursorOffset: number } | undefined {
+function insertCsMethod(text: string, handler: string, className: string | undefined, eventName: string, tag?: string): { text: string; cursorOffset: number } | undefined {
     const existing = findCsMethodDecl(text, handler);
     if (existing >= 0) {
         return { text, cursorOffset: existing };
@@ -426,7 +432,7 @@ function insertCsMethod(text: string, handler: string, className?: string): { te
     const indent = text.slice(lineStart, m.index).match(/^\s*/)?.[0] ?? '';
     const bodyIndent = indent + '    ';
 
-    const method = `\n${bodyIndent}private void ${handler}(object sender, Avalonia.Interactivity.RoutedEventArgs e)\n${bodyIndent}{\n${bodyIndent}    // TODO: Handle ${handler}\n${bodyIndent}}\n`;
+    const method = `\n${bodyIndent}private void ${handler}(object sender, ${eventArgsFor(eventName, tag)} e)\n${bodyIndent}{\n${bodyIndent}    // TODO: Handle ${handler}\n${bodyIndent}}\n`;
     const newText = text.slice(0, close) + method + text.slice(close);
     const cursorOffset = newText.indexOf('// TODO: Handle ' + handler);
     return { text: newText, cursorOffset };
@@ -437,22 +443,11 @@ function insertCsMethod(text: string, handler: string, className?: string): { te
 /**
  * The VB event-args type required by the Avalonia XAML compiler for an event.
  * VB is strict here (unlike C#): the handler signature must match the event's
- * delegate exactly, otherwise the build fails with AVLN:0004.
+ * delegate exactly, otherwise the build fails with AVLN:0004. The map is generated from the
+ * Avalonia assemblies (see src/controlEvents.ts), so every event the picker offers is covered.
  */
-function vbEventArgsFor(eventName: string): string {
-    switch (eventName) {
-        case 'Tapped':
-        case 'DoubleTapped':
-        case 'RightTapped':
-        case 'Holding':
-            return 'Avalonia.Input.TappedEventArgs';
-        case 'SelectionChanged':
-            return 'Avalonia.Controls.SelectionChangedEventArgs';
-        case 'TextChanged':
-            return 'Avalonia.Controls.TextChangedEventArgs';
-        default:
-            return 'Avalonia.Interactivity.RoutedEventArgs';
-    }
+function vbEventArgsFor(eventName: string, tag?: string): string {
+    return eventArgsFor(eventName, tag);
 }
 
 /**
@@ -468,7 +463,7 @@ function findVbMethodDecl(text: string, handler: string): number {
     return idx >= 0 ? idx : m.index;
 }
 
-function insertVbMethod(text: string, handler: string, className: string | undefined, eventName: string): { text: string; cursorOffset: number } | undefined {
+function insertVbMethod(text: string, handler: string, className: string | undefined, eventName: string, tag?: string): { text: string; cursorOffset: number } | undefined {
     const existing = findVbMethodDecl(text, handler);
     if (existing >= 0) {
         return { text, cursorOffset: existing };
@@ -491,7 +486,7 @@ function insertVbMethod(text: string, handler: string, className: string | undef
     const indent = text.slice(lineStart, m.index).match(/^\s*/)?.[0] ?? '';
     const bodyIndent = indent + '    ';
 
-    const method = `\n${bodyIndent}Private Sub ${handler}(sender As Object, e As ${vbEventArgsFor(eventName)})\n${bodyIndent}    ' TODO: Handle ${handler}\n${bodyIndent}End Sub\n`;
+    const method = `\n${bodyIndent}Private Sub ${handler}(sender As Object, e As ${vbEventArgsFor(eventName, tag)})\n${bodyIndent}    ' TODO: Handle ${handler}\n${bodyIndent}End Sub\n`;
     const newText = text.slice(0, endIndex) + method + text.slice(endIndex);
     const cursorOffset = newText.indexOf("' TODO: Handle " + handler);
     return { text: newText, cursorOffset };

@@ -9,6 +9,9 @@
     --panel-2: #2d2d30;
     --border: #3c3c3c;
     --fg: #cccccc;
+    /* Toolbar text: the buttons sit on --panel-2, so they get a real white instead of the dull
+       grey the rest of the UI uses — a glyph is much harder to read than a word. */
+    --fg-hi: #ffffff;
     --fg-dim: #8a8a8a;
     --accent: #4fc3f7;
     --accent-2: #1e90ff;
@@ -39,26 +42,97 @@ body {
 /* ---------- toolbar ---------- */
 #toolbar {
     display: flex;
+    /* Wrap onto a second row instead of squeezing the buttons when the panel gets narrow.
+       Breaks only happen between items, so a button is never split, and the ⚙ Settings button
+       (after the status text) simply rides along at the end of the last row. */
+    flex-wrap: wrap;
     align-items: center;
-    gap: 4px;
+    gap: 4px 4px;
     padding: 4px 8px;
     background: var(--panel);
     border-bottom: 1px solid var(--border);
     flex: 0 0 auto;
+    color: var(--fg-hi);
 }
 
 #toolbar button {
     background: var(--panel-2);
-    color: var(--fg);
+    color: var(--fg-hi);
     border: 1px solid var(--border);
     border-radius: 3px;
-    padding: 3px 10px;
+    padding: 0 10px;
     cursor: pointer;
     font-size: 13px;
+    /* ONE height for every button, whatever is on it. An emoji label (🩺 Code Fix…, 💾 Project
+       Backup) or a glyph (−, ⤢) would otherwise make its button taller than a plain-text one
+       (New Form) — the panel's own font metrics leak into the line box. Fixing the box keeps the
+       row perfectly even. */
+    box-sizing: border-box;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    white-space: nowrap;
+    /* Never squeeze a button to make it fit — the toolbar wraps to the next row instead. */
+    flex: 0 0 auto;
+}
+
+/* The ⚙ Settings button sits at the FAR RIGHT, after the status text. */
+#btnCodeSettings {
+    margin-left: 8px;
+    flex: 0 0 auto;
+}
+
+/* The zoom read-out lines up with the buttons around it. */
+#zoomValue {
+    height: 24px;
+    box-sizing: border-box;
 }
 
 #toolbar button:hover {
-    background: #3a3a3d;
+    background: #46464b;
+    border-color: #6d6d72;
+}
+
+/* Glyph-only buttons (undo/redo, alignment, spacing) draw an INLINE SVG icon: no font is involved
+   at all, so the marks look identical on every machine — and they follow the button's colour
+   through `currentColor`, including the disabled grey, hover and the active (tb-active) state. */
+#btnUndo>svg,
+#btnRedo>svg,
+#btnAlignLeft>svg,
+#btnAlignCentre>svg,
+#btnAlignRight>svg,
+#btnAlignTop>svg,
+#btnAlignMiddle>svg,
+#btnAlignBottom>svg,
+#btnAlignText>svg,
+#btnSameWidth>svg,
+#btnSameHeight>svg,
+#btnEqualV>svg,
+#btnEqualH>svg {
+    display: block;
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+}
+
+/* Their buttons are square-ish: the shared 24px box plus a small side padding. */
+#btnUndo,
+#btnRedo,
+#btnAlignLeft,
+#btnAlignCentre,
+#btnAlignRight,
+#btnAlignTop,
+#btnAlignMiddle,
+#btnAlignBottom,
+#btnAlignText,
+#btnSameWidth,
+#btnSameHeight,
+#btnEqualV,
+#btnEqualH {
+    padding: 0 6px;
+    min-width: 26px;
 }
 
 #btnNewForm {
@@ -71,7 +145,7 @@ body {
     text-align: center;
     background: transparent;
     border: 1px solid transparent;
-    color: var(--fg);
+    color: var(--fg-hi);
     font-size: 12px;
 }
 
@@ -82,9 +156,67 @@ body {
     margin: 0 4px;
 }
 
+/* A separator the toolbar's wrap left dangling (at the end of a row or the start of the next one)
+   is switched off in layoutToolbar() — the UA `[hidden]` rule is made explicit for flex items. */
+.sep[hidden] {
+    display: none;
+}
+
+/* ---------- foldable toolbar categories ---------- */
+/* Every category (Edit, File, Zoom, Guides, Alignment, Spacing) has a heading chip that folds the
+   buttons after it away; the chip is the way back. The toolbar itself stays a FLAT flex box — the
+   buttons are still direct children — which is what keeps the wrapping above working, so
+   designer.js works out which buttons belong to a heading (see toolbarMembers). */
+#toolbar .tbg-head {
+    background: transparent;
+    border-color: transparent;
+    color: #cfd6de;
+    padding: 0 8px 0 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+#toolbar .tbg-head:hover {
+    color: var(--fg-hi);
+    background: #3d3d42;
+    border-color: transparent;
+}
+
+/* Folded away: the chip stays readable (it is the only way back) but looks put away. */
+#toolbar .tbg-head[aria-expanded="false"] {
+    background: #33333a;
+    color: #cfd6de;
+}
+
+/* The caret (▸ folded / ▾ open) is two borders, not a glyph — nothing to be missing on a
+   font-poor machine, and turning it is a plain transform. */
+#toolbar .tbg-head::before {
+    content: '';
+    display: block;
+    width: 5px;
+    height: 5px;
+    margin-right: 6px;
+    border-right: 1.8px solid currentColor;
+    border-bottom: 1.8px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.12s ease;
+}
+
+#toolbar .tbg-head[aria-expanded="true"]::before {
+    transform: rotate(45deg);
+}
+
+/* A folded group's buttons carry the `hidden` attribute. `#toolbar button` sets
+   `display: inline-flex`, which beats the UA `[hidden] { display: none }` rule on specificity, so
+   the hide has to be spelled out (the same reason `.sep[hidden]` exists above). */
+#toolbar [hidden] {
+    display: none;
+}
+
 #status {
     margin-left: auto;
-    color: var(--fg-dim);
+    color: #e6e9ee;
     font-size: 12px;
     white-space: nowrap;
     overflow: hidden;
@@ -189,6 +321,27 @@ body {
 #overlayLayer .ov.drop {
     border: 1.5px dashed var(--accent);
     background: var(--sel);
+}
+
+/* Code-behind problem marker (missing handler, broken binding, …) reported by the extension.
+   `pointer-events: auto` so the tooltip works even though the overlay layer is click-through. */
+.ov-badge {
+    position: absolute;
+    top: -7px;
+    right: -7px;
+    pointer-events: auto;
+    font-size: 12px;
+    line-height: 1;
+    cursor: help;
+    filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.7));
+}
+
+.ov-badge.err {
+    color: #ff6b6b;
+}
+
+.ov-badge.warn {
+    color: #ffc14d;
 }
 
 /* ---------- menu bar dummies (design-time placeholders over the empty bar) ---------- */
@@ -1106,6 +1259,164 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     color: #fff;
 }
 
+/* Event picker (wire an event when a control is placed / Add event… from the context menu) */
+.event-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 46vh;
+    overflow-y: auto;
+    margin: 6px 0 4px 0;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--panel-2);
+    padding: 4px;
+}
+
+.event-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.event-row:hover {
+    background: var(--panel);
+}
+
+.event-row.wired {
+    opacity: 0.75;
+    cursor: default;
+}
+
+.event-row input.event-pick {
+    margin: 0;
+    flex: 0 0 auto;
+}
+
+.event-name {
+    flex: 1 1 auto;
+    font-family: var(--vscode-editor-font-family);
+}
+
+.event-handler {
+    flex: 0 1 auto;
+    font-size: 10px;
+    opacity: 0.6;
+    font-family: var(--vscode-editor-font-family);
+}
+
+.event-wired {
+    flex: 0 0 auto;
+    font-size: 10px;
+    color: var(--accent);
+}
+
+/* The form wires this handler, but the method is gone (deleted by hand) — ⚠ instead of ✓. */
+.event-wired.missing {
+    color: #ffc14d;
+    font-weight: 600;
+}
+
+/* Code-check settings modal (the toolbar's ⚙ Settings): one radio row per trigger. */
+.settings-modes {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0 10px 0;
+}
+
+.settings-mode {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 5px 6px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.settings-mode:hover {
+    border-color: var(--accent);
+    background: var(--panel-2);
+}
+
+.settings-mode input {
+    margin: 2px 0 0 0;
+    flex: 0 0 auto;
+}
+
+.settings-mode-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.settings-mode-hint {
+    font-size: 10px;
+    opacity: 0.7;
+}
+
+.event-goto {
+    flex: 0 0 auto;
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 10px;
+    line-height: 1;
+    padding: 2px 4px;
+    cursor: pointer;
+}
+
+.event-goto:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.modal-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    opacity: 0.85;
+    margin: 2px 0 0 0;
+    cursor: pointer;
+}
+
+.modal-check[hidden] {
+    display: none;
+}
+
+/* Wired-event chooser (middle-click a control that has several handlers): the rows ARE buttons. */
+.handler-row {
+    width: 100%;
+    box-sizing: border-box;
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid transparent;
+    font-family: inherit;
+    text-align: left;
+}
+
+.handler-row:hover,
+.handler-row:focus {
+    border-color: var(--accent);
+    background: var(--panel);
+}
+
+.handler-row:focus {
+    outline: none;
+}
+
+.handler-row .event-wired {
+    font-size: 12px;
+}
+
 /* 'Code Fix…' findings (code-behind checker) */
 .code-list {
     display: flex;
@@ -1327,9 +1638,13 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     color: #fff;
 }
 
-/* Toolbar buttons that need a selection are disabled until there is one. */
+/* Toolbar buttons that need a selection are disabled until there is one. They stay READABLE while
+   off — a dimmed-but-legible grey instead of a 45%-washed white, so the icon is still
+   identifiable — and are set apart by a recessed background/border rather than by fading out. */
 #toolbar button:disabled {
-    opacity: 0.45;
+    color: #9aa4b0;
+    background: #2a2a2d;
+    border-color: #38383c;
     cursor: default;
 }
 

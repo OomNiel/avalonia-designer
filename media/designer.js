@@ -52,11 +52,34 @@
         dotGridCancel: $('dotGridCancel'),
         btnClearSel: $('btnClearSel'),
         contextMenu: $('contextMenu'),
+        toolbar: $('toolbar'),
         ctxDelete: $('ctxDelete'),
         ctxCut: $('ctxCut'),
         ctxCopy: $('ctxCopy'),
         ctxPaste: $('ctxPaste'),
         ctxMoveToContainer: $('ctxMoveToContainer'),
+        ctxAddEvent: $('ctxAddEvent'),
+        eventModal: $('eventModal'),
+        eventTitle: $('eventTitle'),
+        eventHint: $('eventHint'),
+        eventList: $('eventList'),
+        eventRemember: $('eventRemember'),
+        eventRememberWrap: $('eventRememberWrap'),
+        eventSkip: $('eventSkip'),
+        eventWire: $('eventWire'),
+        handlerModal: $('handlerModal'),
+        handlerTitle: $('handlerTitle'),
+        handlerHint: $('handlerHint'),
+        handlerList: $('handlerList'),
+        handlerAdd: $('handlerAdd'),
+        handlerClose: $('handlerClose'),
+        btnCodeSettings: $('btnCodeSettings'),
+        settingsModal: $('settingsModal'),
+        settingsHint: $('settingsHint'),
+        settingsModes: $('settingsModes'),
+        settingsBadges: $('settingsBadges'),
+        settingsSave: $('settingsSave'),
+        settingsCancel: $('settingsCancel'),
         helpPanel: $('helpPanel'),
         helpTitle: $('helpTitle'),
         helpBody: $('helpBody'),
@@ -147,6 +170,9 @@
         // Which Properties sections the user folded away, per control TYPE (e.g. { DataGrid: { data: true } }).
         // Remembered across designer reopens via the webview state (see loadCollapsed/persistCollapsed).
         collapsed: {},
+        // The toolbar CATEGORIES the user folded away (e.g. { align: true }). Every group starts
+        // UNFOLDED; the same webview state as the Properties folds (see loadToolbarFolds).
+        toolbarFolds: {},
         helpOpen: true,
         lastProps: null,
         clipboard: false,
@@ -154,6 +180,9 @@
         recell: null, // { gridName, cells: { v: [], h: [] } } when the selected control is a Grid child
         // Divider bars of every SplitPanel (design coords) — a drag on one resizes the panes.
         splitBars: [],
+        // Code-behind problems the extension reported, per control name: { name: { severity, title } }.
+        // Drawn as a ⚠ badge in the control's overlay (see renderOverlays).
+        markers: {},
         dotGrid: { enabled: true, snap: false, spacingX: 16, spacingY: 16, color: '#9db4d0', dotSize: 1.5 },
         // Crosshair look/length: mode 'short'|'long', shortLength px (Short cross total), line
         // thickness px, opacity %, line colour. The outline colour is auto-derived for contrast.
@@ -388,6 +417,16 @@
             d.style.width = (c.width * state.scale) + 'px';
             d.style.height = (c.height * state.scale) + 'px';
             d.dataset.name = c.name;
+            // A code-behind problem the extension reported for this control (e.g. the handler the
+            // form wires was deleted by hand) — a small ⚠ in the corner, hover to read it.
+            const mark = state.markers[c.name];
+            if (mark) {
+                const badge = document.createElement('span');
+                badge.className = 'ov-badge ' + (mark.severity === 'warning' ? 'warn' : 'err');
+                badge.textContent = '⚠';
+                badge.title = mark.title || 'Code-behind problem';
+                d.appendChild(badge);
+            }
             els.overlay.appendChild(d);
         }
         renderMenuDummies();
@@ -692,6 +731,221 @@
         if (name === '') { selectForm(); return; } // the "Form - <Title>" entry
         const c = state.frame.controls.find((x) => x.name === name);
         if (c) select(c);
+    });
+
+    // ---------------- event picker modal (wire event(s) for a control) ----------------
+    // Opened by the extension: after a control is PLACED (mode 'place' — the default event is
+    // preselected, Skip places it unwired, the "remember" checkbox stores the choice) or from
+    // right-click → Add event (mode 'add' — already-wired events are marked and cannot be re-picked,
+    // and each of them offers ↗ to open its handler).
+    let eventEdit = null;
+    function closeEventPicker() { els.eventModal.hidden = true; eventEdit = null; }
+    function eventChecked() {
+        return Array.from(els.eventList.querySelectorAll('input.event-pick'))
+            .filter((i) => i.checked && i.disabled === false).map((i) => i.value);
+    }
+    function refreshEventButtons() {
+        const n = eventChecked().length;
+        els.eventWire.disabled = n === 0;
+        els.eventWire.textContent = n === 1 ? 'Wire event' : 'Wire ' + n + ' events';
+    }
+    function renderEventList() {
+        if (!eventEdit) return;
+        const list = els.eventList;
+        list.innerHTML = '';
+        const wiredMap = new Map(eventEdit.wired.map((w) => [w && w.event, w]));
+        eventEdit.events.forEach((ev) => {
+            const info = wiredMap.get(ev);
+            const handler = info ? String(info.handler || '') : '';
+            // The form wires it, but the method is gone (deleted by hand) → ⚠ instead of ✓.
+            const missing = info ? info.missing === true : false;
+            const row = document.createElement('div');
+            row.className = 'event-row' + (handler ? ' wired' : '');
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'event-pick';
+            cb.value = ev;
+            cb.disabled = !!handler;
+            cb.checked = handler === '' && ev === eventEdit.preselect;
+            cb.addEventListener('change', refreshEventButtons);
+            row.appendChild(cb);
+            const name = document.createElement('span');
+            name.className = 'event-name';
+            name.textContent = ev;
+            row.appendChild(name);
+            const h = document.createElement('span');
+            h.className = 'event-handler';
+            h.textContent = handler || (eventEdit.name + '_' + ev);
+            row.appendChild(h);
+            if (handler) {
+                const badge = document.createElement('span');
+                badge.className = 'event-wired' + (missing ? ' missing' : '');
+                badge.textContent = missing ? '⚠ missing' : '✓ wired';
+                badge.title = missing
+                    ? 'The form wires ' + handler + ', but the method is gone — clicking ↗ recreates it'
+                    : 'Wired in the form';
+                row.appendChild(badge);
+                const go = document.createElement('button');
+                go.type = 'button';
+                go.className = 'event-goto';
+                go.textContent = '↗';
+                go.title = (missing ? 'Recreate and open ' : 'Open ') + handler;
+                go.addEventListener('click', () => post({ type: 'openHandler', name: eventEdit.name, handler, event: ev }));
+                row.appendChild(go);
+            }
+            list.appendChild(row);
+        });
+        refreshEventButtons();
+    }
+    function openEventPicker(msg) {
+        const place = msg.mode !== 'add';
+        eventEdit = {
+            name: String(msg.name || ''),
+            mode: place ? 'place' : 'add',
+            events: Array.isArray(msg.events) ? msg.events.map(String) : [],
+            wired: Array.isArray(msg.wired) ? msg.wired : [],
+            preselect: place ? String(msg.defaultEvent || '') : ''
+        };
+        const label = msg.label ? String(msg.label) : String(msg.tag || '');
+        els.eventTitle.textContent = (place ? 'Wire an event — ' : 'Add event — ') + label + ' ' + eventEdit.name;
+        els.eventHint.textContent = place
+            ? 'Tick the event(s) to wire for this control. Each one becomes a handler in the code-behind (' +
+            eventEdit.name + '_<Event>). Skip places it without a handler — right-click → Add event… adds one later.'
+            : 'Events already wired are marked ✓ — pick any other event to add another handler.';
+        els.eventRememberWrap.hidden = place === false;
+        els.eventRemember.checked = false;
+        renderEventList();
+        els.eventModal.hidden = false;
+        const first = els.eventList.querySelector('input.event-pick:not([disabled])');
+        if (first) first.focus();
+    }
+    els.eventWire.addEventListener('click', () => {
+        if (!eventEdit) return;
+        const events = eventChecked();
+        if (events.length === 0) return;
+        post({ type: 'wireEvents', name: eventEdit.name, events, remember: els.eventRemember.checked });
+        closeEventPicker();
+    });
+    els.eventSkip.addEventListener('click', () => {
+        if (!eventEdit) return;
+        const msg = { type: 'skipEventPicker', name: eventEdit.name, remember: els.eventRemember.checked };
+        const place = eventEdit.mode === 'place';
+        post(msg);
+        if (place) els.status.textContent = 'Placed without an event handler.';
+        closeEventPicker();
+    });
+    els.eventModal.addEventListener('click', (e) => {
+        if (e.target === els.eventModal) { els.eventSkip.click(); } // click outside = skip
+    });
+
+    // ---------------- wired-event chooser (middle-click a control) ----------------
+    // Middle-click asks the extension which handlers the control has: one → the extension opens it
+    // straight away, several → this list (openHandlerMenu) so the user picks which one to jump to.
+    let handlerTarget = null;
+    function closeHandlerMenu() { els.handlerModal.hidden = true; handlerTarget = null; }
+    function openHandlerMenu(msg) {
+        handlerTarget = { name: String(msg.name || '') };
+        const label = msg.label ? String(msg.label) : String(msg.tag || '');
+        const wired = Array.isArray(msg.wired) ? msg.wired : [];
+        els.handlerTitle.textContent = 'Wired events — ' + label + ' ' + handlerTarget.name;
+        els.handlerHint.textContent = 'This control has ' + wired.length +
+            ' event handlers. Pick the one to open in the code-behind.';
+        els.handlerList.innerHTML = '';
+        wired.forEach((w) => {
+            if (!w || !w.handler) return;
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'event-row handler-row';
+            row.title = 'Open ' + w.handler + ' in the editor';
+            const name = document.createElement('span');
+            name.className = 'event-name';
+            name.textContent = String(w.event);
+            row.appendChild(name);
+            const h = document.createElement('span');
+            h.className = 'event-handler';
+            h.textContent = String(w.handler);
+            row.appendChild(h);
+            const go = document.createElement('span');
+            go.className = 'event-wired' + (w.missing ? ' missing' : '');
+            go.textContent = w.missing ? '⚠ recreate' : '↗';
+            row.appendChild(go);
+            row.addEventListener('click', () => {
+                post({ type: 'openHandler', name: handlerTarget.name, handler: String(w.handler), event: String(w.event) });
+                closeHandlerMenu();
+            });
+            els.handlerList.appendChild(row);
+        });
+        els.handlerModal.hidden = false;
+        const first = els.handlerList.querySelector('.handler-row');
+        if (first) first.focus();
+    }
+    els.handlerClose.addEventListener('click', closeHandlerMenu);
+    els.handlerAdd.addEventListener('click', () => {
+        const name = handlerTarget ? handlerTarget.name : null;
+        closeHandlerMenu();
+        if (name) post({ type: 'addEvent', name });
+    });
+    els.handlerModal.addEventListener('click', (e) => {
+        if (e.target === els.handlerModal) closeHandlerMenu(); // click outside closes
+    });
+
+    // ---------------- code-check settings (toolbar ⚙ Settings) ----------------
+    // Which trigger re-checks the code-behind (returning to the designer / on save / while typing /
+    // only manually) and whether problem controls get a ⚠ badge. Stored in the user's settings.
+    const CHECK_MODES = [
+        ['onReturn', 'When I come back to the designer', 'Re-checks every time the designer tab is focused again — catches edits made in the code-behind meanwhile.'],
+        ['onSave', 'When the code-behind is saved', 'Re-checks when the .vb/.cs file is saved (Ctrl+S).'],
+        ['onType', 'While I type (after a pause)', 'Re-checks shortly after you stop typing in the code-behind.'],
+        ['manual', 'Only when I press Code Fix…', 'No automatic check at all — the original behaviour.']
+    ];
+    let settingsOpen = false;
+    function closeSettings() { els.settingsModal.hidden = true; settingsOpen = false; }
+    function fillSettings(msg) {
+        const mode = String(msg && msg.mode ? msg.mode : 'onReturn');
+        els.settingsModes.innerHTML = '';
+        CHECK_MODES.forEach(([value, label, hint]) => {
+            const row = document.createElement('label');
+            row.className = 'settings-mode';
+            const radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'codeCheckMode';
+            radio.value = value;
+            radio.checked = value === mode;
+            row.appendChild(radio);
+            const text = document.createElement('span');
+            text.className = 'settings-mode-text';
+            const strong = document.createElement('b');
+            strong.textContent = label;
+            const small = document.createElement('span');
+            small.className = 'settings-mode-hint';
+            small.textContent = hint;
+            text.appendChild(strong);
+            text.appendChild(small);
+            row.appendChild(text);
+            els.settingsModes.appendChild(row);
+        });
+        els.settingsBadges.checked = !msg || msg.badges !== false;
+        if (settingsOpen === false) {
+            els.settingsModal.hidden = false;
+            settingsOpen = true;
+            const first = els.settingsModes.querySelector('input');
+            if (first) first.focus();
+        }
+    }
+    els.btnCodeSettings.addEventListener('click', () => post({ type: 'openCodeSettings' }));
+    els.settingsSave.addEventListener('click', () => {
+        const picked = els.settingsModes.querySelector('input:checked');
+        post({
+            type: 'saveCodeSettings',
+            mode: picked ? picked.value : 'onReturn',
+            badges: els.settingsBadges.checked
+        });
+        closeSettings();
+        els.status.textContent = 'Code-check settings saved.';
+    });
+    els.settingsCancel.addEventListener('click', closeSettings);
+    els.settingsModal.addEventListener('click', (e) => {
+        if (e.target === els.settingsModal) closeSettings(); // click outside cancels
     });
 
     // Right-click on the control list dropdown → context menu to delete the
@@ -1245,6 +1499,9 @@
         els.ctxCut.disabled = !hasSel || locked;
         els.ctxCopy.disabled = !hasSel;
         els.ctxMoveToContainer.disabled = !hasSel || locked;
+        // Add event… needs a NAMED control (the handler is named after it) but works for the locked
+        // Body too — a Canvas can carry Loaded/pointer events like any other control.
+        els.ctxAddEvent.disabled = !hasSel;
         els.ctxDelete.disabled = !hasSel || locked;
         els.ctxPaste.disabled = !state.clipboard;
         els.contextMenu.hidden = false;
@@ -1288,6 +1545,13 @@
         els.contextMenu.hidden = true;
     });
     els.ctxDelete.addEventListener('click', () => deleteSelected(els.contextMenu.dataset.name));
+    // Add event… — the extension answers with the openEventPicker message (the control's events,
+    // which ones are already wired) and the modal below wires whatever gets ticked.
+    els.ctxAddEvent.addEventListener('click', () => {
+        const name = els.contextMenu.dataset.name || null;
+        els.contextMenu.hidden = true;
+        if (name) post({ type: 'addEvent', name });
+    });
     els.contextMenu.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('click', hideContextMenu);
     window.addEventListener('resize', hideContextMenu);
@@ -2090,6 +2354,9 @@
                 break;
             case 'status':
                 els.status.textContent = msg.message;
+                // A long status can change how the toolbar wraps (it shares the last row with the
+                // ⚙ Settings button), so re-run the separator layout.
+                layoutToolbar();
                 break;
             case 'codeIssues':
                 renderCodeIssues(msg);
@@ -2101,6 +2368,23 @@
                 }
                 break;
             }
+            case 'openEventPicker':
+                openEventPicker(msg);
+                break;
+            case 'openHandlerMenu':
+                openHandlerMenu(msg);
+                break;
+            case 'codeMarkers': {
+                state.markers = {};
+                for (const m of (Array.isArray(msg.markers) ? msg.markers : [])) {
+                    if (m && m.name) state.markers[String(m.name)] = { severity: String(m.severity || 'error'), title: String(m.title || '') };
+                }
+                renderOverlays();
+                break;
+            }
+            case 'codeSettings':
+                fillSettings(msg);
+                break;
             case 'armTool': {
                 state.pendingTag = msg.tag;
                 updatePendingTool();
@@ -2144,6 +2428,109 @@
     });
 
     // ---------------- toolbar ----------------
+    // The toolbar wraps onto a second row when the buttons don't fit (see #toolbar in the CSS).
+    // A separator (`.sep`) that the wrap left dangling — at the END of a row or at the very START
+    // of the next one — is hidden, so a divider always has buttons on both sides of it.
+    function layoutToolbar() {
+        const bar = els.toolbar;
+        if (!bar) return;
+        // A category that is folded away takes its separator with it: it must not be reset below
+        // (that would leave a stray divider standing where the group used to be).
+        const folded = foldedToolbarItems();
+        const seps = Array.from(bar.querySelectorAll('.sep')).filter((s) => folded.has(s) === false);
+        for (const sep of seps) sep.hidden = false;
+        if (seps.length === 0) return;
+        // A button a folded group hid takes no space, so it is not the separator's neighbour either.
+        const kids = Array.from(bar.children).filter((el) => el.hidden !== true);
+        for (let i = 0; i < kids.length; i++) {
+            const sep = kids[i];
+            if (sep.classList.contains('sep') === false) continue;
+            const prev = kids[i - 1];
+            const next = kids[i + 1];
+            const alone = (prev === undefined || prev.offsetTop !== sep.offsetTop)
+                || (next === undefined || next.offsetTop !== sep.offsetTop);
+            if (alone) sep.hidden = true;
+        }
+    }
+    window.addEventListener('resize', () => layoutToolbar());
+
+    // ---------------- foldable toolbar categories ----------------
+    // The toolbar is a FLAT flex box (so it wraps as before), so a category is defined by its
+    // heading chip: everything after a `.tbg-head` belongs to it, up to the next heading or the
+    // `data-stop` marker (the status text and ⚙ Settings are never folded away). Groups start
+    // UNFOLDED; the folded set is remembered per designer tab, like the Properties sections.
+    function toolbarHeads() {
+        return els.toolbar ? Array.from(els.toolbar.querySelectorAll('.tbg-head')) : [];
+    }
+
+    /** The toolbar items that belong to a heading — its following siblings, until the next
+     *  heading or the `data-stop` marker. */
+    function toolbarMembers(head) {
+        const members = [];
+        for (let el = head.nextElementSibling; el; el = el.nextElementSibling) {
+            if (el.classList.contains('tbg-head') || el.hasAttribute('data-stop')) break;
+            members.push(el);
+        }
+        return members;
+    }
+
+    /** Every item the FOLDED categories currently hide — their buttons, the zoom read-out and the
+     *  separators inside them. Used both to hide them and to keep the wrap pass off them. */
+    function foldedToolbarItems() {
+        const hidden = new Set();
+        for (const head of toolbarHeads()) {
+            if (state.toolbarFolds[head.dataset.grp] !== true) continue;
+            for (const el of toolbarMembers(head)) hidden.add(el);
+        }
+        return hidden;
+    }
+
+    /** Paints the folded state onto every category (and re-runs the wrap: the toolbar's rows change). */
+    function applyToolbarFolds() {
+        for (const head of toolbarHeads()) {
+            const folded = state.toolbarFolds[head.dataset.grp] === true;
+            for (const el of toolbarMembers(head)) el.hidden = folded;
+            head.setAttribute('aria-expanded', folded ? 'false' : 'true');
+            head.title = (head.dataset.tip || '')
+                + (folded ? ' — click to unfold this group' : ' — click to fold this group away');
+        }
+        layoutToolbar();
+    }
+
+    function loadToolbarFolds() {
+        try {
+            const saved = typeof vscode.getState === 'function' ? vscode.getState() : null;
+            if (saved && saved.toolbarFolds && typeof saved.toolbarFolds === 'object') state.toolbarFolds = saved.toolbarFolds;
+        } catch (e) { /* every group starts unfolded */ }
+    }
+
+    function persistToolbarFolds() {
+        try {
+            if (typeof vscode.setState !== 'function') return;
+            const prev = (typeof vscode.getState === 'function' ? vscode.getState() : null) || {};
+            const next = Object.assign({}, prev);
+            next.toolbarFolds = state.toolbarFolds;
+            vscode.setState(next);
+        } catch (e) { /* ignore */ }
+    }
+
+    function toggleToolbarGroup(grp) {
+        if (!grp) return;
+        if (state.toolbarFolds[grp] === true) delete state.toolbarFolds[grp];
+        else state.toolbarFolds[grp] = true;
+        persistToolbarFolds();
+        applyToolbarFolds();
+    }
+
+    // ONE delegated listener for the whole toolbar: the headings are the only buttons without an
+    // action of their own, and delegation survives anything that re-renders the toolbar.
+    if (els.toolbar) {
+        els.toolbar.addEventListener('click', (e) => {
+            const head = e.target && e.target.closest ? e.target.closest('.tbg-head') : null;
+            if (head) toggleToolbarGroup(head.dataset.grp || '');
+        });
+    }
+
     // Undo / Redo — the history (5 levels) lives in the extension; these post the SAME messages
     // the Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y shortcuts send, and are enabled/disabled by the
     // extension's historyState messages.
@@ -2363,6 +2750,21 @@
                     post({ type: 'codeFix', id: it.id });
                 });
                 actions.appendChild(fix);
+                // Alternative ways to resolve the SAME finding — e.g. "the handler delete was
+                // deliberate, drop the wiring from the form instead of re-creating the method".
+                (it.alternatives || []).forEach((a, altIndex) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'modal-btn';
+                    b.textContent = a.label || 'Alternative fix';
+                    b.title = a.detail || '';
+                    b.addEventListener('click', () => {
+                        b.disabled = true;
+                        b.textContent = 'Applying\u2026';
+                        post({ type: 'codeFix', id: it.id, alt: altIndex });
+                    });
+                    actions.appendChild(b);
+                });
             } else {
                 const manual = document.createElement('span');
                 manual.className = 'code-item-manual';
@@ -2447,6 +2849,9 @@
             if (!els.dotGridModal.hidden) closeDotGridSettings();
             if (!els.crosshairModal.hidden) closeCrosshairSettings();
             if (!els.menuModal.hidden) closeMenuEditor();
+            if (!els.eventModal.hidden) els.eventSkip.click();
+            if (!els.handlerModal.hidden) closeHandlerMenu();
+            if (!els.settingsModal.hidden) closeSettings();
             if (!els.statusModal.hidden) closeStatusEditor();
             if (!els.splitModal.hidden) closeSplitEditor();
             if (!els.splitterModal.hidden) closeSplitterEditor();
@@ -3195,6 +3600,10 @@
     applyDotGrid(); // initial toolbar state (overlay follows the first frame message)
     applyCrosshair(); // initial crosshair style (the frame message carries the saved settings)
     loadCollapsed(); // restore the Properties sections the user folded last time
+    loadToolbarFolds(); // and the toolbar categories they folded away
+    applyToolbarFolds(); // apply that state; this also runs the first wrap/separator pass
+    // VS Code sizes the webview frame just after load — re-run once the real width is known.
+    setTimeout(() => layoutToolbar(), 0);
 
     // tell the extension the webview is ready (triggers the first render)
     post({ type: 'ready' });

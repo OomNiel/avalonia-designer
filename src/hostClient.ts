@@ -205,6 +205,18 @@ export class HostClient {
     }
 }
 
+/** Shown when the machine has no `dotnet` on PATH: the preview host is built with the .NET SDK, so
+ *  without it the designer cannot render anything. Written for a user who has just installed the
+ *  extension from a marketplace and has no idea a renderer host is involved. */
+export const DOTNET_SDK_MISSING_MESSAGE =
+    'The .NET SDK was not found on this machine, so the Avalonia designer cannot build its preview host. '
+    + 'Install the .NET SDK (https://dotnet.microsoft.com/download) and reload the window.';
+
+/** True for the error Node throws when the executable itself does not exist (ENOENT on spawn). */
+function isMissingExecutable(e: unknown): boolean {
+    return (e as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
 /** Manages the PreviewerHost process lifecycle (spawn on demand, auto-reconnect). */
 export class PreviewerHostManager implements vscode.Disposable {
     private client?: HostClient;
@@ -250,7 +262,14 @@ export class PreviewerHostManager implements vscode.Disposable {
         // Rebuild if the binary is missing OR any host source file is newer than it,
         // so host fixes always reach the installed copy (not just the dev workspace).
         if (!fs.existsSync(bin) || this.hostSourceIsNewer(bin, path.dirname(project))) {
-            await runCmd('dotnet', ['build', project, '-c', cfg]);
+            try {
+                await runCmd('dotnet', ['build', project, '-c', cfg]);
+            } catch (e) {
+                // No `dotnet` on PATH is by far the most common first-run failure, and the raw error
+                // ('spawn dotnet ENOENT') tells a user nothing. Name the missing piece instead.
+                if (isMissingExecutable(e)) throw new Error(DOTNET_SDK_MISSING_MESSAGE);
+                throw e;
+            }
         }
         return fs.existsSync(bin) ? bin : undefined;
     }

@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "1.0.0-beta.6",
+    "version": "1.0.0-beta.7",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -34,9 +34,7 @@
         "csharp"
     ],
     "main": "./out/extension.js",
-    "activationEvents": [
-        "onStartupFinished"
-    ],
+    "activationEvents": [],
     "contributes": {
         "customEditors": [
             {
@@ -282,6 +280,32 @@
                     ],
                     "default": "auto",
                     "description": "Theme the designer preview renders with: auto = follow the VS Code colour theme (a dark VS Code ≈ a dark OS, so 'System'-themed forms are previewed dark); light/dark force it regardless of an explicit RequestedThemeVariant on the form."
+                },
+                "avaloniaDesigner.askEventOnPlace": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "When a control is placed, ask which event to wire (a picker with the control's own events) instead of wiring the default one silently. Interactive controls only (Button, TextBox, CheckBox, ComboBox, ListBox, DataGrid, TabControl, Menu, …); right-click → Add event works for every control either way."
+                },
+                "avaloniaDesigner.autoWireDefaultEvent": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "With 'askEventOnPlace' switched off: wire the control's default event silently when it is placed. Set to false to place controls without any event handler (the same choice the picker's Skip button remembers for you)."
+                },
+                "avaloniaDesigner.codeCheck.mode": {
+                    "type": "string",
+                    "enum": [
+                        "onReturn",
+                        "onSave",
+                        "onType",
+                        "manual"
+                    ],
+                    "default": "onReturn",
+                    "description": "When the designer re-checks the code-behind against the form (.vb/.cs edited by hand). The check is read-only — it only reports (PROBLEMS pane, canvas badges, Code Fix… list); nothing is ever rewritten. onReturn = every time you come back to the designer tab; onSave = when the code-behind file is saved; onType = while typing (debounced); manual = only when you press Code Fix…"
+                },
+                "avaloniaDesigner.codeCheck.badges": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Mark controls on the design surface whose wired event handler is missing with a ⚠ badge (hover it to see which handler). Only shown while the re-check is not 'manual'."
                 }
             }
         }
@@ -290,6 +314,9 @@
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
         "vscode:prepublish": "npm run compile",
+        "package": "npx --yes @vscode/vsce@2.15.0 package",
+        "publish:pre": "npx --yes @vscode/vsce@2.15.0 publish --pre-release",
+        "publish:stable": "npx --yes @vscode/vsce@2.15.0 publish",
         "test": "node tests/runner.js",
         "test:list": "node tests/runner.js --list",
         "test:fast": "node tests/runner.js --layer t2-logic",

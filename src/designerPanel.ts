@@ -1,17 +1,18 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { XamlModel, localName, SINGLE_CONTENT_TAGS } from './xamlModel';
-import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle } from './hostClient';
+import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './xamlModel';
+import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
 import { propertyDefsFor, opacityToXaml, defaultFor, THEME_COLOR_KEYS, multiCommonProps, isStatusClock, statusClockSample } from './propertyCatalog';
-import { defaultEventFor, hasDefaultEvent, insertHandlerIntoCodeBehind, findHandlerInCodeBehind, insertStatusDateClock, insertXyTrackerClock, XyTrackerMode, getStatusDateSettings, setStatusDateSettings, removeHandlersFromCodeBehind, removeOrphanedHandlersForControls, renameControlInCodeBehind, syncVbAccessors, namedControlsInAxaml, unionNamedControls, findCodeBehindFile, convertCodeBehindToChrome, findItemsSourceBinding, bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet, removeItemsSourceBinding, bindFollowerToColumn, bindImageToGrid, unbindImageFromGrid, hasDataImageBinding, DataSetBindingRef, DataImageRef } from './codeBehind';
+import { defaultEventFor, hasDefaultEvent, handlerChoice, insertHandlerIntoCodeBehind, findHandlerInCodeBehind, insertStatusDateClock, insertXyTrackerClock, XyTrackerMode, getStatusDateSettings, setStatusDateSettings, removeHandlersFromCodeBehind, removeOrphanedHandlersForControls, renameControlInCodeBehind, syncVbAccessors, namedControlsInAxaml, unionNamedControls, findCodeBehindFile, convertCodeBehindToChrome, findItemsSourceBinding, bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet, removeItemsSourceBinding, bindFollowerToColumn, bindImageToGrid, unbindImageFromGrid, hasDataImageBinding, DataSetBindingRef, DataImageRef } from './codeBehind';
 import {
-    analyzeCodeBehind, applyLocalFix, backupCodeBehind, publishIssues, controlsForCheck,
+    analyzeCodeBehind, applyLocalFix, backupCodeBehind, publishIssues, controlsForCheck, issueSignature,
     CodeIssue, CheckOptions, DataSetContext, DataSetFollowerInfo, DataSetGridInfo, DataSetImageInfo
 } from './codeBehindCheck';
 import { withDesignerHeader } from './xamlHeader';
 import { controlInfoFor } from './controlInfo';
+import { asksForEventOnPlace, eventsFor, eventArgsFor, isKnownEvent } from './controlEvents';
 import { findProject, ProjectInfo } from './projectParser';
 import { listAssets, Asset } from './assetCatalog';
 import { ensureDataGridAutoGenerateColumns, ensureSqlitePackages, defaultDbFile, reloadDataSetPanel, saveOpenDataSetDocuments } from './dataSetEditor';
@@ -1449,6 +1450,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      */
     private autoSizeOff = new Set<string>();
     private autoSizeOffLoaded = false;
+    /** Pending debounce timers for the automatic code-behind re-check, keyed by .axaml URI. */
+    private codeCheckTimers = new Map<string, NodeJS.Timeout>();
+    /**
+     * Findings the user waved away with "Leave it — keep my code", keyed by .axaml URI and holding
+     * issue signatures (see `issueSignature`). They stay hidden until the form is reopened — the
+     * point is that a deliberate manual edit must not be reported over and over.
+     */
+    private dismissed = new Map<string, Set<string>>();
     /** System font family names (from the Avalonia host), fetched once and shared with the webviews'
      *  font pickers. Empty until the first fetch (webviews fall back to a compact default list). */
     private systemFonts: string[] = [];
@@ -1459,18 +1468,105 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         context.subscriptions.push(
             vscode.workspace.onDidChangeTextDocument((e) => {
                 const key = e.document.uri.toString();
-                if (!key.endsWith('.axaml')) return;
-                const panel = this.panels.get(key);
-                const doc = this.docs.get(key);
-                if (!panel || !doc || doc.dirty) return;
-                try {
-                    doc.model = new XamlModel(e.document.getText());
-                    void this.render(doc, panel);
-                } catch {
-                    /* keep old model if the file is temporarily invalid */
+                if (key.endsWith('.axaml')) {
+                    const panel = this.panels.get(key);
+                    const doc = this.docs.get(key);
+                    if (!panel || !doc || doc.dirty) return;
+                    try {
+                        doc.model = new XamlModel(e.document.getText());
+                        void this.render(doc, panel);
+                    } catch {
+                        /* keep old model if the file is temporarily invalid */
+                    }
+                    return;
                 }
+                // The code-behind of an open form changed in the text editor: with the
+                // 'onType' mode the check re-runs a moment after typing stops (read-only).
+                if (this.codeCheckMode() !== 'onType') return;
+                this.scheduleCodeBehindCheck(e.document.uri, 900);
             })
         );
+        // Saving the code-behind re-checks it ('onSave' and 'onType' modes — the default mode,
+        // 'onReturn', re-checks when the designer tab is focused again).
+        context.subscriptions.push(
+            vscode.workspace.onDidSaveTextDocument((e) => {
+                const mode = this.codeCheckMode();
+                if (mode !== 'onSave' && mode !== 'onType') return;
+                this.scheduleCodeBehindCheck(e.uri, 0);
+            })
+        );
+    }
+
+    /** When the designer re-checks the code-behind by itself (`avaloniaDesigner.codeCheck.mode`). */
+    private codeCheckMode(): 'onReturn' | 'onSave' | 'onType' | 'manual' {
+        const v = vscode.workspace.getConfiguration('avaloniaDesigner').get<string>('codeCheck.mode', 'onReturn');
+        return v === 'onSave' || v === 'onType' || v === 'manual' ? v : 'onReturn';
+    }
+
+    /** Draw ⚠ badges for controls whose wired handler is missing (`avaloniaDesigner.codeCheck.badges`). */
+    private codeCheckBadges(): boolean {
+        return vscode.workspace.getConfiguration('avaloniaDesigner').get<boolean>('codeCheck.badges', true);
+    }
+
+    /**
+     * Finds the open designer whose code-behind is `uri` and schedules a silent re-check.
+     * `delay` debounces the typing case; 0 runs on the next tick (so the save has settled).
+     */
+    private scheduleCodeBehindCheck(uri: vscode.Uri, delay: number): void {
+        const target = uri.toString();
+        for (const [key, panel] of this.panels) {
+            const doc = this.docs.get(key);
+            if (!doc) continue;
+            if (findCodeBehindFile(doc.uri)?.toString() !== target) continue;
+            const pending = this.codeCheckTimers.get(key);
+            if (pending) clearTimeout(pending);
+            const timer = setTimeout(() => {
+                this.codeCheckTimers.delete(key);
+                void this.runSilentCheck(doc, panel);
+            }, delay);
+            this.codeCheckTimers.set(key, timer);
+        }
+    }
+
+    /**
+     * Re-checks the code-behind WITHOUT showing the Code Fix list and without ever writing: it
+     * refreshes the PROBLEMS entries, the ⚠ badges on the canvas and the status hint. Used by the
+     * automatic triggers (returning to the designer, saving/typing in the code-behind).
+     */
+    private async runSilentCheck(doc: DesignerDocument, panel: vscode.WebviewPanel): Promise<void> {
+        if (!panel.visible) return; // nothing to show it on — the panel re-checks when it comes back
+        let result;
+        try { result = analyzeCodeBehind(doc.uri, this.checkOptions(doc)); }
+        catch { return; }
+        const issues = this.visibleIssues(doc, result.issues);
+        publishIssues(doc.uri, { ...result, issues }, issues);
+        // One badge per CONTROL with a problem (the same control can have several findings).
+        const markers: { name: string; severity: string; title: string }[] = [];
+        const seen = new Set<string>();
+        for (const issue of issues) {
+            const control = issue.data?.control ?? (issue.file === 'axaml' ? issue.member : undefined);
+            if (!control || seen.has(control)) continue;
+            if (!doc.model.findByName(control)) continue; // nothing to draw on
+            seen.add(control);
+            markers.push({ name: control, severity: issue.severity, title: issue.title });
+        }
+        await this.postCodeMarkers(panel, markers);
+        const errors = issues.filter((i) => i.severity === 'error').length;
+        const warnings = issues.length - errors;
+        await this.postStatus(panel, issues.length === 0
+            ? 'Code-behind check: no problems'
+            : `⚠ ${errors} error(s), ${warnings} warning(s) in the code-behind — 🩺 Code Fix…`);
+    }
+
+    /** Drops the findings the user dismissed with "Leave it — keep my code" (session-scoped). */
+    private visibleIssues(doc: DesignerDocument, issues: CodeIssue[]): CodeIssue[] {
+        const gone = this.dismissed.get(doc.uri.toString());
+        return gone && gone.size > 0 ? issues.filter((i) => gone.has(issueSignature(i)) === false) : issues;
+    }
+
+    /** Pushes the badges to the webview (and clears them when there are none). */
+    private async postCodeMarkers(panel: vscode.WebviewPanel, markers: { name: string; severity: string; title: string }[]): Promise<void> {
+        await panel.webview.postMessage({ type: 'codeMarkers', markers: this.codeCheckBadges() ? markers : [] });
     }
 
     async openCustomDocument(uri: vscode.Uri): Promise<DesignerDocument> {
@@ -1496,12 +1592,20 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
 
         webviewPanel.onDidChangeViewState(() => {
             if (webviewPanel.active) this.lastActivePanel = webviewPanel;
+            // Coming back to the designer (default mode 'onReturn'): re-check the code-behind, which
+            // may have been edited in the text editor meanwhile. Read-only — the badges, PROBLEMS
+            // and the status hint update; nothing is rewritten.
+            if (webviewPanel.visible && this.codeCheckMode() === 'onReturn') {
+                void this.runSilentCheck(document, webviewPanel);
+            }
         });
         webviewPanel.onDidDispose(() => {
             this.panels.delete(key);
             this.docs.delete(key);
             this.frames.delete(key);
             this.history.delete(key);
+            const pending = this.codeCheckTimers.get(key);
+            if (pending) { clearTimeout(pending); this.codeCheckTimers.delete(key); }
             if (this.lastActivePanel === webviewPanel) this.lastActivePanel = undefined;
         });
         webviewPanel.webview.onDidReceiveMessage((msg) => void this.handleMessage(document, webviewPanel, msg));
@@ -1519,8 +1623,16 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         await this.render(doc, panel);
                         await this.syncAccessors(doc);
                         void this.pushFonts(panel);
+                        // First code-behind check of this form (read-only): shows the ⚠ badges and
+                        // the status hint right away when the hand-edited code-behind drifted.
+                        if (this.codeCheckMode() !== 'manual') void this.runSilentCheck(doc, panel);
                     } catch (e) {
                         await this.postStatus(panel, `Previewer host error: ${e instanceof Error ? e.message : String(e)}`);
+                        // Missing .NET SDK is actionable and would otherwise only be a one-line
+                        // status note the user can easily miss — offer the fix in a dialog too.
+                        if (e instanceof Error && e.message === DOTNET_SDK_MISSING_MESSAGE) {
+                            void vscode.window.showErrorMessage(e.message);
+                        }
                     }
                     return;
                 }
@@ -1556,6 +1668,31 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.runCodeCheck(doc, panel);
                     return;
                 }
+                case 'openCodeSettings': {
+                    // The toolbar's ⚙ Settings button: reply with the current code-check settings.
+                    await panel.webview.postMessage({
+                        type: 'codeSettings',
+                        mode: this.codeCheckMode(),
+                        badges: this.codeCheckBadges()
+                    });
+                    return;
+                }
+                case 'saveCodeSettings': {
+                    const mode = msg.mode === 'onSave' || msg.mode === 'onType' || msg.mode === 'manual'
+                        ? msg.mode : 'onReturn';
+                    const cfg = vscode.workspace.getConfiguration('avaloniaDesigner');
+                    try {
+                        await cfg.update('codeCheck.mode', mode, vscode.ConfigurationTarget.Global);
+                        await cfg.update('codeCheck.badges', msg.badges !== false, vscode.ConfigurationTarget.Global);
+                    } catch { /* read-only in some hosts — the choice then lasts for this session only */ }
+                    await panel.webview.postMessage({ type: 'codeSettings', mode: this.codeCheckMode(), badges: this.codeCheckBadges() });
+                    // Apply the new behaviour immediately: re-check now (it also refreshes the badges).
+                    await this.runSilentCheck(doc, panel);
+                    await this.postStatus(panel, mode === 'manual'
+                        ? 'Code check: manual — press 🩺 Code Fix… when you want it'
+                        : `Code check: ${mode === 'onReturn' ? 'when returning to the designer' : mode === 'onSave' ? 'when the code-behind is saved' : 'while typing'}`);
+                    return;
+                }
                 case 'codeFix': {
                     // Re-analyse so the fix works on the CURRENT file (the user may have edited it in
                     // between) and so its line/occurrence payload is accurate.
@@ -1563,10 +1700,27 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     const run = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
                     const issue = run.issues.find((i) => i.id === msg.id);
                     if (!issue) { await this.runCodeCheck(doc, panel); return; }
-                    this.backupCodeOnce(doc, run.codeFile);
+                    // `alt` picks an ALTERNATIVE fix of the same finding (e.g. "the delete was
+                    // deliberate — unwire the form") instead of the primary repair.
+                    const alt = typeof msg.alt === 'number' ? (issue.alternatives ?? [])[msg.alt] : undefined;
+                    const action: CodeIssue = alt
+                        ? {
+                            ...issue,
+                            kind: alt.kind,
+                            // A dismissal must remember the ORIGINAL finding (kind/member/payload), not
+                            // the "dismiss" action it arrives as.
+                            data: {
+                                ...(issue.data ?? {}),
+                                ...(alt.data ?? {}),
+                                ...(alt.kind === 'dismiss' ? { signature: issueSignature(issue) } : {})
+                            }
+                        }
+                        : issue;
+                    // Only a fix that touches the code-behind needs the safety copy.
+                    if (action.kind !== 'unwrap-handler') this.backupCodeOnce(doc, run.codeFile);
                     let what: string;
                     try {
-                        what = await this.applyCodeIssue(doc, projFix, panel, issue);
+                        what = await this.applyCodeIssue(doc, projFix, panel, action);
                     } catch (e) {
                         what = `Fix failed: ${e instanceof Error ? e.message : String(e)}`;
                     }
@@ -1582,7 +1736,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     // cap is a guard against a finding whose fix cannot change its own detection.
                     for (let pass = 0; pass < 25; pass++) {
                         const run = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
-                        const next = run.issues.find((i) => i.kind !== 'report-only' && !done.has(i.id));
+                        // Dismissed findings are skipped here too — "leave my code alone" must not be
+                        // undone by a later "Fix all".
+                        const next = this.visibleIssues(doc, run.issues)
+                            .find((i) => i.kind !== 'report-only' && !done.has(i.id));
                         if (!next) break;
                         done.add(next.id);
                         this.backupCodeOnce(doc, run.codeFile);
@@ -2055,16 +2212,48 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         try { await insertStatusDateClock(doc.uri, `${name}Date`); }
                         catch { /* best-effort — the status clock must not fail the placement */ }
                     }
-                    // Generate the code-behind immediately: wire the control's default event
-                    // handler (creating the code-behind file if needed) right after placement,
-                    // instead of waiting for a middle-click. Middle-click now just opens it.
-                    if (placedEl && hasDefaultEvent(localName(placedEl.tagName))) {
+                    // Generate the code-behind: wire an event handler right after placement (creating
+                    // the code-behind file if needed) instead of waiting for a middle-click.
+                    // With `askEventOnPlace` on, the control is placed first and the event PICKER opens
+                    // so the user chooses which event(s) to wire (Skip places it with none); with it off,
+                    // the default event is wired silently as before (`autoWireDefaultEvent`).
+                    // Middle-click still just navigates to the handler.
+                    const placedTag = placedEl ? localName(placedEl.tagName) : '';
+                    const askEvents = !!placedEl && asksForEventOnPlace(placedTag) && this.askEventOnPlace();
+                    if (placedEl && askEvents === false && hasDefaultEvent(placedTag) && this.autoWireDefaultEvent()) {
                         try { await this.wireDefaultHandler(doc, panel, placedEl, name, false); }
                         catch { /* best-effort — code-behind wiring must not fail the placement */ }
                     }
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
                     await panel.webview.postMessage({ type: 'selectControl', name });
+                    if (placedEl && askEvents) {
+                        await this.openEventPicker(doc, panel, name, placedTag, 'place');
+                    }
+                    return;
+                }
+                case 'addEvent': {
+                    // Right-click a control -> "Add event...": offer the events of that control and
+                    // wire the ones already attached are marked (never re-wired).
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || el === doc.model.root) return;
+                    await this.openEventPicker(doc, panel, msg.name, localName(el.tagName), 'add');
+                    return;
+                }
+                case 'wireEvents': {
+                    await this.wireEventSelection(doc, panel, msg.name, msg.events ?? [], !!msg.remember);
+                    return;
+                }
+                case 'skipEventPicker': {
+                    if (msg.remember) await this.rememberEventChoice(false);
+                    return;
+                }
+                case 'openHandler': {
+                    // "Go to handler" — from the picker's ✓ wired rows and from the middle-click menu.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (el && msg.handler) {
+                        await this.openOrCreateHandler(doc, panel, el, msg.event, msg.handler);
+                    }
                     return;
                 }
                 case 'move': {
@@ -4435,26 +4624,29 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private async runCodeCheck(doc: DesignerDocument, panel: vscode.WebviewPanel, fresh = true): Promise<void> {
         if (fresh) this.codeBackups.delete(doc.uri.toString());
         const result = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
-        publishIssues(doc.uri, result, result.issues);
-        const errors = result.issues.filter((i) => i.severity === 'error').length;
-        const warnings = result.issues.length - errors;
+        const issues = this.visibleIssues(doc, result.issues);
+        publishIssues(doc.uri, result, issues);
+        const errors = issues.filter((i) => i.severity === 'error').length;
+        const warnings = issues.length - errors;
         await panel.webview.postMessage({
             type: 'codeIssues',
             file: result.codeFile ? path.basename(result.codeFile) : '',
             errors,
             warnings,
             backup: this.codeBackups.get(doc.uri.toString()) ?? '',
-            issues: result.issues.map((i) => ({
+            issues: issues.map((i) => ({
                 id: i.id,
                 severity: i.severity,
                 title: i.title,
                 detail: i.detail,
                 line: i.line ?? 0,
                 file: i.file ?? 'code',
-                fixable: i.kind !== 'report-only'
+                fixable: i.kind !== 'report-only',
+                // Extra buttons for the same finding (e.g. keep a deliberate delete and unwire the form).
+                alternatives: (i.alternatives ?? []).map((a) => ({ label: a.label, detail: a.detail }))
             }))
         });
-        await this.postStatus(panel, result.issues.length === 0
+        await this.postStatus(panel, issues.length === 0
             ? 'Code Fix: no problems found'
             : `Code Fix: ${errors} error(s), ${warnings} warning(s)`);
     }
@@ -4520,6 +4712,49 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 const tableName = issue.data?.tableName ?? '';
                 if (adsetPath && tableName) this.dropFollowerRecord(adsetPath, tableName, control);
                 return `Removed the stale follower binding of ${control}.`;
+            }
+            case 'repoint-handler': {
+                // The handler was renamed in the code-behind: point the form's attribute at the new
+                // name. The code is NOT touched — this only edits the XAML (via the model, so the
+                // designer owns the save and the change is undoable).
+                const wired = issue.data?.handler ?? issue.member ?? '';
+                const found = issue.data?.found ?? '';
+                const event = issue.data?.event ?? '';
+                const el = issue.data?.control ? doc.model.findByName(issue.data.control) : undefined;
+                if (!el || !event || !found) return `Could not find the control that wires "${wired}" — re-run the check.`;
+                const before = doc.model.serialize(true);
+                el.setAttribute(event, found);
+                this.notifyEdit(doc, panel, before);
+                await this.render(doc, panel);
+                return `Pointed ${event} at "${found}" (was "${wired}").`;
+            }
+            case 'dismiss': {
+                // "Leave it — keep my code": nothing is applied; this exact finding stops being
+                // reported while the form stays open (a deliberate manual edit must not nag).
+                // The signature is the one of the ORIGINAL finding (see the 'codeFix' case).
+                const key = doc.uri.toString();
+                const set = this.dismissed.get(key) ?? new Set<string>();
+                set.add(issue.data?.signature ?? issueSignature(issue));
+                this.dismissed.set(key, set);
+                return `Left "${issue.title}" alone — it stays hidden until you reopen the form.`;
+            }
+            case 'unwrap-handler': {
+                // The manual edit was deliberate (a deleted or renamed handler): take the wiring out of
+                // the form instead of putting the method back. The code-behind is never touched.
+                const event = issue.data?.event ?? '';
+                const wired = issue.data?.handler ?? issue.member ?? '';
+                const el = issue.data?.control ? doc.model.findByName(issue.data.control) : undefined;
+                if (!el || !event) return `Could not find the control that wires "${wired}" — re-run the check.`;
+                const current = el.getAttribute(event);
+                if (current === null) return `${event} is already unwired on ${issue.data?.control}.`;
+                if (wired && current !== wired) {
+                    return `The form now wires ${event}="${current}" — re-run the check before unwiring.`;
+                }
+                const before = doc.model.serialize(true);
+                el.removeAttribute(event);
+                this.notifyEdit(doc, panel, before);
+                await this.render(doc, panel);
+                return `Unwired ${event} from ${issue.data?.control} — the form now matches your code.`;
             }
             default:
                 return applyLocalFix(doc.uri, issue, this.checkOptions(doc));
@@ -5377,6 +5612,129 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         await this.postStatus(panel, `Cleared ${removed.length} control${removed.length === 1 ? '' : 's'}.`);
     }
 
+    /** Is the event picker shown when a control is placed? (`avaloniaDesigner.askEventOnPlace`) */
+    private askEventOnPlace(): boolean {
+        return vscode.workspace.getConfiguration('avaloniaDesigner').get<boolean>('askEventOnPlace', true);
+    }
+
+    /** With the picker off: wire the default event silently? (`avaloniaDesigner.autoWireDefaultEvent`) */
+    private autoWireDefaultEvent(): boolean {
+        return vscode.workspace.getConfiguration('avaloniaDesigner').get<boolean>('autoWireDefaultEvent', true);
+    }
+
+    /**
+     * The picker's "don't ask again" checkbox. `wired` = the choice it remembers: after **Wire** the
+     * default event is wired silently on later drops, after **Skip** nothing is wired at all — so the
+     * checkbox always stores the behaviour the user just chose, in the user's global settings.
+     */
+    private async rememberEventChoice(wired: boolean): Promise<void> {
+        const cfg = vscode.workspace.getConfiguration('avaloniaDesigner');
+        try {
+            await cfg.update('askEventOnPlace', false, vscode.ConfigurationTarget.Global);
+            await cfg.update('autoWireDefaultEvent', wired, vscode.ConfigurationTarget.Global);
+            void vscode.window.showInformationMessage(wired
+                ? 'Avalonia Designer: new controls will wire their default event without asking (Settings → Avalonia Designer → Ask Event On Place).'
+                : 'Avalonia Designer: new controls will be placed without an event handler (Settings → Avalonia Designer → Ask Event On Place).');
+        } catch { /* settings are read-only in some hosts — the dialog simply asks again */ }
+    }
+
+    /** The events already wired on an element, as `{ event, handler }` (used to mark picker rows). */
+    private wiredEventsOf(el: Element, tag: string): { event: string; handler: string }[] {
+        const out: { event: string; handler: string }[] = [];
+        for (let i = 0; i < el.attributes.length; i++) {
+            const a = el.attributes.item(i);
+            if (!a || !a.value) continue;
+            // A handler attribute: a known event name whose value names a METHOD
+            // (`<Button Click="Button1_Click"/>`). `isKnownEvent` covers the events the picker
+            // offers beyond the designer's base list (e.g. `DropDownOpened`, `Opened`).
+            if (!isEventAttribute(a.name) && !isKnownEvent(tag, a.name)) continue;
+            // `Click="{Binding DoIt}"` is a binding, not a handler — it must not be listed (and must
+            // never be turned into a code-behind stub by "open"/"add event").
+            if (/^[A-Za-z_]\w*$/.test(a.value) === false) continue;
+            out.push({ event: a.name, handler: a.value });
+        }
+        return out;
+    }
+
+    /**
+     * Opens the webview's event picker for one control.
+     *  - `mode: 'place'` — just dropped: the default event is preselected and **Skip** places the
+     *    control without any handler (the "don't ask again" checkbox is offered);
+     *  - `mode: 'add'` — right-click → **Add event…**: nothing is preselected, already-wired events
+     *    are marked and cannot be selected again, and each of them offers **Go to handler**.
+     */
+    private async openEventPicker(
+        doc: DesignerDocument,
+        panel: vscode.WebviewPanel,
+        name: string,
+        tag: string,
+        mode: 'place' | 'add'
+    ): Promise<void> {
+        const el = doc.model.findByName(name);
+        if (!el) return;
+        const wired = this.wiredEventsOf(el, tag).map((w) => ({
+            ...w,
+            // The XAML wires it, but the method is gone (deleted by hand) → the UI shows ⚠ missing
+            // and clicking it recreates the stub instead of jumping into a void.
+            missing: findHandlerInCodeBehind(doc.uri, w.handler) === undefined
+        }));
+        await panel.webview.postMessage({
+            type: 'openEventPicker',
+            mode,
+            name,
+            tag,
+            events: eventsFor(tag),
+            wired,
+            defaultEvent: defaultEventFor(tag),
+            known: hasDefaultEvent(tag),
+            label: controlInfoFor(tag).label
+        });
+    }
+
+    /**
+     * Wires the events the picker returned: each becomes `<Control>_<Event>` in the XAML plus an
+     * empty handler in the code-behind (the code-behind is written first, so the form never carries
+     * an event attribute without a method). Already-wired events are left alone.
+     */
+    private async wireEventSelection(
+        doc: DesignerDocument,
+        panel: vscode.WebviewPanel,
+        name: string,
+        events: string[],
+        remember: boolean
+    ): Promise<void> {
+        const el = doc.model.findByName(name);
+        if (!el) return;
+        const tag = localName(el.tagName);
+        const before = doc.model.serialize(true);
+        let elName = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+        if (!elName) { if (remember) await this.rememberEventChoice(true); return; }
+        if (!doc.model.hasExplicitName(el)) {
+            elName = elName.replace(/^_+/, '') || elName;
+            doc.model.setExplicitName(el, elName);
+        }
+        const done: string[] = [];
+        for (const event of events) {
+            if (typeof event !== 'string' || event.length === 0) continue;
+            if (el.getAttribute(event)) continue; // already wired — never overwrite a handler
+            const handler = `${elName}_${event}`;
+            const result = await insertHandlerIntoCodeBehind(doc.uri, handler, event, tag);
+            if (!result) continue;
+            el.setAttribute(event, handler);
+            done.push(event);
+        }
+        if (done.length > 0) {
+            await vscode.workspace.fs.writeFile(doc.uri, Buffer.from(withDesignerHeader(doc.model.serialize(true)), 'utf8'));
+            doc.markSaved();
+            this.notifyEdit(doc, panel, before);
+            await this.render(doc, panel);
+            await this.postStatus(panel, `${elName}: wired ${done.join(', ')}.`);
+        } else if (events.length > 0) {
+            await this.postStatus(panel, 'Those events were already wired.');
+        }
+        if (remember) await this.rememberEventChoice(done.length > 0);
+    }
+
     /**
      * Wires the control's default event into the XAML (e.g. `Click="Button1_Click"`) and inserts
      * the handler stub into the code-behind. Placement calls this (openEditor=false) to create the
@@ -5454,11 +5812,64 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
     }
 
-    /** Middle-click a control: wire the default event and open the code-behind at the handler. */
+    /** Middle-click a control: jump to the wired handler, or pick one when several are wired. */
     private async openEventHandler(doc: DesignerDocument, panel: vscode.WebviewPanel, name: string): Promise<void> {
         const el = doc.model.findByName(name);
         if (!el || el === doc.model.root) return;
-        await this.wireDefaultHandler(doc, panel, el, name, true);
+        const tag = localName(el.tagName);
+        const wired = this.wiredEventsOf(el, tag).map((w) => ({
+            ...w,
+            missing: findHandlerInCodeBehind(doc.uri, w.handler) === undefined
+        }));
+        const choice = handlerChoice(wired);
+        if (choice.mode === 'none') {
+            // Nothing is wired yet — the old behaviour: wire the default event and open that.
+            await this.wireDefaultHandler(doc, panel, el, name, true);
+            return;
+        }
+        if (choice.mode === 'one') {
+            await this.openOrCreateHandler(doc, panel, el, choice.event, choice.handler);
+            return;
+        }
+        // Several handlers: let the user choose in the webview (it answers with 'openHandler').
+        await panel.webview.postMessage({
+            type: 'openHandlerMenu',
+            name,
+            tag,
+            label: controlInfoFor(tag).label,
+            wired: choice.wired
+        });
+    }
+
+    /**
+     * Opens the code-behind at a handler the form has wired, creating the stub first when the
+     * method is missing (hand-written XAML, or a method deleted by hand) — with the exact
+     * EventArgs type for that event, so the build stays clean.
+     */
+    private async openOrCreateHandler(
+        doc: DesignerDocument,
+        panel: vscode.WebviewPanel,
+        el: Element,
+        event: string | undefined,
+        handler: string
+    ): Promise<void> {
+        const existing = findHandlerInCodeBehind(doc.uri, handler);
+        if (existing) {
+            await this.openCodeBehindAt(existing);
+            return;
+        }
+        if (!event) {
+            void vscode.window.showInformationMessage(
+                `No code-behind method "${handler}" yet — the form wires it, but the stub is missing.`);
+            return;
+        }
+        const created = await insertHandlerIntoCodeBehind(doc.uri, handler, event, localName(el.tagName));
+        if (!created) {
+            void vscode.window.showInformationMessage(`Could not create the handler "${handler}".`);
+            return;
+        }
+        await this.openCodeBehindAt(created);
+        await this.postStatus(panel, `Created the missing handler "${handler}".`);
     }
 
     /** Re-renders every open designer (toolbox refresh button). */
@@ -5495,38 +5906,48 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
 <body>
   <div id="app">
     <div id="toolbar">
-      <button id="btnUndo" title="Undo the last change (Ctrl+Z)" disabled>↶</button>
-      <button id="btnRedo" title="Redo the last undone change (Ctrl+Shift+Z / Ctrl+Y)" disabled>↷</button>
+      <!-- Foldable categories: a heading chip folds the buttons that FOLLOW it away (up to the next
+           heading, or the data-stop marker below) — see .tbg-head in designer.css and
+           applyToolbarFolds() in designer.js. Groups start UNFOLDED. -->
+      <button class="tbg-head" data-grp="edit" data-tip="Edit: undo and redo (Ctrl+Z / Ctrl+Shift+Z)" aria-expanded="true">Edit</button>
+      <button id="btnUndo" title="Undo the last change (Ctrl+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.8 2.2 L6.2 4.8 L8.8 7.4"/><path d="M6.2 4.8 H9.6 A3.4 3.4 0 0 1 9.6 11.6 H7.0"/></svg></button>
+      <button id="btnRedo" title="Redo the last undone change (Ctrl+Shift+Z / Ctrl+Y)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.2 2.2 L9.8 4.8 L7.2 7.4"/><path d="M9.8 4.8 H6.4 A3.4 3.4 0 0 0 6.4 11.6 H9.0"/></svg></button>
       <span class="sep"></span>
+      <button class="tbg-head" data-grp="file" data-tip="File: new form, reload from disk, code-behind check, project backup" aria-expanded="true">File</button>
       <button id="btnNewForm" title="Create a new Avalonia form">+ New Form</button>
-      <button id="btnRefresh" title="Reload the form from disk and re-read the database preview (e.g. rows added while the app was running)">⟳ Refresh</button>
+      <button id="btnRefresh" title="Reload the form from disk and re-read the database preview (e.g. rows added while the app was running)">Refresh</button>
       <button id="btnCodeFix" title="Check the code-behind against the form and the DataSet: missing VB accessors, duplicate methods, leftover handlers of deleted controls, broken Data-Image / ItemsSource bindings, missing Imports or bundled helper files — with a one-click fix per problem">🩺 Code Fix…</button>
       <button id="btnBackup" title="Save everything that is unsaved, then copy this whole project into the parent folder as &lt;Project&gt;_&lt;date&gt;_&lt;time&gt; (no bin/obj, caches or .git)">💾 Project Backup</button>
       <span class="sep"></span>
+      <button class="tbg-head" data-grp="zoom" data-tip="Zoom: zoom out / in and fit the form to the window" aria-expanded="true">Zoom</button>
       <button id="btnZoomOut" title="Zoom out">−</button>
       <input id="zoomValue" readonly value="100%"/>
       <button id="btnZoomIn" title="Zoom in">+</button>
       <button id="btnFit" title="Fit to window">Fit</button>
       <span class="sep"></span>
+      <button class="tbg-head" data-grp="guides" data-tip="Guides: dot grid, snap-to-grid, grid settings, crosshair" aria-expanded="true">Guides</button>
       <button id="btnDotGrid" title="Toggle the dot grid on the design surface">Grid</button>
       <button id="btnSnapGrid" title="Toggle snap-to-grid when moving/resizing">Snap</button>
       <button id="btnGridSettings" title="Dot grid settings (spacing, color, dot size)">Grid…</button>
       <span class="sep"></span>
       <button id="btnCrosshair" title="Crosshair settings (thickness, colour, opacity, length)">Crosshair</button>
       <span class="sep"></span>
-      <button id="btnAlignLeft" title="Align left edges to the first-selected control" disabled>⇤</button>
-      <button id="btnAlignCentre" title="Align horizontal centres to the first-selected control" disabled>↔</button>
-      <button id="btnAlignRight" title="Align right edges to the first-selected control" disabled>⇥</button>
-      <button id="btnAlignTop" title="Align top edges to the first-selected control" disabled>⇡</button>
-      <button id="btnAlignMiddle" title="Align vertical centres to the first-selected control" disabled>↕</button>
-      <button id="btnAlignBottom" title="Align bottom edges to the first-selected control" disabled>⇣</button>
-      <button id="btnAlignText" title="Centre the text horizontally in the selected text controls" disabled>Aa</button>
-      <button id="btnSameWidth" title="Make every selected control the same WIDTH as the first-selected control" disabled>⇔</button>
-      <button id="btnSameHeight" title="Make every selected control the same HEIGHT as the first-selected control" disabled>⇕</button>
+      <button class="tbg-head" data-grp="align" data-tip="Alignment Tools: align and size the selected controls against the first-selected one" aria-expanded="true">Alignment</button>
+      <button id="btnAlignLeft" title="Align left edges to the first-selected control" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3 V13"/><path d="M13.5 8 H6.5"/><path d="M9.5 5 L6.5 8 L9.5 11"/></svg></button>
+      <button id="btnAlignCentre" title="Align horizontal centres to the first-selected control" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5 V11"/><path d="M1.5 8 H5.5"/><path d="M3.5 6.4 L5.5 8 L3.5 9.6"/><path d="M14.5 8 H10.5"/><path d="M12.5 6.4 L10.5 8 L12.5 9.6"/></svg></button>
+      <button id="btnAlignRight" title="Align right edges to the first-selected control" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3 V13"/><path d="M2.5 8 H9.5"/><path d="M6.5 5 L9.5 8 L6.5 11"/></svg></button>
+      <button id="btnAlignTop" title="Align top edges to the first-selected control" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3 H13"/><path d="M8 13.5 V6.5"/><path d="M5 9.5 L8 6.5 L11 9.5"/></svg></button>
+      <button id="btnAlignMiddle" title="Align vertical centres to the first-selected control" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8 H11"/><path d="M8 1.5 V5.5"/><path d="M6.4 3.5 L8 5.5 L9.6 3.5"/><path d="M8 14.5 V10.5"/><path d="M6.4 12.5 L8 10.5 L9.6 12.5"/></svg></button>
+      <button id="btnAlignBottom" title="Align bottom edges to the first-selected control" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13 H13"/><path d="M8 2.5 V9.5"/><path d="M5 6.5 L8 9.5 L11 6.5"/></svg></button>
+      <button id="btnAlignText" title="Centre the text horizontally in the selected text controls" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 2 V14"/><path d="M13.5 2 V14"/><path d="M5.5 6 H10.5"/><path d="M4.5 8 H11.5"/><path d="M5.5 10 H10.5"/></svg></button>
+      <button id="btnSameWidth" title="Make every selected control the same WIDTH as the first-selected control" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3 V13"/><path d="M13.5 3 V13"/><path d="M5.5 8 H10.5"/><path d="M7.3 6.2 L5.5 8 L7.3 9.8"/><path d="M8.7 6.2 L10.5 8 L8.7 9.8"/></svg></button>
+      <button id="btnSameHeight" title="Make every selected control the same HEIGHT as the first-selected control" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2.5 H13"/><path d="M3 13.5 H13"/><path d="M8 5.5 V10.5"/><path d="M6.2 7.3 L8 5.5 L9.8 7.3"/><path d="M6.2 8.7 L8 10.5 L9.8 8.7"/></svg></button>
       <span class="sep"></span>
-      <button id="btnEqualV" title="Equal vertical spacing: 3+ controls spread with equal gaps between them (topmost &amp; bottommost stay put)" disabled>⋮</button>
-      <button id="btnEqualH" title="Equal horizontal spacing: 3+ controls spread with equal gaps between them (leftmost &amp; rightmost stay put)" disabled>⋯</button>
-      <span id="status">Ready</span>
+      <button class="tbg-head" data-grp="space" data-tip="Spacing: equal gaps between three or more selected controls" aria-expanded="true">Spacing</button>
+      <button id="btnEqualV" title="Equal vertical spacing: 3+ controls spread with equal gaps between them (topmost &amp; bottommost stay put)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 3.5 H13"/><path d="M6.5 8 H13"/><path d="M6.5 12.5 H13"/><path d="M3 4.8 V11.2"/><path d="M1.6 6.3 L3 4.8 L4.4 6.3"/><path d="M1.6 9.7 L3 11.2 L4.4 9.7"/></svg></button>
+      <button id="btnEqualH" title="Equal horizontal spacing: 3+ controls spread with equal gaps between them (leftmost &amp; rightmost stay put)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6.5 V13"/><path d="M8 6.5 V13"/><path d="M12.5 6.5 V13"/><path d="M4.8 3 H11.2"/><path d="M6.3 1.6 L4.8 3 L6.3 4.4"/><path d="M9.7 1.6 L11.2 3 L9.7 4.4"/></svg></button>
+      <span id="status" data-stop="1">Ready</span>
+      <button id="btnCodeSettings" title="Settings: when the designer re-checks the code-behind against the form (when you return to the designer / on save / while typing / only manually) and whether controls with a missing handler get a ⚠ badge">⚙ Settings</button>
     </div>
     <div id="main">
       <div id="canvasWrap">
@@ -5578,7 +5999,43 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
       <button id="ctxCopy">Copy</button>
       <button id="ctxPaste" disabled>Paste</button>
       <button id="ctxMoveToContainer">Move to container…</button>
+      <button id="ctxAddEvent">Add event…</button>
       <button id="ctxDelete">Delete</button>
+    </div>
+    <div id="eventModal" class="modal" hidden>
+      <div class="modal-box modal-narrow">
+        <h3 id="eventTitle">Wire an event</h3>
+        <p class="modal-hint" id="eventHint"></p>
+        <div id="eventList" class="event-list"></div>
+        <label class="modal-check" id="eventRememberWrap"><input type="checkbox" id="eventRemember"/> Don't ask again — remember this choice</label>
+        <div class="modal-buttons">
+          <button id="eventSkip" type="button" class="modal-btn">Skip</button>
+          <button id="eventWire" type="button" class="modal-btn primary">Wire event</button>
+        </div>
+      </div>
+    </div>
+    <div id="handlerModal" class="modal" hidden>
+      <div class="modal-box modal-narrow">
+        <h3 id="handlerTitle">Wired events</h3>
+        <p class="modal-hint" id="handlerHint"></p>
+        <div id="handlerList" class="event-list"></div>
+        <div class="modal-buttons">
+          <button id="handlerAdd" type="button" class="modal-btn">Add event…</button>
+          <button id="handlerClose" type="button" class="modal-btn primary">Close</button>
+        </div>
+      </div>
+    </div>
+    <div id="settingsModal" class="modal" hidden>
+      <div class="modal-box modal-narrow">
+        <h3>Code check settings</h3>
+        <p class="modal-hint" id="settingsHint">When should the designer check the code-behind against the form? The check is read-only: it reports (PROBLEMS pane, ⚠ badges on the canvas) and never rewrites your code.</p>
+        <div id="settingsModes" class="settings-modes"></div>
+        <label class="modal-check"><input type="checkbox" id="settingsBadges"/> Mark controls whose wired handler is missing with a ⚠ badge</label>
+        <div class="modal-buttons">
+          <button id="settingsCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="settingsSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
     </div>
     <div id="itemsModal" class="modal" hidden>
       <div class="modal-box">

@@ -27,8 +27,8 @@ one that touches the standing **"no automated UI runs"** rule (see §7 — decis
 |---|---|---|---|
 | **T0** | Static / build | `tsc`, `node --check` on webview JS, `dotnet build host`, `dotnet build` of every generated project (C#+VB) | Compiles everywhere, 0 warnings/errors |
 | **T1** | Host preview probes | Drive `PreviewerHost` over WebSocket (render XAML → PNG + control bounds), decode + assert pixels/bounds | Placement, sizing, preview fidelity, title bar, images, item compaction, Body lock, themes |
-| **T2** | Extension logic probes | `node` + vscode stub → `XamlModel`, `codeBehind`, `propertyCatalog`, `assetCatalog`, `dataSetModel/Generator`, `projectScaffold`, `projectCreator`, undo/redo history, `bundledComponents` | Model ops, code-behind generation/cleanup, property defs, asset scanning, .adset round-trips, generated code correctness |
-| **T3** | Webview DOM tests | `jsdom` + stubbed `acquireVsCodeApi` → `designer.js`/`dataSet.js` interaction | Click-select, drag outline + drop, context menu, dropdown, modals, ItemsSource picker, shortcuts. The fixture must mirror **every** `$('…')` id in `media/designer.js` — an assertion fails loudly if one is missing (a stale fixture used to make the script throw on load and run 5 of ~360 checks) |
+| **T2** | Extension logic probes | `node` + vscode stub → `XamlModel`, `codeBehind`, `codeBehindCheck`, `controlEvents`, `propertyCatalog`, `assetCatalog`, `dataSetModel/Generator`, `projectScaffold`, `projectCreator`, undo/redo history, `bundledComponents` | Model ops, code-behind generation/cleanup + fix & alternative rules, the generated event catalog, property defs, asset scanning, .adset round-trips, generated code correctness, marketplace packaging rules |
+| **T3** | Webview DOM tests | `jsdom` + stubbed `acquireVsCodeApi` → `designer.js`/`dataSet.js` interaction | Click-select, drag outline + drop, context menu, dropdown, modals, ItemsSource picker, shortcuts, event chooser, handler menu, ⚠ badges, ⚙ Settings, code-issue alternatives, toolbar categories folding the **real** markup. The fixture must mirror **every** `$('…')` id in `media/designer.js` — an assertion fails loudly if one is missing (a stale fixture used to make the script throw on load and run 5 of ~360 checks) |
 | **T4** | Generated-app runtime | See §7 (needs approval): Avalonia.Headless driver or manual checklist | Runtime window/control behavior |
 
 The runner (node) sequences tests, collects `[PASS]/[FAIL]`, writes the log (§6), and exits non-zero on any failure.
@@ -220,3 +220,25 @@ Each step ends with the log green before the next begins.
   `buildChromeAxaml`, scaffold `App.axaml`+`MainWindow.axaml` for C# and VB, New Form) and every
   designer save site, plus a parse/save round-trip that proves the notice is dropped by the model
   and re-stamped on save.
+
+### Status 2026-09-12 — full suite green (2646 passed / 0 failed / 0 skipped, 41 s)
+
+- **T2** gained three files:
+  - `controlEvents.test.js` (**76** checks) — the generated catalog's shape, the default event and the
+    curated picker list per control, the five names whose `EventArgs` differ per control, and the
+    guarantee that the shipped **`Events per Control.md`** still matches the catalog (plus the
+    preview's handler-attribute stripping going through the same data, so an event the picker offers
+    can never be stripped off the render copy by mistake).
+  - `toolbarGroups.test.js` (**48** checks) — the six toolbar categories, exactly which buttons each
+    one owns (a button inserted in the wrong place silently joins the wrong group, so membership is
+    pinned per heading), the fold/unfold wiring, and the CSS that makes the chip's caret and a folded
+    group's separator behave.
+  - `packaging.test.js` (**60** checks) — the marketplace manifest requirements (publisher, licence,
+    repository, bugs, homepage, categories, keywords, engine range, semver, entry point), the icon
+    really being a ≥128×128 PNG, the MIT licence text, the `.vscodeignore` rules **including the vsce
+    negation trap**, both GitHub workflows, and the missing-.NET-SDK message.
+- **T3** grew the event chooser, the handler menu, the ⚠ badges, the ⚙ Settings dialog, the code-issue
+  list with its alternatives, and a section that folds/unfolds the **real** toolbar markup.
+- **T5** wires 8 catalog events through the VB matrix and still has to `dotnet build` 0/0.
+- **CI** (`.github/workflows/ci.yml`) runs `tsc`, `node --check`, T2 + T3 and a real `vsce package` on
+  every push; the full T0–T5 suite is a manual job because it needs the .NET SDK.
