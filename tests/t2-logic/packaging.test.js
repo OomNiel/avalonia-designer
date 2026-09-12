@@ -29,6 +29,14 @@ module.exports = async (t) => {
     t.ok((pkg.keywords || []).length >= 5, 'manifest', 'and search keywords');
     t.ok(/^\^\d+\.\d+\.\d+$/.test(pkg.engines.vscode), 'manifest', 'the VS Code engine range is pinned');
     t.ok(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pkg.version), 'manifest', 'the version is valid semver');
+    // ...but valid semver is not what the Marketplace validates. It wants one to four PLAIN numbers
+    // and rejects pre-release tags outright — that is how the first upload of 1.0.0-beta.7 failed
+    // (2026-09-12): "The version string '1.0.0-beta.7' doesn't conform to the requirements for a
+    // version." The GitHub tag may carry the friendlier "-beta.N" name; the number that goes into
+    // the VSIX may not.
+    t.ok(/^\d+(?:\.\d+){0,3}$/.test(pkg.version), 'manifest',
+        'and the Marketplace version is numbers only (no semver pre-release tag)');
+    t.ok(/[1-9]/.test(pkg.version), 'manifest', 'containing at least one non-zero number');
     t.equal(pkg.main, './out/extension.js', 'manifest', 'the entry point is the compiled output');
     t.ok(has('src/extension.ts'), 'manifest', 'which tsc builds from src/extension.ts');
     // out/ is git-ignored and rebuilt by `npm run compile` (the package step runs it too), so a fresh
@@ -96,7 +104,7 @@ module.exports = async (t) => {
     t.ok(has('.github/workflows/release.yml'), 'release', 'a release workflow exists');
     const rel = read('.github/workflows/release.yml');
     t.ok(/workflow_dispatch/.test(rel), 'release', 'and it is started by hand (a version number is one-way)');
-    t.ok(/--pre-release/.test(rel), 'release', 'it can publish pre-releases (the current 1.0.0-beta line)');
+    t.ok(/--pre-release/.test(rel), 'release', 'it can publish pre-releases (the current 0.9.x line)');
     t.ok(/VSCE_PAT/.test(rel), 'release', 'it uses a Marketplace token from the repository secrets');
     t.ok(/node tests\/runner\.js/.test(rel), 'release', 'it runs the full suite');
     t.ok(rel.indexOf('node tests/runner.js') < rel.indexOf('--pre-release'), 'release',
@@ -121,6 +129,8 @@ module.exports = async (t) => {
         'plus the global-PAT retirement deadline (the route this guide documents has an end date)');
     t.ok(/--azure-credential/.test(guide) && /2\.26\.1/.test(guide), 'release',
         'and the Entra ID replacement, with the vsce version it requires');
+    t.ok(/numbers only/i.test(guide), 'release',
+        'plus the rule that sank the first upload: the Marketplace version must be numbers only');
     t.ok(/^PUBLISHING\.md$/m.test(ignore), 'packaging', 'the maintainer guide stays out of the VSIX');
     t.ok(/^\.github\/\*\*$/m.test(ignore), 'packaging',
         'and so does repo infrastructure (.github: CI workflows + issue templates)');
