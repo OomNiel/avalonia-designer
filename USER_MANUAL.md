@@ -117,9 +117,11 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer --pre-release
 ```
 
-Every published version is currently a **pre-release**, so VS Code has to be told to accept one: tick
-**“Show pre-release versions”** in the Extensions view (the `--pre-release` flag above does the same
-from the command line), then choose the **Pre-Release** channel on the extension's detail page.
+Every published version is currently a **pre-release**, so VS Code will not pick it up unless you ask
+for it: select the arrow next to the **Install** button and choose **Install Pre-Release Version** (or
+right-click the entry and choose **Show Pre-Release Version** first, to inspect it). The
+`--pre-release` flag above does the same from the command line. There is no global "show pre-releases"
+setting — the choice is made per extension.
 
 **Or from GitHub** — take the `.vsix` from the
 [latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) and install it with:

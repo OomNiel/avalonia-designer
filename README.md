@@ -26,9 +26,11 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer --pre-release
 ```
 
-Every published version so far is a **pre-release**, so VS Code has to be told to accept one: tick
-**“Show pre-release versions”** in the Extensions view (or add `--pre-release` to the command), then
-pick the **Pre-Release** channel on the extension's detail page.
+Every published version so far is a **pre-release**, so pick it deliberately: select the arrow next to
+**Install** and choose **Install Pre-Release Version** (or right-click the entry and choose **Show
+Pre-Release Version** first, to look at it). The `--pre-release` flag in the command above does the
+same from the command line. VS Code has no global "show pre-releases" switch — the choice is made per
+extension.
 
 **Or from GitHub** — take the `.vsix` from the
 [latest release](https://github.com/OomNiel/avalonia-designer/releases/latest):

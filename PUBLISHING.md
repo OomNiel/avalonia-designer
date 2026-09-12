@@ -128,22 +128,34 @@ Either route does the same thing:
 
 The first publish creates the listing at
 <https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer>, built from the
-packaged `package.json` and `README.md`; it takes a few minutes to appear. A **pre-release** is hidden
-from the Marketplace website's browse and search until a visitor ticks *“Show pre-release versions”*,
-so expect no traffic until a stable version exists. (The gallery *query API* returns it regardless,
-which is why `code --install-extension grumpy.avalonia-designer --pre-release` works straight away.)
+packaged `package.json` and `README.md`; it takes a few minutes to appear.
+
+**A pre-release-only extension is visible everywhere — it is just never installed by accident.**
+Verified 2026-09-12: the website's own search lists it as an ordinary result card, and the gallery API
+returns it for every query. VS Code installs the pre-release channel only when you ask: the arrow next
+to **Install** → *Install Pre-Release Version*, right-click → *Show Pre-Release Version*, or
+`code --install-extension <id> --pre-release`. There is **no global “show pre-releases” switch** in VS
+Code (there is no such setting — the only matching UI strings in the 1.136.1 bundle are *Pre-Release
+version* and *Show Pre-Release Version*, and the latter is a per-extension menu action gated on
+`galleryExtensionHasPreReleaseVersion`). Expect little traffic until a stable version exists, but not
+invisibility.
 
 > **Status: done — first listing live 2026-09-12 as `0.9.0`.** It was uploaded through the publisher
 > portal's **Upload** button, so no PAT was involved. That path works today and needs no token; the
-> `VSCE_PAT` workflow below is for automating later releases.
+> `VSCE_PAT` workflow below is for automating later releases. Validation completed the same day, after
+> which the extension became visible inside VS Code.
 
 ### What “Verifying \<version\>” means — and how to confirm the result
 
 **“Verifying” is normal, not an error.** The version is stored and indexed but not yet *validated*;
-that flips on its own within minutes to a few hours, and until it does, clients that exclude
-unvalidated extensions are not offered the release. You can watch the state without signing in: bit 32
-of the `extensionquery` `flags` is `ExcludeNonValidated`, so the same query returns the extension with
-`flags: 914` and **nothing** with `flags: 950` while it is still verifying.
+that flips on its own (minutes to a few hours — `0.9.0` took well under an hour). **While it is
+verifying, the extension is invisible in VS Code**, because VS Code's own gallery client always sends
+`ExcludeNonValidated`. Its bundle spells the flags out —
+`IncludeCategoryAndTags=4, IncludeSharedAccounts=8, IncludeVersionProperties=16,
+ExcludeNonValidated=32, IncludeInstallationTargets=64, IncludeAssetUri=128` — and its query service
+calls `withFlags(..., "ExcludeNonValidated")`. You can therefore watch the state from a terminal
+without signing in: the same query returns the extension with `flags: 914` and **nothing** with
+`flags: 950` until validation finishes.
 
 ```bash
 curl -s -X POST https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery \

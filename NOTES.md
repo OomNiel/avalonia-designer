@@ -1172,6 +1172,17 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   (d) `repository.url` must not end in `.git` — vsce copies it verbatim into the listing's
   `Links.GitHub` / `GetStarted` / `Source`. Guarded from now on by `packaging.test.js`: the manifest
   version is asserted to be plain numbers, not just “valid semver”.
+- §82a **Pre-releases are not hidden any more (2026-09-12)** — the inherited claim in `PUBLISHING.md`
+  (and copied into `README`/`USER_MANUAL`) that a pre-release is invisible until a visitor ticks
+  *“Show pre-release versions”* is **wrong**. The website's own search returned `grumpy.avalonia-designer`
+  as an ordinary result card (“by publisher Grumpy ... install count 0”), and there is no such global
+  control in VS Code at all — the only matching strings in the 1.136.1 bundle are *Pre-Release version*
+  and *Show Pre-Release Version*, the latter being a per-extension menu action gated on
+  `galleryExtensionHasPreReleaseVersion`. The real rule: **visible everywhere, installed only on
+  request** (Install‑arrow → *Install Pre-Release Version*, or `--pre-release`). Lesson: the same one
+  as §82(b) — a plausible sentence in a doc is a hypothesis, not a fact; check it before repeating it.
+  **Validation itself cleared within the hour**, and `flags: 950` going 0 → 1 is the objective signal
+  that VS Code will now see it (VS Code's client always sends `ExcludeNonValidated`).
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 
