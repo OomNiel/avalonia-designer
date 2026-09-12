@@ -26,7 +26,9 @@ NOTES_MEMORY_2026-09-03.md
 SESSION.md
 # Local tool state (e.g. the .poolside agent settings) is not part of the extension.
 .poolside/**
-# Repo artwork that no shipped code loads (the Marketplace icon is Grumpy.png).
-GrumpyWhite.png
+# NOTE: GrumpyWhite.png is the Activity Bar container icon
+# (package.json -> contributes.viewsContainers.activitybar[].icon). It MUST ship — excluding it
+# makes the Avalonia Designer icon vanish from the sidebar with no error anywhere. Guarded by
+# tests/t2-logic/packaging.test.js.
 # Build metadata: VS Code only needs package.json plus the compiled out/ folder.
 tsconfig.json

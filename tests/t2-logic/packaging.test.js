@@ -61,8 +61,8 @@ module.exports = async (t) => {
     t.ok(has('.poolside/settings.local.yaml'), 'packaging', '…and that file does exist, so the rule matters');
     t.ok(/^tests\/\*\*/m.test(ignore), 'packaging', 'the test suite is excluded');
     t.ok(/^tsconfig\.json$/m.test(ignore), 'packaging', 'build metadata (tsconfig.json) is excluded');
-    t.ok(/^GrumpyWhite\.png$/m.test(ignore), 'packaging',
-        'unreferenced artwork is excluded (nothing shipped loads GrumpyWhite.png)');
+    t.ok(/^GrumpyWhite\.png$/m.test(ignore) === false, 'packaging',
+        'the Activity Bar icon is not excluded (see the manifest-assets checks below)');
     t.ok(/^NOTES\.md$/m.test(ignore) && /^SESSION\.md$/m.test(ignore), 'packaging',
         'developer notes stay out of the package');
     t.ok(/^README\.md/m.test(ignore) === false && /^CHANGELOG\.md/m.test(ignore) === false, 'packaging',
@@ -115,6 +115,34 @@ module.exports = async (t) => {
     t.ok(/^PUBLISHING\.md$/m.test(ignore), 'packaging', 'the maintainer guide stays out of the VSIX');
     t.ok(/^\.github\/\*\*$/m.test(ignore), 'packaging',
         'and so does repo infrastructure (.github: CI workflows + issue templates)');
+
+    // ---------- 5b) every asset the manifest points at must SHIP ----------
+    // The Activity Bar container icon is a file in the package (GrumpyWhite.png). Excluding it as
+    // "artwork nothing loads" removes the extension's sidebar icon with no error anywhere — the
+    // manifest is the only place that says it is used, so it is what gets checked here.
+    const assets = new Set();
+    const addIcon = (v) => { if (typeof v === 'string' && v.startsWith('$(') === false) assets.add(v); };
+    addIcon(pkg.icon);
+    for (const list of Object.values(contrib.viewsContainers || {})) for (const c of list) addIcon(c.icon);
+    for (const list of Object.values(contrib.views || {})) for (const v of list) addIcon(v.icon);
+    for (const c of contrib.commands || []) addIcon(c.icon);
+    t.ok(assets.size >= 2, 'manifest-assets', 'the manifest references file assets (Marketplace + view icons)');
+    // Micro-glob: `**` spans directories, `*` stays inside one, so an ignore rule can be matched the
+    // way vsce would match it (exact path, `**/name`, `*.png`, or a bare file name).
+    const globToRe = (g) => {
+        const escaped = g.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+        return new RegExp('^' + escaped.split('**').map((part) => part.split('*').join('[^/]*')).join('.*') + '$');
+    };
+    const ignores = ignore.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && l.startsWith('#') === false && l.startsWith('!') === false);
+    for (const asset of assets) {
+        t.ok(has(asset), 'manifest-assets', `${asset} exists in the repo`);
+        const excluded = ignores.some((rule) => {
+            const re = globToRe(rule);
+            return re.test(asset) || re.test('dir/' + asset) || rule === asset.split('/').pop();
+        });
+        t.ok(excluded === false, 'manifest-assets',
+            `${asset} is NOT excluded by .vscodeignore (excluding it would silently break the UI it drives)`);
+    }
 
     // ---------- 7) first-run friendliness: name the missing .NET SDK ----------
     const host = read('src/hostClient.ts');

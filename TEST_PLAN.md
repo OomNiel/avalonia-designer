@@ -221,7 +221,7 @@ Each step ends with the log green before the next begins.
   designer save site, plus a parse/save round-trip that proves the notice is dropped by the model
   and re-stamped on save.
 
-### Status 2026-09-12 — full suite green (2652 passed / 0 failed / 0 skipped, 43 s)
+### Status 2026-09-12 — full suite green (2661 passed / 0 failed / 0 skipped, 35 s)
 
 - **T2** gained three files:
   - `controlEvents.test.js` (**76** checks) — the generated catalog's shape, the default event and the
@@ -233,10 +233,13 @@ Each step ends with the log green before the next begins.
     one owns (a button inserted in the wrong place silently joins the wrong group, so membership is
     pinned per heading), the fold/unfold wiring, and the CSS that makes the chip's caret and a folded
     group's separator behave.
-  - `packaging.test.js` (**66** checks) — the marketplace manifest requirements (publisher, licence,
+  - `packaging.test.js` (**75** checks) — the marketplace manifest requirements (publisher, licence,
     repository, bugs, homepage, categories, keywords, engine range, semver, entry point), the icon
     really being a ≥128×128 PNG, the MIT licence text, the `.vscodeignore` rules **including the vsce
-    negation trap**, both GitHub workflows, and the missing-.NET-SDK message.
+    negation trap**, both GitHub workflows, the missing-.NET-SDK message, and — after
+    `GrumpyWhite.png` (the Activity Bar icon) was excluded as "artwork nothing loads" and the sidebar
+    icon silently vanished — that **every file asset the manifest references** exists and is not
+    matched by any ignore rule.
 - **T3** grew the event chooser, the handler menu, the ⚠ badges, the ⚙ Settings dialog, the code-issue
   list with its alternatives, and a section that folds/unfolds the **real** toolbar markup.
 - **T5** wires 8 catalog events through the VB matrix and still has to `dotnet build` 0/0.
