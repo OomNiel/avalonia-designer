@@ -110,12 +110,27 @@ Created Project**) reopens your most recent project any time.
 
 ## 3. Installation & first run
 
-The extension is installed as a `.vsix` file — take it from the
+**From the Visual Studio Marketplace (recommended)** — open the Extensions view (`Ctrl+Shift+X`),
+search for *Avalonia Designer*, and install it. Or from a terminal:
+
+```bash
+code --install-extension grumpy.avalonia-designer --pre-release
+```
+
+Every published version is currently a **pre-release**, so VS Code has to be told to accept one: tick
+**“Show pre-release versions”** in the Extensions view (the `--pre-release` flag above does the same
+from the command line), then choose the **Pre-Release** channel on the extension's detail page.
+
+**Or from GitHub** — take the `.vsix` from the
 [latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) and install it with:
 
 ```bash
-code --install-extension avalonia-designer-1.0.0-beta.7.vsix --force
+code --install-extension avalonia-designer-<version>.vsix --force
 ```
+
+> The two places number releases differently. GitHub tags are `v1.0.0-beta.N`; the Marketplace accepts
+> plain numbers only, so the same release appears there as `0.9.x` (`0.9.0` = `v1.0.0-beta.7`).
+> Nothing else differs — the packages are the same.
 
 After installing (or after any update), **reload the window** so the changes take effect:
 `Ctrl+Shift+P` → **Developer: Reload Window**.

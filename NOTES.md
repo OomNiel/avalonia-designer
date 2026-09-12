@@ -28,7 +28,7 @@ dotnet build host/PreviewerHost.csproj -c Debug   # → host/bin/Debug/net8.0/Pr
 ### Packaging / installing
 ```bash
 npm run package                                              # vsce package (pinned @vscode/vsce@2.15.0)
-code --install-extension avalonia-designer-1.0.0-beta.7.vsix --force
+code --install-extension avalonia-designer-0.9.0.vsix --force
 npm run publish:pre                                          # Marketplace pre-release (needs VSCE_PAT)
 ```
 - `activationEvents` is **`[]`** (empty): contributed commands/views/custom editors activate the
@@ -37,7 +37,7 @@ npm run publish:pre                                          # Marketplace pre-r
   `.csproj`) — the installed copy auto-builds it.
 - `.vscodeignore` (NOT `.gitignore`) controls packaging; dev docs (`NOTES*.md`/`SESSION.md`),
   `tests/**`, `.poolside/**`, `tsconfig.json`, unused artwork and the source maps are excluded
-  (**90 files / 588 KB**).
+  (**88 files / 592 KB**).
 - **vsce is NOT gitignore** (verified in its `collectFiles()`): a negated pattern (`!x`) wins over
   EVERY ignore pattern wherever it sits, and folder patterns are auto-expanded (`foo` → `foo/**`).
   The old `!out/**` therefore re-included all 24 source maps no matter how they were excluded —
@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 2646 passed, 0 failed / 0 skipped** (2026-09-12, ~41 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 2664 passed, 0 failed / 0 skipped** (2026-09-12, ~41 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1151,6 +1151,27 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   after `InitializeComponent()`. Lesson: when a user reports a “warning in my file”, run the pure
   analyser first — `node -e "require('./out/codeBehindCheck.js').analyzeCodeBehind({fsPath:…},{})"` —
   a finding published as a diagnostic is indistinguishable from a compiler warning in the pane.
+- §82 **First Marketplace publish — the version string was the whole fight (2026-09-12)** — the
+  publisher portal rejected the upload with *“The version string '1.0.0-beta.7' doesn't conform to the
+  requirements for a version. It must be one to four numbers in the range 0 to 2147483647, with each
+  number separated by a period. It must contain at least one non-zero number.”* The Marketplace has no
+  semver concept at all: **no pre-release tags, ever** — the *pre-release channel* is a separate flag
+  on the VSIX (`vsce package --pre-release`), not a version suffix. Resolution: `package.json` moved to
+  **`0.9.0`** (SemVer's “unstable, pre-1.0” band, and it keeps `1.0.0` free for the first stable
+  release — a published number can never be reused and the latest version cannot be deleted), while
+  GitHub tags stay `v1.0.0-beta.N`. The payload is unchanged: the published VSIX is byte-identical to
+  the local `1.0.0-beta.7` build (the gallery's `VsixSha256` == `sha256sum` of the file). Traps found
+  on the way: (a) **“Verifying \<version\>”** in *Manage* only means *not yet validated* — detect it
+  with `extensionquery` `flags` bit 32 (`ExcludeNonValidated`): `flags: 914` returns the extension,
+  `flags: 950` returns 0 while validating; (b) in `extensionquery` only `filterType 7` (name) and
+  `10` (search text) work — `4` and `9` give HTTP 400 and `8` silently returns 0, and a bogus filter
+  looks exactly like a real negative, so **probe the probe** before concluding anything;
+  (c) the dev machine was installed at `1.0.0-beta.7`, which sorts **above** `0.9.0`, so VS Code will
+  never auto-update it from the Marketplace — a version change needs a *force* reinstall (or clearing
+  the stale copy out of `~/.vscode/extensions/`) or the old build silently shadows the published one;
+  (d) `repository.url` must not end in `.git` — vsce copies it verbatim into the listing's
+  `Links.GitHub` / `GetStarted` / `Source`. Guarded from now on by `packaging.test.js`: the manifest
+  version is asserted to be plain numbers, not just “valid semver”.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

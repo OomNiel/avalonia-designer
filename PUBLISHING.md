@@ -28,6 +28,7 @@ Reviewed **2026-09-12** against Microsoft's own sources (see *Related* for the l
 | Publisher ID `grumpy` on the Marketplace | free (no publisher page) |
 | Extension `grumpy.avalonia-designer` | unused (0 gallery matches) |
 | GitHub repository `OomNiel/avalonia-designer` | public (the listing's repository link needs that) |
+| Sign-in entry points | live, but they **bounce to the Microsoft sign-in page** (that redirect is normal, not a broken link) |
 
 ---
 
@@ -35,13 +36,14 @@ Reviewed **2026-09-12** against Microsoft's own sources (see *Related* for the l
 
 1. Open <https://marketplace.visualstudio.com/manage> and sign in with the Microsoft account that
    should own the extension. A personal account is fine; a work/school account must belong to an
-   Entra ID tenant.
+   Entra ID tenant. With no session active the page first redirects to the Microsoft sign-in page —
+   that is normal, not a broken link.
 2. Choose **Create publisher** and fill in:
    - **ID** — `grumpy` (must equal `"publisher"` in `package.json`, exactly)
    - **Name** — the display name shown on the listing (e.g. `Grumpy` or `OomNiel`)
 3. Save. The optional **verified** badge needs a domain/TXT record *and* Microsoft's prerequisites — an
-extension on the Marketplace for at least **6 months**, and a domain registered at least 6 months
-ago — so it cannot be done on day one; revisit it once the listing has some history.
+   extension on the Marketplace for at least **6 months**, and a domain registered at least 6 months
+   ago — so it cannot be done on day one; revisit it once the listing has some history.
 
 > Prefer a different ID? Change `"publisher"` in `package.json` to the new ID; the two must match.
 
@@ -50,12 +52,21 @@ ago — so it cannot be done on day one; revisit it once the listing has some hi
 A PAT is an Azure DevOps artefact, so you need a (free) Azure DevOps **organization** to create one —
 it does not have to be related to the repository.
 
-1. Go to <https://aex.dev.azure.com/me> and sign in with the **same** account you used for the
-   publisher. Create a free organization if you have none (e.g. `oomniel`).
-2. Open the token page for that organization:
-   `https://dev.azure.com/<your-org>/_usersSettings/tokens`
-   (or the gear icon, top right → **Personal access tokens**).
-3. Choose **New Token** and use exactly these settings:
+1. Sign in with the **same** account you used for the publisher. <https://app.vssps.visualstudio.com>
+   is the reliable entry point (it forwards to the Microsoft sign-in page first).
+2. **An organization has to exist before the token page does.** A PAT belongs to an Azure DevOps
+   *organization*, so without one `dev.azure.com/<org>/_usersSettings/tokens` answers **“404 – Page not
+   found”** — the signature of a missing or misspelled organization, not a broken link.
+   - No organization yet? Choose **Create new organization** on the Azure DevOps start page (or follow
+     [Create an organization](https://learn.microsoft.com/azure/devops/organizations/accounts/create-organization)),
+     give it any name (e.g. `oomniel`) and finish the wizard. `Public` visibility is the simplest
+     choice — it publishes nothing and has nothing to do with the Marketplace listing.
+3. Open the token page **for that organization**, with the name you just chose in place of
+   `<your-org>`: `https://dev.azure.com/<your-org>/_usersSettings/tokens`
+   (or, once signed in: the gear icon, top right → **Personal access tokens**).
+   Click-by-click reference:
+   [Use personal access tokens](https://learn.microsoft.com/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate).
+4. Choose **New Token** and use exactly these settings:
    - **Name** — `vsce-marketplace`
    - **Organization** — **All accessible organizations** *(a single-organization token is the
      documented cause of 401/403 here: publisher data does not live in your own organization, so an
@@ -65,7 +76,7 @@ it does not have to be related to the repository.
      hides the migration behind a mystery 401 later
    - **Scopes** — **Show all scopes**, then tick **Marketplace → Manage**
      *(this is the only scope needed; neighbouring read scopes are not enough)*
-4. Choose **Create** and copy the token **immediately** — it is shown only once.
+5. Choose **Create** and copy the token **immediately** — it is shown only once.
 
 > **This token has a fixed lifetime**, whatever expiry you pick: global PATs stop working on
 > **1 December 2026**. Treat that date as the real expiry — it matters again in part F (rotation) and
@@ -118,21 +129,63 @@ Either route does the same thing:
 The first publish creates the listing at
 <https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer>, built from the
 packaged `package.json` and `README.md`; it takes a few minutes to appear. A **pre-release** is hidden
-from search until a visitor ticks *“Show pre-release versions”*, so expect no traffic until a stable
-version exists.
+from the Marketplace website's browse and search until a visitor ticks *“Show pre-release versions”*,
+so expect no traffic until a stable version exists. (The gallery *query API* returns it regardless,
+which is why `code --install-extension grumpy.avalonia-designer --pre-release` works straight away.)
 
-> **Version tags — watch the first attempt.** Microsoft's docs say pre-releases *“only support
-> `major.minor.patch`”* and that **semver pre-release tags are not supported**, yet this project's
-> versions look like `1.0.0-beta.7`. If the publish rejects the version, publish the identical build
-> as a plain release instead (`npm run publish:stable`, no `--pre-release`); nothing else changes.
+> **Status: done — first listing live 2026-09-12 as `0.9.0`.** It was uploaded through the publisher
+> portal's **Upload** button, so no PAT was involved. That path works today and needs no token; the
+> `VSCE_PAT` workflow below is for automating later releases.
+
+### What “Verifying \<version\>” means — and how to confirm the result
+
+**“Verifying” is normal, not an error.** The version is stored and indexed but not yet *validated*;
+that flips on its own within minutes to a few hours, and until it does, clients that exclude
+unvalidated extensions are not offered the release. You can watch the state without signing in: bit 32
+of the `extensionquery` `flags` is `ExcludeNonValidated`, so the same query returns the extension with
+`flags: 914` and **nothing** with `flags: 950` while it is still verifying.
+
+```bash
+curl -s -X POST https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery \
+  -H "Accept: application/json;api-version=7.2-preview.1" -H "Content-Type: application/json" \
+  -d '{"filters":[{"criteria":[{"filterType":7,"value":"grumpy.avalonia-designer"}],"pageNumber":1,"pageSize":1}],"flags":914}'
+```
+
+The response also proves *what* was published, which is worth checking every time:
+
+- `Microsoft.VisualStudio.Code.PreRelease` is `true` for a pre-release (`--pre-release` is the only
+  way to set it — `vsce` cannot add the flag to a finished VSIX afterwards).
+- the version is the one you meant to ship, and `Publisher`/`Id` match `package.json`.
+- `Microsoft.VisualStudio.Services.VsixSha256` equals `sha256sum` of your local VSIX, and the stored
+  package downloads from `{assetUri}/Microsoft.VisualStudio.Services.VSIXPackage`.
+
+> Compare the hash **only** between your local file and the stored copy. Two separate *builds* of the
+> same source are never byte-reproducible — `vsce` stamps a fresh timestamp into
+> `extension.vsixmanifest`, so identical content still yields different digests.
+
+> **The Marketplace version must be numbers only.** Semver pre-release tags are rejected — uploading
+> `1.0.0-beta.7` fails with *"The version string '1.0.0-beta.7' doesn't conform to the requirements for
+> a version. It must be one to four numbers in the range 0 to 2147483647, with each number separated
+> by a period."* (Observed 2026-09-12.)
+>
+> This project therefore keeps **two** numberings: the GitHub releases/tags stay `v1.0.0-beta.N`
+> (informative and friendly), while `package.json` — the number the Marketplace shows and compares —
+> uses plain `major.minor.patch`. The first pre-release listing is **`0.9.0`**: SemVer's "unstable,
+> pre-1.0" band, and it leaves `1.0.0` free for the first stable release. Further betas bump `0.9.1`,
+> `0.9.2`, … and `1.0.0` then upgrades everyone automatically (VS Code always moves to the highest
+> version). Publishing `1.0.0` *now* would burn that number — a version can never be reused, and the
+> latest version cannot be deleted.
 
 ## F. Releasing after that
 
-1. Bump `version` in `package.json`, commit and tag (see `NOTES.md` §1 for the exact commands).
+1. Bump `version` in `package.json` — **numbers only** (`0.9.1`, `0.9.2`, …). Commit, then tag the
+   GitHub release with the descriptive semver name (`git tag v1.0.0-beta.8`, see `NOTES.md` §1). The
+   tag and `package.json` deliberately differ: the tag is documentation, `package.json` is the number
+   the Marketplace shows and compares. Never reuse a number — the Marketplace rejects the upload.
 2. Publish:
-   - `npm run publish:pre` while the version carries a `-beta` tag (e.g. `1.0.0-beta.8`)
-   - `npm run publish:stable` for a real `1.0.0` — this flips the listing to stable, and users on a
-     pre-release move across with it.
+   - `npm run publish:pre` for every `0.9.x` — it stays on the pre-release channel
+   - `npm run publish:stable` for the real `1.0.0` — this flips the listing to stable, and users on a
+     pre-release move across with it (VS Code always follows the highest version).
 3. Rotate the PAT before it expires (part B → **Regenerate**, then update the GitHub secret). An
 expired token — or one retired on **1 December 2026** — appears as a 401 / *“verification failed”* in
 the release run.
@@ -178,7 +231,7 @@ The same VSIX works there — sign in with GitHub at <https://open-vsx.org>, cre
 your profile, then:
 
 ```bash
-npx ovsx publish avalonia-designer-1.0.0-beta.7.vsix -p <token>
+npx ovsx publish avalonia-designer-<version>.vsix -p <token>
 ```
 
 ## Related

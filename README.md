@@ -17,6 +17,35 @@ remarks are welcome in the [issue tracker](https://github.com/OomNiel/avalonia-d
 
 Listed below is the list of the features of this extension. Feel free to enjoy and contribute.
 
+## Install
+
+**From the Visual Studio Marketplace** — search for *Avalonia Designer* in the Extensions view
+(`Ctrl+Shift+X`), or:
+
+```bash
+code --install-extension grumpy.avalonia-designer --pre-release
+```
+
+Every published version so far is a **pre-release**, so VS Code has to be told to accept one: tick
+**“Show pre-release versions”** in the Extensions view (or add `--pre-release` to the command), then
+pick the **Pre-Release** channel on the extension's detail page.
+
+**Or from GitHub** — take the `.vsix` from the
+[latest release](https://github.com/OomNiel/avalonia-designer/releases/latest):
+
+```bash
+code --install-extension avalonia-designer-0.9.0-prerelease.vsix --force
+```
+
+Either way, **reload the window** afterwards (`Ctrl+Shift+P` → *Developer: Reload Window*). The
+previewer host is compiled with the **.NET SDK** the first time you open a form — see
+[USER_MANUAL.md §3](https://github.com/OomNiel/avalonia-designer/blob/main/USER_MANUAL.md#3-installation--first-run)
+for the prerequisites.
+
+> **GitHub and the Marketplace number releases differently.** The Marketplace only accepts plain
+> numbers, so the tag `v1.0.0-beta.7` is published there as **`0.9.0`** — `1.0.0` is reserved for the
+> first stable release and `0.9.x` is the current pre-release line. The packages are identical.
+
 ## 1. The preview is real
 
 The design surface is rendered by an **actual headless Avalonia application** (`host/`, C#/net8.0 on
@@ -132,7 +161,12 @@ One toolbar click makes a dated **backup of the whole project** before risky wor
 
 ## Status and prerequisites
 
-- **Beta** — incomplete and still changing, but every release ships with a green suite.
+- **Beta**, published on the
+  [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer)
+  as a pre-release — incomplete and still changing, but every release ships with a green suite.
+- **Two version numbers per release, on purpose**: the GitHub tag is `v1.0.0-beta.N` while the
+  Marketplace (plain numbers only) shows the same build as `0.9.x`. `1.0.0` is reserved for the first
+  stable release.
 - VS Code **1.85+**; the **.NET SDK** (the preview host is built with it — the designer names the
   missing SDK with a download link rather than failing silently). Generated projects target `net10.0`.
 - Both the preview host and generated projects use **Avalonia 12.1.1** — one version, so what you
@@ -151,6 +185,8 @@ One toolbar click makes a dated **backup of the whole project** before risky wor
   each release
 - [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) — packaging and
   Marketplace release steps (for maintainers)
+- [Visual Studio Marketplace listing](https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer)
+  — the extension itself, on the pre-release channel
 - [All releases and VSIX downloads](https://github.com/OomNiel/avalonia-designer/releases)
 - [Issue tracker](https://github.com/OomNiel/avalonia-designer/issues) — bug reports, questions and
   remarks go here

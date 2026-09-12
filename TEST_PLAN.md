@@ -245,3 +245,11 @@ Each step ends with the log green before the next begins.
 - **T5** wires 8 catalog events through the VB matrix and still has to `dotnet build` 0/0.
 - **CI** (`.github/workflows/ci.yml`) runs `tsc`, `node --check`, T2 + T3 and a real `vsce package` on
   every push; the full T0–T5 suite is a manual job because it needs the .NET SDK.
+- **`packaging.test.js` gained the version-format guard** (**81** checks): valid semver is *not* what
+  the Marketplace validates, so the manifest version is now asserted to be **plain numbers**
+  (`^\d+(\.\d+){0,3}$`, at least one non-zero) instead of merely "valid semver" — that omission is
+  what let `1.0.0-beta.7` reach the first upload before being rejected. `PUBLISHING.md` is asserted to
+  document the rule too.
+- **First Marketplace publish verified (2026-09-12)** — `grumpy.avalonia-designer` version `0.9.0`,
+  `PreRelease = true`, and the stored `VsixSha256` equals the local VSIX byte for byte. Recorded in
+  `PUBLISHING.md` part E, including the `flags` bit that reveals the not-yet-validated state.

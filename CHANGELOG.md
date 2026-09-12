@@ -3,7 +3,29 @@
 All notable changes to the **Avalonia Designer for VS Code** extension.
 
 Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-versioning follows [SemVer](https://semver.org/).
+versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
+
+> **Two version numbers per release, on purpose.** GitHub tags and releases carry the descriptive
+> name (`v1.0.0-beta.7`), but the Visual Studio Marketplace rejects semver pre-release tags: it accepts
+> only one to four plain numbers. `package.json` therefore holds the Marketplace number — `0.9.0` for
+> `v1.0.0-beta.7` — and each entry below names both. `1.0.0` is reserved for the first stable release,
+> because a published version number can never be reused.
+
+## [0.9.0] - 2026-09-12 · *the `1.0.0-beta.7` build*
+
+### Added
+- **First Visual Studio Marketplace listing** — published as a pre-release at
+  <https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer>. The VSIX on the
+  Marketplace is byte-for-byte the `1.0.0-beta.7` package uploaded to GitHub.
+
+### Changed
+- **`repository.url` no longer ends in `.git`** — the Marketplace copies that field into the listing's
+  Repository / Get Started / Source links, where the suffix is redundant.
+
+### Notes
+- The version number is the *only* difference from `1.0.0-beta.7`. `PUBLISHING.md` part E records the
+  exact rejection message and why `1.0.0` was left unclaimed.
+- Everything under `1.0.0-beta.7` below applies to this release as well.
 
 ## [1.0.0-beta.7] - 2026-09-12
 
