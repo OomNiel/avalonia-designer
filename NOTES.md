@@ -1264,6 +1264,29 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   failure email for a known setup gap; it now warns, stays green and says **“⚠ NOT PUBLISHED”** in the
   job summary (a failed *publish* still fails the run, so the guard against silently skipping a
   release is kept — the summary and the warning are what distinguish “not attempted” from “published”).
+- §85 **Publishing a designed project as a .deb (2026-09-13).** The toolbar's **📦 Publish** builds the
+  project the form belongs to and packages it; **🚀 Install** installs the result here. Decisions worth
+  keeping, because they are the difference between "works on my machine" and a package someone can
+  install:
+  - **Framework-dependent on purpose.** `dotnet publish … --self-contained false` plus
+    `Depends: dotnet-runtime-<major>.<minor>` (derived from the project's TFM). This is the standing
+    project rule — *never bundle the runtime in a .deb* — and it is now asserted by a test, because it
+    is the kind of thing that quietly regresses into a 70 MB package.
+  - **Layout**: `/usr/lib/<pkg>` + a shell launcher in `/usr/bin/<pkg>` (a wrapper, not a symlink, so
+    it can fall back to `dotnet <app>.dll` when there is no apphost) + `/usr/share/applications` entry
+    + icon from the form's `Window → Icon`. `dpkg-deb --root-owner-group` avoids `fakeroot`.
+  - **The staging tree lives under `<project>/obj/avalonia-publish/`**, so git ignores it and the
+    designer's own *Project Backup* (which skips `bin`/`obj`) never copies it.
+  - **Generated, not typed.** The build is a written `publish.sh` (paths quoted, `set -euo pipefail`,
+    re-runnable by hand) rather than a command line sent into a terminal: long lines with spaces in
+    paths are exactly where "works until someone's folder has a space" bugs live.
+  - **sudo and the terminal: exactly one command is sent.** A second line queued behind `sudo dpkg -i`
+    would be eaten as the password ("Sorry, try again") — so verification happens later, from the
+    extension (`dpkg -s`), not by typing into a terminal that may be waiting for input.
+  - **Linux-only, and it says so**: the extension omits the two buttons elsewhere and both actions
+    refuse with an explanation (a hidden button that apologises is worse than no button; a visible one
+    that half-works is worse still). T3 covers both cases, including that `designer.js` still finishes
+    wiring when the buttons are absent — a missing element used to abort the whole script silently.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

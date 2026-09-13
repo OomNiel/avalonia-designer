@@ -306,6 +306,34 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Mark controls on the design surface whose wired event handler is missing with a ⚠ badge (hover it to see which handler). Only shown while the re-check is not 'manual'."
+                },
+                "avaloniaDesigner.publish.packageName": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Debian package name for the \"Publish\" button. Empty = the project's assembly name, lowercased (e.g. MyApp becomes myapp). dpkg-deb only accepts lowercase letters, digits, \".\", \"+\" and \"-\"."
+                },
+                "avaloniaDesigner.publish.version": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Version for the published package. Empty = the <Version> in the project file, else 1.0.0. A leading \"v\" is dropped and \"1.0.0-beta\" becomes \"1.0.0.beta\" (a Debian version must start with a digit, and a \"-\" would split it into upstream/revision)."
+                },
+                "avaloniaDesigner.publish.maintainer": {
+                    "type": "string",
+                    "default": "",
+                    "description": "The \"Maintainer\" field of the published .deb, in the form Name <email>. Debian policy requires it, so it is worth setting once."
+                },
+                "avaloniaDesigner.publish.description": {
+                    "type": "string",
+                    "default": "",
+                    "description": "One-line description shown in the application menu and by apt. Empty = a generic \"Standalone application built with Avalonia\"."
+                },
+                "avaloniaDesigner.publish.extraDepends": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "Extra Debian packages the app needs, added to the .deb's \"Depends\" (e.g. libcanberra0). The .NET runtime and the Avalonia native libraries are declared automatically."
                 }
             }
         }

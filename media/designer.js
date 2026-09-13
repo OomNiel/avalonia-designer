@@ -30,6 +30,9 @@
         btnRefresh: $('btnRefresh'),
         btnCodeFix: $('btnCodeFix'),
         btnBackup: $('btnBackup'),
+        // Linux-only (the .deb flow); null elsewhere, hence the guarded listeners below.
+        btnPublish: $('btnPublish'),
+        btnInstall: $('btnInstall'),
         btnZoomIn: $('btnZoomIn'),
         btnZoomOut: $('btnZoomOut'),
         btnFit: $('btnFit'),
@@ -2727,6 +2730,22 @@
         els.status.textContent = 'Checking the code-behind\u2026';
         post({ type: 'codeCheck' });
     });
+    // Publish…: build the project and package it as a Debian installer. The extension runs the build in
+    // a terminal (so the output is visible and the .deb can be rebuilt by hand), which is also why the
+    // status line says "see the terminal" rather than pretending to know when it finished.
+    if (els.btnPublish) {
+        els.btnPublish.addEventListener('click', () => {
+            els.status.textContent = 'Publishing the app \u2014 see the terminal\u2026';
+            post({ type: 'publishApp' });
+        });
+    }
+    // Install: install the .deb that Publish built on this machine (sudo, in the terminal).
+    if (els.btnInstall) {
+        els.btnInstall.addEventListener('click', () => {
+            els.status.textContent = 'Installing the app \u2014 see the terminal\u2026';
+            post({ type: 'installApp' });
+        });
+    }
     els.btnZoomIn.addEventListener('click', () => {
         state.fitted = false;
         state.scale = Math.min(4, state.scale * 1.2);

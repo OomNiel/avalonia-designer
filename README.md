@@ -151,7 +151,13 @@ snap-to-grid; cross-hair guides; rulers; zoom/fit.
 Split panels are designed visually, controls can be moved between containers without breaking their
 code-behind, and **undo/redo (5 levels) also reverts code-behind changes**.
 
-One toolbar click makes a dated **backup of the whole project** before risky work.
+One toolbar click makes a dated **backup of the whole project** before risky work — and when the app is
+finished, **📦 Publish** builds it in Release and packages it as a **Debian installer**
+(`publish/<name>_<version>_<arch>.deb`) that you can copy to another machine and install there. The
+package **depends on the .NET runtime instead of bundling it**, so apt installs the prerequisite and
+the `.deb` stays small. **🚀 Install** installs that package on the machine you are working on (the
+password is asked for in the terminal), so the app appears in the application menu and runs outside VS
+Code. Both buttons are Linux-only, like the format they produce.
 
 ## 10. Engineering discipline
 

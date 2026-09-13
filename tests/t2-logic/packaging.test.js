@@ -142,7 +142,7 @@ module.exports = async (t) => {
             'actions/upload-artifact': 6
         };
         for (const [file, where] of [['.github/workflows/ci.yml', 'ci'],
-            ['.github/workflows/release.yml', 'release']]) {
+        ['.github/workflows/release.yml', 'release']]) {
             const used = [...read(file).matchAll(/uses:\s*([\w.-]+\/[\w.-]+)@(v\d+)/g)]
                 .map((m) => ({ action: m[1], major: Number(m[2].slice(1)) }));
             t.ok(used.length > 0, where, 'the workflow uses at least one action');

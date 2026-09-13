@@ -11,6 +11,25 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > `v1.0.0-beta.7` — and each entry below names both. `1.0.0` is reserved for the first stable release,
 > because a published version number can never be reused.
 
+## [Unreleased]
+
+### Added
+- **📦 Publish — build your app as a Debian installer.** The project the form belongs to is built in
+  Release and packaged as `publish/<name>_<version>_<arch>.deb`, ready to copy to another machine. The
+  package installs the app into `/usr/lib/<name>` with a launcher in `/usr/bin/<name>` and an
+  application-menu entry (using the form's **Window → Icon** when it has one). The **.NET runtime is
+  declared as a dependency, not bundled** (`dotnet-runtime-8.0`), so apt fetches it instead of the
+  `.deb` carrying a second copy. The build runs in a terminal pane so the output is visible.
+- **🚀 Install — install that package on this machine**, so the app runs on its own (application menu or
+  by name in a terminal) instead of only inside the designer. It runs `sudo dpkg -i` in a terminal and
+  asks for the password **there**; nothing else is ever typed into that terminal while sudo waits.
+- **`avaloniaDesigner.publish.*` settings** — package name, version, maintainer, description and extra
+  `Depends`. All optional: empty values fall back to the project file's name and `<Version>`.
+
+### Notes
+- Both buttons are **Linux-only** (the `.deb` format is Debian's): the extension does not emit them on
+  other platforms, and the actions refuse with an explanation rather than pretending to work.
+
 ## [0.9.1] - 2026-09-13 · *the `1.0.0-beta.8` build*
 
 A measured performance pass over the whole extension — every hot path was timed before and after —

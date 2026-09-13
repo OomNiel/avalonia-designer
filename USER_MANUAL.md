@@ -221,6 +221,55 @@ git history. The status line and a notification tell you the folder and how many
 > have the form open in the designer when you click. If a save fails, **nothing** is copied — the
 > message names the file that could not be saved, so you can fix it and click again.
 
+### 📦 Publish — build a Debian installer for your app
+
+When the form is finished, **📦 Publish…** turns the **project** into a Debian package you can install
+on any Debian/Ubuntu machine — the app then runs on its own, outside VS Code.
+
+1. It builds the project in **Release** and packages it. Both steps run in a **terminal pane** (named
+   *Publish \<App\>*), so you can watch the build and see any error.
+2. The package lands in your project folder as **`publish/<name>_<version>_<arch>.deb`**
+   (e.g. `publish/myapp_1.0.0_amd64.deb`).
+
+Copy that `.deb` to another machine and install it there with `sudo dpkg -i <file>.deb`, or install it
+right here with **🚀 Install**.
+
+What the package contains — so you know what you are handing over:
+
+| Where | What |
+|---|---|
+| `/usr/lib/<name>/` | the built app |
+| `/usr/bin/<name>` | a launcher, so the app can also be started by typing its name in a terminal |
+| `/usr/share/applications/<name>.desktop` | the **application-menu entry** (with an icon, if the form has one) |
+
+**The .NET runtime is *not* included.** The package *depends* on it (`dotnet-runtime-8.0` for a
+`net8.0` project), so `apt`/`dpkg` fetches it when the machine does not have it yet — the same way it
+fetches the libraries Avalonia needs. That keeps the `.deb` small instead of shipping a second copy of
+.NET.
+
+The icon comes from the form: set **Window → Icon** (the field's **"…"** button copies the image into
+the project's `Assets/` folder) and that image becomes the menu icon.
+
+> **📦 Publish and 🚀 Install are Linux-only** — the `.deb` format *is* Debian's, so the two buttons
+> only appear in the toolbar on Linux, and the extension refuses both actions anywhere else instead of
+> pretending they worked.
+
+Settings — `avaloniaDesigner.publish.*`: the **package name**, **version**, **maintainer**, one-line
+**description** and any **extra `Depends`** your app needs. Leaving them empty uses the project file's
+name and `<Version>`, so a first publish needs no configuration at all.
+
+### 🚀 Install — run your app outside VS Code
+
+**🚀 Install** installs the `.deb` that Publish built **on this machine**, so the app appears in your
+application menu and runs like any other program.
+
+- It runs `sudo dpkg -i <the .deb>` in a terminal and **asks for your password there** — the extension
+  never sees it, and nothing else is typed into that terminal while it waits.
+- Nothing published yet? It offers to publish first. Package older than your sources? It says so and
+  lets you publish again.
+- If the install reports a **missing dependency**, run `sudo apt-get -f install` (the notification
+  reminds you) and then click **🚀 Install** again.
+
 ---
 
 ## 5. The Toolbox

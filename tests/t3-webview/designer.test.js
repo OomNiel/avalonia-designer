@@ -17,6 +17,8 @@ const DESIGNER_CSS = path.join(__dirname, '..', '..', 'media', 'designer.css');
 const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomValue', 'canvasWrap',
     'toolbar',
     'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnBackup', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
+    // Linux-only in the real webview: the extension omits them elsewhere (see setup's `omit`).
+    'btnPublish', 'btnInstall',
     'menuDummies',
     'contextMenu', 'ctxDelete', 'ctxCut', 'ctxCopy', 'ctxPaste', 'ctxMoveToContainer', 'ctxAddEvent',
     'eventModal', 'eventTitle', 'eventHint', 'eventList', 'eventRemember', 'eventRememberWrap', 'eventSkip', 'eventWire',
@@ -43,7 +45,12 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'chColor', 'crosshairSave', 'crosshairCancel',
     'rulerH', 'rulerV'];
 
-function setup() {
+/**
+ * Builds the webview DOM + script. `omit` skips ids the extension does not emit on every platform —
+ * the publish/install buttons only exist on Linux, so the script must still load (and keep working)
+ * when they are missing.
+ */
+function setup(omit = []) {
     const { JSDOM } = require('jsdom');
     const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
         runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/'
@@ -96,7 +103,7 @@ function setup() {
     canvas.appendChild(make('chH'));
     canvas.appendChild(make('chV'));
     window.document.body.appendChild(wrap);
-    for (const id of IDS.filter((i) => i !== 'canvasWrap' && i !== 'canvas' && i !== 'preview' && i !== 'overlayLayer' && i !== 'selection' && i !== 'dotGrid' && i !== 'multiSel' && i !== 'marquee' && i !== 'radiusGuide' && i !== 'crosshair' && i !== 'chH' && i !== 'chV' && i !== 'menuDummies')) {
+    for (const id of IDS.filter((i) => i !== 'canvasWrap' && i !== 'canvas' && i !== 'preview' && i !== 'overlayLayer' && i !== 'selection' && i !== 'dotGrid' && i !== 'multiSel' && i !== 'marquee' && i !== 'radiusGuide' && i !== 'crosshair' && i !== 'chH' && i !== 'chV' && i !== 'menuDummies' && !omit.includes(i))) {
         window.document.body.appendChild(make(id));
     }
 
@@ -680,6 +687,37 @@ module.exports = async (t) => {
         t.equal(posted[posted.length - 1], { type: 'projectBackup' }, 'toolbar', 'Project Backup posts projectBackup');
         t.ok(/back(ing)? up/i.test($('status').textContent), 'toolbar', 'the status line says a backup is running',
             $('status').textContent);
+    }
+
+    // --- Toolbar: Publish / Install (Linux-only) ---
+    // Publish builds the project and packages a .deb, Install installs that .deb on this machine. Both
+    // are done by the extension (the build runs in a terminal there), so the webview posts and says so.
+    {
+        t.ok(!!$('btnPublish') && !!$('btnInstall'), 'publish-buttons', 'the two buttons exist');
+        posted.length = 0;
+        $('btnPublish').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1], { type: 'publishApp' }, 'publish-buttons', 'Publish posts publishApp');
+        t.ok(/publish/i.test($('status').textContent), 'publish-buttons',
+            'the status line says it is publishing (the terminal has the detail)', $('status').textContent);
+        posted.length = 0;
+        $('btnInstall').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1], { type: 'installApp' }, 'publish-buttons', 'Install posts installApp');
+        t.ok(/install/i.test($('status').textContent), 'publish-buttons', 'and the status line says so',
+            $('status').textContent);
+    }
+
+    // On Windows/macOS the extension does not emit those buttons at all. The script must still load and
+    // finish wiring the rest of the toolbar — a missing element used to abort the whole script silently.
+    {
+        const nos = setup(['btnPublish', 'btnInstall']);
+        t.equal(nos.$('btnPublish'), null, 'publish-buttons', 'without the flag there is no Publish button');
+        nos.posted.length = 0;
+        nos.$('btnBackup').dispatchEvent(new nos.window.MouseEvent('click', { bubbles: true }));
+        t.equal(nos.posted[nos.posted.length - 1], { type: 'projectBackup' }, 'publish-buttons',
+            'a listener registered BEFORE them still runs');
+        nos.$('btnZoomOut').dispatchEvent(new nos.window.MouseEvent('click', { bubbles: true }));
+        t.equal(nos.$('zoomValue').value, '83%', 'publish-buttons',
+            'and the script reached the listeners registered AFTER them (89% → 83% zoom out)');
     }
 
     // --- colour palette popup: lists EVERY preset colour (not just the current one), then a pick

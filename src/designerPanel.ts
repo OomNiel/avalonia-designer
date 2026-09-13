@@ -17,6 +17,7 @@ import { findProject, ProjectInfo } from './projectParser';
 import { listAssets, Asset } from './assetCatalog';
 import { ensureDataGridAutoGenerateColumns, ensureSqlitePackages, defaultDbFile, reloadDataSetPanel, saveOpenDataSetDocuments } from './dataSetEditor';
 import { backupProject } from './projectBackup';
+import { publishApp, installApp } from './projectPublisher';
 import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTableName } from './dataSetModel';
 import { readDataSetFiles } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
@@ -1645,6 +1646,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 }
                 case 'projectBackup': {
                     await this.projectBackup(doc, panel);
+                    return;
+                }
+                case 'publishApp': {
+                    // Build this form's project and package it as a .deb. The build runs in a visible
+                    // terminal, so this returns as soon as it has been started.
+                    await publishApp(doc.uri);
+                    return;
+                }
+                case 'installApp': {
+                    // Install the .deb that Publish built, on this machine (sudo in a terminal).
+                    await installApp(doc.uri);
                     return;
                 }
                 case 'refresh': {
@@ -5907,6 +5919,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             `script-src ${wv.cspSource}`,
             `font-src ${wv.cspSource}`
         ].join('; ');
+        // Publish/Install produce and install a Debian package, so they only exist on Linux — the
+        // extension refuses both actions elsewhere anyway (see projectPublisher), this just avoids
+        // offering a button that can only apologise.
+        const publishButtons = process.platform === 'linux'
+            ? `      <button id="btnPublish" title="Build THIS project in Release and package it as a Debian installer: publish/&lt;name&gt;_&lt;version&gt;_&lt;arch&gt;.deb. The .deb carries no .NET runtime — it depends on it, so apt installs the prerequisite. Copy the .deb to another machine to install the app there.">📦 Publish…</button>
+      <button id="btnInstall" title="Install the .deb that Publish built, on this machine, so the app runs outside VS Code (it appears in the application menu). Your password is asked for in the terminal.">🚀 Install</button>
+`
+            : '';
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5926,12 +5946,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
       <button id="btnUndo" title="Undo the last change (Ctrl+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.8 2.2 L6.2 4.8 L8.8 7.4"/><path d="M6.2 4.8 H9.6 A3.4 3.4 0 0 1 9.6 11.6 H7.0"/></svg></button>
       <button id="btnRedo" title="Redo the last undone change (Ctrl+Shift+Z / Ctrl+Y)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.2 2.2 L9.8 4.8 L7.2 7.4"/><path d="M9.8 4.8 H6.4 A3.4 3.4 0 0 0 6.4 11.6 H9.0"/></svg></button>
       <span class="sep"></span>
-      <button class="tbg-head" data-grp="file" data-tip="File: new form, reload from disk, code-behind check, project backup" aria-expanded="true">File</button>
+      <button class="tbg-head" data-grp="file" data-tip="File: new form, reload from disk, code-behind check, project backup, publish/install the app as a .deb" aria-expanded="true">File</button>
       <button id="btnNewForm" title="Create a new Avalonia form">+ New Form</button>
       <button id="btnRefresh" title="Reload the form from disk and re-read the database preview (e.g. rows added while the app was running)">Refresh</button>
       <button id="btnCodeFix" title="Check the code-behind against the form and the DataSet: missing VB accessors, duplicate methods, leftover handlers of deleted controls, broken Data-Image / ItemsSource bindings, missing Imports or bundled helper files — with a one-click fix per problem">🩺 Code Fix…</button>
       <button id="btnBackup" title="Save everything that is unsaved, then copy this whole project into the parent folder as &lt;Project&gt;_&lt;date&gt;_&lt;time&gt; (no bin/obj, caches or .git)">💾 Project Backup</button>
-      <span class="sep"></span>
+${publishButtons}      <span class="sep"></span>
       <button class="tbg-head" data-grp="zoom" data-tip="Zoom: zoom out / in and fit the form to the window" aria-expanded="true">Zoom</button>
       <button id="btnZoomOut" title="Zoom out">−</button>
       <input id="zoomValue" readonly value="100%"/>

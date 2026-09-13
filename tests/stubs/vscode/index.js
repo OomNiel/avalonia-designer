@@ -36,6 +36,8 @@ const window = {
     showOpenDialog: async () => undefined,
     showTextDocument: async () => ({ document: { positionAt: () => ({ line: 0, character: 0 }) }, selection: null, revealRange: () => { } }),
     createOutputChannel: () => ({ appendLine: () => { }, show: () => { } }),
+    // The designer runs builds in a real terminal; tests replace this to observe what would be typed.
+    createTerminal: (opts) => ({ name: opts && opts.name, show: () => { }, sendText: () => { }, dispose: () => { } }),
     activeTextEditor: null
 };
 
