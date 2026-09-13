@@ -9,9 +9,11 @@
  * It measures the PURE, app-free functions that the refactor targets, so numbers are comparable
  * between runs without starting the previewer host or a webview:
  *
- *   serialize      XamlModel.serialize(forSave)          — re-serialises the whole document. Called
- *                                                          4–6× per single property edit today; the
- *                                                          Phase-2 fix memoises it behind a dirty flag.
+ *   serialize      XamlModel.serialize(forSave)          — re-serialises the whole document, so it is
+ *                                                          called once per edit rather than once per
+ *                                                          lookup. It is deliberately NOT memoised:
+ *                                                          the panel mutates the model's DOM directly,
+ *                                                          and a stale cache would drop user edits.
  *   findByName     XamlModel.findByName × N             — O(N) because it rebuilds controlElements()
  *                                                          on every call, and render() calls it once
  *                                                          per control → O(N²) per frame.
@@ -19,6 +21,7 @@
  *                                                          O(k²·m) over the selection.
  *   codeCheck      analyzeCodeBehind on a real temp project — the code-behind checker (sync file
  *                                                          reads + XAML parses + regex passes).
+ *   editSignal     the notifyEdit() pattern: serialise, then read the control-set signature.
  *
  * Every benchmark reports ms/call; the aggregate line is what the phase summary quotes.
  */
@@ -107,6 +110,19 @@ End Class
     return { dir, uri: require('vscode').Uri.file(axamlPath) };
 }
 
+/**
+ * The control-set signature as the panel computed it before Phase 2d: serialise the document, hand
+ * the text back to the parser and read the names off the re-parsed tree. Kept here (verbatim) as the
+ * "before" half of the edit-signal benchmark below.
+ */
+function signatureViaParse(xaml) {
+    try {
+        return new XamlModel(xaml).namedControls().map((c) => `${c.name}:${c.type}`).sort().join('|');
+    } catch {
+        return '';
+    }
+}
+
 function time(label, iters, fn) {
     fn(0);                                     // warm-up (JIT, first-parse caches)
     const t0 = process.hrtime.bigint();
@@ -149,6 +165,23 @@ async function main() {
             if (n && !map.has(n)) map.set(n, el);
         }
         for (const nm of names) map.get(nm);
+    }));
+    // What notifyEdit() runs on EVERY edit: serialise the document, then decide whether the set of
+    // named controls changed — that answer re-syncs the VB accessor properties, so it cannot simply be
+    // dropped. The two rows differ only in how the "after" side is read: re-parsed from the text the
+    // serialiser just produced, or read off the live model (Phase 2d). The edit itself is one-off work,
+    // but it sits directly behind every drag, resize and property change.
+    results.push(time('edit signal: serialize + 2 parses (OLD)', 10, () => {
+        const before = model.serialize(true);
+        const after = model.serialize(true);
+        signatureViaParse(before);
+        signatureViaParse(after);
+    }));
+    results.push(time('edit signal: serialize + 1 parse (current)', 10, () => {
+        const before = model.serialize(true);
+        const after = model.serialize(true);
+        signatureViaParse(before);
+        model.namedControlSignature();
     }));
     results.push(time('propertyDefsFor × N (200 controls)', 3, () => {
         for (const el of els) propertyDefsFor(el);

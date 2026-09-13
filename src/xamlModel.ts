@@ -268,6 +268,15 @@ export class XamlModel {
     }
 
     /**
+     * A stable signature of the named controls (`name:type`, sorted) — changes exactly when a
+     * control is added, removed or renamed. Same value as serialising and parsing the result back,
+     * but read straight off the live tree: no serialise and no XML parse.
+     */
+    namedControlSignature(): string {
+        return this.namedControls().map((c) => `${c.name}:${c.type}`).sort().join('|');
+    }
+
+    /**
      * True if the control has a user-assigned name (from the Name property).
      * Auto-generated in-memory names (`_TagN`) do NOT count as real names.
      */

@@ -1403,6 +1403,12 @@ export class DesignerDocument implements vscode.CustomDocument {
         return new DesignerDocument(uri, new XamlModel(text));
     }
 
+    /**
+     * Deliberately re-serialises instead of caching a dirty flag: the panel mutates the model's DOM
+     * directly (drag, resize, property edits), so any flag would have to be bumped by every one of
+     * those call sites, and one missed bump means silently losing user edits. The getter is read
+     * only on a save, an external file change and a close, not per frame.
+     */
     get dirty(): boolean {
         return this.model.serialize(true) !== this.savedContent;
     }
@@ -4765,11 +4771,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         }
     }
 
-    /** Signature of the named controls in a serialized XAML string (for change detection). */
+    /**
+     * Signature of the named controls in a serialized XAML string. Only used for the state captured
+     * BEFORE an edit, which exists as text: the current state is read off the live model instead
+     * (see `XamlModel.namedControlSignature`), so an edit parses the document once, not twice.
+     */
     private controlsSignature(xaml: string): string {
         try {
-            const m = new XamlModel(xaml);
-            return m.namedControls().map((c) => `${c.name}:${c.type}`).sort().join('|');
+            return new XamlModel(xaml).namedControlSignature();
         } catch {
             return '';
         }
@@ -4780,7 +4789,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         if (before === after) return;
         // If the set of named controls changed (a control was added/removed/renamed), keep the
         // VB code-behind's named-control accessor properties in sync.
-        if (this.controlsSignature(before) !== this.controlsSignature(after)) {
+        if (this.controlsSignature(before) !== doc.model.namedControlSignature()) {
             void this.syncAccessors(doc).catch(() => { /* ignore */ });
         }
         this.pushHistory(doc, after);

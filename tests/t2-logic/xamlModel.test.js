@@ -336,4 +336,47 @@ module.exports = async (t) => {
   t.equal(ar1.getAttribute('Height'), '200', 'arc-radius', 'height 200 (stays circular)');
   t.equal(ar1.getAttribute('Canvas.Left'), '50', 'arc-radius', 'box left = centre - radius (150-100)');
   t.equal(ar1.getAttribute('Canvas.Top'), '50', 'arc-radius', 'box top = centre - radius');
-};
+  // --- namedControlSignature (parse-free control-set comparison for notifyEdit) ---
+  // The panel compares the signature before and after an edit to decide whether the VB accessor
+  // properties must be re-synced. Reading it off the live model saves re-parsing the text the
+  // serialiser just produced (1.4 ms on a 200-control form), so it must equal the parse-based value
+  // exactly, and it must move for exactly the three events that matter.
+  const viaParse = (xaml) =>
+    new XamlModel(xaml).namedControls().map((c) => `${c.name}:${c.type}`).sort().join('|');
+  const sig = new XamlModel(WINDOW);
+  t.equal(sig.namedControlSignature(), viaParse(WINDOW), 'signature',
+    'equals the value obtained by re-parsing the serialized XAML');
+  t.equal(sig.namedControlSignature(), sig.namedControlSignature(), 'signature', 'and is stable');
+  t.ok(sig.namedControlSignature().includes('btn1:Button'), 'signature', 'lists name:type');
+
+  // A property edit that does not touch the control set must NOT change the signature (this is what
+  // keeps syncAccessors out of every drag and resize).
+  sig.findByName('btn1').setAttribute('Canvas.Left', '99');
+  t.equal(sig.namedControlSignature(), viaParse(WINDOW), 'signature', 'a move leaves it unchanged');
+
+  // Adding, renaming and deleting a control must each change it.
+  const added = new XamlModel(WINDOW);
+  added.addControl(added.findByName('Body'), '<Button x:Name="btn2" Content="B2"/>', { x: 0, y: 0 });
+  t.ok(added.namedControlSignature() !== viaParse(WINDOW), 'signature', 'adding a control changes it');
+
+  const renamed = new XamlModel(WINDOW);
+  renamed.setExplicitName(renamed.findByName('btn1'), 'btn1Renamed');
+  t.ok(renamed.namedControlSignature() !== viaParse(WINDOW), 'signature', 'renaming changes it');
+  t.equal(renamed.namedControlSignature(), viaParse(renamed.serialize(true)), 'signature',
+    'and matches the re-parsed text after the rename');
+
+  const removed = new XamlModel(WINDOW);
+  const gone = removed.findByName('btn1');
+  gone.parentNode.removeChild(gone);
+  t.ok(removed.namedControlSignature() !== viaParse(WINDOW), 'signature', 'deleting changes it');
+
+  // Auto-generated in-memory names (_TagN, used to map host bounds back to elements) are not part of
+  // the saved document, so they must not leak into the signature — otherwise a render would look like
+  // "the control set changed" and re-sync the accessors on every frame.
+  const auto = new XamlModel(`<Window ${NS}><Canvas x:Name="Body"><Button Content="x"/></Canvas></Window>`);
+  auto.serialize(false);                     // serialising assigns an in-memory _Button1 auto-name
+  t.equal(auto.namedControlSignature(), 'Body:Canvas', 'signature',
+    'in-memory auto-names are excluded (only the explicitly named Canvas is listed)');
+  auto.setExplicitName(auto.controlElements().find((e) => e.tagName.toLowerCase() === 'button'), 'real');
+  t.equal(auto.namedControlSignature(), 'Body:Canvas|real:Button', 'signature',
+    'while an explicit name is included');};
