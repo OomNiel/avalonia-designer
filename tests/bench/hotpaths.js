@@ -146,8 +146,15 @@ async function main() {
     }));
 
     const proj = makeCodeCheckProject(80);
-    results.push(await timeAsync('analyzeCodeBehind (80 controls, VB)', 3, async () => {
+    const axamlText = fs.readFileSync(proj.uri.fsPath, 'utf8');
+    // Two variants on purpose: the editor passes the in-memory model text, while the checker on its own
+    // reads the .axaml from disk. The difference is the file-I/O share of the cost, which is what a
+    // cache can remove — the rest is CPU inside the analyser.
+    results.push(await timeAsync('analyzeCodeBehind (80 ctl VB, reads .axaml)', 3, async () => {
         await analyzeCodeBehind(proj.uri, {});
+    }));
+    results.push(await timeAsync('analyzeCodeBehind (80 ctl VB, text in memory)', 3, async () => {
+        await analyzeCodeBehind(proj.uri, { axamlText });
     }));
 
     const totalMs = results.reduce((a, r) => a + r.ms, 0);

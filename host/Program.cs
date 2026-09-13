@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -293,9 +294,16 @@ internal static class Program
     /// exist as public instance properties on the named Avalonia control type. Attached
     /// properties (containing a '.') are assumed valid. Used by the extension to keep only
     /// valid properties in the panel.</summary>
-    private static List<string> AuditKeys(string typeName, List<string> keys)
+    /** Control types resolved by simple name. The lookup below enumerates EVERY type of EVERY loaded
+     *  assembly (tens of thousands) before filtering, and AuditKeys runs on regular property edits, so
+     *  the result is cached. Only successful lookups are cached: a premature miss (assemblies still
+     *  loading) would otherwise be remembered forever. */
+    private static readonly ConcurrentDictionary<string, Type> ControlTypeCache = new();
+
+    private static Type? ResolveControlType(string typeName)
     {
-        var type = AppDomain.CurrentDomain.GetAssemblies()
+        if (ControlTypeCache.TryGetValue(typeName, out var cached)) return cached;
+        var found = AppDomain.CurrentDomain.GetAssemblies()
             .SelectMany(a =>
             {
                 try { return a.GetTypes(); }
@@ -303,6 +311,13 @@ internal static class Program
                 catch { return Type.EmptyTypes; }
             })
             .FirstOrDefault(t => t.Name == typeName && !t.IsAbstract && typeof(Control).IsAssignableFrom(t));
+        if (found is not null) ControlTypeCache[typeName] = found;
+        return found;
+    }
+
+    private static List<string> AuditKeys(string typeName, List<string> keys)
+    {
+        var type = ResolveControlType(typeName);
 
         if (type is null) return new List<string>();
         var valid = new List<string>();

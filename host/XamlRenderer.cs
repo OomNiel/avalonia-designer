@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -70,11 +71,13 @@ public class XamlRenderer
 
     public FrameResult Render(string xaml, double designW, double designH, string? projectPath = null, string? theme = null, IReadOnlyList<GridPreviewData>? grids = null)
     {
+        Window? shown = null;
         try
         {
             CurrentProjectPath = projectPath;
             var window = LoadWindow(xaml, (int)designW, (int)designH, projectPath)
                 ?? throw new InvalidOperationException("Failed to load XAML into a Window.");
+            shown = window;
 
             // The headless platform can't detect the OS colour scheme, so the extension tells us
             // which FluentTheme variant to render (so a "System" form that the user's OS would
@@ -94,7 +97,8 @@ public class XamlRenderer
             // asset loader (the host has none of the user's assets). Re-inject resolved bitmaps by
             // name into the realized visual instances BEFORE measure, so images keep their real
             // size (a null source measures to 0x0).
-            ApplyImageSources(window, xaml, projectPath);
+            var imageMap = BuildImageMap(xaml, projectPath);
+            ApplyImageSources(window, imageMap);
 
             // Design-time data: a DataGrid bound to a DataSet table is populated at runtime by the
             // app's code-behind, which the headless preview doesn't run. When the extension supplies
@@ -108,7 +112,7 @@ public class XamlRenderer
             // container may not be realized yet. Re-apply now (idempotent) so any Image whose Source
             // is a plain file path / avares URI that Avalonia's loader couldn't resolve still gets a
             // bitmap (e.g. Data-Image previews and hand-typed absolute paths).
-            ApplyImageSources(window, xaml, projectPath);
+            ApplyImageSources(window, imageMap);
 
             // A DataGrid realises its rows/column presenters lazily (a virtualising ScrollViewer
             // inside its template), so the single Measure/Arrange pass above leaves a freshly-filled
@@ -127,7 +131,10 @@ public class XamlRenderer
                 catch { /* design-time preview is best-effort */ }
             }
 
-            var rtb = new RenderTargetBitmap(new PixelSize((int)designW, (int)designH), new Vector(96, 96));
+            // The render target owns an unmanaged surface the size of the frame. Without `using` it was
+            // only reclaimed by the finalizer, so the host accumulated ~1.4 MB per rendered frame for as
+            // long as it stayed alive — and it lives for the whole editing session.
+            using var rtb = new RenderTargetBitmap(new PixelSize((int)designW, (int)designH), new Vector(96, 96));
             rtb.Render(window);
 
             using var ms = new MemoryStream();
@@ -136,7 +143,6 @@ public class XamlRenderer
 
             var frame = new FrameResult { PngBase64 = png, Width = designW, Height = designH };
             CollectControls(window, frame);
-            window.Close();
 
             return frame;
         }
@@ -147,6 +153,10 @@ public class XamlRenderer
         finally
         {
             CurrentProjectPath = null;
+            // Closing here rather than on the success path only: CollectControls runs BEFORE the close
+            // used to, so an exception there left a live headless window (plus its render target) behind
+            // for the lifetime of the host.
+            try { shown?.Close(); } catch { /* already gone */ }
         }
     }
 
@@ -434,16 +444,24 @@ public class XamlRenderer
     /// avares://Project/… URI (or path) that the host's asset loader can't resolve. Works for both
     /// the full-fidelity runtime loader and the programmatic fallback, because x:Name becomes the
     /// control's Name in either path.</summary>
-    private static void ApplyImageSources(Window window, string xaml, string? projectPath)
+    /// <summary>Resolves the body's image sources once per render (see the call site in Render).</summary>
+    private static Dictionary<string, IImage>? BuildImageMap(string xaml, string? projectPath)
     {
-        if (string.IsNullOrEmpty(projectPath)) return;
-        Dictionary<string, IImage>? map = null;
+        if (string.IsNullOrEmpty(projectPath)) return null;
         try
         {
             var doc = XDocument.Parse(xaml);
-            map = ScanImageSources(doc, projectPath);
+            var map = ScanImageSources(doc, projectPath);
+            return map.Count == 0 ? null : map;
         }
-        catch { return; }
+        catch { return null; }
+    }
+
+    /// <summary>Injects already-resolved bitmaps into the realized &lt;Image&gt; controls by name. Called
+    /// twice per frame (before measure and after arrange) because a container may realise its children
+    /// late; both calls now share one decoded map.</summary>
+    private static void ApplyImageSources(Window window, Dictionary<string, IImage>? map)
+    {
         if (map is null || map.Count == 0) return;
 
         foreach (var desc in window.GetVisualDescendants())
@@ -506,8 +524,19 @@ public class XamlRenderer
         }
     }
 
+    /// <summary>Row types already emitted, keyed by the column set. A grid's columns are stable from frame
+    /// to frame, and an emitted assembly cannot be unloaded (AssemblyBuilderAccess.Run), so emitting one
+    /// per call leaked an assembly plus a row type per grid per RENDER — thousands over a session.</summary>
+    private static readonly ConcurrentDictionary<string, Type> RowTypeCache = new();
+
     /// <summary>Builds (via Reflection.Emit) a simple row type exposing one public object property per column.</summary>
     private static Type BuildRowType(IReadOnlyList<string> columns)
+    {
+        var key = string.Join('\u001f', columns);
+        return RowTypeCache.GetOrAdd(key, _ => EmitRowType(columns));
+    }
+
+    private static Type EmitRowType(IReadOnlyList<string> columns)
     {
         var asm = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("GridPreviewRows"), AssemblyBuilderAccess.Run);
         var mod = asm.DefineDynamicModule("GridPreviewRowsMod");

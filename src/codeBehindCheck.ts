@@ -176,11 +176,46 @@ function escapeRe(s: string): string {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** 1-based line number of a character offset. */
+/** Line-start offsets for the most recently indexed text. `lineAt` runs once per declaration, so the
+ *  naive scan made a whole analysis O(n²) — roughly 200 declarations over a 5 000-line file meant
+ *  hundreds of full-text walks. One entry is enough and cheap: every caller within an analysis works
+ *  on the same string, and a different string simply rebuilds the index. */
+let lineStartsFor = '';
+let lineStarts: number[] = [];
+
+function lineStartsOf(text: string): number[] {
+    if (text !== lineStartsFor) {
+        lineStartsFor = text;
+        lineStarts = [0];
+        for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) lineStarts.push(i + 1);
+    }
+    return lineStarts;
+}
+
+/** 1-based line number of a character offset (binary search over the line index). */
 function lineAt(text: string, index: number): number {
-    let line = 1;
-    for (let i = 0; i < index && i < text.length; i++) if (text[i] === '\n') line++;
-    return line;
+    const starts = lineStartsOf(text);
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (starts[mid] <= index) lo = mid;
+        else hi = mid - 1;
+    }
+    return lo + 1;
+}
+
+/** How often `\bname\b` occurs OUTSIDE `[from, to)`, counted in one pass with no copy. The caller
+ *  used to build `text.slice(0, from) + text.slice(to)` for every accessor, i.e. a copy of the whole
+ *  code-behind for every declaration in it. */
+function usesOutside(text: string, name: string, from: number, to: number): number {
+    const re = new RegExp(`\\b${escapeRe(name)}\\b`, 'g');
+    let count = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+        if (m.index < from || m.index >= to) count++;
+    }
+    return count;
 }
 
 /** Index of the `}` matching the `{` at `open`, or -1. */
@@ -612,9 +647,7 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
         }
         for (const a of code.accessors) {
             if (controlNames.has(a.name)) continue;
-            const outside = code.body.slice(0, a.start) + code.body.slice(a.end);
-            const uses = new RegExp(`\\b${escapeRe(a.name)}\\b`, 'g');
-            const count = (outside.match(uses) ?? []).length;
+            const count = usesOutside(code.body, a.name, a.start, a.end);
             add({
                 severity: 'warning', kind: count === 0 ? 'rebuild-accessors' : 'report-only',
                 member: a.name, line: lineAt(code.body, a.start),
