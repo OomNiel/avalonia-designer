@@ -379,4 +379,5 @@ module.exports = async (t) => {
     'in-memory auto-names are excluded (only the explicitly named Canvas is listed)');
   auto.setExplicitName(auto.controlElements().find((e) => e.tagName.toLowerCase() === 'button'), 'real');
   t.equal(auto.namedControlSignature(), 'Body:Canvas|real:Button', 'signature',
-    'while an explicit name is included');};
+    'while an explicit name is included');
+};

@@ -1996,6 +1996,46 @@
         : String((msg && msg.name) || ''));
 
     /**
+     * The field being TYPED into, holding the function that commits its value. A typed property is
+     * applied on Enter or when the field loses focus — never while typing.
+     *
+     * Every commit costs a full round trip: the model is edited, the previewer re-renders the form,
+     * a new PNG comes back, and the Properties panel is rebuilt for the response. Debouncing that to
+     * 400 ms still ran the whole thing mid-word and threw the rows away underneath the user, which is
+     * what made typing feel laggy. Discrete controls are unaffected — a dropdown, a confirmed colour,
+     * a checkbox or a palette click is one action, not typing, and still applies immediately.
+     *
+     * Anything still pending is committed before the rows are rebuilt, so a refresh arriving from the
+     * extension mid-typing can never swallow what was typed.
+     */
+    let pendingText = null;   // () => void: commits the value the field holds now
+
+    function flushPendingText() {
+        const commit = pendingText;
+        pendingText = null;
+        if (commit) commit();
+    }
+
+    /**
+     * Wires a typed field to commit on Enter or blur. The value is read at commit time (not captured),
+     * and the field remembers what the extension was last told: typing a value back to what it was —
+     * or Enter followed by the `change` event it also fires — costs nothing and posts nothing twice.
+     */
+    function onTypedField(el, commit) {
+        let committed = el.value;
+        const flush = () => {
+            const value = el.value;
+            pendingText = null;
+            if (value === committed) return;
+            committed = value;
+            commit();
+        };
+        el.addEventListener('input', () => { pendingText = flush; });
+        el.addEventListener('change', flush);          // fires on blur, and on Enter for text inputs
+        el.addEventListener('keydown', (e) => { if (e.key === 'Enter') flush(); });
+    }
+
+    /**
      * Rebuilds the Properties panel while preserving the scroll position when it rebuilds for the same
      * control. The panel is rebuilt wholesale on every property change, and TWO things used to move it:
      * the rebuilt content started at the top, and the focus restore called `focus()`, which makes the
@@ -2004,6 +2044,8 @@
      * saved and restored around the rebuild.
      */
     function renderProperties(msg) {
+        // The rows are about to be thrown away: commit a half-typed value first (see onTypedField).
+        flushPendingText();
         const id = propsIdentityOf(msg);
         const keep = id === propsShownFor ? els.propsBody.scrollTop : 0;
         try {
@@ -2064,26 +2106,14 @@
             state.selected = { name: msg.name };
             renderSelection();
         }
-        // Text-input handler for TabItem rows (posts setTabItemProperty with debounce)
-        const onTiText = (el) => {
-            let timer = null;
-            el.addEventListener('input', () => {
-                clearTimeout(timer);
-                timer = setTimeout(() => {
-                    post({ type: 'setTabItemProperty', name: msg.name, itemName: el.dataset.tabitem, key: el.dataset.tiprop, value: el.value });
-                }, 400);
-            });
-        };
-        // Text-input handler for ListBoxItem rows (posts setListItemProperty with debounce)
-        const onLiText = (el) => {
-            let timer = null;
-            el.addEventListener('input', () => {
-                clearTimeout(timer);
-                timer = setTimeout(() => {
-                    post({ type: 'setListItemProperty', name: msg.name, itemName: el.dataset.listitem, key: 'Content', value: el.value });
-                }, 400);
-            });
-        };
+        // Text-input handler for TabItem rows (commits on Enter/blur, see onTypedField)
+        const onTiText = (el) => onTypedField(el, () => {
+            post({ type: 'setTabItemProperty', name: msg.name, itemName: el.dataset.tabitem, key: el.dataset.tiprop, value: el.value });
+        });
+        // Text-input handler for ListBoxItem rows (commits on Enter/blur, see onTypedField)
+        const onLiText = (el) => onTypedField(el, () => {
+            post({ type: 'setListItemProperty', name: msg.name, itemName: el.dataset.listitem, key: 'Content', value: el.value });
+        });
         // Properties are grouped into sections (Editors / Layout & size / Appearance / Text & font /
         // Data / Behavior). The groups come from the extension in order; the fold state is per
         // control type, so folding "Data" on one DataGrid folds it on every DataGrid.
@@ -2109,15 +2139,7 @@
                 els.propsBody.appendChild(sectionHeader(p.section, p.sectionId, scopeKey));
             }
             if (p.section && isSectionCollapsed(scopeKey, p.sectionId)) continue;
-            const onText = (el) => {
-                let timer = null;
-                el.addEventListener('input', () => {
-                    clearTimeout(timer);
-                    timer = setTimeout(() => {
-                        postSet(p.key, el.value);
-                    }, 400);
-                });
-            };
+            const onText = (el) => onTypedField(el, () => postSet(p.key, el.value));
 
             if (p.kind === 'dropdown' || p.kind === 'font') {
                 const sel = document.createElement('select');
@@ -2302,15 +2324,9 @@
                 num.dataset.propKey = p.key;
                 num.value = p.value || '';
                 if (p.mixed) num.placeholder = '(multiple)';
-                // 'Undo-Redo' commits on blur/Enter (not per keystroke) — it writes the .adset
-                // and regenerates the DataSet class, so it must not fire on every digit.
-                if (p.key === 'UndoRedoDepth') {
-                    num.addEventListener('change', () => {
-                        postSet(p.key, num.value);
-                    });
-                } else {
-                    onText(num);
-                }
+                // 'Undo-Redo' writes the .adset and regenerates the DataSet class, so it must never
+                // fire per keystroke — it commits on Enter/blur like every other typed field.
+                onText(num);
                 focusTarget = num;
                 if (p.unit) {
                     const wrap = document.createElement('div');
@@ -2332,15 +2348,12 @@
                 if (p.mixed) control.placeholder = '(multiple)';
                 if (p.key === '__type__') control.disabled = true;
                 if (p.key === '__name__') {
-                    // Renaming commits when the field loses focus (or Enter is pressed): the
-                    // control is renamed and its generated code-behind handlers are refactored
-                    // in one step, rather than on every keystroke.
-                    control.addEventListener('change', () => {
-                        post({ type: 'setProperty', name: msg.name, key: '__name__', value: control.value });
-                    });
-                    control.addEventListener('keydown', (ev) => {
-                        if (ev.key === 'Enter') control.blur();
-                    });
+                    // A rename refactors the generated code-behind handlers in one step, so it commits
+                    // on Enter/blur like every other typed field. It renames THIS control only, so it
+                    // deliberately posts without the multi-selection `names` an ordinary row carries.
+                    onTypedField(control, () => post({
+                        type: 'setProperty', name: msg.name, key: '__name__', value: control.value
+                    }));
                 } else {
                     onText(control);
                 }

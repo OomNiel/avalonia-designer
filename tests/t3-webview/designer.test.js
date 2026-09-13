@@ -748,6 +748,85 @@ module.exports = async (t) => {
     const upTop = parseFloat(palette.style.top);
     t.ok(palette.hidden === false && upTop < 600 && upTop >= 8, 'palette', 'below the middle: popup opens ABOVE the property');
 
+    // --- typed properties commit on Enter / blur, NOT while typing ---
+    // Every commit round-trips through the previewer (model edit -> re-render -> PNG -> properties
+    // refresh -> this panel rebuilt), so applying a debounced edit mid-word made typing feel laggy.
+    // A discrete pick (the palette above) still applies immediately.
+    {
+        const props = (value) => msg({
+            type: 'properties', name: 'btn1',
+            properties: [{ key: 'Content', label: 'Text', kind: 'text', value }],
+            info: null, tabItems: [], listItems: []
+        });
+        const textField = () => $('propsBody').querySelector('input[data-prop-key="Content"]');
+        props('Hello');
+        t.ok(!!textField(), 'typed-commit', 'the Text row renders an input');
+
+        // Typing alone posts nothing — no matter how many keystrokes, or how long they take.
+        posted.length = 0;
+        const field = textField();
+        for (const v of ['H', 'He', 'Hel', 'Hell', 'Hello there']) {
+            field.value = v;
+            field.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        }
+        t.equal(posted.length, 0, 'typed-commit', 'five keystrokes post nothing at all');
+
+        // Enter commits the value once (the input also fires `change` for Enter — it must not post twice).
+        field.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        field.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        t.equal(posted.length, 1, 'typed-commit', 'Enter commits exactly once');
+        t.equal(posted[0], { type: 'setProperty', name: 'btn1', key: 'Content', value: 'Hello there' },
+            'typed-commit', 'and carries the typed value');
+
+        // Losing focus (blur → `change`) commits too, and only once.
+        posted.length = 0;
+        const field2 = textField();
+        field2.value = 'Bye';
+        field2.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        t.equal(posted.length, 0, 'typed-commit', 'typing again still posts nothing');
+        field2.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        t.equal(posted.length, 1, 'typed-commit', 'blur commits the value once');
+
+        // Typing a value back to what it already was is not an edit — so it costs no round trip.
+        posted.length = 0;
+        const field3 = textField();
+        field3.value = 'Bye edited';
+        field3.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        field3.value = 'Bye';
+        field3.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        field3.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        t.equal(posted.length, 0, 'typed-commit', 'an edit that changes nothing posts nothing');
+
+        // THE SAFETY NET: the panel is rebuilt from the extension's own refresh (it happens after every
+        // edit, and on code-check/frame messages). A half-typed value must be committed, not dropped.
+        posted.length = 0;
+        const field4 = textField();
+        field4.value = 'Half typed';
+        field4.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        props('Bye');                       // a refresh arrives while the field is dirty
+        t.equal(posted.length, 1, 'typed-commit', 'a panel rebuild commits the pending value first');
+        t.equal(posted[0].value, 'Half typed', 'typed-commit', 'with what the user had typed');
+
+        // TabItem / ListBoxItem rows are typed fields in the same panel and behave identically.
+        posted.length = 0;
+        msg({
+            type: 'properties', name: 'tab1',
+            properties: [],
+            tabItems: [{ name: 'TabItem1', header: 'First' }],
+            listItems: [{ name: 'Item1', content: 'One' }],
+            info: null
+        });
+        const headerInp = $('propsBody').querySelector('input[data-tabitem]');
+        t.ok(!!headerInp, 'typed-commit', 'a TabItem header row renders an input');
+        headerInp.value = 'Second';
+        headerInp.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        t.equal(posted.length, 0, 'typed-commit', 'editing a header posts nothing while typing');
+        headerInp.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        t.equal(posted.length, 1, 'typed-commit', 'blur posts the header once');
+        t.equal(posted[0].type, 'setTabItemProperty', 'typed-commit', 'as setTabItemProperty');
+        t.equal(posted[0].value, 'Second', 'typed-commit', 'with the typed header');
+    }
+
     // --- Grid 'Rows & Columns' editor: opens, add row, edit size, save posts saveGridDefs ---
     msg({
         type: 'properties', name: 'g1',
