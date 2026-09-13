@@ -13,6 +13,10 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.9.2] - 2026-09-13 · *the `1.0.0-beta.9` build*
+
 ### Added
 - **📦 Publish — build your app as a Debian installer.** The project the form belongs to is built in
   Release and packaged as `publish/<name>_<version>_<arch>.deb`, ready to copy to another machine. The

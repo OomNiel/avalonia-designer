@@ -26,7 +26,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The latest published version is **`0.9.1`**, and it is a normal (stable) release, so the plain command
+The latest published version is **`0.9.2`**, and it is a normal (stable) release, so the plain command
 above installs it. `0.9.0` is still on the listing as a **pre-release** — choosing *Install
 Pre-Release Version* (or passing `--pre-release`) would install that **older** build, so only do that
 if you deliberately want it. VS Code has no global “show pre-releases” switch; the choice is made per
@@ -37,7 +37,7 @@ extension.
 its version — a release can lag the Marketplace, so check it):
 
 ```bash
-code --install-extension avalonia-designer-0.9.1.vsix --force
+code --install-extension avalonia-designer-0.9.2.vsix --force
 ```
 
 Either way, **reload the window** afterwards (`Ctrl+Shift+P` → *Developer: Reload Window*). The
@@ -46,7 +46,7 @@ previewer host is compiled with the **.NET SDK** the first time you open a form 
 for the prerequisites.
 
 > **GitHub and the Marketplace number releases differently.** The Marketplace only accepts plain
-> numbers, so the tag `v1.0.0-beta.8` is published there as **`0.9.1`** — `1.0.0` is reserved for the
+> numbers, so the tag `v1.0.0-beta.9` is published there as **`0.9.2`** — `1.0.0` is reserved for the
 > first stable release and `0.9.x` is the current development line. The packages are identical.
 
 ## 1. The preview is real

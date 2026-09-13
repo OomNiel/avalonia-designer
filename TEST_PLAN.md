@@ -221,7 +221,7 @@ Each step ends with the log green before the next begins.
   designer save site, plus a parse/save round-trip that proves the notice is dropped by the model
   and re-stamped on save.
 
-### Status 2026-09-13 — full suite green (2786 passed / 0 failed / 0 skipped, 38 s)
+### Status 2026-09-13 — full suite green (3018 passed / 0 failed / 0 skipped, 37 s)
 
 - **T2** gained three files:
   - `controlEvents.test.js` (**76** checks) — the generated catalog's shape, the default event and the
@@ -263,3 +263,14 @@ Each step ends with the log green before the next begins.
   scroll position and the context-menu placement. `npm run bench` (`tests/bench/hotpaths.js`) is a
   benchmark, not a test — the runner ignores it — and it exists so the hot paths have numbers to
   compare against after a change.
+- **Release `0.9.2` (2026-09-13)** — the Publish/Install feature (`.deb` on Linux, MSI on Windows) plus
+  the storage fix it exposed, suite grown to **3018** assertions. New coverage: `debBuilder.test.js`
+  (118 checks) and `msiBuilder.test.js` (62) for the two packagers (control file, launcher, tree and
+  modes, `--root-owner-group`, MSI version clamping and the stable `UpgradeCode`, the WiX source),
+  the `packageState`/`watchForPackage` state machine behind the Install button, webview sections for
+  the publish/install buttons and their tooltips, generator assertions that the per-user
+  `RuntimeStorage` helper is emitted (and omitted when nothing persists), and eight `codeFix`
+  assertions for the new "writes into the app's own folder" finding (single-line, multi-line,
+  read-only, two writes on one line, `SqliteConnection`, VB). The generated C# *and* VB were also
+  compiled in scaffolded projects for a DataSet with a SQLite grid table plus an XML table — 0 errors /
+  0 warnings — which is what proves the helper is emitted wherever something references it.

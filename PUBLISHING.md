@@ -176,6 +176,16 @@ invisibility.
 > gap only produces a failure email (which it did on 2026-09-13), while a publish that is attempted and
 > *fails* still fails the job, because that one is real news. The summary also distinguishes a dry run
 > from a real publish, so a green run can never be mistaken for a published one.
+>
+> **`0.9.2` (2026-09-13) — packaged, awaiting the portal upload.** Third listing version, tagged
+> `v1.0.0-beta.9`, and the first release that carries **📦 Publish** / **🚀 Install**. Built as a plain
+> (stable) VSIX — `avalonia-designer-0.9.2.vsix`, sha256
+> `c4ba0a02c1d03a510b86a221e80fb2d3174639bad47bc1ca6f097ff1e07870cf` — and attached to the GitHub
+> release with the same tag. Upload it through the publisher portal (as `0.9.0`/`0.9.1` were) while the
+> PAT question is open, then verify with the `flags: 914` query below: version `0.9.2`, no
+> `PreRelease` property, and `VsixSha256` equal to the hash above. The old VSIX files were deleted from
+> the project folder on purpose — one artifact per release, so the file that gets uploaded cannot be
+> confused with an earlier build.
 
 ### What “Verifying \<version\>” means — and how to confirm the result
 
