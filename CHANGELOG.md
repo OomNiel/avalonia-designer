@@ -77,9 +77,12 @@ plus the defects the new tests exposed and three things you reported while testi
 - The Marketplace number is **`0.9.1`**; the same build is tagged **`v1.0.0-beta.8`** on GitHub. A
   published version number can never be reused, so `1.0.0` stays reserved for the first stable
   release (`PUBLISHING.md` part E).
-- This build is published as a **pre-release**, like every `0.9.x`: install it with
-  *Install Pre-Release Version* in the Extensions view or `code --install-extension
-  grumpy.avalonia-designer --pre-release`.
+- Published on the Marketplace as a **normal (stable) release** — the uploaded file was the plain
+  `avalonia-designer-0.9.1.vsix` (verified: the gallery's `VsixSha256` matches it byte for byte).
+  Whether a version lands on the pre-release channel is a property of the VSIX, not a switch: it is
+  set by packaging with `--pre-release` and cannot be changed afterwards. As a result `0.9.0` is now
+  the only pre-release on the listing, so *Install Pre-Release Version* would install that older
+  build.
 
 ## [0.9.0] - 2026-09-12 · *the `1.0.0-beta.7` build*
 

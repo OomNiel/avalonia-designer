@@ -114,14 +114,14 @@ Created Project**) reopens your most recent project any time.
 search for *Avalonia Designer*, and install it. Or from a terminal:
 
 ```bash
-code --install-extension grumpy.avalonia-designer --pre-release
+code --install-extension grumpy.avalonia-designer
 ```
 
-Every published version is currently a **pre-release**, so VS Code will not pick it up unless you ask
-for it: select the arrow next to the **Install** button and choose **Install Pre-Release Version** (or
-right-click the entry and choose **Show Pre-Release Version** first, to inspect it). The
-`--pre-release` flag above does the same from the command line. There is no global "show pre-releases"
-setting — the choice is made per extension.
+The latest published version is **`0.9.1`**, and it is a normal (stable) release, so installing it is
+straightforward. An **older** `0.9.0` is still on the listing as a **pre-release**: do *not* choose
+*Install Pre-Release Version* (and do not pass `--pre-release`) unless you deliberately want that
+older build — it would install `0.9.0` instead of `0.9.1`. There is no global “show pre-releases”
+setting; the choice is made per extension.
 
 **Or from GitHub** — take the `.vsix` from the
 [latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) and install it with:

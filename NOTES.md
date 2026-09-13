@@ -1246,6 +1246,22 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     assertions, never a weakened assertion), and the numbers in the changelog are the harness's, not
     estimates. Benchmarks that cannot be compared between runs are worthless — `npm run bench --
     --json` exists for that.
+- §84 **The release channel is a property of the VSIX, not a switch (2026-09-13).** `0.9.1` went to
+  the Marketplace from the *plain* VSIX, so it is a normal (stable) release — even though every
+  earlier listing was a pre-release and the docs all said so. Four things worth keeping:
+  (a) the pre-release flag is baked in at package time (`--pre-release`) and cannot be changed after
+  upload, so **verify the file before uploading**:
+  `unzip -p <file> extension.vsixmanifest | grep -o 'PreRelease" Value="[a-z]*"'`;
+  (b) `vsce package --pre-release` does **not** write a `-prerelease` file — it **overwrites**
+  `avalonia-designer-<version>.vsix`, so building both needs an explicit `--out`;
+  (c) with `0.9.1` stable and only `0.9.0` on the pre-release channel, *Install Pre-Release Version*
+  installs the **older** build — which made the README's `--pre-release` instruction actively wrong.
+  Lesson: the docs describe the *listing*, not the intention, so they have to be corrected against
+  what is actually live;
+  (d) the gallery's `VsixSha256` is what proves **which** local file is live — `sha256sum` both
+  candidates and compare (`0.9.1` matched `avalonia-designer-0.9.1.vsix`, confirming the stable
+  channel explanation). The Release workflow stays blocked on the missing `VSCE_PAT` repository
+  secret and fails **before** uploading, so a failed run costs nothing.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

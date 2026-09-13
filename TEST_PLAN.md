@@ -254,7 +254,10 @@ Each step ends with the log green before the next begins.
   `PreRelease = true`, and the stored `VsixSha256` equals the local VSIX byte for byte. Recorded in
   `PUBLISHING.md` part E, including the `flags` bit that reveals the not-yet-validated state.
 - **Release `0.9.1` (2026-09-13)** — the performance and correctness pass, suite grown to **2786**
-  assertions. New sections: the `.adset` reader (its cache must never answer from a stale read), the
+  assertions, published on the Marketplace the same day (on the stable channel: `PUBLISHING.md` records
+  what that means for the pre-release copy of the VSIX, and why the listing — not the intention — is
+  what the docs describe). New sections: the `.adset` reader (its cache must never answer from a stale
+  read), the
   first open of a new project, the System-qualified clock code, orphaned-handler cleanup, corrupt
   `.adset` handling, and webview sections for the pointer state, nudge coalescing, the properties
   scroll position and the context-menu placement. `npm run bench` (`tests/bench/hotpaths.js`) is a

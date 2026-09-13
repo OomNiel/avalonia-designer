@@ -145,15 +145,27 @@ invisibility.
 > `VSCE_PAT` workflow below is for automating later releases. Validation completed the same day, after
 > which the extension became visible inside VS Code.
 >
-> **`0.9.1` (2026-09-13)** — second pre-release, tagged `v1.0.0-beta.8`. Same manual path: upload
-> `avalonia-designer-0.9.1-prerelease.vsix`, i.e. the file built with `npm run package -- --pre-release`
-> (the pre-release flag can only be set while packaging — `vsce` cannot add it to a finished VSIX).
-> **Not uploaded yet:** the Release workflow's Publish step fails with *"VSCE_PAT is not set"* because
-> the repository secret does not exist, so the automated path is not usable until someone adds it
-> (Settings → Secrets and variables → Actions). Nothing is uploaded when it fails, so no version number
-> is lost — the run can simply be repeated once the secret is in place. Passing `--out` is required to
-> build the pre-release file: `vsce package --pre-release` alone overwrites the stable
-> `avalonia-designer-0.9.1.vsix` instead of writing a separate `-prerelease` file.
+> **`0.9.1` (2026-09-13) — LIVE, and on the STABLE channel.** Second listing version, tagged
+> `v1.0.0-beta.8`. It went up through the publisher portal (as `0.9.0` did) after the extension was
+> unpublished and published again — the gallery's `VsixSha256` matches the local
+> `avalonia-designer-0.9.1.vsix` byte for byte, so that is the file that is live.
+>
+> ⚠ **It is a normal release, not a pre-release.** The portal upload used the plain VSIX; the
+> pre-release copy was built but not used. `0.9.0` is now the *only* pre-release on the listing, so
+> **Install Pre-Release Version** installs that **older** build. The channel is baked into the VSIX
+> at package time and cannot be changed after upload — check the file *before* uploading:
+> `unzip -p <file> extension.vsixmanifest | grep -o 'PreRelease" Value="[a-z]*"'`
+> (`…Value="true"` = pre-release; no match = stable).
+>
+> Build the two files explicitly — `vsce package --pre-release` alone **overwrites**
+> `avalonia-designer-<version>.vsix` instead of writing a separate `-prerelease` file, so both need
+> an `--out`: `npm run package -- --out <stable.vsix>` and
+> `npm run package -- --pre-release --out <prerelease.vsix>`.
+>
+> The automated path is still blocked: the Release workflow runs compile + the full suite + package,
+> then fails at Publish with *“VSCE_PAT is not set”* — the repository secret does not exist. Nothing
+> is uploaded when it fails, so no version number is lost and the run can simply be repeated once
+> someone adds the secret (Settings → Secrets and variables → Actions).
 
 ### What “Verifying \<version\>” means — and how to confirm the result
 

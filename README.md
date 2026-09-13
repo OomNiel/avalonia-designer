@@ -23,20 +23,21 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 (`Ctrl+Shift+X`), or:
 
 ```bash
-code --install-extension grumpy.avalonia-designer --pre-release
+code --install-extension grumpy.avalonia-designer
 ```
 
-Every published version so far is a **pre-release**, so pick it deliberately: select the arrow next to
-**Install** and choose **Install Pre-Release Version** (or right-click the entry and choose **Show
-Pre-Release Version** first, to look at it). The `--pre-release` flag in the command above does the
-same from the command line. VS Code has no global "show pre-releases" switch — the choice is made per
+The latest published version is **`0.9.1`**, and it is a normal (stable) release, so the plain command
+above installs it. `0.9.0` is still on the listing as a **pre-release** — choosing *Install
+Pre-Release Version* (or passing `--pre-release`) would install that **older** build, so only do that
+if you deliberately want it. VS Code has no global “show pre-releases” switch; the choice is made per
 extension.
 
 **Or from GitHub** — take the `.vsix` from the
-[latest release](https://github.com/OomNiel/avalonia-designer/releases/latest):
+[latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) (the file name carries
+its version — a release can lag the Marketplace, so check it):
 
 ```bash
-code --install-extension avalonia-designer-0.9.1-prerelease.vsix --force
+code --install-extension avalonia-designer-0.9.1.vsix --force
 ```
 
 Either way, **reload the window** afterwards (`Ctrl+Shift+P` → *Developer: Reload Window*). The
@@ -46,7 +47,7 @@ for the prerequisites.
 
 > **GitHub and the Marketplace number releases differently.** The Marketplace only accepts plain
 > numbers, so the tag `v1.0.0-beta.8` is published there as **`0.9.1`** — `1.0.0` is reserved for the
-> first stable release and `0.9.x` is the current pre-release line. The packages are identical.
+> first stable release and `0.9.x` is the current development line. The packages are identical.
 
 ## 1. The preview is real
 
