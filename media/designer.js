@@ -1369,9 +1369,13 @@
         return null;
     }
     function updateCrosshair(e) {
-        const r = els.canvas.getBoundingClientRect();
-        const anchor = crosshairPoint(e, r);
+        // Ask for the drag anchor FIRST. During a move/resize drag it is derived from the selection box
+        // and needs no canvas rect at all. Reading the rect up front (as this used to) forced a
+        // synchronous layout on EVERY pointermove while dragging — onPointerMove had just written the
+        // outline's left/top/width/height — which is the main cause of drag jank on a busy form.
+        const anchor = crosshairPoint(e, null);
         if (anchor) { drawCrosshair(anchor.x, anchor.y); return; }
+        const r = els.canvas.getBoundingClientRect();
         const x = e.clientX - r.left;
         const y = e.clientY - r.top;
         if (x < 0 || y < 0 || x > r.width || y > r.height) { hideCrosshair(); return; }
@@ -1573,6 +1577,28 @@
     window.addEventListener('resize', hideContextMenu);
     els.wrap.addEventListener('scroll', hideContextMenu, true);
 
+    // Arrow-key auto-repeat fires ~20-30 keydowns per second, and each one used to post immediately:
+    // every message re-renders the form on the host AND makes this webview decode the whole preview PNG
+    // again. Accumulate the movement and send ONE nudge per animation frame instead — the same total
+    // distance, one render. Keyed by the selection so a single select and a multi-select accumulate
+    // separately (a selection change mid-frame must not move the wrong controls).
+    const pendingNudges = new Map();
+    let nudgeFrame = 0;
+    function queueNudge(names, dx, dy) {
+        const key = names.join('\u0000');
+        const pending = pendingNudges.get(key) ?? { names: names.slice(), dx: 0, dy: 0 };
+        pending.dx += dx;
+        pending.dy += dy;
+        pendingNudges.set(key, pending);
+        if (nudgeFrame) return;
+        nudgeFrame = requestAnimationFrame(() => {
+            nudgeFrame = 0;
+            const batch = [...pendingNudges.values()];
+            pendingNudges.clear();
+            for (const p of batch) post({ type: 'nudge', names: p.names, dx: p.dx, dy: p.dy });
+        });
+    }
+
     // Esc cancels an armed toolbox tool; arrows nudge the selection; Ctrl+X/C/V cut/copy/paste;
     // Delete removes. Arrow keys move ALL selected controls together (one undo step): the anchor
     // and every Ctrl+clicked control nudge by the same delta — Shift = coarse 10 px, plain = fine
@@ -1593,7 +1619,7 @@
             if (!names.length) return;
             e.preventDefault();
             e.stopPropagation();
-            post({ type: 'nudge', names, dx, dy });
+            queueNudge(names, dx, dy);
             return;
         }
         if (e.key === 'Escape' && state.pendingTag) {

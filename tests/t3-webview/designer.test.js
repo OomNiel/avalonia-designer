@@ -205,17 +205,35 @@ module.exports = async (t) => {
     t.equal(posted[posted.length - 1].name, 'btn1', 'click-select', 'name = btn1');
 
     // --- arrow keys nudge the selection (the WHOLE selection moves together) ---
+    // Nudges are COALESCED into one message per animation frame (refactor Phase 2): a held arrow key
+    // auto-repeats ~20-30 times a second and each post used to mean a full host re-render plus a PNG
+    // re-decode here. Every assertion below therefore waits a frame before inspecting what was posted.
+    const waitFrame = () => new Promise((resolve) => setTimeout(resolve, 30));
+    const key = (k, opts) => s.window.document.dispatchEvent(
+        new s.window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...opts }));
+
     // Single selection: ArrowRight posts a 1 px nudge for the selected control only.
     posted.length = 0;
-    s.window.document.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    key('ArrowRight');
+    await waitFrame();
     let nudge = posted.find((m) => m.type === 'nudge');
     t.ok(!!nudge && Array.isArray(nudge.names) && nudge.names.length === 1 && nudge.names[0] === 'btn1', 'nudge', 'ArrowRight nudges the selected control');
     t.equal(nudge && nudge.dx, 1, 'nudge', 'plain arrow = 1 px');
     t.equal(nudge && nudge.dy, 0, 'nudge', 'no vertical move for Right');
 
+    // Key auto-repeat inside one frame collapses into ONE message carrying the total distance.
+    posted.length = 0;
+    key('ArrowRight'); key('ArrowRight'); key('ArrowRight');
+    await waitFrame();
+    const burst = posted.filter((m) => m.type === 'nudge');
+    t.equal(burst.length, 1, 'nudge', 'a burst of key repeats posts a single nudge');
+    t.equal(burst[0] && burst[0].dx, 3, 'nudge', 'carrying the summed distance');
+    t.equal(burst[0] && burst[0].dy, 0, 'nudge', 'with no perpendicular drift');
+
     // Shift+ArrowUp = the coarse 10 px step.
     posted.length = 0;
-    s.window.document.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true, shiftKey: true }));
+    key('ArrowUp', { shiftKey: true });
+    await waitFrame();
     nudge = posted.find((m) => m.type === 'nudge');
     t.ok(!!nudge, 'nudge', 'Shift+ArrowUp posts a nudge');
     t.equal(nudge && nudge.dx, 0, 'nudge', 'Shift+Up = no horizontal move');
@@ -224,7 +242,8 @@ module.exports = async (t) => {
     // Multi-selection: ctrl+click btn2 (btn1 stays the anchor) → ArrowDown moves BOTH together.
     dispatch('click', 'canvas', { clientX: 320, clientY: 60, ctrlKey: true });
     posted.length = 0;
-    s.window.document.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    key('ArrowDown');
+    await waitFrame();
     nudge = posted.find((m) => m.type === 'nudge');
     t.ok(!!nudge && Array.isArray(nudge.names), 'nudge', 'ArrowDown after multi-select posts a nudge');
     t.equal(nudge.names.length, 2, 'nudge', 'both selected controls move together');
@@ -232,12 +251,14 @@ module.exports = async (t) => {
     t.equal(nudge.dy, 1, 'nudge', 'ArrowDown = 1 px down');
     t.equal(nudge.dx, 0, 'nudge', 'ArrowDown = no horizontal move');
 
-    // Typing in a text field must NOT nudge (arrows are for the field's cursor).
+    // Typing in a text field must NOT nudge (arrows are for the field's cursor). This waits a frame as
+    // well, so it cannot pass merely because the message has not been posted yet.
     const someInput = s.window.document.createElement('input');
     s.window.document.body.appendChild(someInput);
     someInput.focus();
     posted.length = 0;
     someInput.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+    await waitFrame();
     t.ok(!posted.some((m) => m.type === 'nudge'), 'nudge', 'arrow in a text input does not nudge');
     someInput.remove();
 
