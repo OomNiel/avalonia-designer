@@ -18,6 +18,7 @@ import { listAssets, Asset } from './assetCatalog';
 import { ensureDataGridAutoGenerateColumns, ensureSqlitePackages, defaultDbFile, reloadDataSetPanel, saveOpenDataSetDocuments } from './dataSetEditor';
 import { backupProject } from './projectBackup';
 import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTableName } from './dataSetModel';
+import { readDataSetFiles } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
 import { bundledComponentSpecs, isStaleBundledCopy } from './bundledComponents';
 
@@ -46,25 +47,12 @@ interface DesignerHistory {
 /** Finds the .adset (spec + table) that binds a control to a table in a project folder, if any. */
 function findBoundTable(projectFolder: string, controlName: string | null | undefined): { adsetPath: string; spec: DataSetSpec; table: DataTableSpec } | undefined {
     if (!projectFolder || !controlName) return undefined;
-    const files: string[] = [];
-    const stack = [projectFolder];
-    while (stack.length) {
-        const dir = stack.pop()!;
-        let entries: fs.Dirent[] = [];
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
-        for (const e of entries) {
-            if (e.name === 'bin' || e.name === 'obj' || e.name === '.git' || e.name === 'node_modules') continue;
-            const p = path.join(dir, e.name);
-            if (e.isDirectory()) stack.push(p);
-            else if (e.name.toLowerCase().endsWith('.adset')) files.push(p);
-        }
-    }
-    for (const f of files) {
-        try {
-            const spec = parseDataSet(fs.readFileSync(f, 'utf8'));
-            const t = spec.tables.find((tt) => tt.boundTo === controlName);
-            if (t) return { adsetPath: f, spec, table: t };
-        } catch { /* skip unreadable/corrupt .adset */ }
+    // One shared, self-validating read (see dataSetReader). This used to walk the folder and parse
+    // every .adset ITSELF - a second full pass per lookup, right after readDataSetFiles had done the
+    // same work for the same render.
+    for (const f of readDataSetFiles(projectFolder)) {
+        const t = f.spec.tables.find((tt) => tt.boundTo === controlName);
+        if (t) return { adsetPath: f.adsetPath, spec: f.spec, table: t };
     }
     return undefined;
 }
@@ -92,26 +80,6 @@ interface DataImageBindingInfo {
     gridName: string;
     column: string;
     adsetPath: string;
-}
-
-/** Every .adset in a project folder, as {path, spec} (skipping unreadable ones). */
-function readDataSetFiles(projectFolder: string): { adsetPath: string; spec: DataSetSpec }[] {
-    const out: { adsetPath: string; spec: DataSetSpec }[] = [];
-    const stack = [projectFolder];
-    while (stack.length) {
-        const dir = stack.pop()!;
-        let entries: fs.Dirent[] = [];
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
-        for (const e of entries) {
-            if (e.name === 'bin' || e.name === 'obj' || e.name === '.git' || e.name === 'node_modules') continue;
-            const p = path.join(dir, e.name);
-            if (e.isDirectory()) stack.push(p);
-            else if (e.name.toLowerCase().endsWith('.adset')) {
-                try { out.push({ adsetPath: p, spec: parseDataSet(fs.readFileSync(p, 'utf8')) }); } catch { /* skip */ }
-            }
-        }
-    }
-    return out;
 }
 
 /** The table (with its .adset) that a DataGrid is bound to, if any. */
