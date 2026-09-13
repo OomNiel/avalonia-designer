@@ -1604,6 +1604,15 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             this.docs.delete(key);
             this.frames.delete(key);
             this.history.delete(key);
+            // `activeTabs` is pure per-panel view state ("which TabItem was open") and used to be left
+            // behind for every form ever opened in the session.
+            //
+            // `dismissed` and `codeBackups` are deliberately NOT cleared here: a dismissal is a user
+            // DECISION ("leave it — keep my code") and forgetting it when the tab closes would make the
+            // same finding pop back up, and `codeBackups` points at a file on disk that an undo may
+            // still refer to. Both are small (one entry per form); if they ever need bounding, that is
+            // a session-level decision rather than a per-panel one.
+            this.activeTabs.delete(key);
             const pending = this.codeCheckTimers.get(key);
             if (pending) { clearTimeout(pending); this.codeCheckTimers.delete(key); }
             if (this.lastActivePanel === webviewPanel) this.lastActivePanel = undefined;

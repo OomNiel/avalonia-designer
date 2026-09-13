@@ -42,7 +42,7 @@ import {
     convertCodeBehindToChrome,
     vbMatchingEnd
 } from './codeBehind';
-import { EVENT_ARGS, eventArgsFor } from './controlEvents';
+import { eventArgsFor, isKnownEventName, knownEventArgsFor } from './controlEvents';
 
 // ---------------- model ----------------
 
@@ -205,17 +205,9 @@ function matchingBrace(text: string, open: number): number {
 
 /** Events the designer generates / Avalonia controls commonly wire, used to recognise
  *  `Event="Handler"` attributes (a plain `="SomeName"` value on an unrelated property is not an
- *  event). Unknown events are still recognised by the `<Control>_<Event>` naming of the handler. */
-const EVENTS = new Set([
-    'Click', 'DoubleTapped', 'Tapped', 'Loaded', 'Unloaded', 'Initialized', 'AttachedToVisualTree',
-    'DetachedFromVisualTree', 'SelectionChanged', 'SelectionChanging', 'IsCheckedChanged',
-    'TextChanged', 'TextChanging', 'KeyDown', 'KeyUp', 'GotFocus', 'LostFocus', 'PointerPressed',
-    'PointerReleased', 'PointerMoved', 'PointerEntered', 'PointerExited', 'PointerWheelChanged',
-    'Checked', 'Unchecked', 'Indeterminate', 'ValueChanged', 'Opened', 'Closed', 'Opening',
-    'Closing', 'Tick', 'DataContextChanged', 'SizeChanged', 'LayoutUpdated', 'ScrollChanged',
-    'DropDownOpened', 'DropDownClosed', 'ItemsSourceChanged', 'EffectiveViewportChanged',
-    'PropertyChanged', 'ActualThemeVariantChanged', 'Holding', 'ContextRequested'
-]);
+ *  event). Recognised via the shared event CATALOG (`isKnownEventName`) rather than a private copy:
+ *  the local list this file used to keep had drifted from the picker, so events the picker offered
+ *  but the list omitted were never checked at all. */
 
 /** EventArgs per event, where the designer KNOWS the signature it generates. Events that are not
  *  listed here are never signature-checked (a wrong guess would break valid user code). */
@@ -363,7 +355,7 @@ export function axamlFacts(axamlUri: vscode.Uri, axamlText?: string): AxamlFacts
             }
             // `DragDrop.DragOver="…"` qualifies the event; a bare name must be a known event.
             const eventName = key.includes('.') ? key.split('.').pop()! : key;
-            if (EVENTS.has(eventName) && /^[A-Za-z_]\w*$/.test(value)) {
+            if (isKnownEventName(eventName) && /^[A-Za-z_]\w*$/.test(value)) {
                 localEvents.push({ event: eventName, handler: value });
             }
         }
@@ -696,7 +688,14 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
 
     // ---- 4) handler signature doesn't match the event ----
     for (const e of ax.events) {
-        const expected = EVENT_ARGS[e.event] ?? KNOWN_EVENT_ARGS[e.event];
+        // Tag-AWARE. Window.Opened, NumericUpDown.ValueChanged and DatePicker.SelectedDateChanged all
+        // take a different EventArgs than the generic table says. This check used to compare against
+        // that generic table while the code WRITER used the tag-aware lookup — so it demanded a type
+        // other than the one just generated, and published "wrong parameter type" errors on correct,
+        // freshly generated handlers (whose offered fix rewrote the signature to the same wrong text).
+        // `knownEventArgsFor` returns undefined for events the catalog does not know, which keeps the
+        // "never guess a signature" rule intact.
+        const expected = knownEventArgsFor(e.event, e.tag) ?? KNOWN_EVENT_ARGS[e.event];
         if (!expected) continue;
         const method = code.methods.find((m) => m.name === e.handler);
         if (!method) continue;
@@ -719,7 +718,7 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
         if (!m2) continue;
         const [full, controlPart, eventPart] = m2;
         if (isGeneratedName(m.name)) continue;
-        if (EVENTS.has(eventPart) === false) continue; // not a `<Control>_<Event>` handler
+        if (isKnownEventName(eventPart) === false) continue; // not a `<Control>_<Event>` handler
         if (controlNames.has(controlPart)) continue;
         if (handlersInXaml.has(full)) continue; // still wired by another control
         add({

@@ -5,7 +5,7 @@ import { DOMParser } from '@xmldom/xmldom';
 import { localName } from './xamlModel';
 import { bindControlToDataSet, unbindControlFromDataSet, unbindImageFromGrid, hasDataSetBinding, DataSetBindingRef } from './codeBehind';
 import {
-    DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, parseDataSet, serializeDataSet, defaultDataSetSpec,
+    DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, parseDataSet, parseDataSetChecked, serializeDataSet, defaultDataSetSpec,
     isValidIdentifier, findTable, newTableSpec, newColumnSpec, COLUMN_TYPES, isSqliteTable, sanitizeName, sqliteTableName
 } from './dataSetModel';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
@@ -205,6 +205,10 @@ function scanBoundMarkers(projectFolder: string, current: DataSetSpec): Set<stri
 export class DataSetDocument implements vscode.CustomDocument {
     spec: DataSetSpec;
     readonly uri: vscode.Uri;
+    /** Set when the file on disk did NOT parse as a `.adset`. While it is set the document must never
+     *  be written back: the in-memory spec is a recovery, so saving it would replace whatever the
+     *  file really contains with an empty schema. */
+    parseError?: string;
     private savedJson: string;
 
     private constructor(uri: vscode.Uri, spec: DataSetSpec) {
@@ -215,7 +219,18 @@ export class DataSetDocument implements vscode.CustomDocument {
 
     static async create(uri: vscode.Uri): Promise<DataSetDocument> {
         const data = await vscode.workspace.fs.readFile(uri);
-        return new DataSetDocument(uri, parseDataSet(Buffer.from(data).toString('utf8')));
+        const { spec, error } = parseDataSetChecked(Buffer.from(data).toString('utf8'));
+        const doc = new DataSetDocument(uri, spec);
+        if (error) {
+            // Tell the user immediately instead of silently showing an empty schema they might then
+            // save over their own file.
+            doc.parseError = error;
+            void vscode.window.showErrorMessage(
+                `${path.basename(uri.fsPath)} could not be read as a DataSet (${error}). It is shown ` +
+                'with a recovered, empty schema and will NOT be saved over — fix or delete the file, ' +
+                'then reopen it.');
+        }
+        return doc;
     }
 
     get dirty(): boolean { return serializeDataSet(this.spec) !== this.savedJson; }
@@ -319,6 +334,8 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
         // designer still holds in memory (see saveOpenDataSetDocuments).
         dirtySavers.set(key, async () => {
             if (!document.dirty) return false;
+            // A recovered schema must never be written over the file it failed to read.
+            if (document.parseError) return false;
             await vscode.workspace.fs.writeFile(document.uri, Buffer.from(serializeDataSet(document.spec), 'utf8'));
             document.markSaved();
             return true;
@@ -815,8 +832,15 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
         // must match (otherwise the regenerated code can reference columns the saved schema lacks
         // and, worse, an existing .db is left out of step with the code until the next save).
         try {
-            await vscode.workspace.fs.writeFile(doc.uri, Buffer.from(serializeDataSet(doc.spec), 'utf8'));
-            doc.markSaved();
+            if (doc.parseError) {
+                void vscode.window.showErrorMessage(
+                    `Not saving ${path.basename(doc.uri.fsPath)}: it could not be read as a DataSet ` +
+                    `(${doc.parseError}), so writing the schema now would replace the file with an ` +
+                    'empty one. The generated files were written — fix or delete the .adset, then retry.');
+            } else {
+                await vscode.workspace.fs.writeFile(doc.uri, Buffer.from(serializeDataSet(doc.spec), 'utf8'));
+                doc.markSaved();
+            }
         } catch { /* the generated files still exist */ }
         await this.postStatus(panel, `Generated ${names}.`);
         const lang = language === 'vb' ? 'VB.NET' : 'C#';

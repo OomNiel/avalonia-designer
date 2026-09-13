@@ -155,6 +155,10 @@ export class HostClient {
         this.pending.clear();
     }
 
+    /** How long a request may sit unanswered before it is failed. A render takes a few ms, so 30 s
+     *  means something is genuinely wrong (host wedged, killed, or the socket closed mid-send). */
+    private static readonly REQUEST_TIMEOUT_MS = 30000;
+
     request(type: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
         return new Promise((resolve, reject) => {
             if (!this.ws || !this.connected) {
@@ -162,8 +166,26 @@ export class HostClient {
                 return;
             }
             const id = this.nextId++;
-            this.pending.set(id, { resolve, reject });
-            this.ws.send(JSON.stringify({ id, type, ...payload }));
+            // Without this the promise could stay pending FOREVER: if the socket closed between the
+            // `connected` check and the send, `rejectAll` had already run (it only fires on the
+            // socket's `close`), so nothing ever settled it. The designer then sat on "Starting
+            // previewer host…" with no error, leaking one `pending` entry per attempt.
+            const timer = setTimeout(() => {
+                if (this.pending.delete(id)) {
+                    reject(new Error(`Previewer host did not answer "${type}" within ${HostClient.REQUEST_TIMEOUT_MS / 1000} s.`));
+                }
+            }, HostClient.REQUEST_TIMEOUT_MS);
+            this.pending.set(id, {
+                resolve: (v) => { clearTimeout(timer); resolve(v); },
+                reject: (e) => { clearTimeout(timer); reject(e); }
+            });
+            try {
+                this.ws.send(JSON.stringify({ id, type, ...payload }));
+            } catch (e) {
+                clearTimeout(timer);
+                this.pending.delete(id);
+                reject(e instanceof Error ? e : new Error(String(e)));
+            }
         });
     }
 
@@ -247,7 +269,15 @@ export class PreviewerHostManager implements vscode.Disposable {
             this.client = undefined;
         });
         const client = new HostClient(port);
-        await client.connect();
+        try {
+            await client.connect();
+        } catch (e) {
+            // `connect()` retries for ~10 s and then throws. The spawned child used to be left behind
+            // as an orphan holding its port (this repo has already been bitten by exactly that leak).
+            try { child.kill(); } catch { /* already gone */ }
+            this.proc = undefined;
+            throw e;
+        }
         this.client = client;
         return client;
     }

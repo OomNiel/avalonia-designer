@@ -195,17 +195,58 @@ export function findTable(spec: DataSetSpec, name: string): DataTableSpec | unde
     return spec.tables.find((t) => t.name === name);
 }
 
-/**
- * Parses .adset JSON into a validated spec. Missing fields get sane defaults so a
- * hand-edited or older file still opens.
- */
-export function parseDataSet(text: string): DataSetSpec {
+/** Outcome of a checked `.adset` read. A set `error` means the file did NOT parse as a .adset and
+ *  the returned spec is a recovery — callers must not write it back over the user's file. */
+export interface DataSetParseResult {
+    spec: DataSetSpec;
+    error?: string;
+}
+
+/** JSON-level read: separates "could not parse at all" from "parsed but incomplete". */
+function parseRaw(text: string): { raw: any; error?: string } {
+    if (!String(text ?? '').trim()) return { raw: {}, error: 'the file is empty' };
     let raw: any;
     try {
         raw = JSON.parse(text);
-    } catch {
-        raw = {};
+    } catch (e) {
+        return { raw: {}, error: `not valid JSON (${e instanceof Error ? e.message : String(e)})` };
     }
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return { raw: {}, error: 'the top level is not a JSON object' };
+    }
+    if (raw.tables !== undefined && !Array.isArray(raw.tables)) {
+        return { raw: {}, error: '"tables" is not an array' };
+    }
+    return { raw };
+}
+
+/**
+ * Parses .adset JSON into a validated spec. Missing fields get sane defaults so a
+ * hand-edited or older file still opens.
+ *
+ * Deliberately lenient: callers that only READ a schema (bindings, the grid follower, the
+ * code-behind check) are content with best-effort defaults. Use `parseDataSetChecked` anywhere the
+ * result could be written back.
+ */
+export function parseDataSet(text: string): DataSetSpec {
+    return buildSpec(parseRaw(text).raw);
+}
+
+/**
+ * Like `parseDataSet`, but also reports whether the file actually parsed.
+ *
+ * A half-written or hand-broken `.adset` used to open as a valid-looking default schema ("DataSet"
+ * with no tables) and the next Save/Generate wrote that recovery over the user's file — silent data
+ * loss. The DataSet editor keeps this error, tells the user, and refuses to save until the file is
+ * fixed or deleted.
+ */
+export function parseDataSetChecked(text: string): DataSetParseResult {
+    const { raw, error } = parseRaw(text);
+    return { spec: buildSpec(raw), error };
+}
+
+/** Validates one raw .adset object into a spec (shared by both entry points). */
+function buildSpec(raw: any): DataSetSpec {
     const name = sanitizeName(typeof raw.name === 'string' && raw.name ? raw.name : 'DataSet');
     const spec: DataSetSpec = { version: 1, name, tables: [] };
     if (Array.isArray(raw.tables)) {

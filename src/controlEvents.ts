@@ -304,3 +304,47 @@ export function hasDefaultEvent(tag: string): boolean {
 export function isKnownEvent(tag: string, name: string): boolean {
     return eventsFor(tag).includes(name) || name in EVENT_ARGS;
 }
+
+/** Event names Avalonia controls commonly wire that belong to NO catalog list, because they are
+ *  specific to controls the picker lists separately (ToggleButton's Checked/Unchecked/Indeterminate,
+ *  ItemsControl's ItemsSourceChanged, SelectingItemsControl's SelectionChanging, …).
+ *
+ *  They exist for RECOGNITION only: the code-behind checker must treat `Checked="Handler"` in a form
+ *  as an event. They are deliberately NOT added to GENERIC_EVENTS — that list feeds the picker, and
+ *  offering `Checked` on a plain Button would generate a handler for an event the control does not
+ *  have, i.e. an XAML compile error. */
+const COMMONLY_WIRED_EVENTS: readonly string[] = [
+    'Click', 'DoubleTapped', 'Tapped', 'Loaded', 'Unloaded', 'Initialized', 'AttachedToVisualTree',
+    'DetachedFromVisualTree', 'SelectionChanged', 'SelectionChanging', 'IsCheckedChanged',
+    'TextChanged', 'TextChanging', 'KeyDown', 'KeyUp', 'GotFocus', 'LostFocus', 'PointerPressed',
+    'PointerReleased', 'PointerMoved', 'PointerEntered', 'PointerExited', 'PointerWheelChanged',
+    'Checked', 'Unchecked', 'Indeterminate', 'ValueChanged', 'Opened', 'Closed', 'Opening',
+    'Closing', 'Tick', 'DataContextChanged', 'SizeChanged', 'LayoutUpdated', 'ScrollChanged',
+    'DropDownOpened', 'DropDownClosed', 'ItemsSourceChanged', 'EffectiveViewportChanged',
+    'PropertyChanged', 'ActualThemeVariantChanged', 'Holding', 'ContextRequested'
+];
+
+/** Every event name the catalog knows about: the EventArgs table + the generic list + every
+ *  per-control curated list, plus the recognised-only names above. Derived rather than hand-written,
+ *  because a second copy is exactly what drifts — the code-behind checker used to keep its own list
+ *  and had silently stopped recognising 83 events the picker still offered (RightTapped on 45
+ *  control types, every DataGrid edit event, Expander.*, DatePicker.SelectedDateChanged, …). */
+export const KNOWN_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
+    ...Object.keys(EVENT_ARGS),
+    ...GENERIC_EVENTS,
+    ...Object.values(EVENTS_BY_CONTROL).flat(),
+    ...COMMONLY_WIRED_EVENTS
+]);
+
+/** True when the catalog knows `name` as an event on SOME control (see KNOWN_EVENT_NAMES). */
+export function isKnownEventName(name: string): boolean {
+    return KNOWN_EVENT_NAMES.has(name);
+}
+
+/** The tag-aware EventArgs the code WRITER would emit — or `undefined` when the catalog does not
+ *  actually know this event. The `undefined` matters: the checker must never guess a signature, or
+ *  it would flag valid hand-written code. So `undefined` means "do not signature-check this one". */
+export function knownEventArgsFor(event: string, tag?: string): string | undefined {
+    const override = tag ? EVENT_ARGS_BY_CONTROL[tag]?.[event] : undefined;
+    return override ?? EVENT_ARGS[event];
+}

@@ -307,15 +307,17 @@ export async function removeOrphanedHandlersForControls(
     try { text = fs.readFileSync(filePath, 'utf8'); } catch { return; }
     let changed = false;
     for (const name of clean) {
+        // Collect EVERY `<name>_<Event>` declaration FIRST, then remove the ones nothing references.
+        // The previous scan-and-remove loop aborted as soon as one candidate was KEPT: the regex was
+        // not global, so the next `exec` returned the same match again, the `seen` guard fired and the
+        // loop broke — a handler still referenced by another control therefore hid every orphan
+        // handler declared after it.
         const declRe = language === 'vb'
-            ? new RegExp(`\\b(?:Private|Public|Friend|Protected\\s+Friend|Protected)?\\s*Sub\\s+(${escapeRe(name)}_\\w+)\\b`, 'i')
-            : new RegExp(`\\b(?:public|private|protected|internal)\\s+void\\s+(${escapeRe(name)}_\\w+)\\b`, 'i');
-        const seen = new Set<string>();
-        let m: RegExpExecArray | null;
-        while ((m = declRe.exec(text))) {
-            const handler = m[1];
-            if (seen.has(handler)) break;
-            seen.add(handler);
+            ? new RegExp(`\\b(?:Private|Public|Friend|Protected\\s+Friend|Protected)?\\s*Sub\\s+(${escapeRe(name)}_\\w+)\\b`, 'gi')
+            : new RegExp(`\\b(?:public|private|protected|internal)\\s+void\\s+(${escapeRe(name)}_\\w+)\\b`, 'gi');
+        const candidates = new Set<string>();
+        for (const m of text.matchAll(declRe)) candidates.add(m[1]);
+        for (const handler of candidates) {
             if (referenced.has(handler)) continue; // still used by a remaining control
             const next = language === 'vb' ? removeVbMethod(text, handler) : removeCsMethod(text, handler);
             if (next !== text) { text = next; changed = true; }

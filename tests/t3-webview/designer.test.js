@@ -1830,5 +1830,67 @@ module.exports = async (t) => {
         t.equal(q('btnDotGrid').hidden, false, 'toolbar-groups', '…');
     }
 
+    // --- pointer state: a drag the browser does NOT turn into a click must not eat the next click ---
+    // (refactor Phase 1). `suppressClick` was set on every completed drag and cleared only inside the
+    // canvas click handler. When the pointer is released off the canvas the browser fires the click on
+    // the common ancestor instead, so the canvas never saw one — the flag stayed set and silently
+    // swallowed the user's NEXT legitimate click.
+    {
+        const s2 = setup();
+        s2.msg(s2.frame([
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true },
+            { name: 'btn1', type: 'Button', x: 100, y: 50, w: 120, h: 36 },
+            { name: 'btn2', type: 'Button', x: 300, y: 50, w: 100, h: 30 }
+        ]));
+        const selBox = s2.$('selection');
+        const fullClick = (x, y) => {
+            s2.dispatch('pointerdown', 'canvas', { button: 0, clientX: x, clientY: y });
+            s2.dispatch('pointerup', 'canvas', { button: 0, clientX: x, clientY: y });
+            s2.dispatch('click', 'canvas', { clientX: x, clientY: y });
+            return s2.posted.find((m) => m.type === 'select');
+        };
+
+        // control: with no preceding drag, a click selects
+        const first = fullClick(110, 60);
+        t.ok(!!first && first.name === 'btn1', 'pointer-state', 'a plain click selects a control');
+
+        // a real, completed DRAG (the se handle) — this is what sets suppressClick
+        const seHandle = selBox.querySelector('.handle.se');
+        t.ok(!!seHandle, 'pointer-state', 'the selected control has an se handle to drag');
+        s2.posted.length = 0;
+        seHandle.dispatchEvent(new s2.window.MouseEvent('pointerdown', {
+            bubbles: true, cancelable: true, button: 0, clientX: 220, clientY: 86
+        }));
+        s2.dispatch('pointermove', 'canvas', { clientX: 225, clientY: 88 });
+        s2.dispatch('pointermove', 'canvas', { clientX: 230, clientY: 91 });
+        s2.dispatch('pointerup', 'canvas', { clientX: 230, clientY: 91 });
+        t.ok(s2.posted.some((m) => m.type === 'resize'), 'pointer-state',
+            'the drag completes and posts its resize (so the suppression flag IS set)');
+
+        // The pointer ended off the canvas: the browser fires the click on the common ancestor,
+        // so the canvas click handler never runs and never clears the flag.
+        s2.window.document.body.dispatchEvent(
+            new s2.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        // the user's NEXT click must still work
+        s2.posted.length = 0;
+        const after = fullClick(320, 60);
+        t.ok(!!after && after.name === 'btn2', 'pointer-state',
+            'a click after an off-canvas release still selects',
+            `posted=${JSON.stringify(s2.posted.map((m) => m.type))}`);
+    }
+
+    // --- no CSS attribute selector may be built by concatenating a raw name ---
+    // (refactor Phase 1). A control name is XAML-derived; `querySelector('.ov[data-name="' + name +
+    // '"]')` throws a SyntaxError inside a dragover handler the moment the name contains a quote.
+    // The webview must look the node up (or escape) instead.
+    {
+        const js = fs.readFileSync(DESIGNER_JS, 'utf8');
+        const raw = js.match(/(?:data-name|data-path)="'\s*\+\s*(?!cssEscape\()(?:hit|menuKey)?[A-Za-z_$][\w.$]*/g) || [];
+        t.equal(raw, [], 'escape', 'no attribute selector is built from a raw name',
+            raw.join(', '));
+        t.ok(/const cssEscape =/.test(js), 'escape', 'the webview has its own escape helper');
+    }
+
     t.note('T3 done');
 };

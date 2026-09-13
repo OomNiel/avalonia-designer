@@ -318,6 +318,7 @@
         "publish:pre": "npx --yes @vscode/vsce@2.15.0 publish --pre-release",
         "publish:stable": "npx --yes @vscode/vsce@2.15.0 publish",
         "test": "node tests/runner.js",
+        "bench": "node tests/bench/hotpaths.js",
         "test:list": "node tests/runner.js --list",
         "test:fast": "node tests/runner.js --layer t2-logic",
         "test:build": "node tests/runner.js --layer t0-build",

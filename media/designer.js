@@ -4,6 +4,15 @@
     const vscode = acquireVsCodeApi();
     const $ = (id) => document.getElementById(id);
 
+    // A control name is XAML-derived, so a hand-written `x:Name` can contain a quote or a bracket
+    // (XML entity-decoded before it reaches us). Interpolating that straight into an attribute
+    // selector throws a SyntaxError inside the handler that builds it. `CSS.escape` is the right
+    // tool but is not available everywhere (the jsdom test layer has no CSS object), so fall back to
+    // escaping the characters that actually matter.
+    const cssEscape = (s) => (typeof CSS !== 'undefined' && CSS.escape)
+        ? CSS.escape(String(s))
+        : String(s).replace(/["\\\]]/g, '\\$&');
+
     const els = {
         canvas: $('canvas'),
         img: $('preview'),
@@ -967,6 +976,13 @@
     let suppressClick = false;
     function onPointerDown(e) {
         if (e.button !== 0) return;
+        // A NEW pointer interaction invalidates any pending click suppression. The flag is set on
+        // every completed drag and consumed by the click the browser fires straight afterwards — but
+        // when the pointer is released OFF the canvas that click lands on the common ancestor instead,
+        // so the canvas click handler never ran, the flag stayed set and the user's next click was
+        // silently eaten. Clearing it here is timer-free and always correct: a click is preceded by a
+        // pointerdown.
+        suppressClick = false;
         const t = e.target;
         // Shape drag-point handles (a Line's two ends / an Arc's centre + two ends): dragging the
         // point itself edits the shape — a Line end moves with the other end anchored; an Arc end
@@ -1431,7 +1447,7 @@
         const ovs = els.overlay.querySelectorAll('.ov.drop');
         ovs.forEach((o) => o.classList.remove('drop'));
         if (!hit) return;
-        const d = els.overlay.querySelector('.ov[data-name="' + hit.name + '"]');
+        const d = els.overlay.querySelector('.ov[data-name="' + cssEscape(hit.name) + '"]');
         if (d) d.classList.add('drop');
     }
 
@@ -2912,7 +2928,7 @@
         return { list: p.children, idx: path[path.length - 1] };
     }
     function menuFocus(path) {
-        const inp = els.menuBody.querySelector('.mn-row[data-path="' + menuKey(path) + '"] .mn-header');
+        const inp = els.menuBody.querySelector('.mn-row[data-path="' + cssEscape(menuKey(path)) + '"] .mn-header');
         if (inp) { inp.focus(); try { inp.select(); } catch (err) { /* ignore */ } }
     }
     function menuBtn(label, cls, title, fn, disabled) {
