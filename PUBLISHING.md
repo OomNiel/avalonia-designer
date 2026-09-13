@@ -162,10 +162,13 @@ invisibility.
 > an `--out`: `npm run package -- --out <stable.vsix>` and
 > `npm run package -- --pre-release --out <prerelease.vsix>`.
 >
-> The automated path is still blocked: the Release workflow runs compile + the full suite + package,
-> then fails at Publish with *“VSCE_PAT is not set”* — the repository secret does not exist. Nothing
-> is uploaded when it fails, so no version number is lost and the run can simply be repeated once
-> someone adds the secret (Settings → Secrets and variables → Actions).
+> The automated path works as soon as the secret exists. **Without it the run does not fail:** a
+> preflight step notices the missing token, the job still compiles, runs the full suite, packages the
+> VSIX and uploads it as an artifact, prints a `::warning::`, and its **job summary says
+> \"⚠ NOT PUBLISHED\"** with the reason and the fix. That is deliberate — a red run for a known setup
+> gap only produces a failure email (which it did on 2026-09-13), while a publish that is attempted and
+> *fails* still fails the job, because that one is real news. The summary also distinguishes a dry run
+> from a real publish, so a green run can never be mistaken for a published one.
 
 ### What “Verifying \<version\>” means — and how to confirm the result
 
@@ -276,7 +279,9 @@ npx ovsx publish avalonia-designer-<version>.vsix -p <token>
   (VS Code docs, updated 9 Sept 2026 — the Entra ID walkthrough in part G, the PAT scope FAQ and the
   pre-release version note).
 - `.github/workflows/ci.yml` — compiles, runs the fast test layers and packages the VSIX on every push.
-- `.github/workflows/release.yml` — the manual release run (full suite → package → publish).
+- `.github/workflows/release.yml` — the manual release run (full suite → package → publish). A missing
+  `VSCE_PAT` degrades to a warning + a “⚠ NOT PUBLISHED” job summary instead of a failed run; a failed
+  *publish* still fails the run.
 - `npm run package` / `publish:pre` / `publish:stable` — all pin `@vscode/vsce@2.15.0`, so a release
   is reproducible. That pin has to become ≥ 2.26.1 for part G.
 - `TEST_PLAN.md` §2 — what the suite covers; `NOTES.md` §1 — build, package and reload gotchas.

@@ -1260,8 +1260,10 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   what is actually live;
   (d) the gallery's `VsixSha256` is what proves **which** local file is live — `sha256sum` both
   candidates and compare (`0.9.1` matched `avalonia-designer-0.9.1.vsix`, confirming the stable
-  channel explanation). The Release workflow stays blocked on the missing `VSCE_PAT` repository
-  secret and fails **before** uploading, so a failed run costs nothing.
+  channel explanation). The Release workflow used to fail on a missing `VSCE_PAT`, which produced a
+  failure email for a known setup gap; it now warns, stays green and says **“⚠ NOT PUBLISHED”** in the
+  job summary (a failed *publish* still fails the run, so the guard against silently skipping a
+  release is kept — the summary and the warning are what distinguish “not attempted” from “published”).
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

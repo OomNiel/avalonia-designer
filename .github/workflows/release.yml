@@ -11,6 +11,11 @@
 #      auth (`vsce publish --azure-credential`, vsce >= 2.26.1) with the identity added as a
 #      publisher member — see PUBLISHING.md part G.
 #   3. Bump "version" in package.json, commit and tag BEFORE running this workflow.
+#
+# A run WITHOUT the secret is not a failure: it builds, tests, packages and uploads the VSIX, prints a
+# warning and says so in the job summary. That is deliberate — a red run for a known setup gap only
+# produces a failure email, and the missing secret is already reported by the warning + summary. A
+# publish that is attempted and fails still fails the job (that one is real news).
 name: Release
 
 on:
@@ -31,6 +36,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Decide up front whether this run can publish, so a missing token is a warning here rather than
+      # a failed Publish step at the very end (after the full suite has already run).
+      - name: Preflight — is publishing configured?
+        id: preflight
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "${VSCE_PAT}" ]; then
+            echo "can_publish=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::VSCE_PAT is not set — this run builds, tests and packages, but will NOT publish. Add the token (Settings → Secrets and variables → Actions) and run this workflow again."
+          else
+            echo "can_publish=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -55,14 +73,11 @@ jobs:
           mkdir -p .artifacts
           npx --yes @vscode/vsce@2.15.0 package --out .artifacts/avalonia-designer.vsix
       - name: Publish
-        if: ${{ inputs.dry_run == false }}
+        id: publish
+        if: ${{ inputs.dry_run == false && steps.preflight.outputs.can_publish == 'true' }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
-          if [ -z "${VSCE_PAT}" ]; then
-            echo "::error::VSCE_PAT is not set. Add a Marketplace personal access token as a repository secret. (Global PATs are retired on 1 December 2026 — see PUBLISHING.md part G.)"
-            exit 1
-          fi
           if [ "${{ inputs.pre_release }}" = "true" ]; then
             npx --yes @vscode/vsce@2.15.0 publish --pre-release
           else
@@ -73,3 +88,47 @@ jobs:
           name: vsix
           path: .artifacts/avalonia-designer.vsix
           if-no-files-found: error
+      # Says what actually happened, in the job summary, so a green run is never mistaken for a
+      # published one. `steps.publish.outcome` is "skipped" when the step did not run at all.
+      - name: What this run did
+        if: always()
+        env:
+          PUBLISHED: ${{ steps.publish.outcome }}
+          CAN_PUBLISH: ${{ steps.preflight.outputs.can_publish }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PRE_RELEASE: ${{ inputs.pre_release }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          CHANNEL=$([ "$PRE_RELEASE" = "true" ] && echo "pre-release" || echo "stable")
+          if [ "$PUBLISHED" = "success" ]; then
+            {
+              echo "## Published \`$VERSION\`"
+              echo ""
+              echo "\`vsce publish\` succeeded — the Marketplace now has \`$VERSION\` on the **$CHANNEL** channel."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$DRY_RUN" = "true" ]; then
+            {
+              echo "## Dry run — nothing published"
+              echo ""
+              echo "Built, tested and packaged. Run again with *Dry run* off to publish \`$VERSION\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$PUBLISHED" = "failure" ]; then
+            {
+              echo "## Publish FAILED — nothing is live"
+              echo ""
+              echo "\`vsce publish\` failed; see its log above. Check whether \`$VERSION\` is already"
+              echo "taken — a published version number can never be reused, so a new one has to be"
+              echo "chosen in \`package.json\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## ⚠ NOT PUBLISHED"
+              echo ""
+              echo "The repository secret \`VSCE_PAT\` is not set, so this run stopped short of"
+              echo "publishing — it still built, tested and packaged (the VSIX is in the artifacts)."
+              echo ""
+              echo "Add the token under *Settings → Secrets and variables → Actions* and run this"
+              echo "workflow again. \`package.json\` still holds \`$VERSION\`, so nothing is lost."
+              echo "(Global Azure DevOps PATs are retired on 1 December 2026 — see \`PUBLISHING.md\` part G.)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

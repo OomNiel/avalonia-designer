@@ -106,6 +106,19 @@ module.exports = async (t) => {
     t.ok(/workflow_dispatch/.test(rel), 'release', 'and it is started by hand (a version number is one-way)');
     t.ok(/--pre-release/.test(rel), 'release', 'it can publish pre-releases (the current 0.9.x line)');
     t.ok(/VSCE_PAT/.test(rel), 'release', 'it uses a Marketplace token from the repository secrets');
+    // A missing token must not be a failed run: a red run for a known setup gap only produces a
+    // failure email, and the summary is what reports the truth instead. A publish that is attempted
+    // and fails must still fail the job, so the guard against a silently skipped release stays.
+    t.ok(/id: preflight/.test(rel) && /can_publish/.test(rel), 'release',
+        'a preflight step decides whether this run can publish at all');
+    t.ok(/if:.*can_publish.*dry_run|if:.*dry_run.*can_publish/.test(rel), 'release',
+        'and the publish step is gated on it (and on dry_run)');
+    t.ok(/GITHUB_STEP_SUMMARY/.test(rel) && /NOT PUBLISHED/.test(rel), 'release',
+        'the job summary states what happened, including a warning when nothing was published');
+    t.ok(/PUBLISHED.*failure|steps\.publish\.outcome/.test(rel), 'release',
+        'and a publish that ran and failed is still reported as a failure');
+    t.ok(!/::error::VSCE_PAT is not set/.test(rel), 'release',
+        'the missing-token case no longer hard-fails the run');
     t.ok(/node tests\/runner\.js/.test(rel), 'release', 'it runs the full suite');
     t.ok(rel.indexOf('node tests/runner.js') < rel.indexOf('--pre-release'), 'release',
         'and that suite runs BEFORE anything is published');
