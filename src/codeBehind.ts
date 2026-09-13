@@ -509,8 +509,8 @@ function insertCsStatusDate(text: string, handler: string, name: string): string
     const indent = text.slice(lineStart, m.index).match(/^\s*/)?.[0] ?? '';
     const bi = indent + '    ';
     const method = `\n${bi}private void ${handler}(object sender, Avalonia.Interactivity.RoutedEventArgs e)\n${bi}{\n` +
-        `${bi}    var timer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };\n` +
-        `${bi}    timer.Tick += (_, _) => ${name}.Text = DateTime.Now.ToString();\n` +
+        `${bi}    var timer = new Avalonia.Threading.DispatcherTimer { Interval = System.TimeSpan.FromSeconds(1) };\n` +
+        `${bi}    timer.Tick += (_, _) => ${name}.Text = System.DateTime.Now.ToString();\n` +
         `${bi}    timer.Start();\n${bi}}\n`;
     return text.slice(0, close) + method + text.slice(close);
 }
@@ -528,8 +528,8 @@ function insertVbStatusDate(text: string, handler: string, name: string): string
     const indent = text.slice(lineStart, m.index).match(/^\s*/)?.[0] ?? '';
     const bi = indent + '    ';
     const method = `\n${bi}Private Sub ${handler}(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)\n${bi}` +
-        `    Dim timer As New Avalonia.Threading.DispatcherTimer With {.Interval = TimeSpan.FromSeconds(1)}\n` +
-        `${bi}    AddHandler timer.Tick, Sub(s2, e2) ${name}.Text = DateTime.Now.ToString()\n` +
+        `    Dim timer As New Avalonia.Threading.DispatcherTimer With {.Interval = System.TimeSpan.FromSeconds(1)}\n` +
+        `${bi}    AddHandler timer.Tick, Sub(s2, e2) ${name}.Text = System.DateTime.Now.ToString()\n` +
         `${bi}    timer.Start()\n${bi}End Sub\n`;
     return text.slice(0, endIndex) + method + text.slice(endIndex);
 }
@@ -569,7 +569,10 @@ function statusPartExpr(part: 'date' | 'time', choice: string): string {
     const system = fmt === 'd' || fmt === 'T'; // OS standard — render with the current culture
     const quoted = fmt.replace(/"/g, '\\"');
     const args = system ? `"${quoted}"` : `"${quoted}", System.Globalization.CultureInfo.InvariantCulture`;
-    return `DateTime.Now.ToString(${args})`;
+    // Fully qualified on purpose: generated code-behinds carry no `using System;`, and this expression
+    // is shared by both languages — `System.DateTime` is valid in C# and VB alike. Unqualified, the C#
+    // build failed with "The name 'DateTime' does not exist in the current context" (CS0103).
+    return `System.DateTime.Now.ToString(${args})`;
 }
 
 /** The full `Name.Text = …` right-hand expression for the given Date/Time choices (both parts are
@@ -667,7 +670,7 @@ function insertCsXyTracker(text: string, handler: string, name: string, mode: Xy
         ? `if (sender is Avalonia.Controls.Control c && Avalonia.Controls.TopLevel.GetTopLevel(c) is Avalonia.Controls.TopLevel top)\n${bi}            ${name}.Text = string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0} x {1:0} px", top.ClientSize.Width, top.ClientSize.Height);`
         : `if (sender is Avalonia.Controls.Control c && c.Parent is Avalonia.Visual p)\n${bi}            ${name}.Text = string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0} x {1:0} px", p.Bounds.Width, p.Bounds.Height);`;
     const method = `\n${bi}private void ${handler}(object sender, Avalonia.Interactivity.RoutedEventArgs e)\n${bi}{\n` +
-        `${bi}    var timer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };\n` +
+        `${bi}    var timer = new Avalonia.Threading.DispatcherTimer { Interval = System.TimeSpan.FromMilliseconds(200) };\n` +
         `${bi}    timer.Tick += (_, _) =>\n${bi}    {\n${bi}        ${target}\n${bi}    };\n` +
         `${bi}    timer.Start();\n${bi}}\n`;
     return text.slice(0, close) + method + text.slice(close);
@@ -692,7 +695,7 @@ function insertVbXyTracker(text: string, handler: string, name: string, mode: Xy
         // Avalonia 12 types Control.Parent as StyledElement (no Bounds) — cast to Visual to read its size.
         : `        Dim p = TryCast(c.Parent, Avalonia.Visual)\n${bi}        If p IsNot Nothing Then\n${bi}            ${name}.Text = String.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0} x {1:0} px", p.Bounds.Width, p.Bounds.Height)\n${bi}        End If`;
     const method = `\n${bi}Private Sub ${handler}(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)\n${bi}` +
-        `    Dim timer As New Avalonia.Threading.DispatcherTimer With {.Interval = TimeSpan.FromMilliseconds(200)}\n` +
+        `    Dim timer As New Avalonia.Threading.DispatcherTimer With {.Interval = System.TimeSpan.FromMilliseconds(200)}\n` +
         `${bi}    AddHandler timer.Tick, Sub(s2, e2)\n` +
         `${bi}        Dim c = TryCast(sender, Avalonia.Controls.Control)\n${bi}        ${target}\n` +
         `${bi}    End Sub\n` +

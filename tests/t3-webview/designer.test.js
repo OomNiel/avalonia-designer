@@ -1950,5 +1950,42 @@ module.exports = async (t) => {
             'the caret restore focuses with preventScroll');
     }
 
+    // --- the right-click menu must stay inside the window ---
+    // (user report: right-clicking a control near the bottom opened the menu downwards, so its lower
+    // entries were cut off and unreachable). jsdom does no layout, so the menu's size is stubbed here —
+    // the flip depends only on that size and the cursor position.
+    {
+        const s5 = setup();
+        s5.msg(s5.frame([
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true },
+            { name: 'btn1', type: 'Button', x: 100, y: 50, w: 120, h: 36 }
+        ]));
+        const menu = s5.$('contextMenu');
+        menu.getBoundingClientRect = () => ({
+            width: 140, height: 240, top: 0, left: 0, right: 140, bottom: 240, x: 0, y: 0
+        });
+        const vh = s5.window.innerHeight;
+        const vw = s5.window.innerWidth;
+        const openAt = (x, y) => s5.$('canvas').dispatchEvent(
+            new s5.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+
+        openAt(400, 100);
+        t.equal(menu.style.top, '100px', 'ctx-menu', 'a menu that fits opens below the cursor');
+        t.equal(menu.style.left, '400px', 'ctx-menu', 'and to the right of it');
+
+        openAt(400, vh - 50);
+        t.equal(menu.style.top, `${vh - 50 - 240}px`, 'ctx-menu',
+            'near the bottom it flips ABOVE the cursor so every entry stays visible');
+
+        openAt(vw - 50, 100);
+        t.equal(menu.style.left, `${vw - 50 - 140}px`, 'ctx-menu',
+            'near the right edge it flips to the left of the cursor');
+
+        // Even a cursor in the very last pixel cannot push the menu off-screen.
+        openAt(vw - 1, vh - 1);
+        t.ok(parseFloat(menu.style.top) >= 4 && parseFloat(menu.style.left) >= 4, 'ctx-menu',
+            'and it is clamped to the viewport', `top=${menu.style.top} left=${menu.style.left}`);
+    }
+
     t.note('T3 done');
 };

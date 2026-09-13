@@ -1525,6 +1525,19 @@
         els.ctxDelete.disabled = !hasSel || locked;
         els.ctxPaste.disabled = !state.clipboard;
         els.contextMenu.hidden = false;
+        // Position AFTER it is visible and its items are enabled/disabled, so the measurement uses the
+        // real size. A control near the bottom (or right) edge used to open the menu past the viewport
+        // with its lower entries cut off and unreachable; flip it above / to the left of the cursor when
+        // it would not fit, and clamp to the viewport as a last resort. The menu is position:fixed, so
+        // the client coordinates from the event are the right coordinate space.
+        const box = els.contextMenu.getBoundingClientRect();
+        const margin = 4;
+        let left = x;
+        let top = y;
+        if (left + box.width > window.innerWidth - margin) left = x - box.width;
+        if (top + box.height > window.innerHeight - margin) top = y - box.height;
+        els.contextMenu.style.left = Math.max(margin, left) + 'px';
+        els.contextMenu.style.top = Math.max(margin, top) + 'px';
     }
 
     els.canvas.addEventListener('contextmenu', (e) => {
