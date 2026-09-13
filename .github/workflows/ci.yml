@@ -16,8 +16,8 @@ jobs:
     name: Compile, logic + webview tests, package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -37,7 +37,7 @@ jobs:
         run: |
           mkdir -p .artifacts
           npm run package -- --out .artifacts/avalonia-designer.vsix
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vsix
           path: .artifacts/avalonia-designer.vsix
@@ -46,7 +46,7 @@ jobs:
       # without this a red run says only "N passed, 1 failed" and nothing else.
       - name: Test report (only when something failed)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-report
           path: |
@@ -59,12 +59,12 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           # 8.0 builds the bundled preview host, 10.0 the projects the extension generates.
           dotnet-version: |
@@ -82,7 +82,7 @@ jobs:
         run: node tests/runner.js
       - name: Test report (only when something failed)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: full-suite-report
           path: |

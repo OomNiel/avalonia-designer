@@ -114,6 +114,13 @@ publish from your machine (part E, second option).
 
 ## E. The first publish
 
+> **Current practice (2026-09-13): upload through the publisher portal.** The maintainer decided to
+> keep doing it by hand until the Azure DevOps PAT discontinuance is settled (part G) rather than
+> create a token now, so the CLI and workflow routes below are documented but **unused** — the workflow
+> will simply report “⚠ NOT PUBLISHED” (green, with a warning) if it is run without the secret.
+> Upload `avalonia-designer-<version>.vsix` and tick **pre-release** in the portal if the build is
+> meant for the pre-release channel — the portal, not the file, decides that in this route.
+
 Either route does the same thing:
 
 - **From GitHub** — *Actions* → **Release** → *Run workflow*. First run with **pre_release** on and

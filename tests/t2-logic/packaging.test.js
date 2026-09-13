@@ -128,6 +128,29 @@ module.exports = async (t) => {
     }
     t.ok(/@vscode\/vsce@\d/.test(pkg.scripts['publish:pre'] || ''), 'release',
         'the publish script pins the vsce version (a release must be reproducible)');
+
+    // GitHub force-migrates actions that declare Node 20 onto Node 24 and prints a deprecation warning
+    // in EVERY run's log, which buries real annotations. The minimum major that declares node24, read
+    // from each action's own action.yml: checkout v5, setup-node v5, setup-dotnet v5 — and
+    // upload-artifact **v6**, because its v5 still declares node20. Pinned here so a stray `@v4`
+    // cannot quietly bring the noise back.
+    {
+        const node24Min = {
+            'actions/checkout': 5,
+            'actions/setup-node': 5,
+            'actions/setup-dotnet': 5,
+            'actions/upload-artifact': 6
+        };
+        for (const [file, where] of [['.github/workflows/ci.yml', 'ci'],
+            ['.github/workflows/release.yml', 'release']]) {
+            const used = [...read(file).matchAll(/uses:\s*([\w.-]+\/[\w.-]+)@(v\d+)/g)]
+                .map((m) => ({ action: m[1], major: Number(m[2].slice(1)) }));
+            t.ok(used.length > 0, where, 'the workflow uses at least one action');
+            t.equal(used.filter((u) => u.major < (node24Min[u.action] ?? 0))
+                .map((u) => `${u.action}@v${u.major}`), [], where,
+                'no action is left on a Node 20 major (it warns on every single run)');
+        }
+    }
     t.ok(pkg.scripts['vscode:prepublish'].includes('compile'), 'release',
         'packaging always compiles first (vsce runs vscode:prepublish)');
     // The maintainer guide and the workflow have to agree: a renamed secret would only fail at
