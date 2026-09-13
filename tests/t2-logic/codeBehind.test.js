@@ -9,6 +9,7 @@ const {
     bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet,
     hasDataSetBinding, findItemsSourceBinding, removeItemsSourceBinding,
     insertHandlerIntoCodeBehind, findHandlerInCodeBehind, convertCodeBehindToChrome, hasDefaultEvent, defaultEventFor, handlerChoice,
+    findCodeBehindFile,
     removeHandlersFromCodeBehind,
     applyAccessors,
     bindImageToGrid, hasDataImageBinding, unbindImageFromGrid
@@ -331,5 +332,51 @@ End Namespace
         t.ok(!/XYTracker1_Loaded/.test(vb), 'vb-remove-nested', 'whole XYTracker handler removed');
         t.ok(!/timer\.Start\(\)/.test(vb), 'vb-remove-nested', 'no timer.Start() leftover');
         t.ok(/btnTest_Click/.test(vb), 'vb-remove-nested', 'a later sibling handler survives');
+    }
+
+    // --- findCodeBehindFile: cached, but re-validated on every call (Phase 2d) ---
+    // Asked from ~35 places (twice per code-behind check, inside the panel's text-change handler, and
+    // in the "nothing yet -> create the file -> look again" flow), and it used to read EVERY sibling
+    // .cs/.vb body to compare class declarations — a few hundred KB on a real form folder. The cache
+    // must never answer from a stale read, and the flow that creates the file first must see it.
+    {
+        const p = tmpProject('cs');
+        const first = findCodeBehindFile(p.uri);
+        t.ok(!!first && first.endsWith('TestForm.axaml.cs'), 'cb-cache',
+            'resolves the convention-named file that declares the class');
+        t.equal(findCodeBehindFile(p.uri), first, 'cb-cache', 'a second call answers the same file');
+
+        // A new sibling that declares the class must not steal the answer from the conventional file.
+        fs.writeFileSync(path.join(p.dir, 'MainWindow.cs'),
+            'namespace Proj;\npublic partial class TestForm : Window { }\n');
+        t.equal(findCodeBehindFile(p.uri), first, 'cb-cache',
+            'the conventional file still wins after a sibling starts declaring the class');
+
+        // The conventional file no longer declaring it must be noticed (this is the stale-read trap:
+        // the name, and therefore the cheap file LIST, did not change — only the contents did).
+        fs.writeFileSync(path.join(p.dir, 'TestForm.axaml.cs'),
+            'namespace Proj;\npublic partial class Renamed : Window { }\n');
+        t.ok(/MainWindow\.cs$/.test(findCodeBehindFile(p.uri) || ''), 'cb-cache',
+            'an edit that drops the class declaration is picked up, without any invalidation call');
+
+        // Deleting the file it named must not leave a path that no longer exists.
+        fs.rmSync(path.join(p.dir, 'TestForm.axaml.cs'));
+        t.ok(!/TestForm\.axaml\.cs$/.test(findCodeBehindFile(p.uri) || ''), 'cb-cache',
+            'a deleted file is no longer reported');
+    }
+
+    // --- the create flow: look (nothing) -> write the code-behind -> look again ---
+    // insertHandlerIntoCodeBehind does exactly that, so a cache that only accepts an invalidation hook
+    // would insert the handler into undefined here.
+    {
+        const p = tmpProject('cs');
+        fs.rmSync(path.join(p.dir, 'TestForm.axaml.cs'));
+        t.equal(findCodeBehindFile(p.uri), undefined, 'cb-create', 'no code-behind yet -> undefined');
+
+        const r = await insertHandlerIntoCodeBehind(p.uri, 'btnNew_Click', 'Click');
+        t.ok(!!r, 'cb-create', 'the handler is inserted');
+        t.ok(!!r && r.filePath.endsWith('TestForm.axaml.cs'), 'cb-create',
+            'into the code-behind created a moment earlier');
+        t.ok(/btnNew_Click/.test(p.read()), 'cb-create', 'and the method is really in that file');
     }
 };

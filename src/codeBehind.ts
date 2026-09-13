@@ -93,14 +93,58 @@ export function findHandlerInCodeBehind(axamlUri: vscode.Uri, handler: string): 
 }
 
 /**
+ * Cheap fingerprint of everything the lookup below can be influenced by: the NAME of every sibling
+ * `.cs`/`.vb` (a create, delete or rename changes the list) plus its size and mtime (so an edit that
+ * adds or removes the class declaration is noticed). Reading the files' CONTENTS is the expensive
+ * part — up to a few hundred KB on a folder with many classes — and a stat is what tells us whether
+ * the contents can have changed.
+ */
+function codeBehindSignature(dir: string): string {
+    let names: string[];
+    try {
+        names = fs.readdirSync(dir).filter((f) => /\.(cs|vb)$/i.test(f)).sort();
+    } catch {
+        return '';
+    }
+    let sig = '';
+    for (const n of names) {
+        try {
+            const st = fs.statSync(path.join(dir, n));
+            sig += `${n}:${st.size}:${st.mtimeMs};`;
+        } catch {
+            sig += `${n}:?;`;   // vanished between the listing and the stat — never matches a hit
+        }
+    }
+    return sig;
+}
+
+/** Last answer per .axaml path, with the signature it was computed from. */
+const behindCache = new Map<string, { sig: string; result: string | undefined }>();
+
+/**
  * Finds an existing code-behind file that declares the form's class. Checks the
  * conventional names (`<Name>.axaml.cs|vb`, `<Name>.cs|vb`) and then any sibling
  * .cs/.vb file (the "Avalonia VB Projects" generator declares MainWindow in Program.vb).
+ *
+ * The answer is cached per .axaml and re-validated on every call (see `codeBehindSignature`),
+ * because this is asked from ~35 places — twice per code-behind check, inside the panel's text-change
+ * handler, and in the "no file yet, create one, look again" flow, which must see the file that was
+ * just written. Validation is by signature, not by an invalidation hook, so it cannot go stale and no
+ * writer can forget to invalidate it.
  */
 export function findCodeBehindFile(axamlUri: vscode.Uri): string | undefined {
     const dir = path.dirname(axamlUri.fsPath);
-    const base = path.basename(axamlUri.fsPath, '.axaml');
+    const key = axamlUri.fsPath;
+    const sig = codeBehindSignature(dir);
+    const hit = behindCache.get(key);
+    if (hit && hit.sig === sig) return hit.result;
+    const result = findCodeBehindFileUncached(dir, path.basename(axamlUri.fsPath, '.axaml'));
+    behindCache.set(key, { sig, result });
+    return result;
+}
 
+/** Locates the code-behind file for a form (would read every sibling class to compare declarations). */
+function findCodeBehindFileUncached(dir: string, base: string): string | undefined {
     const candidates = [
         path.join(dir, `${base}.axaml.cs`),
         path.join(dir, `${base}.axaml.vb`),
