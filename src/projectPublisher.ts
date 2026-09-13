@@ -364,30 +364,9 @@ async function publishMsi(plan: PublishPlan): Promise<void> {
 }
 
 /** How long ago a file was written, for the "the package is older than the sources" hint. */
-function isStale(plan: PublishPlan): boolean {
-    let built = 0;
-    try { built = fs.statSync(plan.outFile).mtimeMs; } catch { return false; }
-    const newest = (dir: string, depth = 0): number => {
-        if (depth > 3) return 0;
-        let newestMs = 0;
-        let entries: fs.Dirent[] = [];
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
-        for (const e of entries) {
-            if (e.name === 'bin' || e.name === 'obj' || e.name === 'publish' || e.name === '.git') continue;
-            const p = path.join(dir, e.name);
-            if (e.isDirectory()) newestMs = Math.max(newestMs, newest(p, depth + 1));
-            else {
-                try { newestMs = Math.max(newestMs, fs.statSync(p).mtimeMs); } catch { /* ignore */ }
-            }
-        }
-        return newestMs;
-    };
-    return newest(plan.projectDir) > built;
-}
-
 /**
  * Install: `sudo dpkg -i` in a visible terminal, so the password prompt stays in the terminal and is
- * never routed through the extension. Refuses (with an offer to publish) when there is nothing built.
+ * never routed through the extension. Refuses (with an offer to publish) unless the package is current.
  */
 export async function installApp(formUri: vscode.Uri): Promise<void> {
     const platform = process.platform;
@@ -401,19 +380,19 @@ export async function installApp(formUri: vscode.Uri): Promise<void> {
             'No .csproj / .vbproj was found for this form, so there is nothing to install.');
         return;
     }
-    if (!fs.existsSync(plan.outFile)) {
+    const state = packageState(formUri, platform);
+    if (state !== 'ready') {
+        // The Install button is disabled in this state; this is the guard for any other caller (a command
+        // palette entry later, or a stale webview that was rendered before the package disappeared).
         const pick = await vscode.window.showWarningMessage(
-            `Nothing to install yet — ${path.relative(plan.projectDir, plan.outFile)} does not exist yet. ` +
-            'Publish the project first.', 'Publish now');
+            state === 'none'
+                ? `Nothing to install yet — ${path.relative(plan.projectDir, plan.outFile)} does not exist ` +
+                  'yet. Publish the project first.'
+                : `The package is older than the project's sources, so installing it would put the PREVIOUS ` +
+                  'build on your machine while the designer shows the current one. Publish again first.',
+            'Publish now');
         if (pick === 'Publish now') await publishApp(formUri);
         return;
-    }
-    if (isStale(plan)) {
-        const pick = await vscode.window.showWarningMessage(
-            `The package is older than the project's sources. Install it anyway?`,
-            'Install anyway', 'Publish first');
-        if (pick === 'Publish first') { await publishApp(formUri); return; }
-        if (pick !== 'Install anyway') return;
     }
 
     const pkg = plan.outFile;
@@ -444,4 +423,99 @@ export function isInstalled(packageName: string): Promise<boolean> {
         if (process.platform !== 'linux') { resolve(false); return; }
         execFile('dpkg', ['-s', packageName], (err) => resolve(!err));
     });
+}
+
+/**
+ * How usable the built package is, which is what decides whether the Install button is offered:
+ *
+ *  - `none`  nothing has been published (or the package was deleted) → Install is disabled
+ *  - `stale` the package is OLDER than the project's sources → Install is disabled until it is rebuilt,
+ *            because installing it would put the previous build on the machine while the designer shows
+ *            the current one
+ *  - `ready` the package exists and is newer than every source → Install is enabled
+ */
+export type PackageState = 'none' | 'stale' | 'ready';
+
+/** Files that end up inside the app — `.md` notes or a `.vscode` tweak must not invalidate a package. */
+const SOURCE_EXTENSIONS = new Set([
+    '.axaml', '.xaml', '.cs', '.vb', '.csproj', '.vbproj', '.sln', '.resx', '.config',
+    '.png', '.jpg', '.jpeg', '.svg', '.ico', '.gif', '.bmp', '.webp', '.ttf', '.otf'
+]);
+const SOURCE_SKIP_DIRS = new Set(['bin', 'obj', 'publish', '.git', '.vscode', 'node_modules']);
+
+/** Newest modification time among the project's source files (0 when there are none). */
+export function newestSourceMtime(dir: string, depth = 0): number {
+    if (depth > 4) return 0;
+    let entries: fs.Dirent[] = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
+    let newest = 0;
+    for (const e of entries) {
+        if (e.isDirectory()) {
+            if (SOURCE_SKIP_DIRS.has(e.name)) continue;
+            newest = Math.max(newest, newestSourceMtime(path.join(dir, e.name), depth + 1));
+            continue;
+        }
+        if (!SOURCE_EXTENSIONS.has(path.extname(e.name).toLowerCase())) continue;
+        try { newest = Math.max(newest, fs.statSync(path.join(dir, e.name)).mtimeMs); } catch { /* ignore */ }
+    }
+    return newest;
+}
+
+/**
+ * The state of the package for this form's project, or `undefined` when the platform has no package
+ * format here (see `planPublish`).
+ */
+export function packageState(formUri: vscode.Uri, platform: string = process.platform): PackageState | undefined {
+    const plan = planPublish(formUri, platform);
+    if (!plan) return undefined;
+    let built = 0;
+    try { built = fs.statSync(plan.outFile).mtimeMs; } catch { return 'none'; }
+    return newestSourceMtime(plan.projectDir) > built ? 'stale' : 'ready';
+}
+
+/** Timers that wait for a build started in a terminal to produce the package. */
+const buildWatchers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * A publish runs in a terminal, so the extension does not know when it finishes. Poll the artifact until
+ * it appears (or the build is given up on) and report every state change, so the Install button follows
+ * reality instead of staying greyed out after a successful build.
+ */
+export function watchForPackage(
+    formUri: vscode.Uri,
+    onState: (state: PackageState) => void,
+    intervalMs = 1500,
+    maxMinutes = 20
+): vscode.Disposable {
+    const key = formUri.fsPath;
+    const previous = buildWatchers.get(key);
+    if (previous) clearInterval(previous);
+    let last: PackageState | undefined;
+    let ticks = 0;
+    const timer = setInterval(() => {
+        ticks++;
+        const state = packageState(formUri);
+        if (state !== undefined && state !== last) {
+            last = state;
+            onState(state);
+        }
+        // Done when the package is there; give up after the deadline so a failed build cannot leave a
+        // timer running for the rest of the session.
+        if (state === 'ready' || ticks * intervalMs > maxMinutes * 60000) stop();
+    }, intervalMs);
+    const stop = () => {
+        clearInterval(timer);
+        if (buildWatchers.get(key) === timer) buildWatchers.delete(key);
+    };
+    buildWatchers.set(key, timer);
+    return { dispose: stop };
+}
+
+/** Stops any build watcher for a document (used when the panel goes away). */
+export function stopWatchingPackage(formUri: vscode.Uri): void {
+    const timer = buildWatchers.get(formUri.fsPath);
+    if (timer) {
+        clearInterval(timer);
+        buildWatchers.delete(formUri.fsPath);
+    }
 }

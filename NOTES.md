@@ -1301,6 +1301,23 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   - **Untested on Windows, and said so**: the generated .wxs, the version/upgrade identity and the
     PowerShell build script are unit-tested, but `wix build` itself has not been run — the changelog and
     the manual state that rather than implying it was verified.
+  - **Install is state-driven, not dialog-driven (2026-09-13).** A greyed-out button that explains itself
+    beats an enabled button that asks a question, so the three states are computed from the files on disk
+    (`packageState`): *none* (no artifact), *stale* (artifact older than the newest source), *ready*.
+    Only `ready` enables Install, and `installApp` refuses the other two as well — the UI guard and the
+    action guard agree, instead of one trusting the other. Two details that mattered:
+    (a) the staleness scan counts **only files that end up inside the app** — a `.md` note or a `.vscode`
+    tweak must not invalidate a package, or the button greys out for nothing and the user rebuilds for no
+    reason; (b) the build runs in a terminal the extension does not control, so `watchForPackage` polls
+    the artifact and reports the change — otherwise the button would stay grey after a *successful* build.
+    The state is only posted when it actually changes (it is recomputed on every edit, and answering it
+    stats the project's sources).
+  - **`disabled` is not a guard.** jsdom (and any synthetic dispatch) delivers a click to a disabled
+    button's listeners, while a browser does not fire one at all — so the webview repeats the check in
+    the handler. The test asserts that a click in the disabled state posts nothing, which is only
+    meaningful because of that guard. (Also: `findProject` walks UP the tree, so "a form with no project"
+    has to be tested somewhere with no project above it — /tmp turned out to have a stray `.csproj` in it,
+    which the walk found correctly and the test had wrongly assumed away.)
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

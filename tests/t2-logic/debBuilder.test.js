@@ -16,7 +16,7 @@ const {
     AVALONIA_LINUX_LIBS
 } = require('../../out/debBuilder.js');
 const {
-    planPublish, publishScript, publishApp, installApp, ridFor
+    planPublish, publishScript, publishApp, installApp, ridFor, packageState, watchForPackage
 } = require('../../out/projectPublisher.js');
 
 const TINY_PNG = Buffer.from(
@@ -238,6 +238,65 @@ module.exports = async (t) => {
         t.ok(/Publish the project first/.test(warnings.join(' ')), 'install',
             'the user is told to publish first');
 
+        // --- the state machine behind the Install button -------------------------------
+        // 'ready' is the only state in which Install is offered: installing a stale package would put the
+        // PREVIOUS build on the machine while the designer shows the current one.
+        const nowSec = Math.floor(Date.now() / 1000);
+        const setMtime = (p, sec) => fs.utimesSync(p, sec, sec);
+        const axamlFile = path.join(dir, 'MainWindow.axaml');
+
+        t.equal(packageState(uri), 'none', 'state', 'nothing published yet → none');
+        t.equal(packageState(uri, 'darwin'), undefined, 'state',
+            'and no state at all on a platform with no package format');
+        // A loose .axaml with no project above it. `findProject` walks UP the directory tree, so this
+        // fixture cannot live in the system temp folder: /tmp happens to hold a stray .csproj, which the
+        // walk would find — correctly. Under tests/out there is no project above it.
+        const looseDir = path.join(__dirname, '..', 'out', 'loose-form-fixture');
+        fs.mkdirSync(looseDir, { recursive: true });
+        const looseForm = path.join(looseDir, 'Loose.axaml');
+        fs.writeFileSync(looseForm, '<Window xmlns="https://github.com/avaloniaui"/>\n');
+        t.equal(packageState(vscode.Uri.file(looseForm)), undefined, 'state',
+            'nor for a form with no project beside it');
+        fs.rmSync(looseDir, { recursive: true, force: true });
+
+        // Times are set explicitly: a file written a few milliseconds ago is NEWER in ms than a whole
+        // second, so "package is current" has to be expressed with room to spare.
+        fs.mkdirSync(path.dirname(plan.outFile), { recursive: true });
+        fs.writeFileSync(plan.outFile, Buffer.from('!<arch>\n'));
+        setMtime(plan.outFile, nowSec + 300);       // the built package
+        setMtime(axamlFile, nowSec - 60);           // every source is older
+        t.equal(packageState(uri), 'ready', 'state', 'a package newer than every source → ready');
+
+        // A .md note in the project folder is not part of the app, so it must not invalidate the package
+        // (that would grey the button out for no reason and push the user into a needless rebuild).
+        const notes = path.join(dir, 'README.md');
+        fs.writeFileSync(notes, '# notes\n');
+        setMtime(notes, nowSec + 400);
+        t.equal(packageState(uri), 'ready', 'state', 'editing a note does not make the package stale');
+
+        // But editing the form does.
+        setMtime(axamlFile, nowSec + 400);
+        t.equal(packageState(uri), 'stale', 'state', 'editing the form → stale');
+        terminals.length = 0;
+        warnings.length = 0;
+        await installApp(uri);
+        t.equal(terminals.length, 0, 'state', 'a stale package cannot be installed');
+        t.ok(/older than the project's sources/.test(warnings.join(' ')), 'state',
+            'and the message says why (installing it would put the PREVIOUS build on the machine)');
+        t.ok(!/Install anyway/.test(warnings.join(' ')), 'state',
+            'there is no "install anyway" escape hatch any more');
+
+        // Publishing again (the artifact becomes newer than the sources) brings it back.
+        setMtime(plan.outFile, nowSec + 500);
+        setMtime(axamlFile, nowSec - 60);
+        t.equal(packageState(uri), 'ready', 'state', 'a newer package → ready again');
+
+        fs.rmSync(plan.outFile);
+        t.equal(packageState(uri), 'none', 'state', 'deleting the package → none (and Install disabled)');
+        // Restore the fixture the install test below expects: a current package to install.
+        fs.writeFileSync(plan.outFile, Buffer.from('!<arch>\n'));
+        setMtime(plan.outFile, nowSec + 600);
+
         // Install with a package present: exactly one command, and it is the install.
         fs.mkdirSync(path.dirname(plan.outFile), { recursive: true });   // the build script makes it
         fs.writeFileSync(plan.outFile, Buffer.from('!<arch>\n'));
@@ -252,6 +311,19 @@ module.exports = async (t) => {
             'sudo dpkg -i on the built package');
         t.ok(!/apt-get/.test(terminals[0].sent.join(' ')), 'install',
             "and no apt-get is run behind the user's back");
+
+        // --- the watcher: how the button comes back to life after a build in the terminal ---
+        // The build runs in a terminal the extension does not control, so the artifact is polled and every
+        // state change is reported. Without this the button would stay grey after a successful publish.
+        fs.rmSync(plan.outFile);
+        const seen = [];
+        const watcher = watchForPackage(uri, (state) => seen.push(state), 5);
+        fs.writeFileSync(plan.outFile, Buffer.from('!<arch>\n'));
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        watcher.dispose();
+        t.ok(seen.includes('ready'), 'watch',
+            'the watcher reports the package appearing, so Install can enable itself');
+        t.equal(seen[seen.length - 1], 'ready', 'watch', 'and it stops there instead of polling forever');
     } finally {
         vscode.window.createTerminal = realCreateTerminal;
         vscode.window.showWarningMessage = realWarning;

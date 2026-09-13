@@ -83,7 +83,17 @@ function setup(omit = []) {
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
     };
-    const make = (id) => { const el = window.document.createElement(tagFor(id)); el.id = id; return el; };
+    const make = (id) => {
+        const el = window.document.createElement(tagFor(id));
+        el.id = id;
+        // Mirror the two publish buttons as the extension emits them: Install starts DISABLED (nothing has
+        // been published until the extension reports a state), Publish is always available.
+        if (id === 'btnInstall') {
+            el.disabled = true;
+            el.title = 'Checking whether the app has been published…';
+        }
+        return el;
+    };
 
     // Mirror the real webview DOM: #canvasWrap > #canvas > #preview + #dotGrid + #overlayLayer +
     // #selection + #multiSel + #marquee, so handle events bubble up to the canvas's pointer
@@ -694,12 +704,20 @@ module.exports = async (t) => {
     // are done by the extension (the build runs in a terminal there), so the webview posts and says so.
     {
         t.ok(!!$('btnPublish') && !!$('btnInstall'), 'publish-buttons', 'the two buttons exist');
+        // Install starts disabled and says so: nothing is installable until the extension reports a
+        // package, which is the whole point of the button being state-driven.
+        t.equal($('btnInstall').disabled, true, 'install-state',
+            'Install starts disabled, before any report has arrived');
+        t.ok(/checking/i.test($('btnInstall').title), 'install-state', 'and its tooltip says it is checking');
         posted.length = 0;
         $('btnPublish').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal(posted[posted.length - 1], { type: 'publishApp' }, 'publish-buttons', 'Publish posts publishApp');
         t.ok(/publish/i.test($('status').textContent), 'publish-buttons',
             'the status line says it is publishing (the terminal has the detail)', $('status').textContent);
         posted.length = 0;
+        // Install is disabled until the extension reports a CURRENT package, so a state has to arrive
+        // first (the webview never assumes something is installable).
+        msg({ type: 'publishState', state: 'ready', name: 'MyApp 1.0.0' });
         $('btnInstall').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal(posted[posted.length - 1], { type: 'installApp' }, 'publish-buttons', 'Install posts installApp');
         t.ok(/install/i.test($('status').textContent), 'publish-buttons', 'and the status line says so',
@@ -718,6 +736,39 @@ module.exports = async (t) => {
         nos.$('btnZoomOut').dispatchEvent(new nos.window.MouseEvent('click', { bubbles: true }));
         t.equal(nos.$('zoomValue').value, '83%', 'publish-buttons',
             'and the script reached the listeners registered AFTER them (89% → 83% zoom out)');
+    }
+
+    // --- Install is only offered when there is a CURRENT package (the extension reports the state) ---
+    // "ready" is the only enabled state: installing a stale package would put the PREVIOUS build on the
+    // machine while the designer shows the current one, so an out-of-date or missing package disables the
+    // button and the tooltip says which of the two it is.
+    {
+        const install = $('btnInstall');
+        msg({ type: 'publishState', state: 'none', name: 'MyApp 1.0.0' });
+        t.equal(install.disabled, true, 'install-state', 'nothing published → disabled');
+        t.ok(/no package has been built/i.test(install.title), 'install-state',
+            'the tooltip explains it (not a mystery grey button)', install.title);
+        posted.length = 0;
+        install.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted.length, 0, 'install-state', 'and a disabled button posts nothing');
+
+        msg({ type: 'publishState', state: 'stale', name: 'MyApp 1.0.0' });
+        t.equal(install.disabled, true, 'install-state', 'a package older than the sources → disabled');
+        t.ok(/older than the project/i.test(install.title), 'install-state',
+            'with the reason (the package is out of date)', install.title);
+
+        msg({ type: 'publishState', state: 'ready', name: 'MyApp 1.0.0' });
+        t.equal(install.disabled, false, 'install-state', 'a current package → enabled');
+        t.ok(/install myapp 1\.0\.0/i.test(install.title), 'install-state',
+            'and the tooltip names what will be installed', install.title);
+        posted.length = 0;
+        install.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1], { type: 'installApp' }, 'install-state',
+            'clicking it now posts installApp');
+
+        // Publishing again makes it stale (the extension reports it on the next edit), so it goes back.
+        msg({ type: 'publishState', state: 'stale', name: 'MyApp 1.0.0' });
+        t.equal(install.disabled, true, 'install-state', 'and back to disabled once it is out of date again');
     }
 
     // --- colour palette popup: lists EVERY preset colour (not just the current one), then a pick

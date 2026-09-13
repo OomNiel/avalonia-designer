@@ -17,7 +17,7 @@ import { findProject, ProjectInfo } from './projectParser';
 import { listAssets, Asset } from './assetCatalog';
 import { ensureDataGridAutoGenerateColumns, ensureSqlitePackages, defaultDbFile, reloadDataSetPanel, saveOpenDataSetDocuments } from './dataSetEditor';
 import { backupProject } from './projectBackup';
-import { publishApp, installApp } from './projectPublisher';
+import { publishApp, installApp, packageState, watchForPackage, stopWatchingPackage, planPublish } from './projectPublisher';
 import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTableName } from './dataSetModel';
 import { readDataSetFiles } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
@@ -1436,6 +1436,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private lastActivePanel?: vscode.WebviewPanel;
     /** Per-document: the last tab the user selected, so the preview renders it active. */
     private readonly activeTabs = new Map<string, { control: string; index: number }>();
+    /** Last package state posted per document, so a per-edit check does not spam the webview. */
+    private readonly packageStates = new Map<string, string>();
     /**
      * Persisted backup of each control's custom colours (document URI -> control name ->
      * { colourKey: value }), so switching Theme Custom -> System -> Custom restores them.
@@ -1585,6 +1587,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         };
         webviewPanel.webview.html = this.webviewHtml(webviewPanel.webview);
 
+        // Tell the panel whether there is something installable (and whether it is current). Sent once when
+        // the designer opens, then on every edit (an edit makes a built package stale) and after a publish.
+        void this.sendPackageState(document, webviewPanel);
+        webviewPanel.onDidDispose(() => {
+            stopWatchingPackage(document.uri);
+            this.packageStates.delete(key);
+        });
+
         // Reveal the Toolbox sidebar whenever a designer opens, so it's not missed
         // (the toolbox is a contributed view container, not part of this webview).
         void vscode.commands.executeCommand('workbench.view.extension.avaloniaDesigner');
@@ -1649,14 +1659,24 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     return;
                 }
                 case 'publishApp': {
-                    // Build this form's project and package it as a .deb. The build runs in a visible
-                    // terminal, so this returns as soon as it has been started.
+                    // Build this form's project and package it as a .deb (Linux) or an MSI (Windows). The
+                    // build runs in a visible terminal, so this returns as soon as it has been started.
                     await publishApp(doc.uri);
+                    // The build runs in a terminal we do not control: poll the artifact and tell the panel
+                    // when it appears, so the Install button enables itself instead of staying greyed out
+                    // after a successful build (`packageState` decides, and stale counts as not installable).
+                    const watch = watchForPackage(doc.uri, (state) => {
+                        void panel.webview.postMessage({ type: 'publishState', state: state, name: planPublish(doc.uri)?.outFile ?? null });
+                    });
+                    panel.onDidDispose(() => watch.dispose());
+                    await this.sendPackageState(doc, panel);
                     return;
                 }
                 case 'installApp': {
-                    // Install the .deb that Publish built, on this machine (sudo in a terminal).
+                    // Install the built package on this machine (sudo in a terminal / msiexec on Windows).
                     await installApp(doc.uri);
+                    // The package is unchanged, but the machine is not: re-report so the panel reflects it.
+                    await this.sendPackageState(doc, panel);
                     return;
                 }
                 case 'refresh': {
@@ -4799,6 +4819,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private notifyEdit(doc: DesignerDocument, panel: vscode.WebviewPanel, before: string): void {
         const after = doc.model.serialize(true);
         if (before === after) return;
+        // A package built earlier is now out of date, so the Install button must go back to disabled.
+        // `sendPackageState` caches per document, so this only posts when the state actually changes.
+        void this.sendPackageState(doc, panel);
         // If the set of named controls changed (a control was added/removed/renamed), keep the
         // VB code-behind's named-control accessor properties in sync.
         if (this.controlsSignature(before) !== doc.model.namedControlSignature()) {
@@ -5512,6 +5535,32 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     }
 
     /**
+     * Tells the webview whether there is an installable package for this form's project:
+     *
+     *   none   nothing published yet          → the Install button is disabled
+     *   stale  package older than the sources → disabled (installing would put the previous build on the
+     *                                           machine while the designer shows the current one)
+     *   ready  package current                → enabled
+     *
+     * The state is a function of files on disk (the artifact's mtime against the newest source), so it is
+     * recomputed rather than remembered — but only posted when it actually changes, because this is called
+     * on every edit and a project's sources are stat'ed to answer it.
+     */
+    private async sendPackageState(doc: DesignerDocument, panel?: vscode.WebviewPanel): Promise<void> {
+        const target = panel ?? this.panels.get(doc.uri.toString());
+        if (!target) return;
+        const state = packageState(doc.uri);
+        if (state === undefined) return;             // this platform has no package format (see planPublish)
+        const plan = planPublish(doc.uri);
+        const name = plan ? `${plan.appName} ${plan.version}` : '';
+        const signature = `${state}|${name}`;
+        const key = doc.uri.toString();
+        if (this.packageStates.get(key) === signature) return;
+        this.packageStates.set(key, signature);
+        void target.webview.postMessage({ type: 'publishState', state, name });
+    }
+
+    /**
      * Toolbar **Project Backup**: write everything that is unsaved, then copy the project folder
      * into its PARENT folder as `<Project>_<date>_<time>` (naming + skip list: projectBackup.ts).
      * Saving comes first — a backup of a half-saved tree is worthless — and it covers the three
@@ -5925,7 +5974,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const installerWord = process.platform === 'win32' ? 'MSI' : '.deb';
         const publishButtons = process.platform === 'linux' || process.platform === 'win32'
             ? `      <button id="btnPublish" title="Build THIS project in Release and package it as an installer (${installerWord}) in the project's publish/ folder. The package carries no .NET runtime — it requires it, so the prerequisite is installed (Linux: apt) or checked (Windows: the installer says where to get it). Copy the package to another machine to install the app there.">📦 Publish…</button>
-      <button id="btnInstall" title="Install the package that Publish built, on this machine, so the app runs outside VS Code. Linux asks for your password in the terminal; Windows shows its own permission prompt.">🚀 Install</button>
+      <button id="btnInstall" disabled title="Checking whether the app has been published…">🚀 Install</button>
 `
             : '';
         return `<!DOCTYPE html>

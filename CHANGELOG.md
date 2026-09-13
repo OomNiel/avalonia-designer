@@ -31,6 +31,16 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 - **`avaloniaDesigner.publish.*` settings** — package name, version, maintainer, description and extra
   `Depends`. All optional: empty values fall back to the project file's name and `<Version>`.
 
+### Changed
+- **Install is disabled unless the package is *current*.** There are three states and the button follows
+  them: *no package yet* → disabled, *package older than the form* → disabled (installing it would put
+  the previous build on the machine while the designer shows the current one), *up to date* → enabled.
+  The tooltip says which case you are in, editing the form greys it out again immediately, and the
+  button re-enables itself when a build started in the terminal produces the package. "Install anyway"
+  is gone — publish first. Note that *older than the sources* counts only files that end up inside the
+  app (`.axaml`, `.cs`/`.vb`, project files, images, fonts), so editing a README in the project folder
+  does not invalidate a package.
+
 ### Notes
 - Both buttons are **platform-specific by nature** — a `.deb` on Linux, an MSI on Windows — so the
   extension emits them on those two platforms and refuses the actions elsewhere (macOS has no package

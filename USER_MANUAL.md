@@ -269,12 +269,26 @@ name and `<Version>`, so a first publish needs no configuration at all.
 
 ### 🚀 Install — run your app outside VS Code
 
-**🚀 Install** installs the `.deb` that Publish built **on this machine**, so the app appears in your
-application menu and runs like any other program.
+**🚀 Install** installs the package that Publish built **on this machine**, so the app appears in your
+application menu (Linux) or in the Start menu (Windows) and runs like any other program.
+
+**It is greyed out unless there is a *current* package to install**, and the tooltip says which case
+you are in:
+
+| The button | Means |
+|---|---|
+| greyed out — *“no package has been built”* | nothing has been published yet → press **📦 Publish…** |
+| greyed out — *“the package is older than the project’s sources”* | you changed the form after the last publish (or the package was deleted) → publish again. Installing an out-of-date package would put the **previous** build on your machine while the designer shows the current one |
+| enabled — *“Install <App> <version>”* | the package is up to date |
+
+After a Publish it stays greyed out for as long as the build runs, then **enables itself** the moment
+the package appears — and goes grey again as soon as you edit the form.
 
 - It runs `sudo dpkg -i <the .deb>` on Linux (or `msiexec /i <the .msi>` on Windows, which raises
   Windows' own permission prompt) in a terminal and **asks for your password there** — the extension
   never sees it, and nothing else is typed into that terminal while it waits.
+- Installing an **out-of-date package is not offered at all** — there is no “install anyway”: publish
+  first, so what you install is what you were looking at.
 - Nothing published yet? It offers to publish first. Package older than your sources? It says so and
   lets you publish again.
 - If the install reports a **missing dependency**, run `sudo apt-get -f install` (the notification

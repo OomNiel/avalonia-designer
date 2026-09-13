@@ -204,7 +204,11 @@
         crosshair: { mode: 'short', shortLength: 50, thickness: 1, opacity: 100, color: '#ff4d4d' },
         // All currently selected control names (multi-select). state.selected stays the ANCHOR
         // (the first-selected control that edge-alignment aligns everything else to).
-        multi: new Set()
+        multi: new Set(),
+        // Whether the project has a package to install: 'none' | 'stale' | 'ready' (from the extension).
+        // 'none' until the first report arrives, so the Install button starts disabled.
+        packageState: 'none',
+        packageName: ''
     };
 
     // Single-line text controls that 'Align Text' can centre text in (matches propertyCatalog).
@@ -2577,6 +2581,10 @@
                 els.btnRedo.disabled = !msg.canRedo;
                 break;
             }
+            case 'publishState': {
+                applyPublishState(msg);
+                break;
+            }
             case 'fonts': {
                 // System font list from the host — refresh the header-font picker if the Columns
                 // editor is open (it may have been opened before the list arrived).
@@ -2739,12 +2747,44 @@
             post({ type: 'publishApp' });
         });
     }
-    // Install: install the .deb that Publish built on this machine (sudo, in the terminal).
+    // Install: install the built package on this machine (sudo, in the terminal). The button is disabled
+    // unless the extension reported a CURRENT package; the guard is repeated here because a disabled
+    // control does not swallow synthetic/explicit click dispatches in every environment.
     if (els.btnInstall) {
         els.btnInstall.addEventListener('click', () => {
+            if (els.btnInstall.disabled) return;
             els.status.textContent = 'Installing the app \u2014 see the terminal\u2026';
             post({ type: 'installApp' });
         });
+    }
+
+    /**
+     * The extension reports whether there is something to install:
+     *   none   nothing published yet          -> Install is DISABLED
+     *   stale  the package is older than the   -> Install is DISABLED (installing it would put the
+     *          project's sources                  previous build on the machine while the designer
+     *                                             shows the current one)
+     *   ready  the package is current         -> Install is enabled
+     * A disabled button says WHY in its tooltip, so a greyed-out button is not a mystery.
+     */
+    function applyPublishState(msg) {
+        state.packageState = msg.state;
+        state.packageName = msg.name || '';
+        const btn = els.btnInstall;
+        if (!btn) return;
+        const what = state.packageName ? state.packageName : 'the app';
+        if (msg.state === 'ready') {
+            btn.disabled = false;
+            btn.title = 'Install ' + what + ' on this machine, so it runs outside VS Code ' +
+                '(Linux asks for your password in the terminal; Windows shows its own permission prompt).';
+        } else if (msg.state === 'stale') {
+            btn.disabled = true;
+            btn.title = 'Nothing to install: the package is older than the project\u2019s sources. ' +
+                'Press \u24d4 Publish\u2026 to rebuild it, then install the current build.';
+        } else {
+            btn.disabled = true;
+            btn.title = 'Nothing to install yet: no package has been built. Press \u24d4 Publish\u2026 first.';
+        }
     }
     els.btnZoomIn.addEventListener('click', () => {
         state.fitted = false;
