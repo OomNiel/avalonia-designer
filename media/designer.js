@@ -168,6 +168,9 @@
 
     const state = {
         frame: null,
+        // name -> control for the CURRENT frame (see indexFrame). Every "the control the pointer is
+        // dragging" / ancestor lookup used to scan the whole array, and those run per pointermove.
+        byName: new Map(),
         scale: 1,
         fitted: false,
         selected: null, // { name: string|null }
@@ -328,9 +331,30 @@
     }
 
     // ---------------- frame / layout ----------------
+    /**
+     * Rebuilds the name -> control index for the frame that just arrived. `frame.controls` is only
+     * ever replaced wholesale (never pushed to or spliced), so building the index here keeps it
+     * valid for the frame's whole life. First match wins, exactly like the `.find()` scans below.
+     */
+    function indexFrame() {
+        const byName = new Map();
+        if (state.frame) {
+            for (const c of state.frame.controls || []) {
+                if (c.name && !byName.has(c.name)) byName.set(c.name, c);
+            }
+        }
+        state.byName = byName;
+    }
+
+    /** The current frame's control with that name, or null. O(1). */
+    function ctrlByName(name) {
+        return (name && state.byName.get(name)) || null;
+    }
+
     function applyFrame(msg) {
         const sizeChanged = state.designW !== (msg.width || 800) || state.designH !== (msg.height || 450);
         state.frame = msg;
+        indexFrame();
         state.splitBars = msg.splitBars || [];
         state.designW = msg.width || 800;
         state.designH = msg.height || 450;
@@ -385,8 +409,9 @@
 
     function hitTest(x, y) {
         if (!state.frame) return null;
-        const byName = new Map();
-        for (const c of state.frame.controls) if (c.name) byName.set(c.name, c);
+        // The frame's name index, not a Map rebuilt per call: hitTest runs on every pointermove that
+        // drags a selection and on every toolbox dragover.
+        const byName = state.byName;
         // Hierarchy-aware, mirroring Avalonia's input hit-testing: a control is never beaten by its
         // OWN ancestors (the locked Body surface, the Root dock, a containing panel) — an ancestor
         // only wins when nothing inside it is hit. Siblings/unrelated controls compare by ZIndex
@@ -414,29 +439,77 @@
     }
 
     // ---------------- overlays ----------------
+    /* One overlay div per named control, PATCHED in place rather than rebuilt. The old code cleared
+     * the layer and re-created a div per control on every frame — on a 200-control form that is 200
+     * nodes thrown away and 200 built again for a one-pixel drag (plus the style recalc that the
+     * innerHTML teardown triggers). Nodes are keyed by control name, so a drag now writes the two
+     * changed lengths on one existing node. */
+    const overlayNodes = new Map();
+
+    function overlayFor(name) {
+        let d = overlayNodes.get(name);
+        if (!d) {
+            d = document.createElement('div');
+            d.className = 'ov';
+            d.dataset.name = name;
+            overlayNodes.set(name, d);
+        }
+        return d;
+    }
+
+    /** Assigns a length only when it actually changed (re-writing the same value still dirties style). */
+    function setLen(el, prop, value) {
+        if (el.style[prop] !== value) el.style[prop] = value;
+    }
+
     function renderOverlays() {
-        els.overlay.innerHTML = '';
-        if (!state.frame) { renderMenuDummies(); return; }
+        if (!state.frame) {
+            // No frame (form failed to load): drop every node so nothing is left floating.
+            for (const node of overlayNodes.values()) {
+                if (node.parentNode) node.parentNode.removeChild(node);
+            }
+            overlayNodes.clear();
+            renderMenuDummies();
+            return;
+        }
+        const scale = state.scale;
+        const live = new Set();
+        const order = document.createDocumentFragment();
         for (const c of state.frame.controls) {
             if (!c.name) continue;
-            const d = document.createElement('div');
-            d.className = 'ov';
-            d.style.left = (c.x * state.scale) + 'px';
-            d.style.top = (c.y * state.scale) + 'px';
-            d.style.width = (c.width * state.scale) + 'px';
-            d.style.height = (c.height * state.scale) + 'px';
-            d.dataset.name = c.name;
+            live.add(c.name);
+            const d = overlayFor(c.name);
+            setLen(d, 'left', (c.x * scale) + 'px');
+            setLen(d, 'top', (c.y * scale) + 'px');
+            setLen(d, 'width', (c.width * scale) + 'px');
+            setLen(d, 'height', (c.height * scale) + 'px');
             // A code-behind problem the extension reported for this control (e.g. the handler the
-            // form wires was deleted by hand) — a small ⚠ in the corner, hover to read it.
+            // form wires was deleted by hand) — a small ⚠ in the corner, hover to read it. The badge
+            // is the node's only child, so it is patched in place too.
             const mark = state.markers[c.name];
+            let badge = d.firstChild;
             if (mark) {
-                const badge = document.createElement('span');
-                badge.className = 'ov-badge ' + (mark.severity === 'warning' ? 'warn' : 'err');
-                badge.textContent = '⚠';
-                badge.title = mark.title || 'Code-behind problem';
-                d.appendChild(badge);
+                if (!badge) {
+                    badge = document.createElement('span');
+                    d.appendChild(badge);
+                }
+                const cls = 'ov-badge ' + (mark.severity === 'warning' ? 'warn' : 'err');
+                if (badge.className !== cls) badge.className = cls;
+                if (badge.textContent !== '⚠') badge.textContent = '⚠';
+                const title = mark.title || 'Code-behind problem';
+                if (badge.title !== title) badge.title = title;
+            } else if (badge) {
+                d.removeChild(badge);
             }
-            els.overlay.appendChild(d);
+            // Re-appending an existing child MOVES it, so this also restores the paint order.
+            order.appendChild(d);
+        }
+        els.overlay.appendChild(order);
+        // Controls that are no longer on the form lose their overlay.
+        for (const [name, node] of overlayNodes) {
+            if (live.has(name)) continue;
+            if (node.parentNode) node.parentNode.removeChild(node);
+            overlayNodes.delete(name);   // deleting while iterating a Map is safe
         }
         renderMenuDummies();
     }
@@ -463,7 +536,7 @@
         state.multi = new Set(names && names.length ? names : []);
         state.selected = { name: anchor };
         if (state.selected.name) {
-            const hit = state.frame && state.frame.controls.find((c) => c.name === anchor);
+            const hit = ctrlByName(anchor);
             if (hit && hit.parent && state.frame && state.frame.gridCells && state.frame.gridCells[hit.parent]) {
                 state.recell = { gridName: hit.parent, cells: state.frame.gridCells[hit.parent] };
             } else {
@@ -497,7 +570,7 @@
             }
             // Keep the anchor's re-cell state (a Grid-child anchor still re-cells on drag).
             const anc = state.selected ? state.selected.name : null;
-            const ancCtrl = anc && state.frame ? state.frame.controls.find((c) => c.name === anc) : null;
+            const ancCtrl = ctrlByName(anc);
             if (ancCtrl && ancCtrl.parent && state.frame && state.frame.gridCells && state.frame.gridCells[ancCtrl.parent]) {
                 state.recell = { gridName: ancCtrl.parent, cells: state.frame.gridCells[ancCtrl.parent] };
             } else {
@@ -566,13 +639,15 @@
 
     /** True if the control is flagged as locked (the structural Body design surface). */
     function isLockedControl(name) {
-        return !!(state.frame && state.frame.controls.some((x) => x.name === name && x.locked));
+        const c = ctrlByName(name);
+        return !!(c && c.locked);
     }
 
     /** True if the control is a SplitPanel pane body — selectable + editable in the Properties
      *  panel, but it must always FILL its pane, so it can't be resized or moved with the mouse. */
     function isPaneBodyControl(name) {
-        return !!(state.frame && state.frame.controls.some((x) => x.name === name && x.paneBody));
+        const c = ctrlByName(name);
+        return !!(c && c.paneBody);
     }
 
     // Draws the (lighter) selection outline for the NON-anchor selected controls; the anchor keeps
@@ -582,7 +657,7 @@
         if (!state.frame || !state.selected || !state.selected.name) return;
         for (const n of selectionNames()) {
             if (n === state.selected.name) continue;
-            const c = state.frame.controls.find((x) => x.name === n);
+            const c = ctrlByName(n);
             if (!c) continue;
             const d = document.createElement('div');
             d.className = 'multi-sel' + (c.locked ? ' locked' : '');
@@ -603,7 +678,7 @@
         }
         // Align Text needs at least one single-line text control in the selection.
         const hasText = any && state.frame && names.some((n) => {
-            const c = state.frame.controls.find((x) => x.name === n);
+            const c = ctrlByName(n);
             return c && TEXT_ALIGN_TAGS.has(c.type);
         });
         els.btnAlignText.disabled = !hasText;
@@ -613,7 +688,7 @@
         const anchorName = state.selected ? state.selected.name : null;
         const hasSizableTarget = multi && state.frame && names.some((n) => {
             if (n === anchorName) return false;
-            const c = state.frame.controls.find((x) => x.name === n);
+            const c = ctrlByName(n);
             return c && c.type !== 'Line';
         });
         els.btnSameWidth.disabled = !hasSizableTarget;
@@ -621,10 +696,10 @@
         // Equal spacing needs >= 3 controls that can be freely moved (not locked, not a direct Grid
         // child — those are placed by Grid.Row/Column, so their position isn't coordinate-based).
         const movable = multi && state.frame ? names.filter((n) => {
-            const c = state.frame.controls.find((x) => x.name === n);
+            const c = ctrlByName(n);
             if (!c || c.locked || c.paneBody || !c.name) return false;
             if (!c.parent) return true;
-            const p = state.frame.controls.find((x) => x.name === c.parent);
+            const p = ctrlByName(c.parent);
             return !p || p.type !== 'Grid';
         }) : [];
         const eq = movable.length >= 3;
@@ -646,7 +721,7 @@
             s.hidden = true;
             return;
         }
-        const c = state.frame.controls.find((x) => x.name === state.selected.name);
+        const c = ctrlByName(state.selected.name);
         if (!c) {
             s.hidden = true;
             return;
@@ -738,7 +813,7 @@
         const name = els.controlList.value;
         if (!state.frame) return;
         if (name === '') { selectForm(); return; } // the "Form - <Title>" entry
-        const c = state.frame.controls.find((x) => x.name === name);
+        const c = ctrlByName(name);
         if (c) select(c);
     });
 
@@ -963,7 +1038,7 @@
         e.preventDefault();
         const name = els.controlList.value;
         if (!name || !state.frame) return;
-        const c = state.frame.controls.find((x) => x.name === name);
+        const c = ctrlByName(name);
         if (!c) return;
         // Highlight the control on the canvas for visual feedback.
         select(c);
@@ -992,7 +1067,7 @@
             e.stopPropagation();
             const p0 = toDesign(e.clientX, e.clientY);
             const selName = state.selected ? state.selected.name : null;
-            const ctrl = selName && state.frame ? state.frame.controls.find((x) => x.name === selName) : null;
+            const ctrl = ctrlByName(selName);
             drag = {
                 mode: 'shape', shapeType: ctrl ? ctrl.type : null,
                 kind: t.dataset.kind || 'end', name: selName,
@@ -1027,7 +1102,7 @@
         }
         const sel = state.selected;
         if (!sel || !state.frame) return;
-        const c = state.frame.controls.find((x) => x.name === sel.name);
+        const c = ctrlByName(sel.name);
         if (!c) return;
         // The Body design surface and a SplitPanel pane body can't be moved or resized — a pane
         // body always fills its pane (clicking it still selects it so its properties are editable).
@@ -1154,7 +1229,7 @@
         if (drag.mode === 'shape') {
             const p = toDesign(e.clientX, e.clientY);
             // Move the grabbed handle dot to the pointer (relative to the selection box origin).
-            const c = state.frame.controls.find((x) => x.name === drag.name);
+            const c = ctrlByName(drag.name);
             if (c) {
                 const h = els.selection.querySelector('.shape-handle.' + drag.kind);
                 if (h) {
@@ -1195,7 +1270,7 @@
     /** A thin guide line from an Arc's centre to the pointer while its radius is being set. */
     function updateRadiusGuide(drag, p) {
         const g = els.radiusGuide;
-        const c = state.frame.controls.find((x) => x.name === drag.name);
+        const c = ctrlByName(drag.name);
         if (!c) return;
         const cx = c.x + c.width / 2;
         const cy = c.y + c.height / 2;
@@ -1445,14 +1520,16 @@
 
     // ---------------- drag & drop from toolbox ----------------
     let dropTarget = null;
+    let dropNode = null;
     function highlightDrop(hit) {
-        if (dropTarget === hit) return;
+        const node = (hit && overlayNodes.get(hit.name)) || null;
+        if (dropTarget === hit && dropNode === node) return;
         dropTarget = hit;
-        const ovs = els.overlay.querySelectorAll('.ov.drop');
-        ovs.forEach((o) => o.classList.remove('drop'));
-        if (!hit) return;
-        const d = els.overlay.querySelector('.ov[data-name="' + cssEscape(hit.name) + '"]');
-        if (d) d.classList.add('drop');
+        // The overlay node is looked up directly instead of querying the layer for `.ov.drop` and
+        // rebuilding a [data-name] selector from the control name on every dragover.
+        if (dropNode && dropNode !== node) dropNode.classList.remove('drop');
+        if (node) node.classList.add('drop');
+        dropNode = node;
     }
 
     els.canvas.addEventListener('dragover', (e) => {
@@ -1626,7 +1703,7 @@
             const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0;
             const dy = e.key === 'ArrowDown' ? step : e.key === 'ArrowUp' ? -step : 0;
             const names = selectionNames().filter((n) => {
-                const c = state.frame && state.frame.controls.find((x) => x.name === n);
+                const c = ctrlByName(n);
                 return !!c && !c.locked && !c.paneBody;
             });
             if (!names.length) return;
@@ -2446,7 +2523,7 @@
                 break;
             case 'selectControl': {
                 if (state.frame) {
-                    const c = state.frame.controls.find((x) => x.name === msg.name);
+                    const c = ctrlByName(msg.name);
                     if (c) select(c);
                 }
                 break;
@@ -3597,75 +3674,123 @@
         if (e.target === els.dgModal) closeDataGridEditor(); // click outside the box
     });
 
-    // Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay
-    // chips — NOT canvas controls — so clicks on them never hit control-selection/hit-testing.
+    /* Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay
+     * chips — NOT canvas controls — so clicks on them never hit control-selection/hit-testing.
+     *
+     * Patched in place like the control overlays: the old code emptied the host and rebuilt every
+     * chip (plus two listeners each) on every frame, so a drag across a form with a menu bar threw
+     * away and re-created nodes — and their tooltips — dozens of times a second. The two listeners
+     * now live on the host and dispatch from the chip's dataset. */
+    const menuNodes = new Map();
+
+    function menuDummy(kind, key) {
+        let d = menuNodes.get(key);
+        if (!d) {
+            d = document.createElement('div');
+            menuNodes.set(key, d);
+        }
+        const cls = kind === 'sep'
+            ? 'menu-dummy-sep'
+            : 'menu-dummy ' + (kind === 'item' ? 'item' : 'hint');
+        if (d.className !== cls) d.className = cls;
+        return d;
+    }
+
     function renderMenuDummies() {
         const host = els.menuDummies;
         if (!host) return;
-        host.innerHTML = '';
-        if (!state.frame || !state.frame.menus) return;
+        const order = document.createDocumentFragment();
+        const live = new Set();
         const scale = state.scale || 1;
+        const put = (node, key, left, top, width, height) => {
+            live.add(key);
+            setLen(node, 'left', Math.round(left) + 'px');
+            setLen(node, 'top', Math.round(top) + 'px');
+            setLen(node, 'width', Math.round(width) + 'px');
+            setLen(node, 'height', Math.round(height) + 'px');
+            order.appendChild(node);
+        };
         const mk = (kind, menuName, label, xPx, wPx, topPx, hPx, idx) => {
-            const d = document.createElement('div');
-            d.className = 'menu-dummy ' + (kind === 'item' ? 'item' : 'hint');
-            d.textContent = label;
-            d.style.left = Math.round(xPx) + 'px';
-            d.style.top = Math.round(topPx) + 'px';
-            d.style.width = Math.round(wPx) + 'px';
-            d.style.height = Math.round(hPx) + 'px';
-            d.dataset.menu = menuName;
-            d.title = (kind === 'item')
+            const key = menuName + '|' + kind + '|' + (idx == null ? '' : idx);
+            const d = menuDummy(kind, key);
+            if (d.textContent !== label) d.textContent = label;
+            const title = (kind === 'item')
                 ? "Edit the '" + label + "' menu items"
                 : 'Add a top-level menu item';
-            d.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); });
-            d.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (kind === 'item') { openMenuEditor(menuName, idx); return; }
-                openMenuEditor(menuName);
-                if (kind === 'empty') addMenuTopRow(); // empty bar: jump straight to adding the first item
-            });
-            host.appendChild(d);
+            if (d.title !== title) d.title = title;
+            if (d.dataset.menu !== menuName) d.dataset.menu = menuName;
+            const kindAttr = kind === 'item' ? 'item' : kind;
+            if (d.dataset.kind !== kindAttr) d.dataset.kind = kindAttr;
+            if (d.dataset.idx !== String(idx == null ? '' : idx)) d.dataset.idx = String(idx == null ? '' : idx);
+            put(d, key, xPx, topPx, wPx, hPx);
         };
-        for (const c of state.frame.controls) {
-            if (!c.name || c.type !== 'Menu') continue;
-            const items = state.frame.menus[c.name];
-            if (!Array.isArray(items)) continue;
-            const top = c.y * scale;
-            const h = Math.max(20, c.height * scale);
-            if (!items.length) {
-                mk('empty', c.name, '+ Add menu items…', (c.x + 3) * scale, 180 * scale, top, h);
-                continue;
+        if (state.frame && state.frame.menus) {
+            for (const c of state.frame.controls) {
+                if (!c.name || c.type !== 'Menu') continue;
+                const items = state.frame.menus[c.name];
+                if (!Array.isArray(items)) continue;
+                const top = c.y * scale;
+                const h = Math.max(20, c.height * scale);
+                if (!items.length) {
+                    mk('empty', c.name, '+ Add menu items…', (c.x + 3) * scale, 180 * scale, top, h);
+                    continue;
+                }
+                const EST = 7.3; // approx px per header char at the bar's ~13px font
+                let cursor = c.x + 3;
+                items.forEach((it, i) => {
+                    if (it.kind === 'Space') {
+                        // An invisible gap of the space's width (px) between the items on the bar.
+                        cursor += (Number(it.width) > 0 ? Number(it.width) : 12);
+                        return;
+                    }
+                    if (it.kind === 'Separator') {
+                        const key = c.name + '|sep|' + i;
+                        const s = menuDummy('sep', key);
+                        put(s, key,
+                            (cursor + 5) * scale,
+                            (c.y + c.height * 0.25) * scale,
+                            1,
+                            Math.max(2, Math.round(c.height * 0.5 * scale)));
+                        cursor += 12;
+                        return;
+                    }
+                    // A File/Folder Selector row shows its dialog caption; with none set, name the kind
+                    // so the bar chip is never blank.
+                    const header = it.header
+                        || (it.kind === 'FileSelector' ? 'File Selector' : it.kind === 'FolderSelector' ? 'Folder Selector' : '');
+                    const w = Math.max(34, header.length * EST + 28);
+                    mk('item', c.name, header, cursor * scale, w * scale, top, h, i);
+                    cursor += w;
+                });
+                mk('add', c.name, '+', (cursor + 3) * scale, 26 * scale, top, h);
             }
-            const EST = 7.3; // approx px per header char at the bar's ~13px font
-            let cursor = c.x + 3;
-            items.forEach((it, i) => {
-                if (it.kind === 'Space') {
-                    // An invisible gap of the space's width (px) between the items on the bar.
-                    cursor += (Number(it.width) > 0 ? Number(it.width) : 12);
-                    return;
-                }
-                if (it.kind === 'Separator') {
-                    const s = document.createElement('div');
-                    s.className = 'menu-dummy-sep';
-                    s.style.left = Math.round((cursor + 5) * scale) + 'px';
-                    s.style.top = Math.round((c.y + c.height * 0.25) * scale) + 'px';
-                    s.style.height = Math.max(2, Math.round(c.height * 0.5 * scale)) + 'px';
-                    s.style.width = '1px';
-                    host.appendChild(s);
-                    cursor += 12;
-                    return;
-                }
-                // A File/Folder Selector row shows its dialog caption; with none set, name the kind
-                // so the bar chip is never blank.
-                const header = it.header
-                    || (it.kind === 'FileSelector' ? 'File Selector' : it.kind === 'FolderSelector' ? 'Folder Selector' : '');
-                const w = Math.max(34, header.length * EST + 28);
-                mk('item', c.name, header, cursor * scale, w * scale, top, h, i);
-                cursor += w;
-            });
-            mk('add', c.name, '+', (cursor + 3) * scale, 26 * scale, top, h);
+        }
+        host.appendChild(order);
+        for (const [key, node] of menuNodes) {
+            if (live.has(key)) continue;
+            if (node.parentNode) node.parentNode.removeChild(node);
+            menuNodes.delete(key);
         }
     }
+
+    // Delegated once instead of two listeners per chip per frame. A chip carries its menu name, its
+    // kind and (for an item) its index, so the handlers stay stateless.
+    els.menuDummies.addEventListener('pointerdown', (e) => {
+        if (e.target && e.target.closest && e.target.closest('.menu-dummy')) {
+            e.stopPropagation();
+            e.preventDefault();
+        }
+    });
+    els.menuDummies.addEventListener('click', (e) => {
+        const chip = e.target && e.target.closest ? e.target.closest('.menu-dummy') : null;
+        if (!chip) return;
+        e.stopPropagation();
+        const menuName = chip.dataset.menu;
+        const kind = chip.dataset.kind;
+        if (kind === 'item') { openMenuEditor(menuName, Number(chip.dataset.idx)); return; }
+        openMenuEditor(menuName);
+        if (kind === 'empty') addMenuTopRow(); // empty bar: jump straight to adding the first item
+    });
 
     els.wrap.addEventListener('click', (e) => {
         if (e.target === els.wrap) deselect();

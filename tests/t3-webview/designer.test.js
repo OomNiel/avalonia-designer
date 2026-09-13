@@ -185,6 +185,26 @@ module.exports = async (t) => {
     const bodyOpt = [...$('controlList').children].find((o) => o.value === 'Body');
     t.ok(bodyOpt && bodyOpt.textContent.includes('🔒'), 'frame', 'Body dropdown shows 🔒');
 
+    // --- overlays are PATCHED, not rebuilt (Phase 2d) ---
+    // A frame used to clear the layer and re-create a div per control, so every drag frame threw
+    // away and rebuilt every overlay node. The node for a control must now survive a re-render, and
+    // the geometry must still follow the control.
+    {
+        const node = $('overlayLayer').querySelector('.ov[data-name="btn1"]');
+        const left0 = node.style.left;
+        msg(frame(controls.map((c) => (c.name === 'btn1' ? { ...c, x: 140 } : c))));
+        const moved = $('overlayLayer').querySelector('.ov[data-name="btn1"]');
+        t.ok(moved === node, 'overlay-patch', 'the overlay node is reused across frames');
+        t.ok(moved.style.left !== left0, 'overlay-patch', 'and still follows the control');
+        // A control that leaves the form must lose its node (nothing left floating over the canvas).
+        msg(frame(controls.filter((c) => c.name !== 'btn2')));
+        t.equal($('overlayLayer').querySelectorAll('.ov').length, 3, 'overlay-patch',
+            'a dropped control loses its overlay');
+        t.equal($('overlayLayer').querySelector('.ov[data-name="btn2"]'), null, 'overlay-patch',
+            'and its node is removed');
+        msg(frame(controls));
+    }
+
     // --- design rulers: black strips hug the canvas top/left, sized to the design; white ticks ---
     t.equal($('rulerH').style.width, '800px', 'rulers', 'top ruler spans the canvas width');
     t.equal($('rulerV').style.height, '450px', 'rulers', 'left ruler spans the canvas height');
@@ -1309,6 +1329,16 @@ module.exports = async (t) => {
         const dm = $('menuDummies');
         t.equal(dm.children.length, 3, 'menu-dummies', 'bar shows one chip per top-level item + a trailing "+"');
         t.equal(dm.children[0].textContent, 'File', 'menu-dummies', 'first dummy is the File item');
+        // Chips are patched in place like the overlays: the same node (and its tooltip) survives an
+        // identical frame instead of being re-created, listeners and all, on every frame.
+        const chip0 = dm.children[0];
+        menuFrame({
+            mainMenu: [
+                { kind: 'Item', header: 'File', children: [{ kind: 'Item', header: 'Exit' }] },
+                { kind: 'Item', header: 'View' }
+            ]
+        });
+        t.ok($('menuDummies').children[0] === chip0, 'menu-dummies', 'chip node is reused across frames');
         const ddLabels = [...$('controlList').options].map((o) => o.textContent);
         t.ok(!ddLabels.some((x) => /File|Exit|View/.test(x)), 'menu-dummies', 'MenuItems are NOT in the control dropdown');
 
