@@ -122,6 +122,26 @@ module.exports = async (t) => {
   t.ok(!vb.includes('MyData.CreateDataSet()'), 'generate', 'vb no hardcoded MyData dataset ref');
   t.ok(vb.includes('CustomersEditDialog(CreateDataSet()'), 'generate', 'vb dialog uses own CreateDataSet');
 
+  // --- runtime storage: a published app's own folder is read-only ---
+  // The .deb installs to /usr/lib/<pkg> and the MSI to "Program Files" — both root-owned, so a first
+  // run that has to CREATE the .db / the remembered-folder file there fails (SQLite error 14, raised
+  // from the form's constructor → no window at all, and no console when started from the app menu).
+  // Generated code therefore keeps runtime data in the per-user data folder.
+  t.ok(cs.includes('public static class RuntimeStorage'), 'storage', 'cs RuntimeStorage emitted');
+  t.ok(cs.includes('Environment.SpecialFolder.LocalApplicationData'), 'storage', 'cs uses the per-user data folder');
+  t.ok(cs.includes('public static string DbPath(string file) => Path.IsPathRooted(file) ? file : RuntimeStorage.PathFor(file);'), 'storage', 'cs DbPath resolves relative .db paths per user');
+  t.ok(cs.includes('RuntimeStorage.PathFor("Store.lastfolder")'), 'storage', 'cs remembered picker folder is per user');
+  t.equal(cs.split('AppContext.BaseDirectory').length - 1, 1, 'storage', 'cs touches the app folder once (the legacy fallback only)');
+  t.ok(cs.includes('var beside = Path.Combine(AppContext.BaseDirectory, name);'), 'storage', 'cs still adopts data an earlier build left beside the executable');
+  t.ok(vb.includes('Public Module RuntimeStorage'), 'storage', 'vb RuntimeStorage emitted');
+  t.ok(vb.includes('Return If(IO.Path.IsPathRooted(file), file, RuntimeStorage.PathFor(file))'), 'storage', 'vb DbPath resolves relative .db paths per user');
+  t.ok(vb.includes('RuntimeStorage.PathFor("Store.lastfolder")'), 'storage', 'vb remembered picker folder is per user');
+  t.equal(vb.split('AppContext.BaseDirectory').length - 1, 1, 'storage', 'vb touches the app folder once (the legacy fallback only)');
+  // Nothing to persist → no helper in the generated file (and no unused type to read past).
+  const plainSpec = '{ "version": 1, "name": "Plain", "tables": [ { "name": "T", "columns": [ { "name": "Id", "type": "Int32", "allowNull": false } ] } ] }';
+  t.ok(!generateCs(parseDataSet(plainSpec), 'Proj').includes('RuntimeStorage'), 'storage', 'cs: a DataSet that persists nothing omits the helper');
+  t.ok(!generateVb(parseDataSet(plainSpec), 'Proj').includes('RuntimeStorage'), 'storage', 'vb: a DataSet that persists nothing omits the helper');
+
   // --- default spec ---
   const dflt = defaultDataSetSpec('Demo');
   t.equal(dflt.name, 'Demo', 'default', 'name sanitized');

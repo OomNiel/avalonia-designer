@@ -307,11 +307,12 @@ function csSeedLiteral(c: DataColumnSpec): string {
 }
 
 // ---------------- SQLite-backed persistence (C#) ----------------
-// A DataGrid-bound table whose .adset storage is SQLite reads/writes a SQLite database file (next
-// to the app, like the XML files) instead of a DataTable XML file. Save = DELETE + INSERT inside a
-// transaction — SQLite does NOT reset the AUTOINCREMENT sequence on DELETE, so integer keys stay
-// stable. A one-time migration copies rows from a legacy XML file when the DB table is empty.
-// The DB helper lives in a small shared `DatabaseAdapter` class (emitted once per generated file).
+// A DataGrid-bound table whose .adset storage is SQLite reads/writes a SQLite database file (in
+// the per-user data folder, like the XML files) instead of a DataTable XML file. Save = DELETE +
+// INSERT inside a transaction — SQLite does NOT reset the AUTOINCREMENT sequence on DELETE, so
+// integer keys stay stable. A one-time migration copies rows from a legacy XML file when the DB
+// table is empty. The DB helper lives in a small shared `DatabaseAdapter` class (emitted once per
+// generated file).
 
 /** SQLite type affinity for a column (DateTime/Guid/Decimal stored as TEXT, booleans as 0/1). */
 function csSqliteAffinity(type: ColumnType): string {
@@ -541,7 +542,7 @@ function csPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     } else {
         lines.push('');
         lines.push(`        // --- ${t.name}: persistent live grid support ---`);
-        lines.push(`        public static string ${t.name}File() => Path.Combine(AppContext.BaseDirectory, "${escCs(spec.name)}.${escCs(t.name)}.xml");`);
+        lines.push(`        public static string ${t.name}File() => RuntimeStorage.PathFor("${escCs(spec.name)}.${escCs(t.name)}.xml");`);
         lines.push('');
         lines.push(`        public static ${L} Load${t.name}()`);
         lines.push('        {');
@@ -886,14 +887,14 @@ function csBrowseMethod(): string {
 }
 
 /** C# helper that remembers the folder the last "Browse…" pick used — kept in memory, and persisted
- *  next to the app (best-effort) so it survives a restart when that folder is writable. */
+ *  in the per-user data folder (best-effort) so it survives a restart. */
 function csFilePickerMemoryClass(specName: string): string {
     return `    /// <summary>Remembers the folder the row dialogs' "Browse…" picker used last (best-effort).</summary>
     public static class FilePickerMemory
     {
         private static string? _folder;
         private static bool _loaded;
-        private static string StorePath => Path.Combine(AppContext.BaseDirectory, "${escCs(specName)}.lastfolder");
+        private static string StorePath => RuntimeStorage.PathFor("${escCs(specName)}.lastfolder");
         /// <summary>The folder the last Browse… dialog used (null = let the OS pick its default).</summary>
         public static string? LastFolder
         {
@@ -1309,7 +1310,7 @@ function vbPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
         lines.push('');
         lines.push(`        ' --- ${t.name}: persistent live grid support ---`);
         lines.push(`        Public Shared Function ${t.name}File() As String`);
-        lines.push(`            Return System.IO.Path.Combine(System.AppContext.BaseDirectory, "${escVb(spec.name)}.${escVb(t.name)}.xml")`);
+        lines.push(`            Return RuntimeStorage.PathFor("${escVb(spec.name)}.${escVb(t.name)}.xml")`);
         lines.push('        End Function');
         lines.push('');
         lines.push(`        Public Shared Function Load${t.name}() As ${OC}`);
@@ -1673,7 +1674,8 @@ function vbBrowseMethod(): string {
     ].join('\n');
 }
 
-/** VB helper that remembers the folder the last "Browse…" pick used (memory + best-effort file). */
+/** VB helper that remembers the folder the last "Browse…" pick used (memory + best-effort file in
+ *  the per-user data folder). */
 function vbFilePickerMemoryModule(specName: string): string {
     return `    ''' <summary>Remembers the folder the row dialogs' "Browse…" picker used last (best-effort).</summary>
     Public Module FilePickerMemory
@@ -1681,7 +1683,7 @@ function vbFilePickerMemoryModule(specName: string): string {
         Private _loaded As Boolean = False
         Private ReadOnly Property StorePath As String
             Get
-                Return System.IO.Path.Combine(AppContext.BaseDirectory, "${escVb(specName)}.lastfolder")
+                Return RuntimeStorage.PathFor("${escVb(specName)}.lastfolder")
             End Get
         End Property
         ''' <summary>The folder the last Browse… dialog used (Nothing = let the OS pick its default).</summary>
@@ -1870,6 +1872,9 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
     const ns = rootNamespace || spec.name;
     const grid = anyGridBound(spec);
     const sqlite = spec.tables.some((x) => isSqliteTable(x) || !!x.boundTo);
+    // Every persisted table resolves its files through RuntimeStorage: the .db of a bound table and
+    // the XML store the grid persistence code can emit. Extend this when a new emitter is added.
+    const needsStorage = sqlite || spec.tables.some((t) => isGridBound(t));
     const lines: string[] = [];
     lines.push('// Generated by the Avalonia Designer — DataSet designer. Do not edit by hand.');
     lines.push(`// Edit ${spec.name}.adset in the designer and re-generate. (${stamp()})`);
@@ -1936,8 +1941,12 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
         lines.push('        private static Window? OwnerOf(DataGrid grid) => Avalonia.LogicalTree.LogicalExtensions.FindLogicalAncestorOfType<Window>(grid, true);');
     }
     lines.push('    }');
+    if (needsStorage) {
+        lines.push('');
+        for (const l of csRuntimeStorageClass(spec.name).split('\n')) lines.push(l);
+    }
     if (sqlite) {
-        // Shared SQLite helper (relative db files sit next to the app, like the XML files).
+        // Shared SQLite helper (relative db files resolve to the per-user data folder, like the XML files).
         lines.push('');
         lines.push('    /// <summary>Small SQLite helper shared by the tables the DataSet designer stores in a database file.</summary>');
         lines.push('    public static class DatabaseAdapter');
@@ -1948,8 +1957,8 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
         lines.push('        {');
         lines.push('            lock (Sync) { if (_ready) return; _ready = true; global::SQLitePCL.Batteries_V2.Init(); }');
         lines.push('        }');
-        lines.push('        /// <summary>Absolute path of a database file (relative paths resolve next to the app).</summary>');
-        lines.push('        public static string DbPath(string file) => Path.IsPathRooted(file) ? file : Path.Combine(AppContext.BaseDirectory, file);');
+        lines.push('        /// <summary>Absolute path of a database file (relative paths resolve to the per-user data folder).</summary>');
+        lines.push('        public static string DbPath(string file) => Path.IsPathRooted(file) ? file : RuntimeStorage.PathFor(file);');
         lines.push('        /// <summary>Opens the database (creating the file if needed) and runs an idempotent CREATE TABLE.</summary>');
         lines.push('        public static Microsoft.Data.Sqlite.SqliteConnection Open(string file, string createSql)');
         lines.push('        {');
@@ -1990,10 +1999,88 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
     return lines.join('\n') + '\n';
 }
 
+/** C# helper the generated code uses to locate its runtime files. An installed app lives in a
+ *  folder the user cannot write to (`/usr/lib/<pkg>` from the .deb, "Program Files" from the MSI),
+ *  so the database, the XML stores and the remembered picker folder live in the per-user data
+ *  folder instead — otherwise the first write fails (a silent startup crash when launched from the
+ *  application menu). Data an earlier build left beside the executable keeps being used. */
+function csRuntimeStorageClass(specName: string): string {
+    return `    /// <summary>Locates the files the generated code reads and writes at runtime.</summary>
+    public static class RuntimeStorage
+    {
+        private static string? _folder;
+        /// <summary>Per-user folder for this app's data (~/.local/share/App on Linux, %LOCALAPPDATA%\\App on Windows) - created on first use.</summary>
+        public static string Folder
+        {
+            get
+            {
+                if (_folder != null) return _folder;
+                var name = typeof(${escCs(specName)}).Assembly.GetName().Name ?? "app";
+                var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                if (root.Length == 0) root = Path.GetTempPath();
+                var dir = Path.Combine(root, name);
+                try { Directory.CreateDirectory(dir); } catch { /* the failing write reports it */ }
+                _folder = dir;
+                return dir;
+            }
+        }
+        /// <summary>Absolute path of a runtime data file: the per-user copy when it exists, else a
+        /// file of that name beside the executable (an earlier build wrote it there), else the
+        /// per-user location - which the caller then creates.</summary>
+        public static string PathFor(string name)
+        {
+            var user = Path.Combine(Folder, name);
+            if (File.Exists(user)) return user;
+            var beside = Path.Combine(AppContext.BaseDirectory, name);
+            if (File.Exists(beside)) return beside;
+            return user;
+        }
+    }`;
+}
+
+/** VB.NET counterpart of {@link csRuntimeStorageClass}. */
+function vbRuntimeStorageClass(specName: string): string {
+    return `    ''' <summary>Locates the files the generated code reads and writes at runtime.</summary>
+    Public Module RuntimeStorage
+        Private _folder As String = Nothing
+        ''' <summary>Per-user folder for this app's data (created on first use).</summary>
+        Public ReadOnly Property Folder As String
+            Get
+                If _folder IsNot Nothing Then Return _folder
+                Dim name As String = GetType(${escVb(specName)}).Assembly.GetName().Name
+                If String.IsNullOrEmpty(name) Then name = "app"
+                Dim root As String = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+                If root.Length = 0 Then root = System.IO.Path.GetTempPath()
+                Dim dir As String = System.IO.Path.Combine(root, name)
+                Try
+                    System.IO.Directory.CreateDirectory(dir)
+                Catch
+                    ' the failing write reports the real error
+                End Try
+                _folder = dir
+                Return dir
+            End Get
+        End Property
+        ''' <summary>Absolute path of a runtime data file: the per-user copy when it exists, else a
+        ''' file of that name beside the executable (an earlier build wrote it there), else the
+        ''' per-user location - which the caller then creates.</summary>
+        Public Function PathFor(name As String) As String
+            Dim userPath As String = System.IO.Path.Combine(Folder, name)
+            If System.IO.File.Exists(userPath) Then Return userPath
+            Dim beside As String = System.IO.Path.Combine(System.AppContext.BaseDirectory, name)
+            If System.IO.File.Exists(beside) Then Return beside
+            Return userPath
+        End Function
+    End Module`;
+}
+
 /** Generates a VB.NET class that builds the DataSet at runtime. */
 export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
     const grid = anyGridBound(spec);
     const sqlite = spec.tables.some((x) => isSqliteTable(x) || !!x.boundTo);
+    // Every persisted table resolves its files through RuntimeStorage: the .db of a bound table and
+    // the XML store the grid persistence code can emit. Extend this when a new emitter is added.
+    const needsStorage = sqlite || spec.tables.some((t) => isGridBound(t));
     const lines: string[] = [];
     lines.push("' Generated by the Avalonia Designer — DataSet designer. Do not edit by hand.");
     lines.push(`' Edit ${spec.name}.adset in the designer and re-generate. (${stamp()})`);
@@ -2061,8 +2148,12 @@ export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
     }
     lines.push('');
     lines.push('    End Class');
+    if (needsStorage) {
+        lines.push('');
+        for (const l of vbRuntimeStorageClass(spec.name).split('\n')) lines.push(l);
+    }
     if (sqlite) {
-        // Shared SQLite helper (relative db files sit next to the app, like the XML files).
+        // Shared SQLite helper (relative db files resolve to the per-user data folder, like the XML files).
         lines.push('');
         lines.push('    \'\'\' <summary>Small SQLite helper shared by the tables the DataSet designer stores in a database file.</summary>');
         lines.push('    Public Class DatabaseAdapter');
@@ -2076,9 +2167,9 @@ export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
         lines.push('                End If');
         lines.push('            End SyncLock');
         lines.push('        End Sub');
-        lines.push('        \'\'\' <summary>Absolute path of a database file (relative paths resolve next to the app).</summary>');
+        lines.push('        \'\'\' <summary>Absolute path of a database file (relative paths resolve to the per-user data folder).</summary>');
         lines.push('        Public Shared Function DbPath(file As String) As String');
-        lines.push('            Return If(IO.Path.IsPathRooted(file), file, IO.Path.Combine(System.AppContext.BaseDirectory, file))');
+        lines.push('            Return If(IO.Path.IsPathRooted(file), file, RuntimeStorage.PathFor(file))');
         lines.push('        End Function');
         lines.push('        \'\'\' <summary>Opens the database (creating the file if needed) and runs an idempotent CREATE TABLE.</summary>');
         lines.push('        Public Shared Function Open(file As String, createSql As String) As Microsoft.Data.Sqlite.SqliteConnection');

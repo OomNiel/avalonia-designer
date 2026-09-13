@@ -270,7 +270,8 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   Avalonia `StorageProvider.OpenFilePickerAsync(FilePickerOpenOptions{ FileTypeFilter = ImageAll,
   All, SuggestedStartLocation = remembered folder })`, then `files[0].TryGetLocalPath()` → box.Text and
   remembers `Path.GetDirectoryName`. New generated `FilePickerMemory` (C# static class / VB Module) keeps
-  the last folder in memory + best-effort `<DataSet>.lastfolder` next to the app (`AppContext.BaseDirectory`).
+  the last folder in memory + best-effort `<DataSet>.lastfolder` in the app's per-user data folder
+  (`RuntimeStorage`, §86 — it used to sit next to the app, which a .deb/MSI install cannot write).
   Added `using/Imports Avalonia.Platform.Storage` (grid forms only) for FilePickerFileTypes + the
   TryGetLocalPath extension. VERIFIED by generating a DataGrid+SQLite dataset and dotnet-building
   standalone C# and VB projects: **both 0 warnings / 0 errors** (this is the real gate — the API names
@@ -744,7 +745,8 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   `Guid.NewGuid`). **Existing .db files are used IN PLACE via an absolute path (Browse stores the
   absolute path, no copy to bin — no `<Content CopyToOutputDirectory>` injected);** a relative default
   `<DataSetName>.db` is auto-registered when a no-storage table gets BOUND (binding any table with no
-  `sqlite` file sets `file: <DataSetName>.db`) and is created next to the app on first run. Generate
+  `sqlite` file sets `file: <DataSetName>.db`) and is created in the app's per-user data folder on
+  first run (§86; it used to be created next to the app, which fails once the app is installed). Generate
   injects the SQLite PackageReferences (Microsoft.Data.Sqlite 9.0.1 + SQLitePCLRaw.bundle **2.1.13** —
   direct override because 9.0.1's transitive 2.1.10/2.1.11 trip **NU1903**). Design-time: host `sqlite`
   command (`tables` inspect + read-only `query`); DataSet designer shows **Preview SQLite data…**
@@ -772,7 +774,8 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   and the `<Content Include=… CopyToOutputDirectory>` db copy are GONE. Rationale: bound data is
   SQLite-only (decision 3) and an existing `.db` is consumed IN PLACE by absolute path (decision 1),
   so there is nothing to migrate and nothing to copy. A pre-existing file pointed to via Browse is
-  trusted as-is; a brand-new default `<DataSetName>.db` (created next to the app) is just created empty
+  trusted as-is; a brand-new default `<DataSetName>.db` (created in the per-user data folder, §86) is
+  just created empty
   via `CREATE TABLE IF NOT EXISTS`. (Legacy `MyData.<T>.xml` files from beta-era projects are no longer
   read at all — see USER_MANUAL/CHANGELOG for the manual re-import route via Import SQLite.)
 - **SQLite schema drift fix — EnsureColumns (2026-09-06):** adding a column in the designer (or
@@ -1318,6 +1321,40 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     meaningful because of that guard. (Also: `findProject` walks UP the tree, so "a form with no project"
     has to be tested somewhere with no project above it — /tmp turned out to have a stray `.csproj` in it,
     which the walk found correctly and the test had wrongly assumed away.)
+- §86 **"The installed app does not start" was a read-only folder (2026-09-13, OptimisedCSTest).** The
+  first real user report against the new **Publish/Install** flow: `dotnet run` in the IDE worked, the
+  `.deb` installed cleanly (`/var/log/dpkg.log` shows `status installed`), and starting the app from the
+  application menu did nothing at all. The package was innocent — every file in it was correct
+  (apphost executable, launcher, `.desktop` entry, the Skia/HarfBuzz/e_sqlite natives). The cause was
+  one level deeper, and it is a rule about packaging rather than a bug in the packaging:
+  - **The app wrote next to its own binary.** The generated `MyDataSet.cs` resolved both its SQLite file
+    and its remembered-folder store with `Path.Combine(AppContext.BaseDirectory, …)`. That is
+    `bin/Debug/net10.0` from the IDE (writable) and `/usr/lib/<pkg>` once installed — `drwxrwxr-x
+    root/root`, so the user cannot create anything there. The database did not exist yet, so opening it
+    had to *create* it → `SQLite error 14` thrown from `MainWindow`'s constructor → **no window, and no
+    console to show it** (the `.desktop` entry has `Terminal=false`). "The app does not run" was a
+    silently swallowed exception, not a crash on screen.
+  - **The general rule:** a package installs into a folder the application must treat as **read-only**.
+    Anything created at runtime belongs in a per-user directory —
+    `Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)` is `~/.local/share` on
+    Linux and `%LOCALAPPDATA%` on Windows, so one line of code is right on both. This stayed invisible
+    for the whole life of the project because the IDE always ran the app from a writable `bin/` folder;
+    packaging is what exposed it.
+  - **Fixed in the generator, not in the test app.** `dataSetGenerator.ts` now emits a `RuntimeStorage`
+    helper (`Folder` + `PathFor`, C# and VB) that the `.db`, the legacy XML stores and the
+    `<DataSet>.lastfolder` file resolve through; `DatabaseAdapter.DbPath` keeps absolute paths verbatim
+    and sends relative ones to `PathFor`. `PathFor` prefers an existing per-user file, then a file an
+    earlier build left beside the executable (so a developer's data is not orphaned), then the per-user
+    location it is about to create. A new **Code Fix** check (section 14) warns about hand-written
+    writes to `AppContext.BaseDirectory` — that finding is `report-only`: it can explain, but rewriting
+    someone's storage layout is not something to do to their file automatically.
+  - **Verified without running the app** (standing rule: the user runs the app, never an automated UI
+    run): generated C# and VB for a DataSet with a SQLite grid table + an XML table were compiled inside
+    scaffolded projects (`dotnet build` → 0 errors / 0 warnings, which is also what proves the helper is
+    emitted whenever something references it); the `PathFor` logic was probed as a standalone .NET
+    file-based app (`LocalApplicationData` → `/home/niel/.local/share`, per-user copy wins, legacy file
+    adopted, new data per-user); and the check's precision was probed over six shapes (single-line,
+    multi-line, read-only, two writes on one line, `SqliteConnection`, VB).
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

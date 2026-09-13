@@ -627,4 +627,82 @@ End Class
         t.ok(/msg\.alt/.test(panel) && /issueSignature/.test(panel), 'alternatives',
             'the fix request can pick an alternative and keys the dismissal on the original finding');
     }
+
+    // ---------- 15) writes into the app's own folder ----------
+    // A published app is installed into a folder only root may write (`/usr/lib/<pkg>` from the .deb,
+    // "Program Files" from the MSI), so a write beside the executable works from the IDE and fails on
+    // the user's machine — silently, because the application-menu launch has no console. Real case:
+    // an installed app whose form constructor created its SQLite database next to the binary.
+    {
+        const head = `using Avalonia.Controls;
+using System;
+using System.IO;
+namespace Proj;
+public partial class TestForm : Window
+{
+    public TestForm()
+    {
+        InitializeComponent();
+`;
+        const tail = `    }
+
+    private void Button1_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+    }
+}
+`;
+        const found = (r) => r.issues.filter((i) => /own folder|next to the executable/.test(i.title));
+
+        const single = found(makeProject('TestForm.axaml.cs',
+            head + '        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "log.txt"), "started");\n' + tail
+        ).analysis());
+        t.equal(single.length, 1, 'app-folder', 'a write beside the executable is reported');
+        t.equal(single[0].line, 10, 'app-folder', 'and points at the writing line');
+        t.equal(single[0].severity, 'warning', 'app-folder', 'as a warning (the code still compiles)');
+        t.equal(single[0].kind, 'report-only', 'app-folder', 'with no automatic fix');
+        t.ok(/LocalApplicationData/.test(single[0].detail) && /usr\/lib/.test(single[0].detail), 'app-folder',
+            'the detail says where the file should live instead');
+
+        // Multi-line call: the statement is inspected, not just the line.
+        const multiline = found(makeProject('TestForm.axaml.cs',
+            head + '        File.WriteAllText(\n            Path.Combine(AppContext.BaseDirectory, "log.txt"),\n            "started");\n' + tail
+        ).analysis());
+        t.equal(multiline.length, 1, 'app-folder', 'a multi-line write is caught too');
+
+        // Reads are fine: a packaged app can read its own folder.
+        const reads = found(makeProject('TestForm.axaml.cs',
+            head + '        var s = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "settings.json"));\n' + tail
+        ).analysis());
+        t.equal(reads.length, 0, 'app-folder', 'reading from the app folder is not reported');
+
+        // One finding per line, however many writes share it.
+        const sameLine = found(makeProject('TestForm.axaml.cs',
+            head + '        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "a.txt"), "1"); File.Delete(Path.Combine(AppContext.BaseDirectory, "b.txt"));\n' + tail
+        ).analysis());
+        t.equal(sameLine.length, 1, 'app-folder', 'two writes on one line are one finding');
+
+        // Creating the database beside the executable gets its own wording.
+        const db = found(makeProject('TestForm.axaml.cs',
+            head + '        using var con = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + Path.Combine(AppContext.BaseDirectory, "x.db"));\n' + tail
+        ).analysis());
+        t.equal(db.length, 1, 'app-folder', 'creating a database beside the executable is reported');
+        t.equal(db[0].title, 'Creates a database next to the executable', 'app-folder', 'with database wording');
+
+        // VB spells the same thing with IO.* / no semicolons (statements end at the line).
+        const vb = found(makeProject('TestForm.axaml.vb', `Imports Avalonia.Controls
+Namespace Proj
+    Public Class TestForm
+        Inherits Window
+        Public Sub New()
+            InitializeComponent()
+            IO.File.WriteAllText(IO.Path.Combine(AppContext.BaseDirectory, "log.txt"), "started")
+        End Sub
+        Private Sub Button1_Click(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)
+        End Sub
+    End Class
+End Namespace
+`).analysis());
+        t.equal(vb.length, 1, 'app-folder', 'the VB form of the write is reported as well');
+        t.equal(vb[0].line, 7, 'app-folder', 'pointing at the VB line');
+    }
 };

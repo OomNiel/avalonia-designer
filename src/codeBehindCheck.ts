@@ -593,6 +593,33 @@ function isGeneratedName(name: string): boolean {
     return GENERATED_PREFIXES.some((p) => name.startsWith(p));
 }
 
+/** "My own folder" — the folder the executable sits in. Fine to READ from, but a packaged app is
+ *  installed into a folder only root may write to (`/usr/lib/<pkg>` from the .deb, "Program Files"
+ *  from the MSI), so anything written there fails on the user's machine. */
+const APP_FOLDER_RE = /AppContext\.BaseDirectory|AppDomain\.CurrentDomain\.BaseDirectory|Assembly\.GetExecutingAssembly\(\)\.Location|Assembly\.GetEntryAssembly\(\)\??\.Location/g;
+
+/** File-system calls that CREATE or MODIFY something (reads are harmless in a read-only folder). */
+const APP_FOLDER_WRITE_RE = new RegExp([
+    '(?:File|System\\.IO\\.File)\\.(?:WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|AppendText|Create|CreateText|Delete|Copy|Move|Replace|OpenWrite)\\s*\\(',
+    '(?:Directory|System\\.IO\\.Directory)\\.(?:CreateDirectory|Delete|Move)\\s*\\(',
+    'new\\s+(?:System\\.IO\\.)?FileStream\\s*\\(',
+    'new\\s+(?:System\\.IO\\.)?StreamWriter\\s*\\(',
+    'SqliteConnection\\s*\\(\\s*"Data Source='
+].join('|'), 'i');
+
+/** The statement around `index` (C#: back to the previous `;`; VB: its line), capped so far-away code
+ *  in a long body cannot produce a false match. */
+function statementAround(text: string, index: number, language: 'cs' | 'vb'): string {
+    if (language === 'vb') {
+        const start = text.lastIndexOf('\n', index) + 1;
+        const end = text.indexOf('\n', index);
+        return text.slice(start, end < 0 ? text.length : end);
+    }
+    const start = Math.max(text.lastIndexOf(';', index) + 1, index - 600);
+    const end = text.indexOf(';', index);
+    return text.slice(start, end < 0 ? Math.min(text.length, index + 600) : end);
+}
+
 /**
  * Analyses the form's code-behind against its XAML (+ the DataSet context the designer supplies)
  * and returns every problem it can explain. Never throws.
@@ -1095,6 +1122,33 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
             severity: 'error', kind: 'report-only',
             title: `x:Class is "${ax.className}" but the file declares "${code.className}"`,
             detail: 'The XAML and the code-behind must describe the same class. Fix one of the two by hand.'
+        });
+    }
+
+    // ---- 14) writing into the app's own folder (fails once the app is installed) ----
+    const appFolderLines = new Set<number>();
+    APP_FOLDER_RE.lastIndex = 0;
+    for (let m = APP_FOLDER_RE.exec(code.body); m; m = APP_FOLDER_RE.exec(code.body)) {
+        const line = lineAt(code.body, m.index);
+        if (appFolderLines.has(line)) continue;
+        const stmt = statementAround(code.body, m.index, language);
+        if (!APP_FOLDER_WRITE_RE.test(stmt)) continue;
+        appFolderLines.add(line);
+        const isDb = /SqliteConnection/i.test(stmt);
+        add({
+            severity: 'warning', kind: 'report-only', line, member: 'AppContext.BaseDirectory',
+            title: isDb
+                ? 'Creates a database next to the executable'
+                : "Writes a file into the app's own folder",
+            detail: (isDb
+                ? 'The database file is created beside the executable (AppContext.BaseDirectory). '
+                : 'This code writes a file beside the executable (AppContext.BaseDirectory). ')
+                + 'That works while you run the project from the IDE, but a published app is installed '
+                + 'into a folder only root may write to (`/usr/lib/…` from the .deb, "Program Files" from '
+                + 'the MSI), so the write fails — and started from the application menu there is no '
+                + 'console to show the error. Fix: keep such files per user, e.g. `Path.Combine('
+                + 'Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "<App>", '
+                + '"<file>")`. The generated DataSet code does this in its `RuntimeStorage` helper.'
         });
     }
 

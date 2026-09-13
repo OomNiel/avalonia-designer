@@ -794,11 +794,17 @@ What it checks and can fix:
 | **Bundled helper missing** | `ExifImageLoader` / `ChromeWindow` / `AnchorHelper` / `GrumpyPanel` / `PathPicker` not in the project | copies the file in |
 | **Missing `Imports`** | `BC30002 'Line' is not defined'` | adds the `Imports`/`using` |
 | **ChromeWindow mismatch** | root is `<chrome:ChromeWindow>` but the class still `Inherits Window` | changes the base class |
+| **Writing beside the app** | `File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "log.txt"), …)` | reported only — an installed app's folder is read-only |
 
 A few findings come without a Fix button on purpose, because they need your decision — e.g. a
 control name that isn't a valid identifier (`x:Name="Button-1"`), the same name used twice, a
 `x:Class` that doesn't match the class in the file, or a control name that is **still used** by
-hand-written code (deleting its accessor would only move the error).
+hand-written code (deleting its accessor would only move the error). A file **written next to the
+executable** (`AppContext.BaseDirectory`) is reported without a fix for a different reason: it works
+while you run the project from the IDE, but a published app lives in a folder only root may write
+(`/usr/lib/<pkg>` from the .deb, `Program Files` from the MSI), so the write fails — and launched from
+the application menu there is no console to show it. The finding says where such a file belongs
+instead (the per-user data folder).
 
 Two things worth knowing when you read a finding:
 
@@ -1176,8 +1182,11 @@ A DataGrid bound to a table becomes a small data-entry grid, WinForms-style:
   Up to **5** steps are remembered by default — change the number with the **'Undo-Redo'** property
   on the DataGrid in the form designer's Properties panel (0 turns undo off).
 - The rows live in the bound table's **SQLite database** file (chosen in the DataSet designer — by
-  default `<DataSetName>.db` next to the app), so your add/edit/delete changes survive closing and
-  re-running the app.
+  default `<DataSetName>.db`), so your add/edit/delete changes survive closing and re-running the app.
+  The file is looked up in the app's **per-user data folder** (`~/.local/share/<App>/` on Linux,
+  `%LOCALAPPDATA%\<App>\` on Windows — the generated `RuntimeStorage` helper does this), **not** next
+  to the executable: a published app is installed into a folder only root may write (`/usr/lib/<pkg>`
+  from the .deb, `Program Files` from the MSI) and could not create the database there.
 
 > **Notes about binding:**
 > - The binding is written to the **code-behind**, not as a XAML attribute. For a DataGrid it loads

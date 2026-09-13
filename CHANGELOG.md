@@ -30,8 +30,20 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
   download it. Needs the WiX toolset: `dotnet tool install --global wix`.
 - **`avaloniaDesigner.publish.*` settings** — package name, version, maintainer, description and extra
   `Depends`. All optional: empty values fall back to the project file's name and `<Version>`.
+- **Code Fix reports writing into the app's own folder.** A write next to the executable
+  (`File.WriteAllText(Path.Combine(AppContext.BaseDirectory, …), …)`, a `SqliteConnection` whose
+  `Data Source` points there, …) works from the IDE and fails once the app is installed, so the check
+  raises a **warning** (no automatic fix — it says where the file belongs instead).
 
 ### Changed
+- **Generated DataSets keep their files per user instead of next to the app.** An installed app is
+  read-only: the `.deb` puts it in `/usr/lib/<pkg>` and the MSI in `Program Files`, both owned by root.
+  A form whose constructor had to *create* its SQLite database there died with `SQLite error 14`
+  before any window existed — and started from the application menu there is no console to show it, so
+  the app simply "did not start". Relative `.db` paths, the XML stores and the remembered "Browse…"
+  folder now resolve through a generated `RuntimeStorage` helper into the per-user data folder
+  (`~/.local/share/<App>/` on Linux, `%LOCALAPPDATA%\<App>\` on Windows). Data an earlier build left
+  beside the executable is still used when it is the only copy, so nothing is orphaned.
 - **Install is disabled unless the package is *current*.** There are three states and the button follows
   them: *no package yet* → disabled, *package older than the form* → disabled (installing it would put
   the previous build on the machine while the designer shows the current one), *up to date* → enabled.
