@@ -184,9 +184,33 @@ function findFollowerRecord(projectFolder: string, controlName: string | null | 
 /** True if the control is the form's structural body Canvas (the design surface): a Canvas
  *  named "Body" that sits directly under the form root, or under the root's "Root" DockPanel.
  *  It must stay in place (not moved/resized/deleted/renamed) so it always fills the form. */
-function isLockedBody(model: XamlModel, name: string | null | undefined): boolean {
+
+/** name → element for ONE pass, built from a single DOM walk.
+ *
+ *  `XamlModel.findByName` rebuilds the whole control array on every call (`controlElements()` walks
+ *  the tree), and `render()` needs a lookup per reported control — plus one more each inside
+ *  `isLockedStructure` and `shapeHandlesFor`. An N-control form therefore did ~3N full array rebuilds
+ *  per frame, i.e. O(N²) in the number of controls. This is built fresh per render rather than cached
+ *  on the model: a cache there would have to be invalidated by every DOM mutation, including the
+ *  direct ones made from this file, and a stale index would silently lose controls. */
+function elementIndex(model: XamlModel): Map<string, Element> {
+    const map = new Map<string, Element>();
+    for (const el of model.controlElements()) {
+        const n = el.getAttribute('x:Name') || el.getAttribute('Name');
+        if (n && !map.has(n)) map.set(n, el);   // first wins, exactly like findByName
+    }
+    return map;
+}
+
+/** `findByName`, but reusing a per-pass index when one was handed down. */
+function lookup(model: XamlModel, name: string | null | undefined, byName?: Map<string, Element>): Element | undefined {
+    if (!name) return undefined;
+    return byName ? byName.get(name) : model.findByName(name);
+}
+
+function isLockedBody(model: XamlModel, name: string | null | undefined, byName?: Map<string, Element>): boolean {
     if (!name) return false;
-    const el = model.findByName(name);
+    const el = lookup(model, name, byName);
     if (!el || localName(el.tagName) !== 'Canvas') return false;
     if ((el.getAttribute('x:Name') || el.getAttribute('Name')) !== 'Body') return false;
     const root = model.root;
@@ -202,10 +226,10 @@ function isLockedBody(model: XamlModel, name: string | null | undefined): boolea
  *  design surface OR the form's top-level layout container (e.g. the root DockPanel). Both fill
  *  the whole form, so neither may be moved, resized, deleted, cut or renamed — the webview hides
  *  their handles and blocks dragging via the `locked` flag. */
-function isLockedStructure(model: XamlModel, name: string | null | undefined): boolean {
-    if (isLockedBody(model, name)) return true;
+function isLockedStructure(model: XamlModel, name: string | null | undefined, byName?: Map<string, Element>): boolean {
+    if (isLockedBody(model, name, byName)) return true;
     if (!name) return false;
-    const el = model.findByName(name);
+    const el = lookup(model, name, byName);
     if (!el) return false;
     // A GrumpyPanel-based bar's structural inner parts ({name}Dock band + {name}Body free surface)
     // must stay fixed in place — they always fill/drive the panel, so they can't be moved, resized,
@@ -216,9 +240,9 @@ function isLockedStructure(model: XamlModel, name: string | null | undefined): b
 }
 
 /** Short label for a locked structural element, for user-facing messages. */
-function lockedLabel(model: XamlModel, name: string | null | undefined): string {
-    if (isLockedBody(model, name)) return 'Body canvas';
-    const el = name ? model.findByName(name) : undefined;
+function lockedLabel(model: XamlModel, name: string | null | undefined, byName?: Map<string, Element>): string {
+    if (isLockedBody(model, name, byName)) return 'Body canvas';
+    const el = lookup(model, name, byName);
     if (el) {
         const n = el.getAttribute('x:Name') || el.getAttribute('Name');
         return n ? `${n} ${localName(el.tagName)}` : localName(el.tagName);
@@ -3495,8 +3519,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // in design coords for the webview. Every control carries its paint-order ZIndex so the
         // webview's hit-testing picks the TOPMOST control at a point (a shape with ZIndex="-1" must
         // not steal a click from a control over it).
+        // ONE index for the whole pass (see elementIndex): every lookup below used to rebuild the
+        // control array, which made a frame cost quadratic in the number of controls.
+        const byName = elementIndex(doc.model);
         const controls = (frame.controls || []).map((c) => {
-            const el = c.name ? doc.model.findByName(c.name) : undefined;
+            const el = lookup(doc.model, c.name, byName);
             return {
                 ...c,
                 // The host (Avalonia 11) renders Avalonia-12-only controls through stand-in types
@@ -3504,13 +3531,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 // design tag from the model so the control list / type reads e.g. "GroupBox", not
                 // the stand-in type. For everything else the model tag equals the host type.
                 type: el ? localName(el.tagName) : c.type,
-                locked: isLockedStructure(doc.model, c.name),
+                locked: isLockedStructure(doc.model, c.name, byName),
                 // A SplitPanel pane body must always FILL its pane — it can be selected (to edit
                 // its properties) but never resized/moved with the mouse (the webview shows no
                 // resize handles and blocks dragging it). A GrumpyPanel-based bar's structural
                 // inner parts ({name}Dock + {name}Body) are treated the same way.
                 paneBody: isSplitPaneName(c.name) || (el ? !!grumpyPartOf(el) : false),
-                handles: this.shapeHandlesFor(doc, c),
+                handles: this.shapeHandlesFor(doc, c, byName),
                 zIndex: el ? (parseInt(el.getAttribute('ZIndex') || '0', 10) || 0) : 0
             };
         });
@@ -4401,9 +4428,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      * box-origin-relative Start/End points mapped onto the reported bounds; Arc ends come from the
      * Start/Sweep angles around the box centre (0° = right, positive clockwise — matches the host).
      */
-    private shapeHandlesFor(doc: DesignerDocument, c: HostControlInfo): ShapeHandle[] | undefined {
+    private shapeHandlesFor(doc: DesignerDocument, c: HostControlInfo, byName?: Map<string, Element>): ShapeHandle[] | undefined {
         if (!c.name) return undefined;
-        const el = doc.model.findByName(c.name);
+        const el = lookup(doc.model, c.name, byName);
         if (!el) return undefined;
         const tag = localName(el.tagName);
         if (tag === 'Line') {

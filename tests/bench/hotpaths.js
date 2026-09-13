@@ -138,6 +138,18 @@ async function main() {
     results.push(time('findByName × N (200 lookups)', 5, () => {
         for (const nm of names) model.findByName(nm);
     }));
+    // The render() pattern after Phase 2c: ONE DOM walk, one Map, then a lookup per control. Compare
+    // with the row above — same N lookups, without rebuilding the control array N times. The production
+    // code builds this index in `elementIndex()` (src/designerPanel.ts); the loop below is the same
+    // three steps so the numbers are comparable.
+    results.push(time('one walk + Map + N lookups (render pattern)', 5, () => {
+        const map = new Map();
+        for (const el of model.controlElements()) {
+            const n = el.getAttribute('x:Name') || el.getAttribute('Name');
+            if (n && !map.has(n)) map.set(n, el);
+        }
+        for (const nm of names) map.get(nm);
+    }));
     results.push(time('propertyDefsFor × N (200 controls)', 3, () => {
         for (const el of els) propertyDefsFor(el);
     }));
