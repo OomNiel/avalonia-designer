@@ -36,7 +36,7 @@ extension.
 [latest release](https://github.com/OomNiel/avalonia-designer/releases/latest):
 
 ```bash
-code --install-extension avalonia-designer-0.9.0-prerelease.vsix --force
+code --install-extension avalonia-designer-0.9.1-prerelease.vsix --force
 ```
 
 Either way, **reload the window** afterwards (`Ctrl+Shift+P` → *Developer: Reload Window*). The
@@ -45,7 +45,7 @@ previewer host is compiled with the **.NET SDK** the first time you open a form 
 for the prerequisites.
 
 > **GitHub and the Marketplace number releases differently.** The Marketplace only accepts plain
-> numbers, so the tag `v1.0.0-beta.7` is published there as **`0.9.0`** — `1.0.0` is reserved for the
+> numbers, so the tag `v1.0.0-beta.8` is published there as **`0.9.1`** — `1.0.0` is reserved for the
 > first stable release and `0.9.x` is the current pre-release line. The packages are identical.
 
 ## 1. The preview is real
@@ -137,6 +137,10 @@ Rows are grouped into collapsible sections in the same order for every control, 
 a plain-language **“About this control”** help panel — the extension is aimed at beginners, so nothing
 assumes you already know Avalonia's vocabulary.
 
+**A text box applies when you press `Enter` or click away from it** — not on every keystroke, which
+would re-render the preview and rebuild this panel while you are still typing. Everything else (a
+checkbox, a drop-down, a colour, a toolbar button) applies the moment you click it.
+
 ## 9. Designer ergonomics tools to make form control layout easier
 
 Multi-select with six alignments, same-width/same-height and equal spacing (vertical and horizontal).
@@ -150,7 +154,7 @@ One toolbar click makes a dated **backup of the whole project** before risky wor
 
 ## 10. Engineering discipline
 
-- **~2,650 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~2,790 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

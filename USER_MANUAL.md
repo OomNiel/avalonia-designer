@@ -8,7 +8,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-12)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-13)
 
 ---
 
@@ -131,7 +131,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > The two places number releases differently. GitHub tags are `v1.0.0-beta.N`; the Marketplace accepts
-> plain numbers only, so the same release appears there as `0.9.x` (`0.9.0` = `v1.0.0-beta.7`).
+> plain numbers only, so the same release appears there as `0.9.x` (`0.9.1` = `v1.0.0-beta.8`).
 > Nothing else differs — the packages are the same.
 
 After installing (or after any update), **reload the window** so the changes take effect:
@@ -407,6 +407,12 @@ Every property has:
 - A **friendly editor**: text box, number, drop-down, a picker, or (for file properties) a text
   box with a **"…" Browse** button.
 - A **hover description** explaining what it means.
+
+**Typing into a text box applies when you press `Enter` or click away from the field.** The value is
+not pushed to the form on every keystroke: the designer would have to re-render the preview and
+rebuild this panel while you are still typing, and that is what makes typing feel slow. So type
+freely, then press `Enter` — or just click somewhere else. Everything else (a checkbox, a drop-down,
+a colour, a toolbar button) applies the moment you click it.
 
 **File properties** — the three that take a file (**Image → Source**, **Window → Icon**,
 **ChromeWindow → Title Bar Icon**) — have a **"…"** button that opens the **system file picker**.

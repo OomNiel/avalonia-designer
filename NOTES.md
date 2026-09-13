@@ -28,7 +28,7 @@ dotnet build host/PreviewerHost.csproj -c Debug   # → host/bin/Debug/net8.0/Pr
 ### Packaging / installing
 ```bash
 npm run package                                              # vsce package (pinned @vscode/vsce@2.15.0)
-code --install-extension avalonia-designer-0.9.0.vsix --force
+code --install-extension avalonia-designer-0.9.1.vsix --force
 npm run publish:pre                                          # Marketplace pre-release (needs VSCE_PAT)
 ```
 - `activationEvents` is **`[]`** (empty): contributed commands/views/custom editors activate the
@@ -37,7 +37,7 @@ npm run publish:pre                                          # Marketplace pre-r
   `.csproj`) — the installed copy auto-builds it.
 - `.vscodeignore` (NOT `.gitignore`) controls packaging; dev docs (`NOTES*.md`/`SESSION.md`),
   `tests/**`, `.poolside/**`, `tsconfig.json`, unused artwork and the source maps are excluded
-  (**88 files / 592 KB**).
+  (**89 files / 606 KB**).
 - **vsce is NOT gitignore** (verified in its `collectFiles()`): a negated pattern (`!x`) wins over
   EVERY ignore pattern wherever it sits, and folder patterns are auto-expanded (`foo` → `foo/**`).
   The old `!out/**` therefore re-included all 24 source maps no matter how they were excluded —
@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 2664 passed, 0 failed / 0 skipped** (2026-09-12, ~41 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 2786 passed, 0 failed / 0 skipped** (2026-09-13, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -92,6 +92,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 │   ├── codeBehind.ts         event wiring, handler insert, asset/DataSet ItemsSource binding, VB accessors
 │   ├── assetCatalog.ts       scans .cs/.vb/.adset for bindable collections (ItemsSource picker)
 │   ├── dataSetEditor.ts / dataSetModel.ts / dataSetGenerator.ts   .adset designer + C#/VB/XSD codegen
+│   ├── dataSetReader.ts      one validated `.adset` read (walk + strict parse), cached per project folder
 │   ├── controlInfo.ts        plain-language {label, desc, use} per control (help panel + tooltips)
 │   ├── toolboxProvider.ts    sidebar Toolbox TreeView (drag + click-to-arm)
 │   ├── formTemplates.ts / newForm.ts / projectScaffold.ts / projectCreator.ts / projectView.ts
@@ -221,8 +222,17 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
 
 ---
 
-## 6. Current feature state (2026-09-12)
+## 6. Current feature state (2026-09-13)
 
+- **The performance pass, four reported fixes, release 0.9.1 (2026-09-13, suite 2786/0, release
+  1.0.0-beta.8).** Everything on the hot paths was timed before and after (`npm run bench`): the
+  code-behind checker's two O(n²) string patterns (14.3 → 11.9 ms), the per-lookup DOM walk behind
+  `findByName` (2.02 → 0.028 ms for 200 lookups), the per-edit `serialize`+parse signal (3.3–5.0 →
+  1.5–1.6 ms), the `.adset` reads (1.03 → 0.21 ms/lookup), the canvas overlays (3.7 → 1.8 ms/frame
+  at 200 controls) and the code-behind lookup (0.143 → 0.065 ms, no file bodies read). Fixes: the
+  right-click menu flipping back on screen, the Properties panel keeping its scroll position, the
+  `System.`-qualified clock code that fixes `CS0103`, and — the one that prompted the pass — a typed
+  property committing on `Enter`/blur instead of mid-word. Full write-up: §83.
 - **Events, code-behind sync, toolbar categories, packaging (2026-09-12, suite 2646/0, release
   1.0.0-beta.7).** Five threads:
   1. **Event catalog (generated, not hand-written).** A throwaway console app (`/tmp/eventdump`, its own
@@ -1183,6 +1193,59 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   as §82(b) — a plausible sentence in a doc is a hypothesis, not a fact; check it before repeating it.
   **Validation itself cleared within the hour**, and `flags: 950` going 0 → 1 is the objective signal
   that VS Code will now see it (VS Code's client always sends `ExcludeNonValidated`).
+- §83 **The measured performance pass, and why a cache must validate itself (2026-09-13, suite
+  2786/0, release `1.0.0-beta.8` → Marketplace `0.9.1`).** The pass started from a user report
+  ("typing into a property is laggy") and ended up reworking every hot path. Method first, because it
+  is what made the rest possible: `tests/bench/hotpaths.js` (`npm run bench`) times the pure
+  functions on a synthetic 200-control form, so each change could be *shown* rather than claimed —
+  and the numbers went into the changelog instead of adjectives. What it found:
+  - **The report was a debounce problem, not a keystroke problem.** A typed property was posted 400 ms
+    after the last keystroke, and each post is a full round trip: model edit → previewer re-render →
+    new PNG → properties refresh → **panel rebuilt wholesale**. A pause mid-word triggered it, so the
+    field was rebuilt under the cursor. Now: commit on `Enter`/blur, with the pending value flushed
+    **before** any rebuild — the safety the debounce used to provide, because the extension refreshes
+    the panel on its own and a refresh mid-typing must not drop the value. Discrete controls
+    (dropdown, confirmed colour, checkbox, palette) still apply immediately: one action, not typing.
+  - **The two O(n²) patterns in the checker** were `lineAt` (a full-text rescan per declaration → a
+    line-start index + binary search) and a per-accessor `slice+slice` copy of the whole file (→ a
+    single-pass count). 14.3 → 11.9 ms; the remainder is analyser CPU, not I/O — measured by feeding
+    the same analysis from memory (11.9) vs disk (12.4), which is why a file cache was *skipped* there.
+  - **`findByName` was O(N) per call and called per control per render** (2.02 ms per 200-lookup
+    pass). Fixed by building ONE `name → Element` index per render pass (`elementIndex()`), not by
+    caching inside `XamlModel` — the panel mutates the model's DOM directly, so a cache there would
+    need invalidating from every mutation site (drag, resize, property edit, webview message) and one
+    missed invalidation silently breaks lookups. 2.02 → 0.028 ms.
+  - **The self-validating cache, used twice.** `readDataSetFiles` (nine call sites, each walking the
+    tree and parsing every `.adset`) and `findCodeBehindFile` (~35 call sites, each reading the BODY
+    of every sibling `.cs`/`.vb` to see which declares the form's class) both cache per key and
+    re-validate **on every call** with a cheap signature — the file list plus size and mtime of each
+    file. Rationale: a file watcher or an invalidation hook is a promise that every future writer
+    must remember to keep; a signature cannot be forgotten. Only `readFileSync`+`JSON.parse` (and the
+    class-declaration regex) are skipped. The trap this protects against is a **content** change
+    inside an unchanged file NAME — the listing is identical, only the bytes differ — which is exactly
+    the case a name-only cache would get wrong, so both test files assert it explicitly.
+  - **Re-parsing a document to compare it with itself.** `notifyEdit` (every drag/resize/property
+    commit) serialised the document and parsed the text back TWICE — once for the post-edit state it
+    had just serialised. The signature of the control set is now read off the live model
+    (`namedControlSignature()`), and the model-based value is asserted equal to the parse-based one in
+    T2. 3.3–5.0 → 1.5–1.6 ms.
+  - **Webview nodes are patched, not rebuilt.** `renderOverlays` cleared the layer and created a div
+    per named control every frame, and `renderMenuDummies` did the same to the menu bar (re-creating
+    two listeners per chip each time). Nodes are now keyed and reused, the two chip listeners are
+    delegated onto the host, and `hitTest` uses a per-frame `state.byName` instead of rebuilding a Map
+    per pointer move (17 `.controls.find(x => x.name === …)` scans became `ctrlByName()`).
+  - **Host leaks, found by reading rather than timing**: a `RenderTargetBitmap` per frame (~1.4 MB,
+    never disposed), a headless window left alive when collection threw, images parsed and decoded
+    twice per frame, and a non-collectable dynamic assembly per grid **per render**. Caching only
+    successful type lookups matters — a failed lookup cached as "missing" breaks the error card.
+  - **Two places deliberately NOT cached**, both for the same reason: `DesignerDocument.dirty` still
+    re-serialises (a flag would need bumping at every direct DOM mutation, and one miss loses the
+    user's edits) and `serialize()` is not memoised. Both carry an in-code comment so a later
+    "optimisation" does not reintroduce the bug class.
+  - **Verification habit for this kind of work:** every step kept the full suite green (2667 → 2786
+    assertions, never a weakened assertion), and the numbers in the changelog are the harness's, not
+    estimates. Benchmarks that cannot be compared between runs are worthless — `npm run bench --
+    --json` exists for that.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

@@ -221,7 +221,7 @@ Each step ends with the log green before the next begins.
   designer save site, plus a parse/save round-trip that proves the notice is dropped by the model
   and re-stamped on save.
 
-### Status 2026-09-12 — full suite green (2664 passed / 0 failed / 0 skipped, 35 s)
+### Status 2026-09-13 — full suite green (2786 passed / 0 failed / 0 skipped, 38 s)
 
 - **T2** gained three files:
   - `controlEvents.test.js` (**76** checks) — the generated catalog's shape, the default event and the
@@ -253,3 +253,10 @@ Each step ends with the log green before the next begins.
 - **First Marketplace publish verified (2026-09-12)** — `grumpy.avalonia-designer` version `0.9.0`,
   `PreRelease = true`, and the stored `VsixSha256` equals the local VSIX byte for byte. Recorded in
   `PUBLISHING.md` part E, including the `flags` bit that reveals the not-yet-validated state.
+- **Release `0.9.1` (2026-09-13)** — the performance and correctness pass, suite grown to **2786**
+  assertions. New sections: the `.adset` reader (its cache must never answer from a stale read), the
+  first open of a new project, the System-qualified clock code, orphaned-handler cleanup, corrupt
+  `.adset` handling, and webview sections for the pointer state, nudge coalescing, the properties
+  scroll position and the context-menu placement. `npm run bench` (`tests/bench/hotpaths.js`) is a
+  benchmark, not a test — the runner ignores it — and it exists so the hot paths have numbers to
+  compare against after a change.

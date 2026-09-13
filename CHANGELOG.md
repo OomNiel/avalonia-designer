@@ -11,6 +11,76 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > `v1.0.0-beta.7` — and each entry below names both. `1.0.0` is reserved for the first stable release,
 > because a published version number can never be reused.
 
+## [0.9.1] - 2026-09-13 · *the `1.0.0-beta.8` build*
+
+A measured performance pass over the whole extension — every hot path was timed before and after —
+plus the defects the new tests exposed and three things you reported while testing.
+
+### Added
+- **A new project opens in the Designer by itself.** *Avalonia: New Project* now runs the first build
+  in the background and opens the main form's designer tab, so the next thing you see is your form
+  instead of an empty folder.
+- **A benchmark harness** — `npm run bench` times the extension's hot functions (XAML serialise and
+  lookup, property catalog, the code-behind checker, the per-edit commit signal) on a synthetic
+  200-control form, so a performance regression shows up as a number rather than a feeling.
+- **~120 new automated assertions** (the suite now runs **2,786**, all green) covering the code-behind
+  checker's event signatures and recognition, orphaned-handler cleanup, `.adset` parsing and caching,
+  the first open of a new project, the System-qualified clock code, and the webview's pointer state,
+  nudge coalescing, properties scroll position and context-menu placement.
+
+### Changed
+- **Typing into a property applies when you leave the field or press `Enter`** — not while you type.
+  Each commit re-renders the preview, returns a PNG and rebuilds the Properties panel; doing that
+  behind a 400 ms debounce still ran the whole round trip mid-word and rebuilt the panel under your
+  cursor, which made typing feel laggy. Discrete controls (a checkbox, a drop-down, a confirmed
+  colour, a palette pick, a toolbar button) still apply immediately.
+- **Everything below was measured, not guessed** — `analyzeCodeBehind` 14.3 → **11.9 ms** (two O(n²)
+  string patterns replaced by a line index and a single pass) · a 200-lookup name pass 2.02 →
+  **0.028 ms** (one DOM index per render instead of a full walk per lookup) · the per-edit commit
+  signal 3.3–5.0 → **1.5–1.6 ms** (the control-set signature is read off the live model instead of
+  re-parsing the XAML twice) · reading every `.adset` 1.03 → **0.21 ms** per lookup (~7 ms less per
+  render) · the code-behind lookup 0.143 → **0.065 ms** with no file bodies read at all · the canvas
+  overlays 3.7 → **1.8 ms** per frame at 200 controls (patched in place instead of rebuilt).
+- **The webview no longer forces layout on every pointer move.** The drag anchor is resolved before
+  the canvas rect is read, and arrow-key nudges are coalesced to one message per animation frame
+  (they used to post ~20–30 per second, each one a full preview re-render and PNG decode).
+
+### Fixed
+- **The right-click menu always fits on screen** — it is measured after being shown and flipped or
+  clamped against the window edge, instead of running off the bottom on a control near the bottom.
+- **The Properties panel stays where you left it.** Setting a property no longer scrolls the panel so
+  that the edited row sits at the bottom edge.
+- **Generated clock/status handlers compile in C#** — the clock and tracker no longer use bare
+  `TimeSpan`/`DateTime` (`CS0103`); they are fully qualified as `System.TimeSpan`/`System.DateTime`,
+  which is valid in VB too.
+- **No more phantom "wrong parameter type" findings** for the events whose `EventArgs` differ per
+  control (`Window.Opened`, `NumericUpDown.ValueChanged`, `DatePicker.SelectedDateChanged`): the
+  checker now resolves the argument type the same tag-aware way the code writer does.
+- **83 events are checked again.** The checker kept its own hand-written event list, which had drifted
+  from the generated catalog — `RightTapped` on 45 types, the DataGrid edit events, `Expander.*` and
+  others were offered by the picker but never verified. The list is now derived from the catalog.
+- **Deleting a control removes *all* of its orphaned handlers.** The cleanup scan stopped at the track
+  of the first handler it decided to keep, leaving the rest behind as dead code.
+- **A corrupt `.adset` can no longer be silently replaced.** It is parsed strictly, the error is shown,
+  and neither the designer nor the DataSet editor will write over it.
+- **The previewer host no longer leaks per frame** — the render target bitmap is disposed (~1.4 MB per
+  frame before), the headless window is closed even when collection throws, every image is parsed and
+  decoded once per frame instead of twice, and the emitted DataGrid row type plus the reflected type
+  lookups are cached instead of a non-collectable assembly per grid per render.
+- **A previewer request can no longer hang forever**, and a child process that fails to connect is
+  killed instead of being left behind.
+- **A webview escape or a control name containing a quote** could throw inside a pointer handler
+  (an unescaped attribute selector) or swallow your next click (a stale `suppressClick` flag); both
+  are fixed.
+
+### Notes
+- The Marketplace number is **`0.9.1`**; the same build is tagged **`v1.0.0-beta.8`** on GitHub. A
+  published version number can never be reused, so `1.0.0` stays reserved for the first stable
+  release (`PUBLISHING.md` part E).
+- This build is published as a **pre-release**, like every `0.9.x`: install it with
+  *Install Pre-Release Version* in the Extensions view or `code --install-extension
+  grumpy.avalonia-designer --pre-release`.
+
 ## [0.9.0] - 2026-09-12 · *the `1.0.0-beta.7` build*
 
 ### Added

@@ -144,6 +144,10 @@ invisibility.
 > portal's **Upload** button, so no PAT was involved. That path works today and needs no token; the
 > `VSCE_PAT` workflow below is for automating later releases. Validation completed the same day, after
 > which the extension became visible inside VS Code.
+>
+> **`0.9.1` (2026-09-13)** — second pre-release, tagged `v1.0.0-beta.8`. Same manual path: upload
+> `avalonia-designer-0.9.1-prerelease.vsix`, i.e. the file built with `npm run package -- --pre-release`
+> (the pre-release flag can only be set while packaging — `vsce` cannot add it to a finished VSIX).
 
 ### What “Verifying \<version\>” means — and how to confirm the result
 
