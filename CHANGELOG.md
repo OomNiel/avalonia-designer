@@ -13,10 +13,17 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.9.3] - 2026-09-13 · *the `1.0.0-beta.10` build*
+
 ### Changed
 - **The docs describe the stable releases only.** Every *Install Pre-Release Version* / `--pre-release`
   instruction was removed from `README.md`, `USER_MANUAL.md`, `CHANGELOG.md` and `PUBLISHING.md`:
   `0.9.x` ships as normal releases, so there is nothing for a user to choose between.
+- **The release workflow defaults to a normal release.** Its `pre_release` input was on by default
+  ("keep this on while the version is a -beta"), which would have published onto the other channel
+  without anyone asking for it; ticking it is now the deliberate opt-in.
 
 ## [0.9.2] - 2026-09-13 · *the `1.0.0-beta.9` build*
 

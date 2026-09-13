@@ -28,7 +28,7 @@ dotnet build host/PreviewerHost.csproj -c Debug   # → host/bin/Debug/net8.0/Pr
 ### Packaging / installing
 ```bash
 npm run package                                              # vsce package (pinned @vscode/vsce@2.15.0)
-code --install-extension avalonia-designer-0.9.2.vsix --force
+code --install-extension avalonia-designer-0.9.3.vsix --force
 npm run publish:stable                                       # Marketplace publish (needs VSCE_PAT)
 ```
 - `activationEvents` is **`[]`** (empty): contributed commands/views/custom editors activate the
@@ -1352,6 +1352,16 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     file-based app (`LocalApplicationData` → `/home/niel/.local/share`, per-user copy wins, legacy file
     adopted, new data per-user); and the check's precision was probed over six shapes (single-line,
     multi-line, read-only, two writes on one line, `SqliteConnection`, VB).
+- §87 **`0.9.3` — a release whose only content is corrected documentation (2026-09-13).** Bumped the
+  day `0.9.2` went live, because a package's docs are frozen at upload time and this project had just
+  rewritten them: the listing's overview tab is the `README.md` **inside** the VSIX, and a published
+  version can never be replaced, so the cleaned install instructions needed a new version number to
+  reach the Marketplace at all. Two lessons worth keeping: (a) a doc fix inside a shipped package is a
+  *release*, not a commit — check whether a change lands in the VSIX (README, CHANGELOG, `out/**`,
+  `media/**`, `resources/**`) before deciding it needs no bump; (b) prove it after building by
+  comparing the packaged files with the working tree (`unzip -q <file> -d /tmp/x && diff -rq /tmp/x .`),
+  which is how the stale `0.9.2` package was caught in the first place (5 of 92 files differed, all of
+  them docs).
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

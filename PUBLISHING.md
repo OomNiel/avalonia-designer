@@ -176,6 +176,15 @@ listing when that release is uploaded — a repo-only README edit does not.
 > gallery's `VsixSha256` matches the local file byte for byte). The old VSIX files were deleted from
 > the project folder on purpose — one artifact per release, so the file that gets uploaded cannot be
 > confused with an earlier build.
+>
+> **`0.9.3` (2026-09-13) — packaged, awaiting the portal upload.** Fourth listing version, tagged
+> `v1.0.0-beta.10`, and a documentation-only patch: the install instructions in `README.md`,
+> `USER_MANUAL.md` and `CHANGELOG.md` no longer describe a pre-release channel, so this is the upload
+> that finally puts the corrected text on the listing's overview tab (the tab shows the `README.md`
+> *inside* the uploaded VSIX, and `0.9.2` could not be re-uploaded). Plain VSIX —
+> `avalonia-designer-0.9.3.vsix`, sha256
+> `a00d6205a199d8b5285f6f9ec65e55afbd7e980cf3cc36078732ea52d6eb76ca` — with the `0.9.2` file deleted from the project folder afterwards, so again exactly one
+> artifact exists locally.
 
 ### What “Verifying \<version\>” means — and how to confirm the result
 
