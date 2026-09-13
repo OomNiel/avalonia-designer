@@ -6,14 +6,17 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **Two version numbers per release, on purpose.** GitHub tags and releases carry the descriptive
-> name (`v1.0.0-beta.9`), but the Visual Studio Marketplace rejects semver pre-release tags: it accepts
-> only one to four plain numbers. `package.json` therefore holds the Marketplace number — `0.9.2` for
-> `v1.0.0-beta.9` — and each entry below names both. `1.0.0` is reserved for the first stable release,
-> because a published version number can never be reused.
+> name (`v1.0.0-beta.9`), but the Visual Studio Marketplace accepts only one to four plain numbers —
+> a suffix like `-beta.9` is rejected. `package.json` therefore holds the Marketplace number — `0.9.2`
+> for `v1.0.0-beta.9` — and each entry below names both. `1.0.0` is reserved for the first stable
+> release, because a published version number can never be reused.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+- **The docs describe the stable releases only.** Every *Install Pre-Release Version* / `--pre-release`
+  instruction was removed from `README.md`, `USER_MANUAL.md`, `CHANGELOG.md` and `PUBLISHING.md`:
+  `0.9.x` ships as normal releases, so there is nothing for a user to choose between.
 
 ## [0.9.2] - 2026-09-13 · *the `1.0.0-beta.9` build*
 
@@ -131,17 +134,13 @@ plus the defects the new tests exposed and three things you reported while testi
 - The Marketplace number is **`0.9.1`**; the same build is tagged **`v1.0.0-beta.8`** on GitHub. A
   published version number can never be reused, so `1.0.0` stays reserved for the first stable
   release (`PUBLISHING.md` part E).
-- Published on the Marketplace as a **normal (stable) release** — the uploaded file was the plain
+- Published on the Marketplace as a normal release — the uploaded file was the plain
   `avalonia-designer-0.9.1.vsix` (verified: the gallery's `VsixSha256` matches it byte for byte).
-  Whether a version lands on the pre-release channel is a property of the VSIX, not a switch: it is
-  set by packaging with `--pre-release` and cannot be changed afterwards. As a result `0.9.0` is now
-  the only pre-release on the listing, so *Install Pre-Release Version* would install that older
-  build.
 
 ## [0.9.0] - 2026-09-12 · *the `1.0.0-beta.7` build*
 
 ### Added
-- **First Visual Studio Marketplace listing** — published as a pre-release at
+- **First Visual Studio Marketplace listing** — published at
   <https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer>. The VSIX on the
   Marketplace is byte-for-byte the `1.0.0-beta.7` package uploaded to GitHub.
 

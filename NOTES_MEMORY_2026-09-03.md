@@ -2520,11 +2520,11 @@
   - PUBLIC GITHUB BETA — RELEASE HYGIENE (§67, 2026-09-02): repo github.com/OomNiel/avalonia-designer
     (public). git init main + hardened .gitignore (out/, host/bin, host/obj, .poolside/) → initial
     commit 42f4f09; release-hygiene commit 3c19d74 (pushed). package.json: repository/homepage/bugs,
-    keywords(10), categories ["Other","Visualization"], version 1.0.0-beta.1 (semver prerelease —
-    flatten to 1.0.0 when stable). CHANGELOG.md (Keep a Changelog, bundled). README prereq +
+    keywords(10), categories ["Other","Visualization"], version 1.0.0-beta.1 (flatten to 1.0.0 when
+    stable). CHANGELOG.md (Keep a Changelog, bundled). README prereq +
     version-matrix note (generated net10/Avalonia 12 vs host net8/Avalonia 11; designer opt-in).
     Extension ICON deferred (only SVGs exist; marketplace wants PNG ≥128px). Repackaged
     avalonia-designer-1.0.0-beta.1.vsix (93 files, 376KB) installed. Docs: NOTES §67. User steps
-    remaining: tag v1.0.0-beta.1 pre-release on GitHub; Marketplace publish via vsce publish
-    --pre-release (publisher "grumpy", needs PAT/Azure DevOps).
+    remaining: tag v1.0.0-beta.1 on GitHub; Marketplace publish via `vsce publish`
+    (publisher "grumpy", needs PAT/Azure DevOps).
 

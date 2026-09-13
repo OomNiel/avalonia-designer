@@ -9,4 +9,4 @@ contact_links:
     about: Which events each control exposes, and what the handler must take (EventArgs).
   - name: Releases — download the latest VSIX
     url: https://github.com/OomNiel/avalonia-designer/releases
-    about: Pre-release builds, changelogs and known fixes.
+    about: Changelogs, downloads and known fixes.

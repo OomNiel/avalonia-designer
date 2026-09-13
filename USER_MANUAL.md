@@ -117,11 +117,8 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The latest published version is **`0.9.2`**, and it is a normal (stable) release, so installing it is
-straightforward. An **older** `0.9.0` is still on the listing as a **pre-release**: do *not* choose
-*Install Pre-Release Version* (and do not pass `--pre-release`) unless you deliberately want that
-older build — it would install `0.9.0` instead of `0.9.2`. There is no global “show pre-releases”
-setting; the choice is made per extension.
+The latest published version is **`0.9.2`**, so the command above installs it; add `--force` to
+reinstall or to update a copy that is already on the machine.
 
 **Or from GitHub** — take the `.vsix` from the
 [releases page](https://github.com/OomNiel/avalonia-designer/releases) (newest at the top) and

@@ -251,12 +251,12 @@ Each step ends with the log green before the next begins.
   what let `1.0.0-beta.7` reach the first upload before being rejected. `PUBLISHING.md` is asserted to
   document the rule too.
 - **First Marketplace publish verified (2026-09-12)** — `grumpy.avalonia-designer` version `0.9.0`,
-  `PreRelease = true`, and the stored `VsixSha256` equals the local VSIX byte for byte. Recorded in
-  `PUBLISHING.md` part E, including the `flags` bit that reveals the not-yet-validated state.
+  and the stored `VsixSha256` equals the local VSIX byte for byte. Recorded in `PUBLISHING.md` part E,
+  including the `flags` bit that reveals the not-yet-validated state.
 - **Release `0.9.1` (2026-09-13)** — the performance and correctness pass, suite grown to **2786**
-  assertions, published on the Marketplace the same day (on the stable channel: `PUBLISHING.md` records
-  what that means for the pre-release copy of the VSIX, and why the listing — not the intention — is
-  what the docs describe). New sections: the `.adset` reader (its cache must never answer from a stale
+  assertions, published on the Marketplace the same day (hash-verified against the gallery, and the
+  repo docs corrected to describe the listing rather than the intention). New sections: the `.adset`
+  reader (its cache must never answer from a stale
   read), the
   first open of a new project, the System-qualified clock code, orphaned-handler cleanup, corrupt
   `.adset` handling, and webview sections for the pointer state, nudge coalescing, the properties
@@ -273,4 +273,6 @@ Each step ends with the log green before the next begins.
   assertions for the new "writes into the app's own folder" finding (single-line, multi-line,
   read-only, two writes on one line, `SqliteConnection`, VB). The generated C# *and* VB were also
   compiled in scaffolded projects for a DataSet with a SQLite grid table plus an XML table — 0 errors /
-  0 warnings — which is what proves the helper is emitted wherever something references it.
+  0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
+  Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
+  VSIX byte for byte.

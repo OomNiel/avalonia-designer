@@ -33,7 +33,7 @@ module.exports = async (t) => {
     // --- MSI version: three numbers, no text (MSI truncates the rest and upgrades break) ---
     t.equal(msiVersion('1.2.3'), '1.2.3', 'version', 'plain');
     t.equal(msiVersion('v1.0.0'), '1.0.0', 'version', 'a leading v is dropped');
-    t.equal(msiVersion('1.0.0-beta.2'), '1.0.0', 'version', 'pre-release text is dropped');
+    t.equal(msiVersion('1.0.0-beta.2'), '1.0.0', 'version', 'text after the numbers is dropped');
     t.equal(msiVersion('2.0'), '2.0.0', 'version', 'missing parts are filled in');
     t.equal(msiVersion('1.2.3.4'), '1.2.3', 'version', 'a fourth number is dropped (MSI has three)');
     t.equal(msiVersion('300.1.2'), '255.1.2', 'version', 'major is clamped to 255');

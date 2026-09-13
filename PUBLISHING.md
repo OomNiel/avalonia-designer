@@ -118,57 +118,48 @@ publish from your machine (part E, second option).
 > keep doing it by hand until the Azure DevOps PAT discontinuance is settled (part G) rather than
 > create a token now, so the CLI and workflow routes below are documented but **unused** — the workflow
 > will simply report “⚠ NOT PUBLISHED” (green, with a warning) if it is run without the secret.
-> Upload `avalonia-designer-<version>.vsix` and tick **pre-release** in the portal if the build is
-> meant for the pre-release channel — the portal, not the file, decides that in this route.
+> Upload `avalonia-designer-<version>.vsix` and submit; the portal adds it to the listing.
 
 Either route does the same thing:
 
-- **From GitHub** — *Actions* → **Release** → *Run workflow*. First run with **pre_release** on and
-  **dry_run** on (it builds, tests and packages, but publishes nothing). Once that is green, run it
-  again with **dry_run** off.
+- **From GitHub** — *Actions* → **Release** → *Run workflow*. First run with **dry_run** on (it builds,
+  tests and packages, but publishes nothing). Once that is green, run it again with **dry_run** off to
+  publish.
 - **From your machine** —
   ```bash
-  VSCE_PAT=<paste-token> npm run publish:pre
+  VSCE_PAT=<paste-token> npm run publish:stable
   # or, once:  npx --yes @vscode/vsce@2.15.0 login grumpy   (stores it in your keychain)
-  # then:      npm run publish:pre
+  # then:      npm run publish:stable
   ```
 
 The first publish creates the listing at
 <https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer>, built from the
-packaged `package.json` and `README.md`; it takes a few minutes to appear.
-
-**A pre-release-only extension is visible everywhere — it is just never installed by accident.**
-Verified 2026-09-12: the website's own search lists it as an ordinary result card, and the gallery API
-returns it for every query. VS Code installs the pre-release channel only when you ask: the arrow next
-to **Install** → *Install Pre-Release Version*, right-click → *Show Pre-Release Version*, or
-`code --install-extension <id> --pre-release`. There is **no global “show pre-releases” switch** in VS
-Code (there is no such setting — the only matching UI strings in the 1.136.1 bundle are *Pre-Release
-version* and *Show Pre-Release Version*, and the latter is a per-extension menu action gated on
-`galleryExtensionHasPreReleaseVersion`). Expect little traffic until a stable version exists, but not
-invisibility.
+packaged `package.json` and `README.md`; it takes a few minutes to appear. `README.md` **inside the
+VSIX** is what the listing's overview tab shows, so a release whose README changed only reaches the
+listing when that release is uploaded — a repo-only README edit does not.
 
 > **Status: done — first listing live 2026-09-12 as `0.9.0`.** It was uploaded through the publisher
 > portal's **Upload** button, so no PAT was involved. That path works today and needs no token; the
 > `VSCE_PAT` workflow below is for automating later releases. Validation completed the same day, after
 > which the extension became visible inside VS Code.
 >
-> **`0.9.1` (2026-09-13) — LIVE, and on the STABLE channel.** Second listing version, tagged
-> `v1.0.0-beta.8`. It went up through the publisher portal (as `0.9.0` did) after the extension was
-> unpublished and published again — the gallery's `VsixSha256` matches the local
-> `avalonia-designer-0.9.1.vsix` byte for byte, so that is the file that is live.
+> **`0.9.1` (2026-09-13) — LIVE.** Second listing version, tagged `v1.0.0-beta.8`. It went up through
+> the publisher portal (as `0.9.0` did) after the extension was unpublished and published again — the
+> gallery's `VsixSha256` matches the local `avalonia-designer-0.9.1.vsix` byte for byte, so that is the
+> file that is live.
 >
-> ⚠ **It is a normal release, not a pre-release.** The portal upload used the plain VSIX; the
-> pre-release copy was built but not used. `0.9.0` is now the *only* pre-release on the listing, so
-> **Install Pre-Release Version** installs that **older** build. The channel is baked into the VSIX
-> at package time and cannot be changed after upload — check the file *before* uploading:
+> ⚠ **What you upload is what the listing shows.** The identity a listing uses comes from the VSIX that
+> is uploaded, and a packaged VSIX cannot be re-flagged afterwards — so check what you are about to
+> upload *before* uploading it:
 > `unzip -p <file> extension.vsixmanifest | grep -o 'PreRelease" Value="[a-z]*"'`
-> (`…Value="true"` = pre-release; no match = stable).
+> (no match = the normal listing version).
 >
-> Build the two files explicitly — `vsce package --pre-release` alone **overwrites**
-> `avalonia-designer-<version>.vsix` instead of writing a separate `-prerelease` file, so both need
-> an `--out`: `npm run package -- --out <stable.vsix>` and
-> `npm run package -- --pre-release --out <prerelease.vsix>`.
->
+> ⚠ **Always pass `--out` when you build more than one variant.** `vsce package --pre-release` alone
+> **overwrites** `avalonia-designer-<version>.vsix` instead of writing a separate file, so both variants
+> need an explicit name: `npm run package -- --out <name>.vsix` and
+> `npm run package -- --pre-release --out <other>.vsix`. `publish:pre` exists for the rare case of
+> deliberately publishing a build on the other channel; everything in `0.9.x` ships with
+> `publish:stable`.
 > The automated path works as soon as the secret exists. **Without it the run does not fail:** a
 > preflight step notices the missing token, the job still compiles, runs the full suite, packages the
 > VSIX and uploads it as an artifact, prints a `::warning::`, and its **job summary says
@@ -177,13 +168,12 @@ invisibility.
 > *fails* still fails the job, because that one is real news. The summary also distinguishes a dry run
 > from a real publish, so a green run can never be mistaken for a published one.
 >
-> **`0.9.2` (2026-09-13) — packaged, awaiting the portal upload.** Third listing version, tagged
+> **`0.9.2` (2026-09-13) — LIVE on the Marketplace, hash-verified.** Third listing version, tagged
 > `v1.0.0-beta.9`, and the first release that carries **📦 Publish** / **🚀 Install**. Built as a plain
-> (stable) VSIX — `avalonia-designer-0.9.2.vsix`, sha256
-> `c4ba0a02c1d03a510b86a221e80fb2d3174639bad47bc1ca6f097ff1e07870cf` — and attached to the GitHub
-> release with the same tag. Upload it through the publisher portal (as `0.9.0`/`0.9.1` were) while the
-> PAT question is open, then verify with the `flags: 914` query below: version `0.9.2`, no
-> `PreRelease` property, and `VsixSha256` equal to the hash above. The old VSIX files were deleted from
+> VSIX — `avalonia-designer-0.9.2.vsix`, sha256
+> `c4ba0a02c1d03a510b86a221e80fb2d3174639bad47bc1ca6f097ff1e07870cf` — uploaded through the publisher
+> portal and attached to the GitHub release with the same tag (downloaded again and compared: the
+> gallery's `VsixSha256` matches the local file byte for byte). The old VSIX files were deleted from
 > the project folder on purpose — one artifact per release, so the file that gets uploaded cannot be
 > confused with an earlier build.
 
@@ -207,8 +197,6 @@ curl -s -X POST https://marketplace.visualstudio.com/_apis/public/gallery/extens
 
 The response also proves *what* was published, which is worth checking every time:
 
-- `Microsoft.VisualStudio.Code.PreRelease` is `true` for a pre-release (`--pre-release` is the only
-  way to set it — `vsce` cannot add the flag to a finished VSIX afterwards).
 - the version is the one you meant to ship, and `Publisher`/`Id` match `package.json`.
 - `Microsoft.VisualStudio.Services.VsixSha256` equals `sha256sum` of your local VSIX, and the stored
   package downloads from `{assetUri}/Microsoft.VisualStudio.Services.VSIXPackage`.
@@ -217,18 +205,18 @@ The response also proves *what* was published, which is worth checking every tim
 > same source are never byte-reproducible — `vsce` stamps a fresh timestamp into
 > `extension.vsixmanifest`, so identical content still yields different digests.
 
-> **The Marketplace version must be numbers only.** Semver pre-release tags are rejected — uploading
+> **The Marketplace version must be numbers only.** A tag suffix is rejected — uploading
 > `1.0.0-beta.7` fails with *"The version string '1.0.0-beta.7' doesn't conform to the requirements for
 > a version. It must be one to four numbers in the range 0 to 2147483647, with each number separated
 > by a period."* (Observed 2026-09-12.)
 >
 > This project therefore keeps **two** numberings: the GitHub releases/tags stay `v1.0.0-beta.N`
 > (informative and friendly), while `package.json` — the number the Marketplace shows and compares —
-> uses plain `major.minor.patch`. The first pre-release listing is **`0.9.0`**: SemVer's "unstable,
-> pre-1.0" band, and it leaves `1.0.0` free for the first stable release. Further betas bump `0.9.1`,
-> `0.9.2`, … and `1.0.0` then upgrades everyone automatically (VS Code always moves to the highest
-> version). Publishing `1.0.0` *now* would burn that number — a version can never be reused, and the
-> latest version cannot be deleted.
+> uses plain `major.minor.patch`. The line started at **`0.9.0`**: SemVer's "unstable, pre-1.0" band,
+> and it leaves `1.0.0` free for the first stable release. Releases bump `0.9.1`, `0.9.2`, … and
+> `1.0.0` then upgrades everyone automatically (VS Code always moves to the highest version).
+> Publishing `1.0.0` *now* would burn that number — a version can never be reused, and the latest
+> version cannot be deleted.
 
 ## F. Releasing after that
 
@@ -236,10 +224,9 @@ The response also proves *what* was published, which is worth checking every tim
    GitHub release with the descriptive semver name (`git tag v1.0.0-beta.8`, see `NOTES.md` §1). The
    tag and `package.json` deliberately differ: the tag is documentation, `package.json` is the number
    the Marketplace shows and compares. Never reuse a number — the Marketplace rejects the upload.
-2. Publish:
-   - `npm run publish:pre` for every `0.9.x` — it stays on the pre-release channel
-   - `npm run publish:stable` for the real `1.0.0` — this flips the listing to stable, and users on a
-     pre-release move across with it (VS Code always follows the highest version).
+2. Publish — through the publisher portal (part E). For the CLI route the normal release is
+   `npm run publish:stable`; `npm run publish:pre` is the variant that puts the build on the other
+   channel, and it is not used for a normal `0.9.x` release.
 3. Rotate the PAT before it expires (part B → **Regenerate**, then update the GitHub secret). An
 expired token — or one retired on **1 December 2026** — appears as a 401 / *“verification failed”* in
 the release run.
@@ -293,8 +280,7 @@ npx ovsx publish avalonia-designer-<version>.vsix -p <token>
 - Sources for the dates above: [Retirement of Global Personal Access Tokens in Azure DevOps](https://devblogs.microsoft.com/devops/retirement-of-global-personal-access-tokens-in-azure-devops/)
   (Azure DevOps blog, Dec 2025 — "December 1, 2026: all existing global PATs will be fully
   decommissioned") and [Publishing Extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)
-  (VS Code docs, updated 9 Sept 2026 — the Entra ID walkthrough in part G, the PAT scope FAQ and the
-  pre-release version note).
+  (VS Code docs, updated 9 Sept 2026 — the Entra ID walkthrough in part G and the PAT scope FAQ).
 - `.github/workflows/ci.yml` — compiles, runs the fast test layers and packages the VSIX on every push.
 - `.github/workflows/release.yml` — the manual release run (full suite → package → publish). A missing
   `VSCE_PAT` degrades to a warning + a “⚠ NOT PUBLISHED” job summary instead of a failed run; a failed

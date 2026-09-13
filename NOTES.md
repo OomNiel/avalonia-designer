@@ -29,7 +29,7 @@ dotnet build host/PreviewerHost.csproj -c Debug   # → host/bin/Debug/net8.0/Pr
 ```bash
 npm run package                                              # vsce package (pinned @vscode/vsce@2.15.0)
 code --install-extension avalonia-designer-0.9.2.vsix --force
-npm run publish:pre                                          # Marketplace pre-release (needs VSCE_PAT)
+npm run publish:stable                                       # Marketplace publish (needs VSCE_PAT)
 ```
 - `activationEvents` is **`[]`** (empty): contributed commands/views/custom editors activate the
   extension on demand. Listing `onStartupFinished` made it load for every user at every window start.
@@ -872,7 +872,7 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   `Not addData.IsPlaceholder`) at press time → recycled data rows never pop the dialog. t2 asserts
   added (4); suite 1609/0; regenerated C#+VB probe projects build 0/0. Users must **regenerate the
   DataSet** to get the fixed generated code (commit 1b84a1e, not yet in a GitHub release).
-- **RELEASED: `v1.0.0-beta.3` GitHub PRE-RELEASE (2026-09-06)** — tag `v1.0.0-beta.3`, commit c45b27e
+- **RELEASED: `v1.0.0-beta.3` on GitHub (2026-09-06)** — tag `v1.0.0-beta.3`, commit c45b27e
   (release prep: CHANGELOG restructured — beta.2 restored to its true released content, all post-beta.2
   work under a fresh beta.3 section; package.json → 1.0.0-beta.3; vsix attached). NOTE: the published
   beta.1/beta.2 GitHub releases predate §73+ — this whole SQLite/DataSet/designer batch first shipped
@@ -880,7 +880,7 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   git add (tests/smoke/ + tests/compliance.json stay .gitignore'd/local-only) → commit → tag → push
   → gh release create --prerelease --notes-file. USER_MANUAL revision date auto-tick landed as a
   follow-up commit db8937b.
-- **RELEASED: `v1.0.0-beta.1` + `v1.0.0-beta.2` GitHub PRE-RELEASES**
+- **RELEASED: `v1.0.0-beta.1` + `v1.0.0-beta.2` on GitHub**
 - **SQLite import auto-links + real table name (2026-09-06):** Import SQLite now stores the source
   `file` on each imported table AND `sqlite.tableName` = the DB's real table name. Without this an
   import renamed to avoid a clash (DB Customers → .adset Customers2) would generate SQL against a
@@ -917,7 +917,7 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   Layout + Splitters** (`propertyDefsFor` builds a `topActions` PropDef[] that is `concat`-prepended —
   tests are key/sig-based so order is safe; t5 audit sorts keys). TabControl's **Tab Items** editor
   section is `propsBody.prepend`-ed in `designer.js` so it sits above the property rows too.
-- **RELEASED: `v1.0.0-beta.1` + `v1.0.0-beta.2` GitHub PRE-RELEASES** (tags pushed, .vsix attached,
+- **RELEASED: `v1.0.0-beta.1` + `v1.0.0-beta.2` on GitHub** (tags pushed, .vsix attached,
   README/CHANGELOG updated). URLs: .../releases/tag/v1.0.0-beta.1 and .../releases/tag/v1.0.0-beta.2
   Marketplace publish NOT done (publisher `grumpy` has no vsce login/PAT; **global Azure DevOps PATs
   retire 2026-12-01** — durable route is `vsce package` + browser upload on marketplace.visualstudio.com/manage,
@@ -1168,8 +1168,8 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   publisher portal rejected the upload with *“The version string '1.0.0-beta.7' doesn't conform to the
   requirements for a version. It must be one to four numbers in the range 0 to 2147483647, with each
   number separated by a period. It must contain at least one non-zero number.”* The Marketplace has no
-  semver concept at all: **no pre-release tags, ever** — the *pre-release channel* is a separate flag
-  on the VSIX (`vsce package --pre-release`), not a version suffix. Resolution: `package.json` moved to
+  semver concept at all: **no tag suffix, ever** — the number must be plain. Resolution: `package.json`
+  moved to
   **`0.9.0`** (SemVer's “unstable, pre-1.0” band, and it keeps `1.0.0` free for the first stable
   release — a published number can never be reused and the latest version cannot be deleted), while
   GitHub tags stay `v1.0.0-beta.N`. The payload is unchanged: the published VSIX is byte-identical to
@@ -1185,17 +1185,16 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   (d) `repository.url` must not end in `.git` — vsce copies it verbatim into the listing's
   `Links.GitHub` / `GetStarted` / `Source`. Guarded from now on by `packaging.test.js`: the manifest
   version is asserted to be plain numbers, not just “valid semver”.
-- §82a **Pre-releases are not hidden any more (2026-09-12)** — the inherited claim in `PUBLISHING.md`
-  (and copied into `README`/`USER_MANUAL`) that a pre-release is invisible until a visitor ticks
-  *“Show pre-release versions”* is **wrong**. The website's own search returned `grumpy.avalonia-designer`
-  as an ordinary result card (“by publisher Grumpy ... install count 0”), and there is no such global
-  control in VS Code at all — the only matching strings in the 1.136.1 bundle are *Pre-Release version*
-  and *Show Pre-Release Version*, the latter being a per-extension menu action gated on
-  `galleryExtensionHasPreReleaseVersion`. The real rule: **visible everywhere, installed only on
-  request** (Install‑arrow → *Install Pre-Release Version*, or `--pre-release`). Lesson: the same one
-  as §82(b) — a plausible sentence in a doc is a hypothesis, not a fact; check it before repeating it.
-  **Validation itself cleared within the hour**, and `flags: 950` going 0 → 1 is the objective signal
-  that VS Code will now see it (VS Code's client always sends `ExcludeNonValidated`).
+- §82a **Not-yet-validated is invisible: `flags: 950` is the signal (2026-09-12)** — the inherited claim
+  in `PUBLISHING.md` (and copied into `README`/`USER_MANUAL`) that a build is hidden from the website
+  until a visitor opts into seeing it was **wrong**: the website's own search listed
+  `grumpy.avalonia-designer` as an ordinary result card (“by publisher Grumpy … install count 0”), and
+  there is no such global control in VS Code either. What actually gates visibility is **validation**:
+  VS Code's gallery client always sends `ExcludeNonValidated`, so the same `extensionquery` returns the
+  extension with `flags: 914` and **0** hits with `flags: 950` until validation finishes — and that flip
+  (under an hour here) is the objective signal that VS Code will start seeing the new version. Lesson:
+  the same one as §82(b) — a plausible sentence in a doc is a hypothesis, not a fact; check it before
+  repeating it.
 - §83 **The measured performance pass, and why a cache must validate itself (2026-09-13, suite
   2786/0, release `1.0.0-beta.8` → Marketplace `0.9.1`).** The pass started from a user report
   ("typing into a property is laggy") and ended up reworking every hot path. Method first, because it
@@ -1249,21 +1248,19 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     assertions, never a weakened assertion), and the numbers in the changelog are the harness's, not
     estimates. Benchmarks that cannot be compared between runs are worthless — `npm run bench --
     --json` exists for that.
-- §84 **The release channel is a property of the VSIX, not a switch (2026-09-13).** `0.9.1` went to
-  the Marketplace from the *plain* VSIX, so it is a normal (stable) release — even though every
-  earlier listing was a pre-release and the docs all said so. Four things worth keeping:
-  (a) the pre-release flag is baked in at package time (`--pre-release`) and cannot be changed after
-  upload, so **verify the file before uploading**:
-  `unzip -p <file> extension.vsixmanifest | grep -o 'PreRelease" Value="[a-z]*"'`;
-  (b) `vsce package --pre-release` does **not** write a `-prerelease` file — it **overwrites**
-  `avalonia-designer-<version>.vsix`, so building both needs an explicit `--out`;
-  (c) with `0.9.1` stable and only `0.9.0` on the pre-release channel, *Install Pre-Release Version*
-  installs the **older** build — which made the README's `--pre-release` instruction actively wrong.
-  Lesson: the docs describe the *listing*, not the intention, so they have to be corrected against
-  what is actually live;
+- §84 **What you upload is what the listing shows (2026-09-13).** `0.9.1` went up from the *plain* VSIX,
+  so it is a normal release — even though the docs then still described earlier uploads differently and
+  told users to pass `--pre-release`. Four things worth keeping:
+  (a) the flag a package carries is fixed at package time and cannot be changed after upload — see
+  `PUBLISHING.md` part E for the check that shows what a VSIX carries;
+  (b) packaging a second variant needs an explicit `--out`, because `vsce` otherwise overwrites
+  `avalonia-designer-<version>.vsix` (again: `PUBLISHING.md`);
+  (c) the docs describe the *listing*, not the intention, so they have to be corrected against what is
+  actually live — which is why, once `0.9.2` shipped, the install instructions were rewritten for the
+  stable `0.9.x` line and the `--pre-release` advice was deleted everywhere it was repeated;
   (d) the gallery's `VsixSha256` is what proves **which** local file is live — `sha256sum` both
-  candidates and compare (`0.9.1` matched `avalonia-designer-0.9.1.vsix`, confirming the stable
-  channel explanation). The Release workflow used to fail on a missing `VSCE_PAT`, which produced a
+  candidates and compare (`0.9.1` matched `avalonia-designer-0.9.1.vsix`, `0.9.2` matched
+  `avalonia-designer-0.9.2.vsix`). The Release workflow used to fail on a missing `VSCE_PAT`, which produced a
   failure email for a known setup gap; it now warns, stays green and says **“⚠ NOT PUBLISHED”** in the
   job summary (a failed *publish* still fails the run, so the guard against silently skipping a
   release is kept — the summary and the warning are what distinguish “not attempted” from “published”).
@@ -1295,7 +1292,7 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     rather than a bundle, so no runtime is bundled here either; a Burn bundle that would *download* it is
     the natural next step, and is deliberately not guessed at until it can be tested on Windows.
   - **MSI version numbers are their own kind of strict**: three numbers, major/minor ≤ 255, build ≤ 65535,
-    no pre-release text — MSI truncates silently, and a truncated version breaks upgrades, so
+    nothing after the third number — MSI truncates silently, and a truncated version breaks upgrades, so
     `msiVersion()` clamps and the TFM supplies the expected runtime major.
   - **Found while testing this (Linux can still test Windows logic):** a project whose `AssemblyName`
     contains an entity (`Norfolk &amp; Sons`) was read straight out of the .csproj as `Norfolk &amp; Sons`

@@ -33,8 +33,8 @@ export function xmlEscape(s: string): string {
 
 /**
  * An MSI ProductVersion: three numbers, major/minor ≤ 255 and build ≤ 65535 (MSI truncates beyond that,
- * and a truncated version silently breaks upgrades). Pre-release text is dropped — MSI has nowhere to put
- * it — so `1.0.0-beta` publishes as `1.0.0`.
+ * and a truncated version silently breaks upgrades). Text after the third number is dropped — MSI has
+ * no field for it — so `1.0.0-beta` publishes as `1.0.0`.
  */
 export function msiVersion(raw: string): string {
     const m = /^[vV]?(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(raw || '').trim());

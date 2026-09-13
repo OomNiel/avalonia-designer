@@ -26,11 +26,8 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The latest published version is **`0.9.2`**, and it is a normal (stable) release, so the plain command
-above installs it. `0.9.0` is still on the listing as a **pre-release** — choosing *Install
-Pre-Release Version* (or passing `--pre-release`) would install that **older** build, so only do that
-if you deliberately want it. VS Code has no global “show pre-releases” switch; the choice is made per
-extension.
+The latest published version is **`0.9.2`**, so the command above installs it (add `--force` to
+reinstall, or to update a copy that is already on the machine).
 
 **Or from GitHub** — take the `.vsix` from the
 [releases page](https://github.com/OomNiel/avalonia-designer/releases) (newest at the top — the file
@@ -176,9 +173,9 @@ replaces the old one.
 
 ## Status and prerequisites
 
-- **Beta**, published on the
-  [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer)
-  as a pre-release — incomplete and still changing, but every release ships with a green suite.
+- **Published on the
+  [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer)**
+  — still changing, but every release ships with a green suite.
 - **Two version numbers per release, on purpose**: the GitHub tag is `v1.0.0-beta.N` while the
   Marketplace (plain numbers only) shows the same build as `0.9.x`. `1.0.0` is reserved for the first
   stable release.
@@ -201,7 +198,7 @@ replaces the old one.
 - [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) — packaging and
   Marketplace release steps (for maintainers)
 - [Visual Studio Marketplace listing](https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer)
-  — the extension itself, on the pre-release channel
+  — the extension itself
 - [All releases and VSIX downloads](https://github.com/OomNiel/avalonia-designer/releases)
 - [Issue tracker](https://github.com/OomNiel/avalonia-designer/issues) — bug reports, questions and
   remarks go here

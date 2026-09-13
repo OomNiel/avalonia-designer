@@ -30,12 +30,12 @@ module.exports = async (t) => {
     t.ok(/^\^\d+\.\d+\.\d+$/.test(pkg.engines.vscode), 'manifest', 'the VS Code engine range is pinned');
     t.ok(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pkg.version), 'manifest', 'the version is valid semver');
     // ...but valid semver is not what the Marketplace validates. It wants one to four PLAIN numbers
-    // and rejects pre-release tags outright — that is how the first upload of 1.0.0-beta.7 failed
+    // and rejects any suffix outright — that is how the first upload of 1.0.0-beta.7 failed
     // (2026-09-12): "The version string '1.0.0-beta.7' doesn't conform to the requirements for a
     // version." The GitHub tag may carry the friendlier "-beta.N" name; the number that goes into
     // the VSIX may not.
     t.ok(/^\d+(?:\.\d+){0,3}$/.test(pkg.version), 'manifest',
-        'and the Marketplace version is numbers only (no semver pre-release tag)');
+        'and the Marketplace version is numbers only (no tag suffix)');
     t.ok(/[1-9]/.test(pkg.version), 'manifest', 'containing at least one non-zero number');
     t.equal(pkg.main, './out/extension.js', 'manifest', 'the entry point is the compiled output');
     t.ok(has('src/extension.ts'), 'manifest', 'which tsc builds from src/extension.ts');

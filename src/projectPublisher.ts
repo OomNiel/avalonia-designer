@@ -130,7 +130,7 @@ export function planPublish(formUri: vscode.Uri, platform: string = process.plat
 
     if (platform === 'win32') {
         // Harvesting happens from the publish output directly (WiX's <Files>), and the version has to be
-        // MSI-shaped: three numbers, no pre-release text — MSI truncates anything else and a truncated
+        // MSI-shaped: three numbers, nothing after them — MSI truncates anything else and a truncated
         // version silently breaks upgrades.
         const arch = msiArchitecture(process.arch);
         const msiVer = msiVersion(version);
@@ -387,9 +387,9 @@ export async function installApp(formUri: vscode.Uri): Promise<void> {
         const pick = await vscode.window.showWarningMessage(
             state === 'none'
                 ? `Nothing to install yet — ${path.relative(plan.projectDir, plan.outFile)} does not exist ` +
-                  'yet. Publish the project first.'
+                'yet. Publish the project first.'
                 : `The package is older than the project's sources, so installing it would put the PREVIOUS ` +
-                  'build on your machine while the designer shows the current one. Publish again first.',
+                'build on your machine while the designer shows the current one. Publish again first.',
             'Publish now');
         if (pick === 'Publish now') await publishApp(formUri);
         return;
