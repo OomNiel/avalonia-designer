@@ -157,7 +157,9 @@ finished, **📦 Publish** builds it in Release and packages it as a **Debian in
 package **depends on the .NET runtime instead of bundling it**, so apt installs the prerequisite and
 the `.deb` stays small. **🚀 Install** installs that package on the machine you are working on (the
 password is asked for in the terminal), so the app appears in the application menu and runs outside VS
-Code. Both buttons are Linux-only, like the format they produce.
+Code. On **Windows** the same two buttons produce an **MSI** (WiX) that installs per-machine into
+`Program Files` with a Start-menu entry and an *Apps & features* entry, and installing a newer build
+replaces the old one.
 
 ## 10. Engineering discipline
 

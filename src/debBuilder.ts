@@ -85,13 +85,23 @@ export function targetFrameworkOf(projectText: string): string {
 /** `<Version>1.2.3</Version>` / `<VersionPrefix>`, else the fallback. */
 export function appVersionOf(projectText: string, fallback = '1.0.0'): string {
     const m = /<(?:Version|VersionPrefix)>\s*([^<]+?)\s*<\/(?:Version|VersionPrefix)>/i.exec(projectText);
-    return m ? m[1] : fallback;
+    return m ? decodeXmlText(m[1]) : fallback;
+}
+
+/**
+ * XML text decoding for values read straight out of a project file: `<AssemblyName>A &amp; B</AssemblyName>`
+ * means the name `A & B`, and a name like that must reach the package metadata (and then be escaped again
+ * where it is written back out) instead of leaking `&amp;` into a .desktop file or an MSI product name.
+ */
+export function decodeXmlText(s: string): string {
+    const entities: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' };
+    return String(s ?? '').replace(/&(lt|gt|quot|apos|amp);/g, (_m, e) => entities[e]);
 }
 
 /** `<AssemblyName>Foo</AssemblyName>`, else the project file's own name. */
 export function assemblyNameOf(projectText: string, fallback: string): string {
     const m = /<AssemblyName>\s*([^<]+?)\s*<\/AssemblyName>/i.exec(projectText);
-    return m ? m[1] : fallback;
+    return m ? decodeXmlText(m[1]) : fallback;
 }
 
 export interface ControlFields {

@@ -229,30 +229,39 @@ on any Debian/Ubuntu machine — the app then runs on its own, outside VS Code.
 1. It builds the project in **Release** and packages it. Both steps run in a **terminal pane** (named
    *Publish \<App\>*), so you can watch the build and see any error.
 2. The package lands in your project folder as **`publish/<name>_<version>_<arch>.deb`**
-   (e.g. `publish/myapp_1.0.0_amd64.deb`).
+   (e.g. `publish/myapp_1.0.0_amd64.deb`) on Linux, or **`publish/<name>_<version>_x64.msi`** on
+   Windows.
 
-Copy that `.deb` to another machine and install it there with `sudo dpkg -i <file>.deb`, or install it
-right here with **🚀 Install**.
+On Linux, copy that `.deb` to another machine and install it there with `sudo dpkg -i <file>.deb`; on
+Windows, copy the `.msi` and double-click it. Either way you can also install it right here with
+**🚀 Install**.
 
 What the package contains — so you know what you are handing over:
 
-| Where | What |
+| Where (Linux) | What |
 |---|---|
 | `/usr/lib/<name>/` | the built app |
 | `/usr/bin/<name>` | a launcher, so the app can also be started by typing its name in a terminal |
 | `/usr/share/applications/<name>.desktop` | the **application-menu entry** (with an icon, if the form has one) |
 
-**The .NET runtime is *not* included.** The package *depends* on it (`dotnet-runtime-8.0` for a
-`net8.0` project), so `apt`/`dpkg` fetches it when the machine does not have it yet — the same way it
-fetches the libraries Avalonia needs. That keeps the `.deb` small instead of shipping a second copy of
-.NET.
+On **Windows** the MSI installs into **`C:\Program Files\<App>`** (so it needs the usual permission
+prompt), adds a **Start-menu entry** and an entry in **Apps & features**, and installing a newer build
+**replaces** the previous one instead of stacking up.
+
+**The .NET runtime is *not* included** on either platform. Linux declares it as a dependency
+(`dotnet-runtime-8.0` for a `net8.0` project), so `apt`/`dpkg` fetches it if the machine does not have
+it yet; the Windows installer **checks** for it and tells you where to get it if it is missing. That
+keeps the package small instead of shipping a second copy of .NET.
+
+The Windows installer needs the **WiX toolset** — install it once with
+`dotnet tool install --global wix` (the designer offers this for you and says so if it is missing).
 
 The icon comes from the form: set **Window → Icon** (the field's **"…"** button copies the image into
 the project's `Assets/` folder) and that image becomes the menu icon.
 
-> **📦 Publish and 🚀 Install are Linux-only** — the `.deb` format *is* Debian's, so the two buttons
-> only appear in the toolbar on Linux, and the extension refuses both actions anywhere else instead of
-> pretending they worked.
+> **📦 Publish and 🚀 Install appear on Linux and Windows** — they produce the package format of the
+> platform you are on: a **`.deb`** on Linux, an **`.msi`** on Windows. On macOS they are not shown, and
+> the actions refuse with an explanation instead of pretending they worked.
 
 Settings — `avaloniaDesigner.publish.*`: the **package name**, **version**, **maintainer**, one-line
 **description** and any **extra `Depends`** your app needs. Leaving them empty uses the project file's
@@ -263,7 +272,8 @@ name and `<Version>`, so a first publish needs no configuration at all.
 **🚀 Install** installs the `.deb` that Publish built **on this machine**, so the app appears in your
 application menu and runs like any other program.
 
-- It runs `sudo dpkg -i <the .deb>` in a terminal and **asks for your password there** — the extension
+- It runs `sudo dpkg -i <the .deb>` on Linux (or `msiexec /i <the .msi>` on Windows, which raises
+  Windows' own permission prompt) in a terminal and **asks for your password there** — the extension
   never sees it, and nothing else is typed into that terminal while it waits.
 - Nothing published yet? It offers to publish first. Package older than your sources? It says so and
   lets you publish again.

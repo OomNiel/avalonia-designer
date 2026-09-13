@@ -24,9 +24,15 @@ import {
     appVersionOf, assemblyNameOf, debArchitecture, debFileName, debPackageName, debTree,
     runtimeDependency, targetFrameworkOf, AVALONIA_LINUX_LIBS, DEB_APP_DIR
 } from './debBuilder';
+import {
+    dotnetRuntimeFor, msiArchitecture, msiFileName, msiVersion, stableGuid, winRid, wixBuildArgs,
+    wixSource, WIX_MISSING_MESSAGE
+} from './msiBuilder';
 
 /** Everything decided up front, so the same plan drives Publish and Install. */
 export interface PublishPlan {
+    /** Which package format this plan produces — `.deb` on Linux, `.msi` on Windows. */
+    kind: 'deb' | 'msi';
     projectDir: string;
     projectFile: string;
     packageName: string;
@@ -45,10 +51,19 @@ export interface PublishPlan {
     publishOutDir: string;
     outFile: string;
     scriptPath: string;
+    /** Windows only: the WiX source and the executable the shortcut points at. */
+    wxsPath?: string;
+    exeName?: string;
+    runtimeMajor?: number;
+    runtimeUrl?: string;
 }
 
 const LINUX_ONLY =
     'Publishing and installing a .deb is Linux-only. This machine is not Linux, so the .deb flow is unavailable.';
+const WINDOWS_ONLY =
+    'Building an MSI installer is Windows-only (it is the WiX toolset). The Publish/Install buttons are hidden on this platform.';
+const MAC_ONLY =
+    'Publishing is not implemented for macOS yet — the designer builds a .deb on Linux and an MSI on Windows. On macOS you can still run `dotnet publish` and the project\'s own scripts by hand.';
 
 /** Non-empty setting, else the fallback. */
 function setting(key: string, fallback: string): string {
@@ -83,7 +98,10 @@ function iconFor(formUri: vscode.Uri, projectDir: string): string | undefined {
  * Resolves what Publish and Install would do for a form, without touching anything. `undefined` when
  * there is no project to publish (a loose .axaml with no .csproj/.vbproj next to it).
  */
-export function planPublish(formUri: vscode.Uri): PublishPlan | undefined {
+export function planPublish(formUri: vscode.Uri, platform: string = process.platform): PublishPlan | undefined {
+    // Only the two formats this extension can actually produce; anything else gets no plan at all, so
+    // callers cannot accidentally act on a plan for a platform they refuse to run on.
+    if (platform !== 'linux' && platform !== 'win32') return undefined;
     const project = findProject(formUri);
     if (!project) return undefined;
 
@@ -104,23 +122,44 @@ export function planPublish(formUri: vscode.Uri): PublishPlan | undefined {
     const extra = vscode.workspace.getConfiguration('avaloniaDesigner').get<string[]>('publish.extraDepends') ?? [];
     const work = path.join(projectDir, 'obj', 'avalonia-publish');
     const stageDir = path.join(work, 'stage');
-    const arch = debArchitecture(process.arch);
+    const iconSource = iconFor(formUri, projectDir);
+    const common = {
+        projectDir, projectFile, packageName, appName: assemblyName, assemblyName,
+        description, maintainer, targetFramework, iconSource, stageDir, scriptPath: ''
+    };
 
+    if (platform === 'win32') {
+        // Harvesting happens from the publish output directly (WiX's <Files>), and the version has to be
+        // MSI-shaped: three numbers, no pre-release text — MSI truncates anything else and a truncated
+        // version silently breaks upgrades.
+        const arch = msiArchitecture(process.arch);
+        const msiVer = msiVersion(version);
+        return {
+            ...common,
+            kind: 'msi',
+            version: msiVer,
+            architecture: arch,
+            depends: [],
+            publishOutDir: path.join(work, 'payload'),
+            outFile: path.join(projectDir, 'publish', msiFileName(packageName, msiVer, arch)),
+            scriptPath: path.join(work, 'publish.ps1'),
+            wxsPath: path.join(work, 'package.wxs'),
+            exeName: `${assemblyName}.exe`,
+            ...(() => {
+                const rt = dotnetRuntimeFor(targetFramework);
+                return rt ? { runtimeMajor: rt.major, runtimeUrl: rt.url } : {};
+            })()
+        };
+    }
+
+    const arch = debArchitecture(process.arch);
     return {
-        projectDir,
-        projectFile,
-        packageName,
-        appName: assemblyName,
-        assemblyName,
+        ...common,
+        kind: 'deb',
         version,
         architecture: arch,
-        targetFramework,
-        description,
-        maintainer,
         // Order matters for readability in `dpkg -I`: the runtime first, then the native libraries.
         depends: [runtimeDependency(targetFramework), ...AVALONIA_LINUX_LIBS, ...extra],
-        iconSource: iconFor(formUri, projectDir),
-        stageDir,
         publishOutDir: path.join(stageDir, DEB_APP_DIR.replace(/^\//, ''), packageName),
         outFile: path.join(projectDir, 'publish', debFileName(packageName, version, arch)),
         scriptPath: path.join(work, 'publish.sh')
@@ -173,8 +212,56 @@ function writeStage(plan: PublishPlan): void {
 }
 
 /**
- * The build script the terminal runs. It is written to disk rather than typed into the terminal so a
- * long command line survives, quoting is explicit, and the user can re-run it by hand.
+ * The Windows build script. PowerShell rather than a .cmd so quoting is predictable, and it is invoked as
+ * `powershell -File <script>` so the user's terminal profile cannot change what runs.
+ */
+export function windowsPublishScript(plan: PublishPlan): string {
+    const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
+    const rid = winRid(plan.architecture);
+    return `# Generated by the Avalonia Designer — Publish (Windows). Re-runnable by hand.
+$ErrorActionPreference = 'Stop'
+Set-Location ${q(plan.projectDir)}
+Write-Host "▶ Publishing ${plan.appName} ${plan.version} (${plan.targetFramework}, ${rid})..."
+Remove-Item -Recurse -Force ${q(plan.publishOutDir)} -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force ${q(plan.publishOutDir)} | Out-Null
+# Framework-dependent on purpose: the MSI requires the .NET runtime instead of bundling it
+# (see the packaging notes), exactly like the .deb declares it as a dependency.
+dotnet publish ${q(plan.projectFile)} -c Release -r ${rid} --self-contained false -o ${q(plan.publishOutDir)}
+Write-Host "▶ Building ${path.basename(plan.outFile)}..."
+New-Item -ItemType Directory -Force ${q(path.dirname(plan.outFile))} | Out-Null
+wix build -arch ${plan.architecture} -o ${q(plan.outFile)} ${q(plan.wxsPath ?? '')}
+Write-Host ""
+Write-Host "✓ Built ${plan.outFile}"
+Write-Host "  Install it with the designer's Install button, or:  msiexec /i \"${plan.outFile}\""
+`;
+}
+
+/** The WiX source for a plan (Windows only — the file list is harvested by WiX at build time). */
+export function msiSource(plan: PublishPlan): string {
+    return wixSource({
+        appName: plan.appName,
+        exeName: plan.exeName ?? `${plan.assemblyName}.exe`,
+        version: plan.version,
+        manufacturer: plan.maintainer,
+        description: plan.description,
+        upgradeCode: stableGuid('upgrade:' + plan.packageName),
+        payloadDir: plan.publishOutDir,
+        ...(plan.iconSource ? { iconPath: plan.iconSource } : {}),
+        ...(plan.runtimeMajor ? { runtimeMajor: plan.runtimeMajor } : {}),
+        ...(plan.runtimeUrl ? { runtimeUrl: plan.runtimeUrl } : {})
+    });
+}
+
+/** `wix` is the one external tool the Windows packaging needs. */
+function hasWix(): Promise<boolean> {
+    return new Promise((resolve) => {
+        execFile('wix', ['--version'], { timeout: 20000 }, (err) => resolve(!err));
+    });
+}
+
+/**
+ * The Debian build script the terminal runs. It is written to disk rather than typed into the terminal so
+ * a long command line survives, quoting is explicit, and the user can re-run it by hand.
  */
 export function publishScript(plan: PublishPlan): string {
     const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -202,15 +289,20 @@ echo "  Install it with the designer's Install button, or:  sudo dpkg -i ${q(pla
 
 /** Publish: build the project and package it. Runs the build in a visible terminal. */
 export async function publishApp(formUri: vscode.Uri): Promise<void> {
-    if (process.platform !== 'linux') {
-        void vscode.window.showWarningMessage(LINUX_ONLY);
+    const platform = process.platform;
+    if (platform !== 'linux' && platform !== 'win32') {
+        void vscode.window.showWarningMessage(platform === 'darwin' ? MAC_ONLY : LINUX_ONLY);
         return;
     }
-    const plan = planPublish(formUri);
+    const plan = planPublish(formUri, platform);
     if (!plan) {
         void vscode.window.showWarningMessage(
             'No .csproj / .vbproj was found for this form, so there is nothing to publish. ' +
             'Open a form that belongs to a project (or create one with "Avalonia: New Project").');
+        return;
+    }
+    if (plan.kind === 'msi') {
+        await publishMsi(plan);
         return;
     }
     if (!hasDpkgDeb()) {
@@ -237,10 +329,38 @@ export async function publishApp(formUri: vscode.Uri): Promise<void> {
         `The package will land in ${path.relative(plan.projectDir, plan.outFile)}.`);
 }
 
-/** The .deb Publish would produce, if it exists on disk. */
-export function builtDeb(formUri: vscode.Uri): string | undefined {
+/** The package Publish would produce, if it exists on disk. */
+export function builtPackage(formUri: vscode.Uri): string | undefined {
     const plan = planPublish(formUri);
     return plan && fs.existsSync(plan.outFile) ? plan.outFile : undefined;
+}
+
+/**
+ * Windows publish: generate the WiX source + PowerShell build script, then run it in a terminal. `wix`
+ * itself is checked first, because "not recognised as a command" in a terminal is a poor way to learn
+ * that a one-line install is missing.
+ */
+async function publishMsi(plan: PublishPlan): Promise<void> {
+    if (!(await hasWix())) {
+        const pick = await vscode.window.showErrorMessage(WIX_MISSING_MESSAGE, 'Install WiX toolset…');
+        if (pick === 'Install WiX toolset…') {
+            const t = vscode.window.createTerminal({ name: 'install wix', cwd: plan.projectDir });
+            t.show();
+            t.sendText('dotnet tool install --global wix');
+        }
+        return;
+    }
+    fs.mkdirSync(path.dirname(plan.scriptPath), { recursive: true });
+    fs.writeFileSync(plan.wxsPath ?? path.join(plan.stageDir, 'package.wxs'), msiSource(plan), 'utf8');
+    fs.writeFileSync(plan.scriptPath, windowsPublishScript(plan), 'utf8');
+
+    const terminal = vscode.window.createTerminal({ name: `Publish ${plan.appName}`, cwd: plan.projectDir });
+    terminal.show();
+    // Explicitly through powershell, so the user's default terminal profile cannot change what runs.
+    terminal.sendText(`powershell -NoProfile -ExecutionPolicy Bypass -File "${plan.scriptPath}"`);
+    void vscode.window.showInformationMessage(
+        `Publishing ${plan.appName} ${plan.version} — the build output is in the terminal. ` +
+        `The installer will land in ${path.relative(plan.projectDir, plan.outFile)}.`);
 }
 
 /** How long ago a file was written, for the "the package is older than the sources" hint. */
@@ -270,11 +390,12 @@ function isStale(plan: PublishPlan): boolean {
  * never routed through the extension. Refuses (with an offer to publish) when there is nothing built.
  */
 export async function installApp(formUri: vscode.Uri): Promise<void> {
-    if (process.platform !== 'linux') {
-        void vscode.window.showWarningMessage(LINUX_ONLY);
+    const platform = process.platform;
+    if (platform !== 'linux' && platform !== 'win32') {
+        void vscode.window.showWarningMessage(platform === 'darwin' ? MAC_ONLY : LINUX_ONLY);
         return;
     }
-    const plan = planPublish(formUri);
+    const plan = planPublish(formUri, platform);
     if (!plan) {
         void vscode.window.showWarningMessage(
             'No .csproj / .vbproj was found for this form, so there is nothing to install.');
@@ -295,13 +416,22 @@ export async function installApp(formUri: vscode.Uri): Promise<void> {
         if (pick !== 'Install anyway') return;
     }
 
-    const deb = plan.outFile;
+    const pkg = plan.outFile;
     const terminal = vscode.window.createTerminal({ name: `Install ${plan.appName}`, cwd: plan.projectDir });
     terminal.show();
-    // The password prompt belongs to this terminal: the extension never sees the password. Nothing
-    // else is queued behind it — a second command typed while sudo waits would be eaten as the
-    // password ("Sorry, try again"), so verification is left to the next state query instead.
-    terminal.sendText(`sudo dpkg -i '${deb.replace(/'/g, `'\\''`)}'`);
+    if (plan.kind === 'msi') {
+        // msiexec raises the normal UAC / installer UI, so nothing is queued behind it — the same rule as
+        // sudo on Linux: a second command would land in whatever prompt is waiting.
+        terminal.sendText(`msiexec /i "${pkg}"`);
+        void vscode.window.showInformationMessage(
+            `Installing ${plan.packageName} ${plan.version}. Windows will ask for permission; when it ` +
+            `finishes, ${plan.appName} is in the Start menu and in "Apps & features".`);
+        return;
+    }
+    // The password prompt belongs to this terminal: the extension never sees the password. Nothing else is
+    // queued behind it — a second command typed while sudo waits would be eaten as the password ("Sorry,
+    // try again"), so verification is left to the next state query instead.
+    terminal.sendText(`sudo dpkg -i '${pkg.replace(/'/g, `'\\''`)}'`);
     void vscode.window.showInformationMessage(
         `Installing ${plan.packageName} ${plan.version}. Enter your password in the terminal if it asks; ` +
         `when it finishes, ${plan.packageName} can be started from the application menu. ` +

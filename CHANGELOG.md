@@ -23,12 +23,21 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 - **🚀 Install — install that package on this machine**, so the app runs on its own (application menu or
   by name in a terminal) instead of only inside the designer. It runs `sudo dpkg -i` in a terminal and
   asks for the password **there**; nothing else is ever typed into that terminal while sudo waits.
+- **Windows: the same buttons produce an MSI installer** (WiX), per-machine into `Program Files` with a
+  Start-menu entry, an *Apps & features* entry and a shortcut icon from the form. Installing a newer
+  version **replaces** the previous one (a stable `UpgradeCode` per app makes it an upgrade, not a
+  second app). The .NET runtime is **checked, not bundled**, via a launch condition that says where to
+  download it. Needs the WiX toolset: `dotnet tool install --global wix`.
 - **`avaloniaDesigner.publish.*` settings** — package name, version, maintainer, description and extra
   `Depends`. All optional: empty values fall back to the project file's name and `<Version>`.
 
 ### Notes
-- Both buttons are **Linux-only** (the `.deb` format is Debian's): the extension does not emit them on
-  other platforms, and the actions refuse with an explanation rather than pretending to work.
+- Both buttons are **platform-specific by nature** — a `.deb` on Linux, an MSI on Windows — so the
+  extension emits them on those two platforms and refuses the actions elsewhere (macOS has no package
+  format wired up yet).
+- The Windows MSI path is **generated and unit-tested but not yet built on a real Windows machine** (the
+  development machine is Linux): the WiX source, the version/upgrade identity and the PowerShell build
+  script are asserted, and the `wix build` step itself still needs a Windows run to be confirmed.
 
 ## [0.9.1] - 2026-09-13 · *the `1.0.0-beta.8` build*
 

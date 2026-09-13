@@ -1283,10 +1283,24 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   - **sudo and the terminal: exactly one command is sent.** A second line queued behind `sudo dpkg -i`
     would be eaten as the password ("Sorry, try again") — so verification happens later, from the
     extension (`dpkg -s`), not by typing into a terminal that may be waiting for input.
-  - **Linux-only, and it says so**: the extension omits the two buttons elsewhere and both actions
-    refuse with an explanation (a hidden button that apologises is worse than no button; a visible one
-    that half-works is worse still). T3 covers both cases, including that `designer.js` still finishes
-    wiring when the buttons are absent — a missing element used to abort the whole script silently.
+  - **Windows is the same idea in the other format**: an MSI built by **WiX** (`dotnet tool install
+    --global wix`), per-machine into `Program Files`, harvested by WiX itself (`<Files Include="…\**">`,
+    so the file list does not have to be known before `dotnet publish` runs), with a **stable
+    `UpgradeCode` derived from the package name** — that is what turns "install a newer build" into an
+    upgrade instead of a second entry in *Apps & features*. ProductCode stays auto-generated per build.
+    The runtime is a **launch condition** (`HKLM\SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost`)
+    rather than a bundle, so no runtime is bundled here either; a Burn bundle that would *download* it is
+    the natural next step, and is deliberately not guessed at until it can be tested on Windows.
+  - **MSI version numbers are their own kind of strict**: three numbers, major/minor ≤ 255, build ≤ 65535,
+    no pre-release text — MSI truncates silently, and a truncated version breaks upgrades, so
+    `msiVersion()` clamps and the TFM supplies the expected runtime major.
+  - **Found while testing this (Linux can still test Windows logic):** a project whose `AssemblyName`
+    contains an entity (`Norfolk &amp; Sons`) was read straight out of the .csproj as `Norfolk &amp; Sons`
+    and would have leaked that text into the package metadata — `assemblyNameOf` now decodes XML entities
+    before the value is escaped again on the way into a .desktop file or a WiX product name.
+  - **Untested on Windows, and said so**: the generated .wxs, the version/upgrade identity and the
+    PowerShell build script are unit-tested, but `wix build` itself has not been run — the changelog and
+    the manual state that rather than implying it was verified.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

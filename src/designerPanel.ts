@@ -5919,12 +5919,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             `script-src ${wv.cspSource}`,
             `font-src ${wv.cspSource}`
         ].join('; ');
-        // Publish/Install produce and install a Debian package, so they only exist on Linux — the
-        // extension refuses both actions elsewhere anyway (see projectPublisher), this just avoids
-        // offering a button that can only apologise.
-        const publishButtons = process.platform === 'linux'
-            ? `      <button id="btnPublish" title="Build THIS project in Release and package it as a Debian installer: publish/&lt;name&gt;_&lt;version&gt;_&lt;arch&gt;.deb. The .deb carries no .NET runtime — it depends on it, so apt installs the prerequisite. Copy the .deb to another machine to install the app there.">📦 Publish…</button>
-      <button id="btnInstall" title="Install the .deb that Publish built, on this machine, so the app runs outside VS Code (it appears in the application menu). Your password is asked for in the terminal.">🚀 Install</button>
+        // Publish/Install produce a package for the current platform: a Debian package on Linux, an MSI
+        // on Windows (the two formats the extension can build — see projectPublisher). On macOS they are
+        // not emitted at all, and the actions refuse there rather than half-working.
+        const installerWord = process.platform === 'win32' ? 'MSI' : '.deb';
+        const publishButtons = process.platform === 'linux' || process.platform === 'win32'
+            ? `      <button id="btnPublish" title="Build THIS project in Release and package it as an installer (${installerWord}) in the project's publish/ folder. The package carries no .NET runtime — it requires it, so the prerequisite is installed (Linux: apt) or checked (Windows: the installer says where to get it). Copy the package to another machine to install the app there.">📦 Publish…</button>
+      <button id="btnInstall" title="Install the package that Publish built, on this machine, so the app runs outside VS Code. Linux asks for your password in the terminal; Windows shows its own permission prompt.">🚀 Install</button>
 `
             : '';
         return `<!DOCTYPE html>
