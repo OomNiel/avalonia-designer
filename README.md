@@ -33,8 +33,8 @@ if you deliberately want it. VS Code has no global “show pre-releases” switc
 extension.
 
 **Or from GitHub** — take the `.vsix` from the
-[latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) (the file name carries
-its version — a release can lag the Marketplace, so check it):
+[releases page](https://github.com/OomNiel/avalonia-designer/releases) (newest at the top — the file
+name carries its version, and a GitHub release can lag the Marketplace, so check it):
 
 ```bash
 code --install-extension avalonia-designer-0.9.2.vsix --force

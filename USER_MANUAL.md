@@ -124,7 +124,8 @@ older build — it would install `0.9.0` instead of `0.9.2`. There is no global 
 setting; the choice is made per extension.
 
 **Or from GitHub** — take the `.vsix` from the
-[latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) and install it with:
+[releases page](https://github.com/OomNiel/avalonia-designer/releases) (newest at the top) and
+install it with:
 
 ```bash
 code --install-extension avalonia-designer-<version>.vsix --force

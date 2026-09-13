@@ -6,9 +6,9 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **Two version numbers per release, on purpose.** GitHub tags and releases carry the descriptive
-> name (`v1.0.0-beta.7`), but the Visual Studio Marketplace rejects semver pre-release tags: it accepts
-> only one to four plain numbers. `package.json` therefore holds the Marketplace number — `0.9.0` for
-> `v1.0.0-beta.7` — and each entry below names both. `1.0.0` is reserved for the first stable release,
+> name (`v1.0.0-beta.9`), but the Visual Studio Marketplace rejects semver pre-release tags: it accepts
+> only one to four plain numbers. `package.json` therefore holds the Marketplace number — `0.9.2` for
+> `v1.0.0-beta.9` — and each entry below names both. `1.0.0` is reserved for the first stable release,
 > because a published version number can never be reused.
 
 ## [Unreleased]
