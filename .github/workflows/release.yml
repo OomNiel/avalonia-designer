@@ -35,7 +35,7 @@ jobs:
     name: Package and publish
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Decide up front whether this run can publish, so a missing token is a warning here rather than
       # a failed Publish step at the very end (after the full suite has already run).
       - name: Preflight — is publishing configured?
@@ -49,11 +49,11 @@ jobs:
           else
             echo "can_publish=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
             8.0.x
@@ -83,7 +83,7 @@ jobs:
           else
             npx --yes @vscode/vsce@2.15.0 publish
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vsix
           path: .artifacts/avalonia-designer.vsix
