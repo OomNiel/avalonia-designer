@@ -26,6 +26,9 @@ const VALID_NAME = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 /** globalState key: project paths whose first open should auto-run `dotnet build`. */
 const PENDING_BUILDS_KEY = 'pendingFirstBuilds';
 
+/** globalState key: main-form paths whose FIRST open should land in the Designer. */
+const PENDING_DESIGNER_KEY = 'pendingDesignerForms';
+
 /** Most recently created project path (also persisted in globalState). */
 export let lastProjectPath: string | undefined;
 
@@ -88,6 +91,13 @@ export async function createNewProject(context: vscode.ExtensionContext, forcedL
     const pending = context.globalState.get<string[]>(PENDING_BUILDS_KEY) ?? [];
     await context.globalState.update(PENDING_BUILDS_KEY, [...pending, projectPath]);
 
+    // Remember the main form too, so the first open can land the user IN the Designer instead of an
+    // empty window: an .axaml file opens in the text editor by default (the designer is opt-in), and
+    // the whole point of creating a project is to start designing its form.
+    const pendingForms = context.globalState.get<string[]>(PENDING_DESIGNER_KEY) ?? [];
+    await context.globalState.update(PENDING_DESIGNER_KEY,
+        [...pendingForms, path.join(projectPath, 'MainWindow.axaml')]);
+
     const open = await vscode.window.showInformationMessage(
         `Project "${name}" created in ${projectPath}.`,
         'Open Project'
@@ -138,21 +148,27 @@ export async function openLastProject(context: vscode.ExtensionContext): Promise
  * the first time the project folder is opened. The marker is cleared afterwards.
  */
 export function maybeRunFirstBuild(context: vscode.ExtensionContext): void {
-    const pending = context.globalState.get<string[]>(PENDING_BUILDS_KEY) ?? [];
-    if (pending.length === 0) return;
-
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!root) return;
 
-    const rest = pending.filter((p) => p !== root);
-    if (rest.length === pending.length) return; // this workspace is not a pending project
+    // 1) Build the freshly-created project once.
+    const pending = context.globalState.get<string[]>(PENDING_BUILDS_KEY) ?? [];
+    if (pending.includes(root)) {
+        void context.globalState.update(PENDING_BUILDS_KEY, pending.filter((p) => p !== root) ?? []);
+        const terminal = vscode.window.createTerminal({ name: 'dotnet build', cwd: root });
+        terminal.show();
+        terminal.sendText('dotnet build');
+    }
 
-    // Matched — consume the marker, then build.
-    void context.globalState.update(PENDING_BUILDS_KEY, rest.length ? rest : undefined);
-
-    const terminal = vscode.window.createTerminal({ name: 'dotnet build', cwd: root });
-    terminal.show();
-    terminal.sendText('dotnet build');
+    // 2) Open the new project's main form in the Designer. Done through the existing
+    //    `avaloniaDesigner.openInDesigner` command rather than by importing the editor provider —
+    //    this module must not depend on designerPanel (extension.ts wires the two together).
+    const forms = context.globalState.get<string[]>(PENDING_DESIGNER_KEY) ?? [];
+    const form = forms.find((f) => f.startsWith(root + path.sep));
+    if (form) {
+        void context.globalState.update(PENDING_DESIGNER_KEY, forms.filter((f) => f !== form) ?? []);
+        void vscode.commands.executeCommand('avaloniaDesigner.openInDesigner', vscode.Uri.file(form));
+    }
 }
 
 // ---------------------------------------------------------------------------

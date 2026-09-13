@@ -39,10 +39,9 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         log(`views registered (${ProjectViewProvider.viewType})`);
 
-        // Auto-build a freshly-created project the first time its folder is opened:
-        // check now (in case the folder is already loaded) and again if the workspace
-        // folders load slightly after activation.
-        maybeRunFirstBuild(context);
+        // Auto-build a freshly-created project the first time its folder is opened, and open its main
+        // form in the Designer. Checked again when the workspace folders arrive slightly after
+        // activation.
         context.subscriptions.push(
             vscode.workspace.onDidChangeWorkspaceFolders(() => maybeRunFirstBuild(context))
         );
@@ -113,6 +112,9 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.commands.registerCommand('avaloniaDesigner.openDataSet', (uri?: vscode.Uri) => openDataSet(uri))
         );
         log('activate complete');
+        // AFTER the commands are registered: the first-open hook opens the new project's form in the
+        // Designer by executing `avaloniaDesigner.openInDesigner`, which must exist by then.
+        maybeRunFirstBuild(context);
     } catch (err) {
         logger.logError(err);
         logger.log('activate FAILED — views/editors may not be registered');

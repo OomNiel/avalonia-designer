@@ -1898,7 +1898,33 @@
         return head;
     }
 
+    /** Which control the panel is currently showing, so a rebuild for the SAME control can keep the
+     *  user's scroll position while a NEW selection starts at the top. */
+    let propsShownFor = '';
+    const propsIdentityOf = (msg) => (Array.isArray(msg && msg.names) && msg.names.length
+        ? msg.names.join('\u0000')
+        : String((msg && msg.name) || ''));
+
+    /**
+     * Rebuilds the Properties panel while preserving the scroll position when it rebuilds for the same
+     * control. The panel is rebuilt wholesale on every property change, and TWO things used to move it:
+     * the rebuilt content started at the top, and the focus restore called `focus()`, which makes the
+     * browser scroll the focused input into view — so the property just edited ended up pinned to the
+     * bottom edge of the panel. The input is now focused with `preventScroll` and the scroll offset is
+     * saved and restored around the rebuild.
+     */
     function renderProperties(msg) {
+        const id = propsIdentityOf(msg);
+        const keep = id === propsShownFor ? els.propsBody.scrollTop : 0;
+        try {
+            renderPropertiesInner(msg);
+        } finally {
+            propsShownFor = id;
+            els.propsBody.scrollTop = keep;
+        }
+    }
+
+    function renderPropertiesInner(msg) {
         // Every property edit triggers a properties refresh that rebuilds the rows;
         // remember which field the user is editing so we can restore focus + caret.
         let focusKey = null;
@@ -2236,7 +2262,9 @@
             row.appendChild(control);
             els.propsBody.appendChild(row);
             if (focusKey === p.key && focusTarget) {
-                focusTarget.focus();
+                // preventScroll: without it the browser scrolls the focused input into view, which
+                // moved the panel on every property change (the edited row landed at the bottom edge).
+                focusTarget.focus({ preventScroll: true });
                 try { focusTarget.setSelectionRange(focusCaret, focusCaret); } catch (err) { /* not focusable */ }
             }
         }

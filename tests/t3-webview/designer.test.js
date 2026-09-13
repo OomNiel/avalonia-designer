@@ -1913,5 +1913,42 @@ module.exports = async (t) => {
         t.ok(/const cssEscape =/.test(js), 'escape', 'the webview has its own escape helper');
     }
 
+    // --- a property change must NOT move the Properties panel ---
+    // (user report: after setting a property the panel scrolled so the edited row was the last one
+    // visible). Two causes: the panel is rebuilt wholesale on every change, and the caret restore
+    // called focus() — which makes the browser scroll the focused input into view.
+    {
+        const s4 = setup();
+        s4.msg(s4.frame([
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true },
+            { name: 'btn1', type: 'Button', x: 100, y: 50, w: 120, h: 36 }
+        ]));
+        const body = s4.$('propsBody');
+        const rows = (name) => [
+            { key: '__name__', label: 'Name', kind: 'text', value: name },
+            { key: 'Width', label: 'Width', kind: 'number', value: '120' },
+            { key: 'Height', label: 'Height', kind: 'number', value: '36' }
+        ];
+        const send = (name) => s4.msg({
+            type: 'properties', name,
+            properties: rows(name), info: null, tabItems: [], listItems: []
+        });
+
+        send('btn1');
+        t.ok(body.children.length > 0, 'props-scroll', 'the panel rendered the rows');
+
+        body.scrollTop = 40;
+        send('btn1');   // a property change re-sends the whole panel for the SAME control
+        t.equal(body.scrollTop, 40, 'props-scroll',
+            'a rebuild for the same control keeps the scroll position');
+
+        send('btn2');   // a different control
+        t.equal(body.scrollTop, 0, 'props-scroll', 'a new selection starts at the top');
+
+        const js = fs.readFileSync(DESIGNER_JS, 'utf8');
+        t.ok(/focus\(\{ preventScroll: true \}\)/.test(js), 'props-scroll',
+            'the caret restore focuses with preventScroll');
+    }
+
     t.note('T3 done');
 };
