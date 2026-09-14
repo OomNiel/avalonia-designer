@@ -26,6 +26,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { assessHardware, readHardwareFacts, type AssistantConfig } from './assistant';
 import { freePort, isMissingExecutable, runCmd } from './hostClient';
+import { log, logError } from './logger';
 import {
     MODEL_FOLDER,
     MODEL_SPECS,
@@ -116,7 +117,7 @@ class ModelServer {
     private endpoint?: string;
     private starting?: Promise<string>;
 
-    constructor(private readonly context: vscode.ExtensionContext) {}
+    constructor(private readonly context: vscode.ExtensionContext) { }
 
     current(): RunningServer | undefined {
         if (!this.endpoint || !this.proc || this.proc.exitCode !== null) return undefined;
@@ -156,9 +157,11 @@ class ModelServer {
         let stdout = '';
         child.stdout?.on('data', (d: Buffer) => {
             stdout += d.toString();
-            console.log('[ModelHost]', d.toString().trim());
+            // Straight into View → Output → "Avalonia Designer": the first thing to look at when the
+            // runtime will not start, and the only place the model's own load messages appear.
+            log(`ModelHost: ${d.toString().trim()}`);
         });
-        child.stderr?.on('data', (d: Buffer) => console.error('[ModelHost]', d.toString().trim()));
+        child.stderr?.on('data', (d: Buffer) => logError(`ModelHost: ${d.toString().trim()}`));
 
         await new Promise<void>((resolve, reject) => {
             const timer = setTimeout(() => reject(new Error('The model runtime did not start within 60 s.')), 60000);
@@ -189,7 +192,7 @@ class ModelServer {
         progress?: vscode.Progress<{ message?: string }>
     ): Promise<void> {
         const deadline = Date.now() + LOAD_TIMEOUT_MS;
-        for (;;) {
+        for (; ;) {
             if (child.exitCode !== null) {
                 throw new Error('The model runtime stopped while loading — see the "Avalonia Designer" output for the reason.');
             }
@@ -216,7 +219,7 @@ class ModelServer {
                 /* already gone */
             }
         }
-        if (wasRunning) console.log('[ModelHost] stopped');
+        if (wasRunning) log('ModelHost: stopped');
     }
 
     dispose(): void {
