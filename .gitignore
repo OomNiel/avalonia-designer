@@ -9,9 +9,14 @@ tests/out/
 tests/node_modules/
 tests/package-lock.json
 
-# C# Previewer Host build output
+# C# Previewer Host build output. NOTE: the `host/*/bin` form matches ONE level deep only — ModelHost
+# is a second project UNDER host/, and `git add -A` happily committed its 99 MB of llama.cpp natives
+# until these nested patterns were added (2026-09-14). The same mistake hit `.vscodeignore`; see
+# NOTES.md §92.
 host/bin/
 host/obj/
+host/**/bin/
+host/**/obj/
 
 # VS Code extension packaging
 *.vsix

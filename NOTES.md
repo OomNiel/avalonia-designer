@@ -1486,14 +1486,19 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     `HttpListenerContext` has no `RequestAborted`; and the executor is constructed from an `LLamaContext`
     created by `weights.CreateContext(parameters)`. `dotnet build` is the arbiter, and the lesson is the
     same one as in §88: for a C# API, read the package's XML docs or compile it, never recite it.
-  - **Two packaging traps, both invisible until a second project lives in `host/`.** (1)
+  - **Three traps, all invisible until a second project lives in `host/`.** (1)
     `PreviewerHost.csproj` globs `**/*.cs` from its own folder, so it swallowed `ModelHost/Program.cs` *and*
     the sidecar's generated `obj/` files — two entry points and duplicate assembly attributes. Fixed with
     `<Compile Remove="ModelHost/**" />` (+ `None Remove`). (2) `.vscodeignore` had `host/obj/**` and
     `host/bin/**`, which match one level deep only: the sidecar's own `bin/` (99 MB of llama.cpp for every
     platform, regenerated on the user's machine anyway) would have travelled in the VSIX. Fixed with
     `host/**/obj/**` and `host/**/bin/**`, and pinned by tests — including "no `.csproj` may be ignored",
-    because the runtime being *source* is the whole design.
+    because the runtime being *source* is the whole design. (3) The same one-level-deep assumption in
+    **`.gitignore`**: `host/bin/` and `host/obj/` do not match `host/ModelHost/bin/`, so `git add -A`
+    committed 132 files of build output (18 MiB packed, mostly llama.cpp's natives) into the repository.
+    Untracked, ignored with `host/**/bin/` + `host/**/obj/`, and pinned by two more tests — the lesson
+    generalises: every pattern that describes "the build output" has to be written for a *nested* project
+    as soon as one exists.
   - **A total timeout would have broken the feature it was written for.** `chat()` originally aborted after
     `timeoutSeconds` in total. A 3B model on a CPU produces ~10 tokens/s, so a 900-token method takes
     60–110 s and would have been killed *while working perfectly*. The timeout is now an **inactivity**

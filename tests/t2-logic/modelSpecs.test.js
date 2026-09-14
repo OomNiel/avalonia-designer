@@ -234,6 +234,12 @@ module.exports = async (t) => {
         t.ok(!/^host\/ModelHost/m.test(ignore), 'packaging', 'and the sidecar sources do ship');
 
         t.ok(exists('host/ModelHost/ModelHost.csproj'), 'packaging', 'the sidecar project ships with the extension');
+
+        // (c) The same one-level-deep trap in .gitignore: the sidecar's build output (99 MB of natives)
+        //     was committed by `git add -A` before the nested patterns existed.
+        const gitignore = read('.gitignore');
+        t.ok(/^host\/\*\*\/bin\/$/m.test(gitignore), 'packaging', 'git ignores nested host build output');
+        t.ok(/^host\/\*\*\/obj\/$/m.test(gitignore), 'packaging', 'and its obj/');
         const csproj = read('host/ModelHost/ModelHost.csproj');
         t.ok(/LLamaSharp\.Backend\.Cpu/.test(csproj), 'packaging',
             'it uses the CPU backend: NuGet resolves the right native library per platform');
