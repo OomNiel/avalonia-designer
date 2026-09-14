@@ -17,6 +17,23 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-09-14)
+
+- **The local AI assist shipped in two tiers**, written up in `NOTES.md` §90–§99: tier 1 talks to any
+  OpenAI-compatible server on the machine (LM Studio, Ollama, your own `llama-server`); tier 2 brings its
+  own — `host/ModelHost/` is a C# server built on the user's machine with the .NET SDK, so one VSIX fits
+  every platform, and the weights are downloaded once with a SHA-256 check. Both are **off by default**
+  (`avaloniaDesigner.assistant.backend`).
+- **Versions 0.9.5 – 0.9.13 are local builds only.** The Marketplace still carries **0.9.4** (GitHub
+  release `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F
+  (numbers-only version, both GitHub release flags, no BETA suffix).
+- **Gotcha that cost the most time:** `files.autoSave = onFocusChange` + `editor.formatOnSave` in the
+  user's settings save *every* dirty buffer when focus moves (any terminal command does), which silently
+  reverts edits made to files that are open in the editor. Verify edits on disk and run `tsc`/the suite
+  before believing a multi-file change; put new tests in files that are not open (NOTES.md §99).
+- Also: a VSIX installed while a window is open changes **nothing** until that window reloads — the status
+  command now prints the running version so that is never guesswork.
+
 ## How to continue
 
 1. Build/run: `npm install` → `npm run compile` → `dotnet build host/PreviewerHost.csproj` → F5.

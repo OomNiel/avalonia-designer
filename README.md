@@ -183,7 +183,7 @@ letting you find out the hard way.
 
 ## 11. Engineering discipline
 
-- **~3,260 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~3,360 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release
