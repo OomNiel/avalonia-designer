@@ -185,18 +185,22 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `a00d6205a199d8b5285f6f9ec65e55afbd7e980cf3cc36078732ea52d6eb76ca` — uploaded through the publisher
 > portal; the gallery's stored `VsixSha256` matches it byte for byte.
 >
-> **`0.9.4` (2026-09-14) — GitHub release done, portal upload pending.** Fifth listing version, tagged
+> **`0.9.4` (2026-09-14) — LIVE, hash-verified; its GitHub release is *Latest*.** Fifth listing version, tagged
 > `v1.0.0-beta.11`, and the first release with the new artwork: the extension icon is the new badge
 > with the black field outside its blue ring removed, and the Activity Bar glyph is a white version of
 > the same badge. Both are 128x128 transparent PNGs, both keep their file names, so **the manifest is
 > unchanged** (`Grumpy.png` / `GrumpyWhite.png` — same fields, new pixels). Plain VSIX —
 > `avalonia-designer-0.9.4.vsix`, sha256
 > `7bc26f839116b438268bd305b1c1449e2f02653f527becda70dfa85eb1506379` — and the `0.9.3` file was deleted
-> once this build succeeded.
+> once this build succeeded. **Uploaded through the publisher portal:** the gallery's stored
+> `VsixSha256` equals that same hash byte for byte, and `flags: 950` (which excludes non-validated
+> versions) already returned `0.9.4` when it was checked — no *Verifying* window this time, so VS Code
+> could install it immediately.
 >
 > **GitHub `v1.0.0-beta.11` is created** with that VSIX attached; re-downloading the asset and
-> `sha256sum`-ing it matched the local file, so the release carries exactly the build that goes to the
-> Marketplace (as `beta.8`/`beta.9` did). It is **not** marked pre-release and is flagged **Latest** —
+> `sha256sum`-ing it matched the local file, so the release carries exactly the build that is live on
+> the Marketplace (as `beta.8`/`beta.9` did). Its title no longer carries the `(BETA)` suffix — from
+> `beta.11` on the suffix is gone, since the release is a normal one. It is **not** marked pre-release and is flagged **Latest** —
 > the first release in the repo's history that is (all nine earlier ones are pre-release), so the
 > repository page now shows a normal latest release. **The tag history has a gap:** `0.9.3` went out through the
 > portal without ever being tagged, so the releases run `v1.0.0-beta.9` → `v1.0.0-beta.11` — the
@@ -251,8 +255,10 @@ The response also proves *what* was published, which is worth checking every tim
    the Marketplace shows and compares. Never reuse a number — the Marketplace rejects the upload.
 2. Create the GitHub release with the descriptive tag —
    `git tag -a v1.0.0-beta.11 -m "<one-line summary>"`, push the tag, then
-   `gh release create v1.0.0-beta.11 --title "Avalonia Designer for VS Code v1.0.0-beta.11 (BETA)"
-   --notes-file <file> --latest avalonia-designer-<version>.vsix`. Notes house style: an intro block
+   `gh release create v1.0.0-beta.11 --title "Avalonia Designer for VS Code v1.0.0-beta.11"
+   --notes-file <file> --latest avalonia-designer-<version>.vsix` — **no `(BETA)` in the title** from
+   `beta.11` on (the `-beta.N` tag already says what the build is; the suffix only made a *Latest*
+   release look like a draft). Notes house style: an intro block
    ("Install:" + the `sha256` + a one-paragraph summary + `Test suite: N passed / 0 failed /
    0 skipped.`), then `### Added / ### Changed / ### Fixed / ### Notes`. **From `v1.0.0-beta.11` on,
    set both flags explicitly:** `prerelease` and `make_latest` are *separate* fields, so clearing
