@@ -13,6 +13,31 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.9.6] - 2026-09-14 · *the AI assist brings its own model*
+
+### Added
+- **The AI assist can run its own local model — no server, no account, no Copilot required.** *AI: Set
+  Up Local Model…* offers code-specialised models (Qwen2.5-Coder 3B at 2.1 GB, 7B at 4.7 GB), or a
+  `.gguf` file you already have, or one you point it at by address. The download shows progress, can be
+  cancelled, is verified against the publisher's SHA-256 and is stored in the extension's global
+  storage — once, for all projects. *AI: Status and Hardware Check* reports the runtime, the model file
+  and the server; *AI: Stop the Local Model* frees the RAM.
+- **The runtime ships as source and is built on your machine.** `host/ModelHost/` is a small C# HTTP
+  server that speaks the OpenAI API the client already uses, so one VSIX covers every platform and
+  architecture: NuGet picks the right llama.cpp binaries for the current runtime identifier during the
+  build the extension already performs for its design previewer. The bundled backend therefore needs no
+  more than the .NET SDK the designer requires, and a 2 GB model never has to travel inside a VSIX.
+
+### Changed
+- **The request timeout is an inactivity budget, not a total one.** The clock restarts with every token,
+  so a slow CPU writing a long method is allowed to take minutes, while a server that has stopped talking
+  is caught in seconds. A total budget would have cut off exactly the slow-but-busy case this feature is
+  for.
+
+## [0.9.5] - 2026-09-14 · *the local AI assist (tier 1)*
+
 ### Added
 - **✨ AI assist (tier 1) — a local model for the fixes a rule cannot express.** Two flows: *AI:
   Implement in Function…* (rewrite the method the caret is in, described in a dialog) and *✨ Fix with

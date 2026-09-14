@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.4",
+    "version": "0.9.6",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -116,6 +116,18 @@
                 "title": "AI: Status and Hardware Check",
                 "category": "Avalonia",
                 "icon": "$(pulse)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.setupModel",
+                "title": "AI: Set Up Local Model…",
+                "category": "Avalonia",
+                "icon": "$(cloud-download)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.stopModel",
+                "title": "AI: Stop the Local Model",
+                "category": "Avalonia",
+                "icon": "$(debug-stop)"
             }
         ],
         "viewsContainers": {
@@ -217,6 +229,12 @@
                 },
                 {
                     "command": "avaloniaDesigner.assistant.status"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.setupModel"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.stopModel"
                 }
             ],
             "editor/context": [
@@ -244,14 +262,28 @@
                     "type": "string",
                     "enum": [
                         "off",
-                        "external"
+                        "external",
+                        "bundled"
                     ],
                     "enumDescriptions": [
                         "Off — nothing is sent anywhere (default).",
-                        "Use an OpenAI-compatible server on this machine (LM Studio, Ollama, llama.cpp)."
+                        "Use an OpenAI-compatible server on this machine (LM Studio, Ollama, llama.cpp).",
+                        "Bundle it: the extension builds a small local model server and uses a model it downloads once (no other AI needed)."
                     ],
                     "default": "off",
-                    "markdownDescription": "Where the AI assist gets its model. A bundled runtime — so users need no server at all — is the next step; see `NOTES.md` §90."
+                    "markdownDescription": "Where the AI assist gets its model. `bundled` needs nothing installed except the .NET SDK the designer already requires; run **AI: Set Up Local Model…** first."
+                },
+                "avaloniaDesigner.assistant.modelPath": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "The `.gguf` file the bundled runtime loads, set by **AI: Set Up Local Model…**. A downloaded model lives in the extension's global storage."
+                },
+                "avaloniaDesigner.assistant.threads": {
+                    "type": "number",
+                    "default": 0,
+                    "minimum": 0,
+                    "maximum": 32,
+                    "description": "CPU threads for the bundled runtime. 0 picks automatically (one less than the machine has, capped at 8) — more than the physical cores makes generation slower, not faster."
                 },
                 "avaloniaDesigner.assistant.endpoint": {
                     "type": "string",
@@ -268,7 +300,7 @@
                     "default": 60,
                     "minimum": 5,
                     "maximum": 600,
-                    "description": "Give up on an answer after this long. Inference in system RAM is slow: 10 s is optimistic for a 3B model, 30 s is normal on an older CPU."
+                    "description": "How long to wait without any output before giving up — the clock restarts with every token, so a slow CPU is fine and a stalled server is caught. Inference in system RAM is slow: 10 s is optimistic for a 3B model, 30 s is normal on an older CPU."
                 },
                 "avaloniaDesigner.assistant.maxTokens": {
                     "type": "number",

@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3136 passed, 0 failed / 0 skipped** (2026-09-14, ~41 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3259 passed, 0 failed / 0 skipped** (2026-09-14, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1464,6 +1464,47 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     (streaming SSE, a `stream`-ignoring server, HTTP 500 with a body, a dead port, the model list) and
     cover the pure parts — config clamping, the hardware gate, prompts, extraction, span maths, and the
     manifest wiring.
+- §92 **Tier 2: the AI assist brings its own model (2026-09-14).** §90 left the one gap a developer with
+  no AI at all still had — a model server. Closing it turned out to be the same trick the designer already
+  uses for its previewer: **ship source, build it on the user's machine.** `host/ModelHost/` is a small
+  C# HTTP server (LLamaSharp 0.27 + `LLamaSharp.Backend.Cpu`) that speaks the OpenAI API
+  `src/assistant.ts` already talks, so the client needed no knowledge of it — `backend: 'bundled'` only
+  changes where `endpoint` comes from. The extension builds it on first use with the .NET SDK, and NuGet
+  resolves the right llama.cpp binaries for the current runtime identifier *during that build*, which is
+  what lets one VSIX cover Linux/Windows/macOS on x64 and arm64: no `RuntimeIdentifier`, no per-platform
+  package, no rebuild when VS Code's Node ABI moves. The weights are the other half — a Q4 3B model is
+  2.1 GB — so they are downloaded once into `globalStorage`, with progress, cancellation, and a
+  **SHA-256 check against the publisher's own hash** (`/api/models/<repo>?blobs=true` gives it, and the
+  file is only renamed out of `.part` once it matches). Verified facts baked into the registry:
+  `qwen2.5-coder-3b-instruct-q4_k_m.gguf` = 2 104 932 800 B / `724fb256…30b7`, `…-7b-…-q4_k_m.gguf` =
+  4 683 073 536 B / `509287f7…4d3c`.
+  - **The LLamaSharp API is not what I remembered, and the package says so itself.** Reading
+    `~/.nuget/packages/llamasharp/0.27.0/lib/net8.0/LLamaSharp.xml` (the compiler-verified member list)
+    before trusting memory caught four wrong guesses: the session type is **`LLama.ChatSession`** (not
+    `LLamaChatSession`) and takes an executor plus `AddSystemMessage`/`AddUserMessage`; **`InferenceParams`
+    has no `Temperature`** (sampling moved to `SamplingPipeline` — `DefaultSamplingPipeline.Temperature`);
+    `HttpListenerContext` has no `RequestAborted`; and the executor is constructed from an `LLamaContext`
+    created by `weights.CreateContext(parameters)`. `dotnet build` is the arbiter, and the lesson is the
+    same one as in §88: for a C# API, read the package's XML docs or compile it, never recite it.
+  - **Two packaging traps, both invisible until a second project lives in `host/`.** (1)
+    `PreviewerHost.csproj` globs `**/*.cs` from its own folder, so it swallowed `ModelHost/Program.cs` *and*
+    the sidecar's generated `obj/` files — two entry points and duplicate assembly attributes. Fixed with
+    `<Compile Remove="ModelHost/**" />` (+ `None Remove`). (2) `.vscodeignore` had `host/obj/**` and
+    `host/bin/**`, which match one level deep only: the sidecar's own `bin/` (99 MB of llama.cpp for every
+    platform, regenerated on the user's machine anyway) would have travelled in the VSIX. Fixed with
+    `host/**/obj/**` and `host/**/bin/**`, and pinned by tests — including "no `.csproj` may be ignored",
+    because the runtime being *source* is the whole design.
+  - **A total timeout would have broken the feature it was written for.** `chat()` originally aborted after
+    `timeoutSeconds` in total. A 3B model on a CPU produces ~10 tokens/s, so a 900-token method takes
+    60–110 s and would have been killed *while working perfectly*. The timeout is now an **inactivity**
+    watchdog re-armed on every chunk: slow-but-alive is fine, silent is caught in seconds. Two tests drive
+    a real server to prove both halves (a token every 300 ms past a 1 s budget must succeed; headers then
+    silence must fail).
+  - **What is deliberately NOT verified here:** that a 3B model actually writes good C#/VB.NET on this
+    machine, how many tokens/s it really produces, and whether `/health` behaves on Windows. Running the
+    sidecar or downloading 2 GB would be automated app testing, which is off the table — the user runs it,
+    the extension's own *AI: Status and Hardware Check* is the diagnostic, and the runtime reports a load
+    failure in the health payload (503 with the message) instead of dying silently.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

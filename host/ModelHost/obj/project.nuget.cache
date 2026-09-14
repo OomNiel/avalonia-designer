@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "dgSpecHash": "Qq++6MAsEGU=",
+  "success": true,
+  "projectFilePath": "/home/niel/Projekte/Avalonia/DesignerCS_Ext/avalonia-designer-extension/host/ModelHost/ModelHost.csproj",
+  "expectedPackageFiles": [
+    "/home/niel/.nuget/packages/communitytoolkit.highperformance/8.4.2/communitytoolkit.highperformance.8.4.2.nupkg.sha512",
+    "/home/niel/.nuget/packages/llamasharp/0.27.0/llamasharp.0.27.0.nupkg.sha512",
+    "/home/niel/.nuget/packages/llamasharp.backend.cpu/0.27.0/llamasharp.backend.cpu.0.27.0.nupkg.sha512",
+    "/home/niel/.nuget/packages/microsoft.bcl.asyncinterfaces/10.0.5/microsoft.bcl.asyncinterfaces.10.0.5.nupkg.sha512",
+    "/home/niel/.nuget/packages/microsoft.bcl.memory/10.0.5/microsoft.bcl.memory.10.0.5.nupkg.sha512",
+    "/home/niel/.nuget/packages/microsoft.extensions.ai.abstractions/10.4.1/microsoft.extensions.ai.abstractions.10.4.1.nupkg.sha512",
+    "/home/niel/.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/10.0.5/microsoft.extensions.dependencyinjection.abstractions.10.0.5.nupkg.sha512",
+    "/home/niel/.nuget/packages/microsoft.extensions.logging.abstractions/10.0.5/microsoft.extensions.logging.abstractions.10.0.5.nupkg.sha512",
+    "/home/niel/.nuget/packages/system.diagnostics.diagnosticsource/10.0.5/system.diagnostics.diagnosticsource.10.0.5.nupkg.sha512",
+    "/home/niel/.nuget/packages/system.interactive.async/7.0.0/system.interactive.async.7.0.0.nupkg.sha512",
+    "/home/niel/.nuget/packages/system.io.pipelines/10.0.4/system.io.pipelines.10.0.4.nupkg.sha512",
+    "/home/niel/.nuget/packages/system.linq.async/7.0.0/system.linq.async.7.0.0.nupkg.sha512",
+    "/home/niel/.nuget/packages/system.linq.asyncenumerable/10.0.2/system.linq.asyncenumerable.10.0.2.nupkg.sha512",
+    "/home/niel/.nuget/packages/system.numerics.tensors/10.0.5/system.numerics.tensors.10.0.5.nupkg.sha512",
+    "/home/niel/.nuget/packages/system.text.encodings.web/10.0.4/system.text.encodings.web.10.0.4.nupkg.sha512",
+    "/home/niel/.nuget/packages/system.text.json/10.0.4/system.text.json.10.0.4.nupkg.sha512",
+    "/home/niel/.nuget/packages/microsoft.netcore.app.host.linux-x64/8.0.31/microsoft.netcore.app.host.linux-x64.8.0.31.nupkg.sha512"
+  ],
+  "logs": []
+}

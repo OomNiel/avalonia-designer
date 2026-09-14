@@ -10,6 +10,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- ModelHost is a SECOND project inside this folder (the bundled local model server, see
+         NOTES.md §92). The SDK's default `**/*.cs` glob would otherwise compile its Program.cs and
+         its generated obj/ files into this one too — two entry points, duplicate assembly
+         attributes. Keep the two hosts strictly apart. -->
+    <Compile Remove="ModelHost/**" />
+    <None Remove="ModelHost/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Avalonia 12.1.1 — the SAME version generated projects target (single-version stack, 2026-09-07). -->
     <PackageReference Include="Avalonia" Version="12.1.1" />
     <PackageReference Include="Avalonia.Headless" Version="12.1.1" />

@@ -27,16 +27,21 @@
 import * as fs from 'fs';
 import * as os from 'os';
 
-/** How the assistant gets its model. `bundled` arrives with the Tier 2 runtime (NOTES.md §90). */
-export type AssistantBackend = 'off' | 'external';
+/** How the assistant gets its model. `bundled` = the extension builds and runs its own local server. */
+export type AssistantBackend = 'off' | 'external' | 'bundled';
 
 /** The settings shape after normalisation (see `normalizeAssistantConfig`). */
 export interface AssistantConfig {
     backend: AssistantBackend;
-    /** Base URL of an OpenAI-compatible API, e.g. `http://127.0.0.1:1234/v1`. */
+    /** Base URL of an OpenAI-compatible API, e.g. `http://127.0.0.1:1234/v1`. For `bundled` the
+     *  runtime fills this in at request time — the request shape is identical either way. */
     endpoint: string;
     /** Model id to request. Empty = let the server pick (`/models` order). */
     model: string;
+    /** `.gguf` file for the bundled runtime (set by "AI: Set Up Local Model…"). */
+    modelPath: string;
+    /** Threads for the bundled runtime; 0 = choose automatically. */
+    threads: number;
     timeoutSeconds: number;
     maxTokens: number;
     temperature: number;
@@ -47,6 +52,8 @@ export interface RawAssistantSettings {
     backend?: unknown;
     endpoint?: unknown;
     model?: unknown;
+    modelPath?: unknown;
+    threads?: unknown;
     timeoutSeconds?: unknown;
     maxTokens?: unknown;
     temperature?: unknown;
@@ -84,20 +91,26 @@ export function normalizeEndpoint(endpoint: string): string {
  * UI and the tests all funnel through here, so "what does backend X mean" has one answer.
  */
 export function normalizeAssistantConfig(raw: RawAssistantSettings): AssistantConfig {
-    const backend: AssistantBackend = raw.backend === 'external' ? 'external' : 'off';
+    const backend: AssistantBackend =
+        raw.backend === 'external' ? 'external' : raw.backend === 'bundled' ? 'bundled' : 'off';
     return {
         backend,
         endpoint: normalizeEndpoint(typeof raw.endpoint === 'string' ? raw.endpoint : DEFAULT_ENDPOINT),
         model: typeof raw.model === 'string' ? raw.model.trim() : '',
+        modelPath: typeof raw.modelPath === 'string' ? raw.modelPath.trim() : '',
+        threads: num(raw.threads, 0, 0, 32),
         timeoutSeconds: num(raw.timeoutSeconds, 60, 5, 600),
         maxTokens: num(raw.maxTokens, 900, 64, 8192),
         temperature: num(raw.temperature, 0.2, 0, 1)
     };
 }
 
-/** True when the user has switched the feature on *and* there is somewhere to send requests. */
+/** True when the user has switched the feature on *and* there is somewhere to send requests: either a
+ *  server they pointed at, or the bundled runtime that fills the endpoint in itself. */
 export function assistantEnabled(cfg: AssistantConfig): boolean {
-    return cfg.backend !== 'off' && cfg.endpoint.length > 0;
+    if (cfg.backend === 'off') return false;
+    if (cfg.backend === 'bundled') return true;
+    return cfg.endpoint.length > 0;
 }
 
 // ---------------- hardware ----------------
@@ -295,6 +308,11 @@ export interface ChatOptions {
 /**
  * Sends a chat request and returns the answer text. Streams when the server supports it (every local
  * runtime does) and falls back to a single JSON read when it does not.
+ *
+ * `timeoutSeconds` is an **inactivity** budget, not a total one: the watchdog is re-armed every time
+ * data arrives, so a 3B model on a CPU taking two minutes for a long method is fine while a server that
+ * has stopped talking is caught in seconds. A total budget would have killed exactly the slow-but-busy
+ * case this feature exists for.
  */
 export async function chat(
     cfg: AssistantConfig,
@@ -303,7 +321,12 @@ export async function chat(
 ): Promise<string> {
     const doFetch = opts.fetchImpl ?? defaultFetch();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), cfg.timeoutSeconds * 1000);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const armWatchdog = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => controller.abort(), cfg.timeoutSeconds * 1000);
+    };
+    armWatchdog();
     const onAbort = () => controller.abort();
     opts.signal?.addEventListener('abort', onAbort);
     try {
@@ -333,9 +356,10 @@ export async function chat(
         let buffer = '';
         let raw = '';
         let text = '';
-        for (;;) {
+        for (; ;) {
             const { done, value } = await reader.read();
             if (done) break;
+            armWatchdog(); // data arrived: the server is alive, whatever its speed
             const chunk = decoder.decode(value, { stream: true });
             raw += chunk;
             buffer += chunk;
@@ -368,7 +392,7 @@ export async function chat(
     } catch (err) {
         throw new Error(describeError(err));
     } finally {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         opts.signal?.removeEventListener('abort', onAbort);
     }
 }

@@ -28,6 +28,7 @@ import {
     type ChatMessage
 } from './assistant';
 import { methodsIn, type MethodSpan } from './codeBehindCheck';
+import { bundledStatusLines, ensureBundledEndpoint } from './modelRuntime';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -38,6 +39,8 @@ export function assistantConfig(): AssistantConfig {
         backend: cfg.get<string>('backend', 'off'),
         endpoint: cfg.get<string>('endpoint', ''),
         model: cfg.get<string>('model', ''),
+        modelPath: cfg.get<string>('modelPath', ''),
+        threads: cfg.get<number>('threads', 0),
         timeoutSeconds: cfg.get<number>('timeoutSeconds', 60),
         maxTokens: cfg.get<number>('maxTokens', 900),
         temperature: cfg.get<number>('temperature', 0.2)
@@ -110,6 +113,28 @@ function summarise(code: string): string {
 }
 
 /**
+ * The configuration to actually send with. For `bundled` that means starting the extension's own model
+ * server first — it speaks the same OpenAI-compatible API, so nothing downstream knows the difference.
+ * Returns undefined when the runtime cannot start; the reason has already been shown by then.
+ */
+async function effectiveConfig(cfg: AssistantConfig): Promise<AssistantConfig | undefined> {
+    if (cfg.backend !== 'bundled') return cfg;
+    try {
+        return { ...cfg, endpoint: await ensureBundledEndpoint(cfg) };
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const pick = await vscode.window.showErrorMessage(
+            `The local model could not start: ${message}`,
+            'Set up model',
+            'Show status'
+        );
+        if (pick === 'Set up model') await vscode.commands.executeCommand('avaloniaDesigner.assistant.setupModel');
+        if (pick === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
+        return undefined;
+    }
+}
+
+/**
  * Asks the model for a replacement method, shows it as a diff, and applies it only when the developer
  * says so. Returns a short summary, or undefined when the attempt was cancelled or failed.
  */
@@ -117,9 +142,9 @@ async function proposeMethod(
     document: vscode.TextDocument,
     span: MethodSpan,
     messages: ChatMessage[],
-    what: string
+    what: string,
+    cfg: AssistantConfig
 ): Promise<string | undefined> {
-    const cfg = assistantConfig();
     let chunks = 0;
     let answer = '';
     try {
@@ -251,7 +276,7 @@ export async function implementInFunction(): Promise<void> {
     if (methodTooLong(method)) {
         void vscode.window.showWarningMessage(
             `That method is ${method.split('\n').length} lines — too long for a local model to rewrite well. ` +
-                'Split it first, or write it by hand.'
+            'Split it first, or write it by hand.'
         );
         return;
     }
@@ -273,7 +298,11 @@ export async function implementInFunction(): Promise<void> {
         header: headerOf(editor.document, language),
         sibling: siblingOf(editor.document, span, all)
     });
-    await proposeMethod(editor.document, span, messages, `Asking ${cfg.model || 'the local model'}…`);
+    // The dialog comes first: starting the bundled server takes a few seconds (a cold build can take
+    // much longer), so nothing is started until there is a request to send.
+    const resolved = await effectiveConfig(cfg);
+    if (!resolved) return;
+    await proposeMethod(editor.document, span, messages, `Asking ${cfg.model || 'the local model'}…`, resolved);
 }
 
 /** "Fix with AI…" — offered from the PROBLEMS pane on a finding the checker published. */
@@ -303,16 +332,21 @@ export async function fixFindingWithAI(uri: vscode.Uri, line: number, message: s
         header: headerOf(document, language),
         sibling: siblingOf(document, span, all)
     });
-    await proposeMethod(document, span, messages, `Asking ${cfg.model || 'the local model'} to fix the finding…`);
+    const resolved = await effectiveConfig(cfg);
+    if (!resolved) return;
+    await proposeMethod(document, span, messages, `Asking ${cfg.model || 'the local model'} to fix the finding…`, resolved);
 }
 
 /** Backend off: explain what to switch on rather than failing silently. */
 async function offerSetup(): Promise<void> {
     const pick = await vscode.window.showInformationMessage(
-        'AI assist is off. Point it at a local model server (LM Studio, Ollama, llama.cpp) — nothing leaves your machine.',
+        'AI assist is off. Either point it at a local model server you already run (LM Studio, Ollama, '
+        + 'llama.cpp), or let the extension set up its own local model — nothing leaves your machine either way.',
+        'Set up a local model',
         'Open settings',
         'Show status'
     );
+    if (pick === 'Set up a local model') await vscode.commands.executeCommand('avaloniaDesigner.assistant.setupModel');
     if (pick === 'Open settings') await vscode.commands.executeCommand('workbench.action.openSettings', SETTINGS);
     if (pick === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
 }
@@ -322,15 +356,17 @@ export async function showStatus(): Promise<void> {
     const cfg = assistantConfig();
     const hw = assessHardware(readHardwareFacts());
     const lines = [
-        `AI assist: ${cfg.backend === 'external' ? 'on (local model server)' : 'off'}`,
-        `Endpoint: ${cfg.endpoint}`,
+        `AI assist: ${cfg.backend === 'external' ? 'on (local model server)' : cfg.backend === 'bundled' ? 'on (bundled local model)' : 'off'}`,
+        cfg.backend === 'bundled' ? 'Endpoint: the bundled runtime supplies one' : `Endpoint: ${cfg.endpoint}`,
         `Model: ${cfg.model || '(the server decides)'}`,
         `Budget: ${cfg.timeoutSeconds} s, up to ${cfg.maxTokens} tokens, temperature ${cfg.temperature}`,
         '',
         `Hardware: ${hw.level === 'good' ? 'comfortable' : hw.level === 'minimal' ? 'minimum only' : 'not usable'}`,
         ...hw.reasons.map((r) => `• ${r}`)
     ];
-    if (assistantEnabled(cfg)) {
+    if (cfg.backend === 'bundled') {
+        lines.push('', ...bundledStatusLines(cfg));
+    } else if (assistantEnabled(cfg)) {
         const probe = await probeServer(cfg);
         lines.push('', probe.ok ? `Server: reachable — ${probe.models.length} model(s) offered` : `Server: ${probe.error}`);
         if (probe.ok) lines.push(...probe.models.slice(0, 8).map((m) => `• ${m.id}`));

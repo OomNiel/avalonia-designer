@@ -8,6 +8,7 @@ import { ProjectViewProvider, setActiveContext } from './projectView';
 import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor';
 import { disposeIssues } from './codeBehindCheck';
 import { AssistantCodeActionProvider, fixFindingWithAI, implementInFunction, showStatus } from './assistantUi';
+import { initModelRuntime, setupBundledModel, stopModelServer } from './modelRuntime';
 import * as logger from './logger';
 
 /** The shared PreviewerHost manager, kept module-level so `deactivate` can kill the C# host
@@ -113,10 +114,21 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.commands.registerCommand('avaloniaDesigner.openDataSet', (uri?: vscode.Uri) => openDataSet(uri))
         );
 
+        // The bundled model runtime is created once per window and disposed with it: it can hold
+        // gigabytes of weights, so it must never be started twice.
+        initModelRuntime(context);
+
         // Local AI assist — opt-in, one explicit command per flow, no background traffic.
         context.subscriptions.push(
             vscode.commands.registerCommand('avaloniaDesigner.assistant.implement', () => implementInFunction()),
             vscode.commands.registerCommand('avaloniaDesigner.assistant.status', () => showStatus()),
+            // The bundled runtime: source that is built on this machine, so one VSIX fits every
+            // platform (see NOTES.md §92). Its process is stopped when the window closes.
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.setupModel', () => setupBundledModel(context)),
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.stopModel', () => {
+                stopModelServer();
+                void vscode.window.showInformationMessage('The local model server has been stopped.');
+            }),
             vscode.commands.registerCommand(
                 'avaloniaDesigner.assistant.fixFinding',
                 (uri: vscode.Uri, line: number, message: string) => fixFindingWithAI(uri, line, message)

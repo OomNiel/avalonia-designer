@@ -886,6 +886,45 @@ Expect it to be **slow and imperfect**. On a CPU-only machine a 3B model answers
 Read the diff: this is for the boilerplate you would otherwise type yourself, not for logic you have not
 decided on yet.
 
+#### No model server? Let the extension bring its own
+
+Having no AI at all is the case this feature exists for, so it does not require LM Studio or Ollama:
+
+1. Run **AI: Set Up Local Model…** from the Command Palette.
+2. Pick a model. Two code-specialised ones are offered, and the size is shown before anything is
+downloaded:
+
+   | Model | Size | Trade-off |
+   |---|---|---|
+   | Qwen2.5-Coder 3B Instruct (Q4_K_M) | 2.1 GB | answers in 5–15 s on a CPU — the practical choice |
+   | Qwen2.5-Coder 7B Instruct (Q4_K_M) | 4.7 GB | noticeably better code, two to three times slower |
+
+   You can also point it at a `.gguf` file you already have, or paste the address of one.
+3. Wait for the download — it is shown as a percentage and can be cancelled and resumed by running the
+   command again. The file is checked against the **SHA-256** the publisher lists for it, then stored in
+   the extension's own storage. It is downloaded once, for all your projects.
+4. That is it: `backend` is switched to `bundled` for you and the feature is ready.
+
+**How is there an AI in my editor with no server?** The extension builds a small C# program (the same
+way it already builds its design previewer) with the .NET SDK on your machine, and *that* program loads
+the model. Building it the first time also downloads the inference library from nuget.org — about
+100 MB, once. From then on everything is local: no account, no key, no subscription, and nothing that
+leaves the machine.
+
+**Where the model lives:** in this extension's global storage — on Linux
+`~/.config/Code/User/globalStorage/grumpy.avalonia-designer/models/`. Delete the file to reclaim the
+disk space; set-up will offer it again.
+
+**When it does not fit.** The set-up refuses a model that this machine cannot run well (the 7B on 8 GB
+of RAM, or a CPU without AVX2) and tells you why instead of letting you discover it. *AI: Status and
+Hardware Check* shows the same verdict at any time, together with whether the model server is running,
+which threads it uses (`avaloniaDesigner.assistant.threads`, 0 = automatic) and how long an answer may
+take. **AI: Stop the Local Model** frees the RAM immediately; it starts again with the next request.
+
+The timeout setting is worth knowing about: it is an **inactivity** budget, not a total one — the clock
+restarts with every token, so a slow CPU writing a long method is allowed to take minutes, while a
+server that has stopped talking is caught in seconds.
+
 ### Wiring more events later
 
 Right-click the control → **Add event…** to wire another event, using the same chooser as when you

@@ -235,7 +235,7 @@ export const DOTNET_SDK_MISSING_MESSAGE =
     + 'Install the .NET SDK (https://dotnet.microsoft.com/download) and reload the window.';
 
 /** True for the error Node throws when the executable itself does not exist (ENOENT on spawn). */
-function isMissingExecutable(e: unknown): boolean {
+export function isMissingExecutable(e: unknown): boolean {
     return (e as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
 }
 
@@ -337,7 +337,7 @@ export class PreviewerHostManager implements vscode.Disposable {
     }
 }
 
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
     return new Promise((resolve, reject) => {
         const srv = net.createServer();
         srv.once('error', reject);
@@ -349,7 +349,7 @@ function freePort(): Promise<number> {
     });
 }
 
-function runCmd(cmd: string, args: string[]): Promise<void> {
+export function runCmd(cmd: string, args: string[]): Promise<void> {
     return new Promise((resolve, reject) => {
         const child = cp.spawn(cmd, args, { stdio: 'inherit' });
         child.on('error', reject);

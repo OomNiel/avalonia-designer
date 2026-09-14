@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ModelHost — the bundled local model server for the AI assist (NOTES.md §92).
+
+    It exists so the extension does not have to ship a native runtime: this project is *built on the
+    user's machine* next to the designer's PreviewerHost (the extension ships the sources, runs
+    `dotnet build`, and runs the result). NuGet then picks the right llama.cpp backend for the current
+    RID — one VSIX for every platform and architecture — and the model file itself is downloaded once
+    into the extension's storage, because a 2 GB GGUF can never travel inside a VSIX.
+
+    The server speaks just enough of the OpenAI API for `src/assistant.ts` to talk to it unchanged:
+    GET /health, GET /v1/models, POST /v1/chat/completions (streaming SSE or one JSON body).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ModelHost</AssemblyName>
+    <RootNamespace>ModelHost</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- The CPU backend is enough for the 3B/7B models this ships with; a GPU backend is a later step. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LLamaSharp" Version="0.27.0" />
+    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
+  </ItemGroup>
+
+</Project>

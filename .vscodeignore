@@ -7,6 +7,11 @@
 !out/**/*.js
 host/obj/**
 host/bin/**
+# ModelHost is a second project UNDER host/ (the local model server, NOTES.md §92). Its bin/ holds
+# llama.cpp's native backends for every platform — hundreds of megabytes that NuGet regenerates on the
+# user's machine, so a `host/obj|bin/**` pattern that only matches one level deep is not enough.
+host/**/obj/**
+host/**/bin/**
 **/node_modules/.cache/**
 .gitignore
 # The automated test suite (runner, jsdom, generated test projects) is not part of the runtime extension.

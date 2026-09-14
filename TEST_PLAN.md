@@ -276,6 +276,22 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.6` (2026-09-14)** — the bundled local model runtime (`host/ModelHost`, NOTES.md §92),
+  suite grown to **3259** assertions. The new `tests/t2-logic/modelSpecs.test.js` covers the model
+  registry (unique ids, https URLs that really name the file, pinned 64-hex SHA-256s), the size and
+  thread arithmetic, the exact sidecar argv, the health payload, the hardware gate per model, the
+  settings for `backend: bundled` / `modelPath` / `threads`, and the wiring. Three assertions exist
+  because they guard traps that only appear when a second project lives inside `host/`: the previewer
+  host must exclude `ModelHost/**` from its compile items (otherwise two entry points), `.vscodeignore`
+  must exclude **nested** `host/**/bin|obj/**` (the sidecar's own output holds llama.cpp for every
+  platform, ~99 MB), and no `.csproj` may be ignored (the runtime is built from source on the user's
+  machine). Two more drive the client against a real server to prove the new **inactivity** timeout: a
+  token every 300 ms past the budget must succeed, a server that goes silent must fail.
+- **Release `0.9.5` (2026-09-14)** — the local AI assist (tier 1), suite grown to **3136** assertions:
+  `tests/t2-logic/assistant.test.js` drives the client against a throwaway `http` server (streaming SSE,
+  a server that ignores `stream: true`, HTTP 500 with a body, a dead port, the model list) and covers the
+  pure parts — settings normalisation and clamping, the hardware gate, the prompt builders, `extractCode`,
+  the method-span maths for C# and VB, `methodTooLong` and the manifest wiring.
 - **Unreleased — the local AI assist (tier 1)**, suite grown to **3136** assertions: the new
   `tests/t2-logic/assistant.test.js` drives the client against a throwaway `http` server (streaming SSE,
   a server that ignores `stream: true`, HTTP 500 with a body, a dead port, the model list) and covers the

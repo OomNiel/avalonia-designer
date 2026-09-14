@@ -261,6 +261,42 @@ module.exports = async (t) => {
             await srv.close();
         }
 
+        // 6a2) the timeout is an INACTIVITY budget, which is what makes CPU inference usable
+        {
+            // Slow but alive: a token every 300 ms, well past a 1 s budget in total. This is the shape
+            // of a 3B model on a CPU writing a long method — a total timeout would have killed it.
+            const slow = await serve((req, res) => {
+                res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+                let n = 0;
+                const tick = setInterval(() => {
+                    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `t${n}` } }] })}\n\n`);
+                    if (++n === 5) {
+                        clearInterval(tick);
+                        res.write('data: [DONE]\n\n');
+                        res.end();
+                    }
+                }, 300);
+            });
+            const slowCfg = { ...cfg, endpoint: slow.endpoint, timeoutSeconds: 1 };
+            const slowAnswer = await chat(slowCfg, [{ role: 'user', content: 'hi' }]);
+            t.equal(slowAnswer, 't0t1t2t3t4', 'client', 'a slow but steadily streaming server is not cut off');
+            await slow.close();
+
+            // Silent: headers, then nothing. That is a stalled server and must fail with the timeout.
+            const quiet = await serve((req, res) => {
+                res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+                res.write(': waiting\n\n');
+            });
+            let timedOut = '';
+            try {
+                await chat({ ...cfg, endpoint: quiet.endpoint, timeoutSeconds: 1 }, [{ role: 'user', content: 'hi' }]);
+            } catch (e) {
+                timedOut = e.message;
+            }
+            t.ok(/cancelled or timed out/i.test(timedOut), 'client', 'a server that stops talking fails the watchdog');
+            await quiet.close();
+        }
+
         // 6b) a server that ignores `stream: true`
         {
             const srv = await serve((req, res) => {
