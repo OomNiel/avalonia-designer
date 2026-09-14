@@ -7,6 +7,7 @@ import { createNewProject, openLastProject, maybeRunFirstBuild } from './project
 import { ProjectViewProvider, setActiveContext } from './projectView';
 import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor';
 import { disposeIssues } from './codeBehindCheck';
+import { AssistantCodeActionProvider, fixFindingWithAI, implementInFunction, showStatus } from './assistantUi';
 import * as logger from './logger';
 
 /** The shared PreviewerHost manager, kept module-level so `deactivate` can kill the C# host
@@ -110,6 +111,22 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         context.subscriptions.push(
             vscode.commands.registerCommand('avaloniaDesigner.openDataSet', (uri?: vscode.Uri) => openDataSet(uri))
+        );
+
+        // Local AI assist — opt-in, one explicit command per flow, no background traffic.
+        context.subscriptions.push(
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.implement', () => implementInFunction()),
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.status', () => showStatus()),
+            vscode.commands.registerCommand(
+                'avaloniaDesigner.assistant.fixFinding',
+                (uri: vscode.Uri, line: number, message: string) => fixFindingWithAI(uri, line, message)
+            ),
+            // "✨ Fix with AI…" appears only on OUR diagnostics, and only for a line inside a method.
+            vscode.languages.registerCodeActionsProvider(
+                [{ language: 'csharp' }, { language: 'vb' }],
+                new AssistantCodeActionProvider(),
+                { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }
+            )
         );
         log('activate complete');
         // AFTER the commands are registered: the first-open hook opens the new project's form in the

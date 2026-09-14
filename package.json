@@ -104,6 +104,18 @@
                 "title": "Open Created Project",
                 "category": "Avalonia",
                 "icon": "$(folder-opened)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.implement",
+                "title": "AI: Implement in Function…",
+                "category": "Avalonia",
+                "icon": "$(sparkle)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.status",
+                "title": "AI: Status and Hardware Check",
+                "category": "Avalonia",
+                "icon": "$(pulse)"
             }
         ],
         "viewsContainers": {
@@ -198,6 +210,20 @@
                 {
                     "command": "avaloniaDesigner.openDataSet",
                     "when": "false"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.implement",
+                    "when": "editorLangId == csharp || editorLangId == vb"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.status"
+                }
+            ],
+            "editor/context": [
+                {
+                    "command": "avaloniaDesigner.assistant.implement",
+                    "when": "editorLangId == csharp || editorLangId == vb",
+                    "group": "avaloniaAI@1"
                 }
             ]
         },
@@ -213,6 +239,50 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Snap controls to the grid when moving or resizing them."
+                },
+                "avaloniaDesigner.assistant.backend": {
+                    "type": "string",
+                    "enum": [
+                        "off",
+                        "external"
+                    ],
+                    "enumDescriptions": [
+                        "Off — nothing is sent anywhere (default).",
+                        "Use an OpenAI-compatible server on this machine (LM Studio, Ollama, llama.cpp)."
+                    ],
+                    "default": "off",
+                    "markdownDescription": "Where the AI assist gets its model. A bundled runtime — so users need no server at all — is the next step; see `NOTES.md` §90."
+                },
+                "avaloniaDesigner.assistant.endpoint": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Base URL of the local server, e.g. `http://127.0.0.1:1234/v1` (LM Studio), `http://127.0.0.1:11434/v1` (Ollama) or `http://127.0.0.1:8080/v1` (llama.cpp). Empty = the LM Studio default."
+                },
+                "avaloniaDesigner.assistant.model": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Model id to ask for. Empty lets the server decide — Ollama has no default, so it needs a name here (e.g. `qwen2.5-coder:7b`)."
+                },
+                "avaloniaDesigner.assistant.timeoutSeconds": {
+                    "type": "number",
+                    "default": 60,
+                    "minimum": 5,
+                    "maximum": 600,
+                    "description": "Give up on an answer after this long. Inference in system RAM is slow: 10 s is optimistic for a 3B model, 30 s is normal on an older CPU."
+                },
+                "avaloniaDesigner.assistant.maxTokens": {
+                    "type": "number",
+                    "default": 900,
+                    "minimum": 64,
+                    "maximum": 8192,
+                    "description": "Upper bound on the generated code — 900 tokens is roughly a 60-line method."
+                },
+                "avaloniaDesigner.assistant.temperature": {
+                    "type": "number",
+                    "default": 0.2,
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Lower is more literal. Code wants it low: 0.1-0.3."
                 },
                 "avaloniaDesigner.dotGrid.spacingX": {
                     "type": "number",

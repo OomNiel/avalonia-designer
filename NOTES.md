@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3018 passed, 0 failed / 0 skipped** (2026-09-13, ~37 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3136 passed, 0 failed / 0 skipped** (2026-09-14, ~41 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1396,6 +1396,74 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   correctly, which is how the cache was cleared of suspicion. Both flags are part of the release routine
   in `PUBLISHING.md` part F now, and the README/USER_MANUAL links went back to `/releases/latest`
   (they had been pointing at the releases list precisely because every release was a pre-release).
+- §90 **A local AI assist, tier 1: a server, not a model (2026-09-14).** The ask was a small coding
+  model **bundled** into the extension that (a) fixes code a developer has edited by hand and (b) writes
+  short blocks into a function from a description typed into a dialog — for users who have no AI of any
+  kind — with Phi-3-mini as the guess, ~5 GB allowed, Linux first, open source (so *not* through
+  Copilot), a ~10 s budget **in RAM, no VRAM**, an optional hardware gate, a **diff** before anything is
+  written, C# first with VB.NET best effort. Tier 1 is the part that needs no model in the VSIX: the
+  developer points the feature at a local OpenAI-compatible server (LM Studio / Ollama / `llama-server`)
+  and gets the whole product experience — prompts, diff, apply, build check — with the model runtime as
+  the only thing still to be bundled. What shipped:
+  - **`src/assistant.ts`** — the model-agnostic core, containing no `vscode` import at all (a test pins
+    that, and it is what makes the file testable and the tier-2 runtime swappable): endpoint
+    normalisation, `assessHardware`/`readHardwareFacts` (RAM, CPU threads, AVX2 from `/proc/cpuinfo`,
+    arch — `MIN_RAM_GB = 8`, `GOOD_RAM_GB = 16`), `probeServer` (`GET {endpoint}/models`), a streaming
+    `chat` with `AbortController` (SSE `data:` deltas via `TextDecoder`, plus a fallback to
+    `parseChatCompletion` for servers that ignore `stream: true` — llama.cpp with a small model
+    completes and closes before the first delta), the two prompt builders, `extractCode`/`tidyCode` and
+    `detectEol`/`reindent`/`spliceMethod`.
+  - **`src/assistantUi.ts`** — everything that touches VS Code: the caret's method (`enclosingMethod`),
+    a header (usings + the class line) and one short sibling method as a style sample, a cancellable
+    progress notification, the diff, and `runBuildTask` (finds the project's `build` task, waits for the
+    exit code, 5-minute cap).
+  - **Settings** `avaloniaDesigner.assistant.{backend,endpoint,model,timeoutSeconds,maxTokens,temperature}`
+    — `backend` defaults to **`off`**, so nothing changes for anyone until they ask. Two commands (*AI:
+    Implement in Function…*, *AI: Status and Hardware Check*) plus a `CodeActionProvider` that offers
+    *✨ Fix with AI…* only on diagnostics whose `source === 'Avalonia Designer'` **and** whose line is
+    inside a method — every structural finding keeps its exact rule-based fix.
+- §91 **Why tier 2 is a .NET sidecar, and what the small models can actually do (2026-09-14).** The
+  feasibility dig behind §90, recorded because it decides the next step:
+  - **Phi-3-mini is the wrong model here, and Microsoft says so.** Its model card carries *"Limited
+    Scope for Code — majority of Phi-3 training data is based in Python and uses common packages such as
+    'typing, math, random, collections, datetime, itertools' … scripts in other languages … manually
+    verify"*. C#/VB.NET to-do → structural conversion to another language, which is exactly what its
+    card warns about. The right class is a code-specialised small model: Qwen2.5-Coder 3B (1.93 GB) or
+    7B (~4.4 GB at Q4_K_M) both fit the ~5 GB ceiling; the 7B is the quality answer, the 3B the
+    latency one.
+  - **The RAM-only physics sets the UX, not the model choice.** On this machine (Ryzen 5 7640HS, 12
+    threads) a 3B Q4 returns a short method in ~5–15 s and a 7B in ~20–30 s — so the 10 s target holds
+    only for *short* answers, which is why the design streams tokens into a progress notification
+    (something moves within a second) and caps the request (`MAX_METHOD_LINES = 120`) instead of
+    pretending. A GPU (Vulkan/CUDA/Metal) is the real fix and arrives with the runtime.
+  - **Bundling options, and the decision.** `node-llama-cpp` is the natural TypeScript choice (MIT,
+    prebuilt binaries, all three backends, grammar-constrained JSON output) but it drags a native `.node`
+    binary into the VSIX — one build **per platform and architecture**, to be redone whenever VS Code's
+    Node ABI moves. The alternative reuses something this extension already proves: it **compiles a
+    small C# host on the user's machine** for the previewer. A `LLamaSharp`/ONNX sidecar inherits that —
+    NuGet picks the right native backend per RID inside the build — so **one VSIX serves every platform
+    and architecture**, and a 5 GB runtime that dies cannot take the extension host with it. That is the
+    plan; `assistant.ts` stays transport-agnostic so the fallback remains a change of one module.
+  - **Not Copilot's models** (the user's call, and the right one): `vscode.lm` + Copilot would tie a
+    "free and open source" feature to a subscription and to VS Code itself. For the record, VS Code also
+    lets an extension *provide* models — `registerLanguageModelChatProvider` plus the
+    `languageModelChatProviders` contribution point, the mechanism Copilot's BYOK providers use — so a
+    bundled local model could later be offered to VS Code Chat, and to other extensions, as well.
+  - **The guardrails are the feature.** A small model told to "fix the file" rewrites the file, so the
+    prompt asks for **one** method and states the contract ("answer with the complete replacement … in
+    one fenced block, no commentary"); `extractCode` takes the **last** fenced block (models echo the
+    prompt's code first), accepts JSON, and never throws; the answer is re-indented to the file's own
+    indentation and spliced over that method, preserving the blank line after it; the developer reviews a
+    **diff**; the write is an ordinary `WorkspaceEdit`, so **Ctrl+Z** works; *Build to verify* is one
+    click. Two real bugs the new tests caught, both worth remembering: `extractCode` originally used
+    `.trim()`, which stripped the first line's indentation and — since `reindent` re-bases on the
+    smallest indent — pushed the whole body one level deeper; and the checker's `CodeMethod.end` includes
+    the **blank line after** a method, so a span counted from `end - 1` reported the line *below* the
+    closing brace and the splice swallowed the separator between two methods.
+  - **Tests are model-free:** 111 new assertions drive the client against a throwaway `http` server
+    (streaming SSE, a `stream`-ignoring server, HTTP 500 with a body, a dead port, the model list) and
+    cover the pure parts — config clamping, the hardware gate, prompts, extraction, span maths, and the
+    manifest wiring.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

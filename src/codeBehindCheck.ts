@@ -620,6 +620,45 @@ function statementAround(text: string, index: number, language: 'cs' | 'vb'): st
     return text.slice(start, end < 0 ? Math.min(text.length, index + 600) : end);
 }
 
+/** A method's span inside a code-behind file (offsets are into the BOM-free text). */
+export interface MethodSpan {
+    name: string;
+    params: string;
+    start: number;
+    end: number;
+    /** 1-based line of the declaration. */
+    line: number;
+    /** 1-based line of the method's last line (`End Sub` / the closing brace). */
+    endLine: number;
+}
+
+/**
+ * Every method in the file, borrowed from the checker's own parser so the AI assist and the findings
+ * agree about where a method begins and ends. One parse per call — the caller keeps the result.
+ */
+export function methodsIn(codeFile: string, text: string): MethodSpan[] {
+    const code = parseCode(codeFile, text);
+    return code.methods.map((m) => {
+        // `end` sits past the method AND past the blank line that usually follows it, so trim the whole
+        // trailing line-break run before counting lines — otherwise the closing brace looks one line
+        // too low and a line after the method appears to belong to it.
+        const span = code.body.slice(m.start, m.end).replace(/[\r\n]+$/, '');
+        return {
+            name: m.name,
+            params: m.params,
+            start: m.start,
+            end: m.end,
+            line: m.line,
+            endLine: m.line + span.split('\n').length - 1
+        };
+    });
+}
+
+/** The method whose span contains `line` (1-based), or undefined when the line is outside one. */
+export function enclosingMethod(codeFile: string, text: string, line: number): MethodSpan | undefined {
+    return methodsIn(codeFile, text).find((m) => m.line <= line && line <= m.endLine);
+}
+
 /**
  * Analyses the form's code-behind against its XAML (+ the DataSet context the designer supplies)
  * and returns every problem it can explain. Never throws.

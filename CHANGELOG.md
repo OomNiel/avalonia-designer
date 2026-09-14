@@ -13,7 +13,19 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **✨ AI assist (tier 1) — a local model for the fixes a rule cannot express.** Two flows: *AI:
+  Implement in Function…* (rewrite the method the caret is in, described in a dialog) and *✨ Fix with
+  AI…* (on a finding that sits inside a method). It talks to a local OpenAI-compatible server — LM
+  Studio, Ollama or `llama-server` — so nothing leaves the machine, and it is **off by default**
+  (`avaloniaDesigner.assistant.*`). The proposal always opens as a **diff**; applying it is a normal
+  edit (`Ctrl+Z` works) and is followed by an optional **Build to verify**. The model is asked for
+  exactly one method, and the answer is parsed defensively (last fenced block, or JSON), re-indented to
+  the file's own style and spliced over that method and nothing else. *AI: Status and Hardware Check*
+  reports the endpoint, the reachable models and a **hardware verdict** (RAM, CPU threads, AVX2) — the
+  basis for disabling the feature on a machine that cannot run a model. The bundled runtime, so users
+  need no server at all, is the next tier (see `NOTES.md` §90).
+
 
 ## [0.9.4] - 2026-09-14 · *the `1.0.0-beta.11` build*
 

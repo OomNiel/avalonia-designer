@@ -845,6 +845,47 @@ have to be fixed:
   it**) and for a signature you changed (**Keep my signature — unwire it**).
 - Anything else can simply be ignored: checks are read-only until you press a button.
 
+### AI assist — a local model for the fixes a rule cannot express
+
+The checker's fixes are exact because each one is a rule. That leaves a gap: a handler that is simply
+**empty**, or a change no rule can describe ("read the row the user picked and fill the TextBoxes"). For
+those the extension can ask a **local language model** — one running on your own machine. Nothing is
+sent anywhere: the request goes to `127.0.0.1`, and the feature ships **off**.
+
+**Turning it on.** You need a local model server; the extension speaks the OpenAI-compatible API that
+LM Studio, Ollama and `llama-server` all expose. Install one, load a small code model, then set:
+
+| Setting | Value |
+|---|---|
+| `avaloniaDesigner.assistant.backend` | `external` — enables the feature |
+| `avaloniaDesigner.assistant.endpoint` | `http://127.0.0.1:1234/v1` (LM Studio) · `11434/v1` (Ollama) · `8080/v1` (llama.cpp); empty means LM Studio's default |
+| `avaloniaDesigner.assistant.model` | the model id, e.g. `qwen2.5-coder-7b`. Empty lets the server decide — Ollama needs a name here |
+| `avaloniaDesigner.assistant.timeoutSeconds` | how long to wait (default 60). Inference in RAM is slow: 10 s is optimistic, 30 s is normal on an older CPU |
+
+**AI: Status and Hardware Check** (Command Palette) shows what the feature sees right now: the endpoint,
+whether the server answers, which models it offers — and a **hardware verdict**. RAM, CPU threads and
+AVX2 decide whether a local model can run at all; on a machine that cannot, the feature stays disabled
+and says why instead of pretending.
+
+**Two ways to use it:**
+
+- **AI: Implement in Function…** — put the caret inside the method, run the command, and describe the
+  behaviour in the dialog. The model returns the **complete method**; the name, signature and
+  indentation stay as they were.
+- **✨ Fix with AI (local model)…** — offered on a finding in the **PROBLEMS** pane (and in its
+  light-bulb menu) when the line sits inside a method. Structural findings — a missing accessor, a lost
+  Data-Image block — keep their exact rule-based fix and do not offer the model at all.
+
+**Nothing is written without you.** The proposal opens as a **diff** beside your file: **Apply** writes
+it as a normal edit (so **Ctrl+Z** undoes it), **Discard** throws it away. The extension then offers
+**Build to verify**, which runs your project's `build` task and reports the exit code — the check that
+actually matters for generated code.
+
+Expect it to be **slow and imperfect**. On a CPU-only machine a 3B model answers a short method in
+5–15 s, a 7B takes two to three times longer, and both are noticeably better at **C#** than at VB.NET.
+Read the diff: this is for the boilerplate you would otherwise type yourself, not for logic you have not
+decided on yet.
+
 ### Wiring more events later
 
 Right-click the control → **Add event…** to wire another event, using the same chooser as when you

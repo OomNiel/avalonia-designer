@@ -162,9 +162,21 @@ Code. On **Windows** the same two buttons produce an **MSI** (WiX) that installs
 `Program Files` with a Start-menu entry and an *Apps & features* entry, and installing a newer build
 replaces the old one.
 
-## 10. Engineering discipline
+## 10. ✨ AI assist — write the handler, or fix what a rule cannot
 
-- **~2,790 automated assertions across 5 layers**, including a layer that drives the real headless
+The Code Fix engine repairs what can be expressed as a rule. For the rest — an empty handler, or a
+change you can only describe in words — the extension can ask a **local** model: *AI: Implement in
+Function…* takes one sentence ("read the row the user picked and fill the TextBoxes") and returns the
+complete method, and *✨ Fix with AI…* appears on findings that sit inside a method. It runs against a
+local server you already have (LM Studio, Ollama, llama.cpp — the OpenAI-compatible API they share),
+nothing leaves your machine, and it is **off until you switch it on**. The proposal always opens as a
+**diff**, applying it is a normal undoable edit, and **Build to verify** runs your project's build so
+generated code is not taken on trust. A bundled runtime (no server to install) and a hardware gate that
+disables the feature where a model cannot run are the next step.
+
+## 11. Engineering discipline
+
+- **~3,140 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

@@ -276,6 +276,14 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Unreleased — the local AI assist (tier 1)**, suite grown to **3136** assertions: the new
+  `tests/t2-logic/assistant.test.js` drives the client against a throwaway `http` server (streaming SSE,
+  a server that ignores `stream: true`, HTTP 500 with a body, a dead port, the model list) and covers the
+  pure parts — settings normalisation and clamping, the hardware gate (no AVX2, low RAM, low free RAM,
+  too few cores, unsupported arch), the prompt builders, `extractCode` (fenced block, prose-wrapped
+  block, JSON, nothing usable), the method-span maths for C# and VB (including that a splice preserves
+  line count, indentation, line endings and a BOM), `methodTooLong`, and the manifest wiring. One
+  assertion is architectural: `src/assistant.ts` must not import `vscode`.
 - **Release `0.9.4` (2026-09-14)** — a new extension icon (the badge with the black field outside its
   blue ring removed, now 128x128 transparent PNG) plus a white Activity Bar glyph derived from the same
   artwork, suite grown to **3025** assertions. New guards in `packaging.test.js`: the Marketplace icon
