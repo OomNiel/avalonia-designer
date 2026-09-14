@@ -276,6 +276,14 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.7` (2026-09-14)** — a readable Activity Bar icon, suite grown to **3269** assertions.
+  Six of them are new and exist because the old glyph was invisible-faint while passing every check the
+  suite had: `packaging.test.js` now decodes the PNG (a ~50-line reader over `zlib.inflateSync` with the
+  five scanline filters, no dependency added) and asserts, for every PNG the manifest names as a view
+  icon, that ink exists, that every ink pixel is pure white, that there is a **solid core** (≥ 30% of the
+  ink fully opaque — the old file had 0%), that the background is still transparent, and that the glyph
+  is neither clipped by its canvas nor off-centre. Verified by pointing the suite at the previous icon:
+  it fails on exactly the two opacity assertions.
 - **Release `0.9.6` (2026-09-14)** — the bundled local model runtime (`host/ModelHost`, NOTES.md §92),
   suite grown to **3261** assertions. The new `tests/t2-logic/modelSpecs.test.js` covers the model
   registry (unique ids, https URLs that really name the file, pinned 64-hex SHA-256s), the size and

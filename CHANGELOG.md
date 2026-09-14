@@ -15,6 +15,22 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.7] - 2026-09-14 · *a sidebar icon you can actually see*
+
+### Changed
+- **A new Activity Bar icon, drawn for contrast.** The old one was made by scaling the coloured badge
+  artwork down and clearing everything that was not the glyph, which left **no fully opaque pixel at
+  all** — 5 938 semi-transparent ones — so it looked washed out and faint in the 24 px sidebar. It is
+  now drawn as shapes: pure `#FFFFFF`, fully opaque, with the ring and Grumpy's face (cap, sunglasses
+  and moustache as negative space) reduced to what survives at 24 px. `tools/make-activitybar-icon.py`
+  regenerates it, and the test suite now decodes the PNG to assert what went unnoticed for two
+  releases: white only, a solid core, a transparent background, not clipped.
+
+### Added
+- The model runtime's messages (build, model load, generation) now go to the extension's own
+  **View → Output → "Avalonia Designer"** channel instead of the Extension Host log, which is where
+  the rest of the designer's diagnostics already are.
+
 ## [0.9.6] - 2026-09-14 · *the AI assist brings its own model*
 
 ### Added

@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3261 passed, 0 failed / 0 skipped** (2026-09-14, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3269 passed, 0 failed / 0 skipped** (2026-09-14, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1510,6 +1510,29 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     sidecar or downloading 2 GB would be automated app testing, which is off the table — the user runs it,
     the extension's own *AI: Status and Hardware Check* is the diagnostic, and the runtime reports a load
     failure in the health payload (503 with the message) instead of dying silently.
+- §93 **A sidebar glyph you can actually see — and the test that finally looks at pixels (2026-09-14).**
+  The Activity Bar icon looked "very faint". The cause was measurable, and the surprise was that nothing in
+  the repo could have caught it: `GrumpyWhite.png` had been produced by scaling the coloured badge down
+  and deleting what was not the glyph, which left **0 fully opaque pixels out of 5 938 ink pixels** — every
+  one of them a remainder of antialiasing plus the badge's own translucency — in a 128×128 file that was,
+  by every check the suite made (PNG signature, ≥ 128×128, square, not excluded by `.vscodeignore`),
+  perfectly correct. In the 24 px sidebar it reads as washed out. It was reported by the user, not by a
+  test, which is the interesting part.
+  - **Fix: draw shapes, don't scale a picture.** `tools/make-activitybar-icon.py` (new, excluded from the
+    VSIX via `tools/**`) draws the glyph from primitives at 1024 with an 8× supersample down to 128, so
+    the interior is *exactly* `#FFFFFF` at alpha 255 and only the edges are antialiased: 6 038 of 8 848
+    ink pixels fully opaque, one single colour in the file.
+  - **What survives at 24 px is decided by looking, not by taste.** Two designs were rendered at real
+    size and judged before choosing: a single wide cap visor read as a **headset boom**, and a `</>`
+    inside the ring collapsed into a **\"%\" sign**. What ships is the ring plus Grumpy's head with two
+    sunglass lenses cut out as negative space (the only facial detail that survives) — an avatar in a
+    ring, which is the badge's identity minus the parts 24 px cannot hold.
+  - **The new guard decodes the PNG in-process** (`readPng` in `packaging.test.js`, ~50 lines over
+    `zlib.inflateSync` with the five scanline filters — no dependency worth adding for 16 K pixels) and
+    asserts what actually matters: ink exists, every ink pixel is pure white, a solid core
+    (≥ 30% fully opaque), a transparent background, and an unclipped, centred bbox. On the old file that
+    suite would have failed on two of them. Lesson: for an icon, "the file exists and is 128×128" is not
+    a test of anything a user can see.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

@@ -41,3 +41,6 @@ SESSION.md
 Grumpy_128x128.png
 # Build metadata: VS Code only needs package.json plus the compiled out/ folder.
 tsconfig.json
+# The icon generator (tools/make-activitybar-icon.py) is a developer tool, not runtime code: it draws
+# GrumpyWhite.png from shapes so the glyph can be regenerated or adjusted (NOTES.md §93).
+tools/**

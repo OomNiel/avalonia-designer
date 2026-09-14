@@ -6,10 +6,75 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
 const ROOT = path.join(__dirname, '..', '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const has = (rel) => fs.existsSync(path.join(ROOT, rel));
+
+/**
+ * Minimal PNG reader — enough for the 8-bit RGBA, non-interlaced files this repo ships (PIL writes
+ * exactly that). Needed because the icon assertions below are about *pixels*, and a dependency just to
+ * look at 16 K pixels would not pay for itself.
+ */
+function readPng(file) {
+    const buf = fs.readFileSync(file);
+    if (!buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+        throw new Error(`${file} is not a PNG`);
+    }
+    let pos = 8;
+    let width = 0, height = 0, bitDepth = 0, colorType = 0, interlace = 0;
+    const chunks = [];
+    while (pos + 12 <= buf.length) {
+        const len = buf.readUInt32BE(pos);
+        const type = buf.toString('latin1', pos + 4, pos + 8);
+        const data = buf.slice(pos + 8, pos + 8 + len);
+        if (type === 'IHDR') {
+            width = data.readUInt32BE(0);
+            height = data.readUInt32BE(4);
+            bitDepth = data[8];
+            colorType = data[9];
+            interlace = data[12];
+        } else if (type === 'IDAT') chunks.push(data);
+        else if (type === 'IEND') break;
+        pos += 12 + len;
+    }
+    if (bitDepth !== 8 || colorType !== 6 || interlace !== 0) {
+        throw new Error(`${file} is not 8-bit RGBA (depth ${bitDepth}, colour type ${colorType})`);
+    }
+    const raw = zlib.inflateSync(Buffer.concat(chunks));
+    const bpp = 4, stride = width * bpp;
+    const out = Buffer.alloc(height * stride);
+    let rp = 0;
+    for (let y = 0; y < height; y++) {
+        const filter = raw[rp++];
+        const line = raw.slice(rp, rp + stride);
+        rp += stride;
+        const prev = y > 0 ? out.slice((y - 1) * stride, y * stride) : Buffer.alloc(stride);
+        const cur = out.slice(y * stride, (y + 1) * stride);
+        for (let x = 0; x < stride; x++) {
+            const a = x >= bpp ? cur[x - bpp] : 0;
+            const b = prev[x];
+            const c = x >= bpp ? prev[x - bpp] : 0;
+            let val;
+            switch (filter) {
+                case 0: val = line[x]; break;
+                case 1: val = line[x] + a; break;
+                case 2: val = line[x] + b; break;
+                case 3: val = line[x] + ((a + b) >> 1); break;
+                case 4: {
+                    const p = a + b - c;
+                    const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+                    val = line[x] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+                    break;
+                }
+                default: throw new Error(`${file}: unknown scanline filter ${filter}`);
+            }
+            cur[x] = val & 0xff;
+        }
+    }
+    return { width, height, data: out };
+}
 
 module.exports = async (t) => {
     t.section('T2: marketplace packaging');
@@ -212,6 +277,47 @@ module.exports = async (t) => {
         const aw = buf.readUInt32BE(16), ah = buf.readUInt32BE(20);
         t.ok(aw >= 128 && ah >= 128, 'manifest-assets', `${asset} is at least 128x128 (${aw}x${ah})`);
         t.equal(aw, ah, 'manifest-assets', `${asset} is square (${aw}x${ah})`);
+    }
+
+    // ---------- 6b) the sidebar glyph is actually VISIBLE (2026-09-14) ----------
+    // The size/squareness checks above are blind to the failure that really happened: the Activity Bar
+    // icon had been made by scaling the coloured badge down and clearing what was not the glyph, which
+    // left **no fully opaque pixel at all** (5938 semi-transparent ones). Nothing in the manifest or in
+    // the packaging is wrong in that state — it simply looks washed out at 24 px in the sidebar, and a
+    // user has to report it. So look at the pixels: white only, a solid core, a transparent
+    // background, and a glyph that is neither clipped nor off-centre.
+    const sidebarIcons = Object.values(contrib.viewsContainers || {})
+        .flatMap((list) => list.map((c) => c.icon))
+        .filter((i) => typeof i === 'string' && /\.png$/i.test(i) && i !== pkg.icon);
+    t.ok(sidebarIcons.length >= 1, 'icon-visibility', 'the Activity Bar container declares a PNG icon');
+    for (const file of sidebarIcons) {
+        const { width, height, data } = readPng(path.join(ROOT, file));
+        let ink = 0, opaque = 0, tinted = 0;
+        let minX = width, minY = height, maxX = -1, maxY = -1;
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const i = (y * width + x) * 4;
+                if (data[i + 3] === 0) continue;
+                ink += 1;
+                if (data[i + 3] === 255) opaque += 1;
+                if (data[i] !== 255 || data[i + 1] !== 255 || data[i + 2] !== 255) tinted += 1;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+        t.ok(ink > 0, 'icon-visibility', `${file} has a glyph (not an empty or fully transparent file)`);
+        t.equal(tinted, 0, 'icon-visibility',
+            `${file} is white only — no colour and no gradient, so the theme cannot wash it out`);
+        t.ok(opaque > 0, 'icon-visibility',
+            `${file} contains fully opaque pixels (the old glyph had none — that is exactly why it was faint)`);
+        t.ok(opaque / ink >= 0.3, 'icon-visibility',
+            `${file} has a solid core (${Math.round((opaque / ink) * 100)}% of its ink is fully opaque)`);
+        t.ok(ink / (width * height) < 0.9, 'icon-visibility', `${file} keeps a transparent background`);
+        t.ok(minX >= 2 && minY >= 2 && maxX <= width - 3 && maxY <= height - 3, 'icon-visibility',
+            `${file} is not clipped by its canvas (ink bbox ${minX},${minY}-${maxX},${maxY})`);
+        t.ok(Math.abs(minX + maxX - (minY + maxY)) <= 6, 'icon-visibility', `${file} is centred`);
     }
 
     // ---------- 7) first-run friendliness: name the missing .NET SDK ----------
