@@ -277,7 +277,7 @@ Each step ends with the log green before the next begins.
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
 - **Release `0.9.6` (2026-09-14)** — the bundled local model runtime (`host/ModelHost`, NOTES.md §92),
-  suite grown to **3259** assertions. The new `tests/t2-logic/modelSpecs.test.js` covers the model
+  suite grown to **3261** assertions. The new `tests/t2-logic/modelSpecs.test.js` covers the model
   registry (unique ids, https URLs that really name the file, pinned 64-hex SHA-256s), the size and
   thread arithmetic, the exact sidecar argv, the health payload, the hardware gate per model, the
   settings for `backend: bundled` / `modelPath` / `threads`, and the wiring. Three assertions exist
