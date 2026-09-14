@@ -276,6 +276,8 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.9` (2026-09-14)** — the status dialog got an embedding-model heuristic, a "Pin a
+  model…" action and a "Copy" action, suite grown to **3286** assertions.
 - **Release `0.9.8` (2026-09-14)** — the status check names the model that will answer, suite grown to
   **3278** assertions (nine of them for the wording of the `Model:` line: one model offered, several
   offered, server unreachable, none probed, a named model, and the two `bundled` cases).

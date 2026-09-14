@@ -20,6 +20,7 @@ import {
     chat,
     describeModel,
     extractCode,
+    looksLikeEmbeddingModel,
     methodTooLong,
     normalizeAssistantConfig,
     probeServer,
@@ -360,10 +361,13 @@ export async function showStatus(): Promise<void> {
     // actually has, and the settings alone cannot answer it. (`bundled` needs no probe — the model file
     // is the model.)
     const probe = cfg.backend === 'external' && assistantEnabled(cfg) ? await probeServer(cfg) : undefined;
+    // Embedding models are listed by every local server next to the chat ones and cannot answer a chat
+    // request, so they are named but not counted as candidates.
+    const chatModels = (probe?.models ?? []).filter((m) => !looksLikeEmbeddingModel(m.id));
     const lines = [
         `AI assist: ${cfg.backend === 'external' ? 'on (local model server)' : cfg.backend === 'bundled' ? 'on (bundled local model)' : 'off'}`,
         cfg.backend === 'bundled' ? 'Endpoint: the bundled runtime supplies one' : `Endpoint: ${cfg.endpoint}`,
-        describeModel(cfg, probe),
+        describeModel(cfg, probe && { ok: probe.ok, models: chatModels }),
         `Budget: ${cfg.timeoutSeconds} s, up to ${cfg.maxTokens} tokens, temperature ${cfg.temperature}`,
         '',
         `Hardware: ${hw.level === 'good' ? 'comfortable' : hw.level === 'minimal' ? 'minimum only' : 'not usable'}`,
@@ -374,13 +378,39 @@ export async function showStatus(): Promise<void> {
     } else if (probe) {
         lines.push('', probe.ok ? `Server: reachable — ${probe.models.length} model(s) offered` : `Server: ${probe.error}`);
         if (probe.ok) {
-            lines.push(...probe.models.slice(0, 8).map((m) => `• ${m.id}`));
-            if (probe.models.length > 1 && !cfg.model) {
-                lines.push('', 'Tip: set "avaloniaDesigner.assistant.model" to one of these to pin it down.');
+            for (const m of probe.models.slice(0, 8)) {
+                lines.push(`• ${m.id}${looksLikeEmbeddingModel(m.id) ? '   (embeddings — cannot answer chat)' : ''}`);
+            }
+            if (chatModels.length > 1 && !cfg.model) {
+                lines.push('', 'Tip: pin one to make requests reproducible — or use "Pin a model…" below.');
             }
         }
     }
-    await vscode.window.showInformationMessage(lines.join('\n'), { modal: true }, 'OK');
+
+    const needsPin = !!probe?.ok && chatModels.length > 1 && !cfg.model;
+    const actions = needsPin ? ['Pin a model…', 'Open settings', 'Copy'] : ['OK', 'Copy'];
+    const pick = await vscode.window.showInformationMessage(lines.join('\n'), { modal: true }, ...actions);
+
+    if (pick === 'Copy') {
+        await vscode.env.clipboard.writeText(lines.join('\n'));
+        void vscode.window.showInformationMessage('Status copied to the clipboard.');
+        return;
+    }
+    if (pick === 'Open settings') {
+        await vscode.commands.executeCommand('workbench.action.openSettings', SETTINGS);
+        return;
+    }
+    if (pick === 'Pin a model…') {
+        const chosen = await vscode.window.showQuickPick(
+            chatModels.map((m) => m.id),
+            { title: 'Which model should the AI assist use?', ignoreFocusOut: true }
+        );
+        if (!chosen) return;
+        await vscode.workspace.getConfiguration(SETTINGS).update('model', chosen, vscode.ConfigurationTarget.Global);
+        void vscode.window.showInformationMessage(
+            `The AI assist is pinned to "${chosen}". Requests now name it explicitly.`
+        );
+    }
 }
 
 /**

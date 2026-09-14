@@ -114,12 +114,23 @@ export function assistantEnabled(cfg: AssistantConfig): boolean {
 }
 
 /**
+ * Heuristic: an embedding model cannot answer a chat request, and local servers happily list them next
+ * to the chat models (LM Studio ships `text-embedding-nomic-embed-text-v1.5` alongside real ones). Only
+ * the obvious names are flagged — this drives a *hint*, never a hard filter, so a false positive costs a
+ * word in a dialog and nothing else.
+ */
+export function looksLikeEmbeddingModel(id: string): boolean {
+    return /(^|[^a-z])(embed|bge|gte|e5)([^a-z]|$)/i.test(id);
+}
+
+/**
  * The `Model:` line of the status dialog.
  *
  * "(the server decides)" is technically true and practically useless — on a server with exactly one
  * model loaded the answer is known, and on a server with several the developer needs to know that
  * setting `model` is what pins one down (Ollama, in particular, refuses an unnamed request). Pure, so
- * every branch is asserted in the suite rather than being discovered in a dialog.
+ * every branch is asserted in the suite rather than being discovered in a dialog. Pass the *chat* models
+ * (see `looksLikeEmbeddingModel`) so the counts match what can actually answer.
  */
 export function describeModel(
     cfg: Pick<AssistantConfig, 'backend' | 'model' | 'modelPath'>,
@@ -133,11 +144,12 @@ export function describeModel(
     }
     if (cfg.model) return `Model: ${cfg.model} (asked for by name)`;
     if (probe?.ok && probe.models.length === 1) {
-        return `Model: ${probe.models[0].id} (the only model the server offers)`;
+        return `Model: ${probe.models[0].id} (the only chat model the server offers)`;
     }
     if (probe?.ok && probe.models.length > 1) {
-        return `Model: (the server picks one of ${probe.models.length} — set "model" to pin it down)`;
+        return `Model: (the server picks one of ${probe.models.length} chat models — set "model" to pin it down)`;
     }
+    if (probe?.ok) return 'Model: (no chat model offered — only embeddings, which cannot answer)';
     if (probe && !probe.ok) return 'Model: (not known yet — the server is not answering)';
     return 'Model: (the server decides)';
 }

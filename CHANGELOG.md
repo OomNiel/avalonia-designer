@@ -15,6 +15,22 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.9] - 2026-09-14 · *the status check knows what an embedding model is*
+
+### Added
+- **"Pin a model…"** in *AI: Status and Hardware Check*: when the server offers more than one chat model
+  and none is chosen, the dialog now writes the choice for you (`avaloniaDesigner.assistant.model`) from a
+  pick list, instead of leaving you to find the setting. **Copy** puts the whole report on the clipboard.
+
+### Changed
+- **Embedding models are no longer offered as candidates.** LM Studio lists
+  `text-embedding-nomic-embed-text-v1.5` next to its chat models, and the dialog's "pick one of 3"
+  invitation made it look like a valid answer — it cannot answer a chat request at all. Models that look
+  like embeddings (by name: `embed`, `bge`, `gte`, `e5`) are now named in the list as
+  *"(embeddings — cannot answer chat)"* and excluded from the counts, and a server offering *only*
+  embeddings says exactly that. The heuristic drives a hint, never a filter, so a false positive costs a
+  word.
+
 ## [0.9.8] - 2026-09-14 · *the status check names the model*
 
 ### Changed

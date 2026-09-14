@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3278 passed, 0 failed / 0 skipped** (2026-09-14, ~43 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3286 passed, 0 failed / 0 skipped** (2026-09-14, ~39 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1543,6 +1543,21 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   `bundled` → the `.gguf` it loads, no probe needed. The wording lives in `describeModel()` in
   `assistant.ts`, so all nine cases are asserted in the suite instead of being discovered in a dialog —
   the same rule the rest of the assistant follows: anything the developer reads is a pure function.
+- §95 **A screenshot is a test case: the dialog was offering an embedding model (2026-09-14).** The
+  first real status dialog (user's machine, LM Studio on 1234) listed three models — `qwen/qwen3.5-9b`,
+  `google/gemma-4-e4b` and **`text-embedding-nomic-embed-text-v1.5`** — and said "set *model* to pin it
+  down". Two problems fell out of one screenshot: the third entry **cannot answer a chat request at
+  all** (it is an embedding model, listed by every local server next to the chat ones), and pinning meant
+  finding a setting by hand. Now: `looksLikeEmbeddingModel()` (`embed|bge|gte|e5` as a word, pure and
+  asserted) marks such entries *"(embeddings — cannot answer chat)"* and keeps them **out of the
+  counts** the dialog quotes, an embeddings-only server says so instead of inviting a bad choice, and the
+  dialog grew **"Pin a model…"** (writes the setting from a pick list) and **"Copy"**. The heuristic
+  only drives a hint, never a filter — a false positive costs a word in a dialog, a false negative costs
+  the developer a wasted request — which is why it is a naming rule and not a capability probe.
+  - **A cost of the workflow worth remembering:** two of the edits made in the same turn were silently
+    reverted — the test file's import list and one regex — because it is open in the editor and a save
+    from a stale buffer won the race. The suite caught it (`describeModel is not defined`), which is the
+    reason the counts in this file are verified against a real run rather than assumed.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

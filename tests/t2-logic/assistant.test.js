@@ -22,6 +22,7 @@ const {
     describeModel,
     detectEol,
     extractCode,
+    looksLikeEmbeddingModel,
     methodTooLong,
     normalizeAssistantConfig,
     normalizeEndpoint,
@@ -347,12 +348,12 @@ module.exports = async (t) => {
     // ---------- 6b) the status line says which model will really answer ----------
     {
         const base = { backend: 'external', model: '', modelPath: '' };
-        t.ok(/only model the server offers/.test(describeModel(base, { ok: true, models: [{ id: 'qwen3-coder-local' }] })),
+        t.ok(/only chat model the server offers/.test(describeModel(base, { ok: true, models: [{ id: 'qwen3-coder-local' }] })),
             'status', 'a server with one model is reported by name, not as "the server decides"');
         t.ok(/qwen3-coder-local/.test(describeModel(base, { ok: true, models: [{ id: 'qwen3-coder-local' }] })),
             'status', 'and the name is the server\'s own id');
         const many = describeModel(base, { ok: true, models: [{ id: 'a' }, { id: 'b' }] });
-        t.ok(/picks one of 2/.test(many) && /set "model"/.test(many), 'status',
+        t.ok(/picks one of 2 chat models/.test(many) && /set "model"/.test(many), 'status',
             'several models say so, and point at the setting that pins one down (Ollama refuses an unnamed request)');
         t.ok(/not known yet/.test(describeModel(base, { ok: false, models: [] })), 'status',
             'an unreachable server is not silently reported as "decides"');
@@ -368,6 +369,25 @@ module.exports = async (t) => {
             'and says what to do when no file is set yet');
         t.ok(describeModel({ backend: 'bundled', model: '', modelPath: 'C:\\models\\x.gguf' })
             .includes('x.gguf'), 'status', 'Windows paths are reduced to the file name too');
+
+        // LM Studio lists its embedding model next to the chat ones (seen in a real status dialog:
+        // qwen/qwen3.5-9b, google/gemma-4-e4b, text-embedding-nomic-embed-text-v1.5). An embedding model
+        // cannot answer a chat request, so it must not be offered as a candidate.
+        t.equal(looksLikeEmbeddingModel('text-embedding-nomic-embed-text-v1.5'), true, 'status',
+            'an embedding model is recognised by name');
+        t.equal(looksLikeEmbeddingModel('nomic-embed-text'), true, 'status', 'in its short form too');
+        t.equal(looksLikeEmbeddingModel('bge-large-en-v1.5'), true, 'status', 'and by family name');
+        t.equal(looksLikeEmbeddingModel('qwen/qwen3.5-9b'), false, 'status', 'a chat model is not');
+        t.equal(looksLikeEmbeddingModel('google/gemma-4-e4b'), false, 'status', 'nor is this one');
+        t.equal(looksLikeEmbeddingModel('qwen2.5-coder-7b-instruct'), false, 'status',
+            'and a coder model with no embed in its name certainly is not');
+
+        // The counts in the dialog are the *chat* models only, because that is what can answer.
+        const chat = [{ id: 'qwen/qwen3.5-9b' }, { id: 'google/gemma-4-e4b' }];
+        t.ok(/picks one of 2 chat models/.test(describeModel(base, { ok: true, models: chat })), 'status',
+            'the count is the chat models the server offers');
+        t.ok(/no chat model offered/.test(describeModel(base, { ok: true, models: [] })), 'status',
+            'a server offering only embeddings says so instead of inviting a bad choice');
     }
 
     // ---------- 7) the manifest and the wiring ----------
