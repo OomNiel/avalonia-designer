@@ -15,6 +15,22 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.11] - 2026-09-14 · *the Apply button stops disappearing*
+
+### Fixed
+- **Applying or discarding a proposal no longer depends on catching a notification.** On the first
+  successful real run the toast with *Apply*/*Discard* expired while the diff was being read, and with it
+  went the only obvious way to accept the change. The decision now lives where it cannot time out: a
+  **status bar** action (*Apply AI change* / *Discard*, hidden again once resolved) and two buttons in the
+  **diff editor's own title bar**, both driven by a context key, so they are there for as long as the
+  proposal is.
+- **The diff no longer asks to be saved.** Its right-hand pane was opened as an untitled document, which
+  is "unsaved" by definition — so closing it or reloading the window produced a save prompt about a pane
+  that is nothing but a preview. It is served by a read-only content provider now, with no dirty state at
+  all.
+- **Build to verify saves your files first**, silently: a build compiles what is on disk, and a dirty
+  editor would have verified something other than the change on screen.
+
 ## [0.9.10] - 2026-09-14 · *the endpoint setting shows where it points*
 
 ### Changed

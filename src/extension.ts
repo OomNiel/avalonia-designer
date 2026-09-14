@@ -7,7 +7,7 @@ import { createNewProject, openLastProject, maybeRunFirstBuild } from './project
 import { ProjectViewProvider, setActiveContext } from './projectView';
 import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor';
 import { disposeIssues } from './codeBehindCheck';
-import { AssistantCodeActionProvider, fixFindingWithAI, implementInFunction, showStatus } from './assistantUi';
+import { AssistantCodeActionProvider, PROPOSAL_SCHEME, applyProposal, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, showStatus } from './assistantUi';
 import { initModelRuntime, setupBundledModel, stopModelServer } from './modelRuntime';
 import * as logger from './logger';
 
@@ -129,6 +129,14 @@ export function activate(context: vscode.ExtensionContext): void {
                 stopModelServer();
                 void vscode.window.showInformationMessage('The local model server has been stopped.');
             }),
+            // Reviewing a proposal can take minutes, so the decision lives where it cannot expire: the
+            // status bar and the diff editor's title bar, both driven by `avaloniaDesigner.proposalPending`.
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.applyProposal', () => applyProposal()),
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.discardProposal', () => discardProposal()),
+            // The right pane of the diff is a read-only virtual document — otherwise closing it asks
+            // "do you want to save?" about a pane that is nothing but a preview.
+            vscode.workspace.registerTextDocumentContentProvider(PROPOSAL_SCHEME, proposalContent),
+            proposalContent,
             vscode.commands.registerCommand(
                 'avaloniaDesigner.assistant.fixFinding',
                 (uri: vscode.Uri, line: number, message: string) => fixFindingWithAI(uri, line, message)

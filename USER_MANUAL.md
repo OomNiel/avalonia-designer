@@ -876,10 +876,14 @@ and says why instead of pretending.
   light-bulb menu) when the line sits inside a method. Structural findings — a missing accessor, a lost
   Data-Image block — keep their exact rule-based fix and do not offer the model at all.
 
-**Nothing is written without you.** The proposal opens as a **diff** beside your file: **Apply** writes
-it as a normal edit (so **Ctrl+Z** undoes it), **Discard** throws it away. The extension then offers
-**Build to verify**, which runs your project's `build` task and reports the exit code — the check that
-actually matters for generated code.
+**Nothing is written without you.** The proposal opens as a **diff** beside your file, and the decision
+does not expire: **Apply AI change** and **Discard** sit in the **status bar** (and as buttons in the
+diff's own title bar) and stay there until you pick one — reading a diff takes as long as it takes, and a
+notification that vanishes after a few seconds is the wrong place for that choice. **Apply** writes it as
+a normal edit (so **Ctrl+Z** undoes it), **Discard** throws it away. The right-hand pane of the diff is a
+read-only preview, so nothing ever asks you to save it. The extension then offers **Build to verify**,
+which saves your unsaved files first (that is what a build compiles) and runs your project's `build` task,
+reporting the exit code — the check that actually matters for generated code.
 
 Expect it to be **slow and imperfect**. On a CPU-only machine a 3B model answers a short method in
 5–15 s, a 7B takes two to three times longer, and both are noticeably better at **C#** than at VB.NET.

@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.10",
+    "version": "0.9.11",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -128,6 +128,18 @@
                 "title": "AI: Stop the Local Model",
                 "category": "Avalonia",
                 "icon": "$(debug-stop)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.applyProposal",
+                "title": "AI: Apply the Proposed Change",
+                "category": "Avalonia",
+                "icon": "$(check)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.discardProposal",
+                "title": "AI: Discard the Proposed Change",
+                "category": "Avalonia",
+                "icon": "$(close)"
             }
         ],
         "viewsContainers": {
@@ -235,6 +247,24 @@
                 },
                 {
                     "command": "avaloniaDesigner.assistant.stopModel"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.applyProposal"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.discardProposal"
+                }
+            ],
+            "editor/title": [
+                {
+                    "command": "avaloniaDesigner.assistant.applyProposal",
+                    "when": "avaloniaDesigner.proposalPending && isInDiffEditor",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.discardProposal",
+                    "when": "avaloniaDesigner.proposalPending && isInDiffEditor",
+                    "group": "navigation@2"
                 }
             ],
             "editor/context": [

@@ -136,6 +136,193 @@ async function effectiveConfig(cfg: AssistantConfig): Promise<AssistantConfig | 
     }
 }
 
+/* ---------------- the proposal, and how it is reviewed ----------------
+ *
+ * Reviewing a diff takes as long as it takes, and a notification does not wait: the toast with
+ * Apply/Discard expires after a few seconds, and then the only sensible action is gone (reported by the
+ * user on the first successful run, 2026-09-14). So the decision is published in two places that do not
+ * time out — the status bar and the diff editor's own title bar — both driven by a context key, both
+ * gone the moment the proposal is resolved.
+ *
+ * The right-hand side of the diff is a READ-ONLY virtual document. It used to be an untitled document,
+ * which made closing the tab ask "do you want to save?" about a pane that is nothing but a preview.
+ */
+
+export const PROPOSAL_SCHEME = 'avalonia-ai-proposal';
+
+/** Supplies the read-only content behind the diff. Cheap, and the only way to avoid the save prompt. */
+class ProposalContentProvider implements vscode.TextDocumentContentProvider {
+    private readonly documents = new Map<string, string>();
+    private readonly emitter = new vscode.EventEmitter<vscode.Uri>();
+    readonly onDidChange = this.emitter.event;
+
+    put(uri: vscode.Uri, content: string): void {
+        this.documents.set(uri.toString(), content);
+        this.emitter.fire(uri);
+    }
+
+    forget(uri: vscode.Uri): void {
+        this.documents.delete(uri.toString());
+    }
+
+    provideTextDocumentContent(uri: vscode.Uri): string {
+        return this.documents.get(uri.toString()) ?? '';
+    }
+
+    dispose(): void {
+        this.documents.clear();
+        this.emitter.dispose();
+    }
+}
+
+/** Registered once in `activate`. */
+export const proposalContent = new ProposalContentProvider();
+
+interface PendingProposal {
+    documentUri: vscode.Uri;
+    /** the method the model rewrote — looked up again when Apply is pressed */
+    name: string;
+    startLine: number;
+    endLine: number;
+    /** the model's own answer, re-spliced at apply time so edits made while reviewing are respected */
+    code: string;
+    /** the file as it was when the proposal was computed */
+    original: string;
+    proposalUri: vscode.Uri;
+    summary: string;
+}
+
+let pending: PendingProposal | undefined;
+let applyItem: vscode.StatusBarItem | undefined;
+let discardItem: vscode.StatusBarItem | undefined;
+let proposalSeq = 0;
+
+function fileBaseName(document: vscode.TextDocument): string {
+    return document.fileName.split(/[\\/]/).pop() ?? 'proposal.cs';
+}
+
+/** Publishes the waiting decision somewhere that outlives a notification. */
+function publishPending(p: PendingProposal): void {
+    pending = p;
+    applyItem ??= vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    discardItem ??= vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+    applyItem.text = '$(check) Apply AI change';
+    applyItem.tooltip = `${p.name}() — ${p.summary}. Applies the diff that is on screen.`;
+    applyItem.command = 'avaloniaDesigner.assistant.applyProposal';
+    discardItem.text = '$(close) Discard';
+    discardItem.tooltip = `Leave ${p.name}() as it is.`;
+    discardItem.command = 'avaloniaDesigner.assistant.discardProposal';
+    applyItem.show();
+    discardItem.show();
+    void vscode.commands.executeCommand('setContext', 'avaloniaDesigner.proposalPending', true);
+}
+
+function clearPending(): void {
+    pending = undefined;
+    applyItem?.hide();
+    discardItem?.hide();
+    void vscode.commands.executeCommand('setContext', 'avaloniaDesigner.proposalPending', false);
+}
+
+/** Closes the diff tab *by reference*: never "whatever happens to be the active editor". */
+async function closeProposalTab(p: PendingProposal): Promise<void> {
+    for (const group of vscode.window.tabGroups.all) {
+        for (const tab of group.tabs) {
+            const input = tab.input;
+            const modified = input instanceof vscode.TabInputTextDiff ? input.modified : undefined;
+            if (modified?.toString() === p.proposalUri.toString()) {
+                await vscode.window.tabGroups.close(tab);
+                return;
+            }
+        }
+    }
+}
+
+/** "AI: Apply the Proposed Change" — also the status-bar button and the diff editor's title action. */
+export async function applyProposal(): Promise<void> {
+    const p = pending;
+    if (!p) {
+        void vscode.window.showInformationMessage('No AI proposal is waiting.');
+        return;
+    }
+    let document: vscode.TextDocument;
+    try {
+        document = await vscode.workspace.openTextDocument(p.documentUri);
+    } catch {
+        clearPending();
+        void vscode.window.showErrorMessage('The file is no longer available — the proposal was dropped.');
+        return;
+    }
+
+    const current = document.getText();
+    const spans = methodsIn(document.fileName, current);
+    // The method may have moved while the diff was on screen, so match on the name first and fall back
+    // to "the method that now occupies the span we proposed".
+    const span =
+        spans.find((m) => m.name === p.name) ??
+        spans.find((m) => p.startLine <= m.endLine && m.line <= p.endLine);
+    if (!span) {
+        clearPending();
+        void vscode.window.showWarningMessage(`"${p.name}" is no longer in the file — nothing was applied.`);
+        return;
+    }
+
+    // The diff may have been on screen for minutes: if the method moved or was edited meanwhile, the
+    // model's answer is spliced into the CURRENT text, and that is worth confirming.
+    if (current !== p.original) {
+        const pick = await vscode.window.showWarningMessage(
+            `The file changed while you were reviewing the proposal. Applying replaces ${p.name}() as it is now.`,
+            { modal: true },
+            'Apply',
+            'Discard'
+        );
+        if (pick === 'Discard') {
+            await discardProposal();
+            return;
+        }
+        if (pick !== 'Apply') return;
+    }
+
+    const eol = current.includes('\r\n') ? '\r\n' : '\n';
+    const proposed = spliceMethod(current, span, p.code, eol);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(current.length)), proposed);
+    if (!(await vscode.workspace.applyEdit(edit))) {
+        void vscode.window.showErrorMessage('Could not apply the proposal — the file may be read-only.');
+        return; // keep it pending: the file can be made writable and the same button pressed again
+    }
+
+    const summary = p.summary;
+    const name = p.name;
+    await closeProposalTab(p);
+    proposalContent.forget(p.proposalUri);
+    clearPending();
+    // Saved on purpose, without asking: the change is applied, and "Build to verify" builds what is on
+    // disk — leaving it dirty would verify the code as it was before.
+    await document.save();
+
+    const next = await vscode.window.showInformationMessage(
+        `${name}() replaced — Ctrl+Z undoes it.`,
+        'Build to verify',
+        'Dismiss'
+    );
+    if (next === 'Build to verify') await runBuildTask();
+    void summary;
+}
+
+/** "AI: Discard the Proposed Change" — closes the diff, changes nothing. */
+export async function discardProposal(): Promise<void> {
+    const p = pending;
+    if (!p) {
+        void vscode.window.showInformationMessage('No AI proposal is waiting.');
+        return;
+    }
+    await closeProposalTab(p);
+    proposalContent.forget(p.proposalUri);
+    clearPending();
+    void vscode.window.showInformationMessage(`${p.name}() was left as it is.`);
+}
+
 /**
  * Asks the model for a replacement method, shows it as a diff, and applies it only when the developer
  * says so. Returns a short summary, or undefined when the attempt was cancelled or failed.
@@ -182,46 +369,61 @@ async function proposeMethod(
     const eol = original.includes('\r\n') ? '\r\n' : '\n';
     const proposed = spliceMethod(original, span, code, eol);
 
-    // The diff is the contract: the developer reads it before anything is written.
-    const proposal = await vscode.workspace.openTextDocument({ content: proposed, language: document.languageId });
+    // A new proposal replaces an older one: its diff is stale, so its tab and content go.
+    const previous = pending;
+    if (previous) {
+        await closeProposalTab(previous);
+        proposalContent.forget(previous.proposalUri);
+        clearPending();
+    }
+
+    // Read-only virtual document (never an untitled one — see the note above the provider).
+    const proposalUri = vscode.Uri.from({
+        scheme: PROPOSAL_SCHEME,
+        path: `/${++proposalSeq}/${fileBaseName(document)}`
+    });
+    proposalContent.put(proposalUri, proposed);
     await vscode.commands.executeCommand(
         'vscode.diff',
         document.uri,
-        proposal.uri,
-        `${document.fileName.split(/[\\/]/).pop()} — AI proposal for ${span.name}()`
+        proposalUri,
+        `${fileBaseName(document)} — AI proposal for ${span.name}()`
     );
+    publishPending({
+        documentUri: document.uri,
+        name: span.name,
+        startLine: span.line,
+        endLine: span.endLine,
+        code,
+        original,
+        proposalUri,
+        summary: summarise(code)
+    });
 
     const pick = await vscode.window.showInformationMessage(
         `AI proposal for ${span.name}(): ${summarise(code)}. Review the diff, then apply.${note ? ` (${note})` : ''}`,
         'Apply',
         'Discard'
     );
-    if (pick !== 'Apply') {
-        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    if (pick === 'Discard') {
+        await discardProposal();
         return undefined;
     }
-
-    const edit = new vscode.WorkspaceEdit();
-    const whole = new vscode.Range(document.positionAt(0), document.positionAt(original.length));
-    edit.replace(document.uri, whole, proposed);
-    if (!(await vscode.workspace.applyEdit(edit))) {
-        void vscode.window.showErrorMessage('Could not apply the proposal — the file may be read-only.');
-        return undefined;
+    if (pick === 'Apply') {
+        await applyProposal();
+        return summarise(code);
     }
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-    await document.save();
-
-    const next = await vscode.window.showInformationMessage(
-        `${span.name}() replaced — Ctrl+Z undoes it.`,
-        'Build to verify',
-        'Dismiss'
-    );
-    if (next === 'Build to verify') await runBuildTask();
-    return summarise(code);
+    // The toast expired or was dismissed — the status bar and the diff's title bar still offer the
+    // decision, so nothing is lost and nothing is applied without a word.
+    return undefined;
 }
 
 /** Runs the project's own `build` task (the scaffold creates one) and reports the exit code. */
 export async function runBuildTask(): Promise<void> {
+    // Save everything first, without a prompt: the build compiles what is on disk, and a dirty editor
+    // would verify something other than the change on screen. (`saveAll(false)` skips untitled buffers,
+    // which is what we want — there are none in this flow any more.)
+    await vscode.workspace.saveAll(false);
     const tasks = await vscode.tasks.fetchTasks();
     const build =
         tasks.find((t) => t.name === 'build') ??

@@ -435,5 +435,33 @@ module.exports = async (t) => {
         t.ok(/methodAt\(editor\.document/.test(ui), 'wiring', 'the implement command finds the caret\'s method');
         t.ok(/vscode\.diff/.test(ui), 'wiring', 'the proposal is always shown as a diff');
         t.ok(/WorkspaceEdit/.test(ui) && /applyEdit/.test(ui), 'wiring', 'and applied as a normal edit (so Ctrl+Z works)');
+
+        // The review flow, as reported by the user's first successful run (2026-09-14): the toast with
+        // Apply/Discard expired while they read the diff, and closing the right pane asked to save it.
+        for (const short of ['applyProposal', 'discardProposal']) {
+            const cmd = `avaloniaDesigner.assistant.${short}`;
+            t.ok(commands.includes(cmd), 'manifest', `${short} is contributed as a command`);
+            t.ok(palette.some((m) => m.command === cmd), 'manifest', `${short} is reachable from the palette`);
+            t.ok((pkg.contributes.menus['editor/title'] || []).some(
+                (m) => m.command === cmd && /avaloniaDesigner\.proposalPending/.test(m.when || '')
+            ), 'manifest', `${short} is a button on the diff editor's title bar, only while a proposal waits`);
+            t.ok((pkg.contributes.menus['editor/title'] || []).some(
+                (m) => m.command === cmd && /isInDiffEditor/.test(m.when || '')
+            ), 'manifest', `and only inside a diff editor — not on ordinary files`);
+        }
+        t.ok(/createStatusBarItem/.test(ui), 'wiring',
+            'the decision is also published in the status bar, where it cannot expire');
+        t.ok(/setContext', 'avaloniaDesigner\.proposalPending'/.test(ui), 'wiring',
+            'gated by a context key, which is what the title-bar buttons match on');
+        t.ok(/registerTextDocumentContentProvider\(PROPOSAL_SCHEME/.test(ext), 'wiring',
+            'the right pane of the diff is a read-only content provider');
+        t.ok(/proposalContent,/.test(ext), 'wiring', 'registered for disposal with the window');
+        t.ok(/openTextDocument\(\{ content/.test(ui) === false, 'wiring',
+            'and never an untitled document — that is exactly what asked "do you want to save?"');
+        t.ok(/saveAll\(false\)/.test(ui), 'wiring', 'Build to verify saves unsaved files first (that is what it compiles)');
+        t.ok(/tabGroups\.close/.test(ui), 'wiring',
+            'the diff tab is closed by reference, never "whatever is active"');
+        t.ok(commands.includes('avaloniaDesigner.assistant.fixFinding') === false, 'manifest',
+            'the internal Code Action command stays out of the palette');
     }
 };

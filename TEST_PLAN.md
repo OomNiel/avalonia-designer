@@ -276,6 +276,9 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.11` (2026-09-14)** — the review of a proposal survives scrolling: status-bar and
+  diff-title buttons gated by a context key, a read-only content provider behind the diff (no save prompt)
+  and an implicit save before *Build to verify*. Sixteen assertions, suite **3304**.
 - **Release `0.9.10` (2026-09-14)** — the endpoint setting shows its default instead of an empty box;
   two assertions pin the manifest default and `DEFAULT_ENDPOINT` to each other. Suite **3288**.
 - **Release `0.9.9` (2026-09-14)** — the status dialog got an embedding-model heuristic, a "Pin a

@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3288 passed, 0 failed / 0 skipped** (2026-09-14, ~39 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3304 passed, 0 failed / 0 skipped** (2026-09-14, ~43 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1567,6 +1567,27 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   `DEFAULT_ENDPOINT` in `assistant.ts` — the suite asserts they are equal, so a future edit to one of them
   fails instead of silently pointing the feature at the wrong port. General lesson: a default that is
   invisible in the UI is a default users will ask about.
+- §97 **The first successful run, and the two things it exposed (2026-09-14).** The user's first working
+  request ("A Button1 click must set RadioButton1", 17 s, diff shown) produced two defects that no test here
+  could have found, because both are about *time* and *document state*:
+  - **A decision offered in a notification expires.** The toast carried Apply/Discard; reading the diff is
+    exactly the task that outlives it, so the buttons were gone by the time the developer knew what to
+    press. The fix is not a longer timeout but a different surface: a **status bar** item pair and two
+    **`editor/title`** buttons on the diff itself, both gated by the context key
+    `avaloniaDesigner.proposalPending`, both hidden when the proposal is resolved. The toast stays as a
+    shortcut; it is no longer the only door.
+  - **An untitled document is dirty by definition.** The right pane of the diff was
+    `openTextDocument({ content })`, so closing it — or reloading the window — asked to save a preview.
+    The pane is now served by a `TextDocumentContentProvider` on the `avalonia-ai-proposal` scheme: no
+    dirty state, no prompt, and `Apply` re-reads the real file and re-splices the answer, so a file that
+    changed during the review is handled (with a confirmation) instead of overwritten.
+  - Also fixed the friction the user named: *Build to verify* now calls `workspace.saveAll(false)` first —
+    a build compiles the disk, so an unsaved editor would verify the wrong thing.
+  - **How this turn was nearly lost:** the edits were made into a file whose editor buffer was stale, and
+    two of them (an import and a renamed property) were reverted by a save from that buffer while the rest
+    landed — leaving a file that compiled with three errors and an editor that refused to save. The
+    compile errors are what surfaced it; the lesson is to run `tsc` *before* believing any multi-edit turn,
+    and to tell the user to revert the buffer (File → Revert File) rather than save it.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 
