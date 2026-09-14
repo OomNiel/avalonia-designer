@@ -1385,6 +1385,17 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     differs from the repo's is not evidence of a stale package — check the diff before chasing it.
   - New guards: `packaging.test.js` asserts the icon is **square**, and runs the PNG/size/square check
     over *every* PNG the manifest names, not just `package.json#icon`.
+- §89 **"Latest release" is a second flag, not the absence of the first (2026-09-14).** The GitHub
+  release for `0.9.4` was created with `--prerelease` (the house style up to then, matching the `-beta`
+  tags). Clearing it with `gh release edit <tag> --prerelease=false` removes the *Pre-release* badge but
+  does **not** make GitHub call it *Latest*: `prerelease` and `make_latest` are separate fields, and the
+  repository keeps no "latest" at all until `--latest` is set — the API's `releases/latest` returned
+  nothing and `/releases/latest` 302'd to the releases *list*. After `--latest` the API returns the tag,
+  `gh release list` shows **Latest**, and `/releases/latest` redirects to the tag page — although the
+  *plain* URL kept serving the old cached 302 to the list for a while; a `?cachebust=1` request resolved
+  correctly, which is how the cache was cleared of suspicion. Both flags are part of the release routine
+  in `PUBLISHING.md` part F now, and the README/USER_MANUAL links went back to `/releases/latest`
+  (they had been pointing at the releases list precisely because every release was a pre-release).
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

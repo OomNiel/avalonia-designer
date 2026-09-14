@@ -34,8 +34,8 @@ The latest published version is **`0.9.4`**, so the command above installs it (a
 reinstall, or to update a copy that is already on the machine).
 
 **Or from GitHub** — take the `.vsix` from the
-[releases page](https://github.com/OomNiel/avalonia-designer/releases) (newest at the top — the file
-name carries its version, and a GitHub release can lag the Marketplace, so check it):
+[latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) (the file name carries
+its version, and a GitHub release can lag the Marketplace, so check it):
 
 ```bash
 code --install-extension avalonia-designer-0.9.4.vsix --force

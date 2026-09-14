@@ -196,7 +196,9 @@ listing when that release is uploaded — a repo-only README edit does not.
 >
 > **GitHub `v1.0.0-beta.11` is created** with that VSIX attached; re-downloading the asset and
 > `sha256sum`-ing it matched the local file, so the release carries exactly the build that goes to the
-> Marketplace (as `beta.8`/`beta.9` did). **The tag history has a gap:** `0.9.3` went out through the
+> Marketplace (as `beta.8`/`beta.9` did). It is **not** marked pre-release and is flagged **Latest** —
+> the first release in the repo's history that is (all nine earlier ones are pre-release), so the
+> repository page now shows a normal latest release. **The tag history has a gap:** `0.9.3` went out through the
 > portal without ever being tagged, so the releases run `v1.0.0-beta.9` → `v1.0.0-beta.11` — the
 > `0.9.3` package can be backfilled from the gallery's stored copy if that ever matters.
 
@@ -247,10 +249,20 @@ The response also proves *what* was published, which is worth checking every tim
    GitHub release with the descriptive semver name (`git tag v1.0.0-beta.8`, see `NOTES.md` §1). The
    tag and `package.json` deliberately differ: the tag is documentation, `package.json` is the number
    the Marketplace shows and compares. Never reuse a number — the Marketplace rejects the upload.
-2. Publish — through the publisher portal (part E). For the CLI route the normal release is
+2. Create the GitHub release with the descriptive tag —
+   `git tag -a v1.0.0-beta.11 -m "<one-line summary>"`, push the tag, then
+   `gh release create v1.0.0-beta.11 --title "Avalonia Designer for VS Code v1.0.0-beta.11 (BETA)"
+   --notes-file <file> --latest avalonia-designer-<version>.vsix`. Notes house style: an intro block
+   ("Install:" + the `sha256` + a one-paragraph summary + `Test suite: N passed / 0 failed /
+   0 skipped.`), then `### Added / ### Changed / ### Fixed / ### Notes`. **From `v1.0.0-beta.11` on,
+   set both flags explicitly:** `prerelease` and `make_latest` are *separate* fields, so clearing
+   `--prerelease` alone leaves the repository with no latest release at all — `--latest` is what makes
+   `gh release list` say **Latest** and `/releases/latest` resolve. Every release before `beta.11`
+   stays pre-release.
+3. Publish — through the publisher portal (part E). For the CLI route the normal release is
    `npm run publish:stable`; `npm run publish:pre` is the variant that puts the build on the other
    channel, and it is not used for a normal `0.9.x` release.
-3. Rotate the PAT before it expires (part B → **Regenerate**, then update the GitHub secret). An
+4. Rotate the PAT before it expires (part B → **Regenerate**, then update the GitHub secret). An
 expired token — or one retired on **1 December 2026** — appears as a 401 / *“verification failed”* in
 the release run.
 
