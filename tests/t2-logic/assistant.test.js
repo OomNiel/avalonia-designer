@@ -406,6 +406,14 @@ module.exports = async (t) => {
         }
         t.equal(pkg.contributes.configuration.properties['avaloniaDesigner.assistant.backend'].default, 'off', 'manifest',
             'and the feature ships switched off');
+        // The default endpoint exists in TWO places — the manifest and DEFAULT_ENDPOINT in assistant.ts —
+        // and the settings UI shows only the first one. A blank field whose real value is a URL is what
+        // confused a user during testing (2026-09-14), so the two are pinned to each other here.
+        const epDefault = pkg.contributes.configuration.properties['avaloniaDesigner.assistant.endpoint'].default;
+        t.equal(epDefault, DEFAULT_ENDPOINT, 'manifest',
+            'the endpoint default shown in the settings UI is the one the code falls back to');
+        t.ok(/LM Studio/.test(pkg.contributes.configuration.properties['avaloniaDesigner.assistant.endpoint'].markdownDescription),
+            'manifest', 'and its description names the server it points at');
         const commands = (pkg.contributes.commands || []).map((c) => c.command);
         t.ok(commands.includes('avaloniaDesigner.assistant.implement'), 'manifest', 'the implement command is contributed');
         t.ok(commands.includes('avaloniaDesigner.assistant.status'), 'manifest', 'and the status command');

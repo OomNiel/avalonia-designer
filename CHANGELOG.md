@@ -15,6 +15,15 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.10] - 2026-09-14 · *the endpoint setting shows where it points*
+
+### Changed
+- **The endpoint setting is no longer blank by default.** `avaloniaDesigner.assistant.endpoint` defaulted
+  to an empty string, which *means* "use `http://127.0.0.1:1234/v1`" — correct in code, but the settings UI
+  showed an empty box, so the only way to see where requests would go was to run the status command. The
+  default is now the address itself (an empty value still falls back to it), and a test pins the two
+  places it is written — the manifest and `DEFAULT_ENDPOINT` — to each other so they cannot drift.
+
 ## [0.9.9] - 2026-09-14 · *the status check knows what an embedding model is*
 
 ### Added

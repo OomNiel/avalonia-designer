@@ -858,7 +858,7 @@ LM Studio, Ollama and `llama-server` all expose. Install one, load a small code 
 | Setting | Value |
 |---|---|
 | `avaloniaDesigner.assistant.backend` | `external` — enables the feature |
-| `avaloniaDesigner.assistant.endpoint` | `http://127.0.0.1:1234/v1` (LM Studio) · `11434/v1` (Ollama) · `8080/v1` (llama.cpp); empty means LM Studio's default |
+| `avaloniaDesigner.assistant.endpoint` | the address of your server: `http://127.0.0.1:1234/v1` (**the default**, LM Studio) · `http://127.0.0.1:11434/v1` (Ollama) · `http://127.0.0.1:8080/v1` (llama.cpp). An empty value falls back to the LM Studio address |
 | `avaloniaDesigner.assistant.model` | the model id, e.g. `qwen2.5-coder-7b`. Empty lets the server decide — Ollama needs a name here |
 | `avaloniaDesigner.assistant.timeoutSeconds` | how long to wait (default 60). Inference in RAM is slow: 10 s is optimistic, 30 s is normal on an older CPU |
 

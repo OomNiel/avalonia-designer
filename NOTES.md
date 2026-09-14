@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3286 passed, 0 failed / 0 skipped** (2026-09-14, ~39 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3288 passed, 0 failed / 0 skipped** (2026-09-14, ~39 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1558,6 +1558,15 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     reverted — the test file's import list and one regex — because it is open in the editor and a save
     from a stale buffer won the race. The suite caught it (`describeModel is not defined`), which is the
     reason the counts in this file are verified against a real run rather than assumed.
+- §96 **An empty field whose real value is a URL (2026-09-14).** `assistant.endpoint` defaulted to `""`,
+  and `normalizeEndpoint('')` turns that into LM Studio's `http://127.0.0.1:1234/v1` — correct, and proven
+  the same afternoon: the status dialog printed `Endpoint: http://127.0.0.1:1234/v1` while the setting was
+  untouched. But the settings UI showed an empty box, so "leave endpoint empty" looked like a missing
+  value rather than a chosen default; the user asked about it. The default is now the address itself
+  (empty still falls back), and because that address is written in **two** places — `package.json` and
+  `DEFAULT_ENDPOINT` in `assistant.ts` — the suite asserts they are equal, so a future edit to one of them
+  fails instead of silently pointing the feature at the wrong port. General lesson: a default that is
+  invisible in the UI is a default users will ask about.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

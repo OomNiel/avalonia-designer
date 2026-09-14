@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.9",
+    "version": "0.9.10",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -287,8 +287,8 @@
                 },
                 "avaloniaDesigner.assistant.endpoint": {
                     "type": "string",
-                    "default": "",
-                    "markdownDescription": "Base URL of the local server, e.g. `http://127.0.0.1:1234/v1` (LM Studio), `http://127.0.0.1:11434/v1` (Ollama) or `http://127.0.0.1:8080/v1` (llama.cpp). Empty = the LM Studio default."
+                    "default": "http://127.0.0.1:1234/v1",
+                    "markdownDescription": "Base URL of the local server: `http://127.0.0.1:1234/v1` (LM Studio, the default), `http://127.0.0.1:11434/v1` (Ollama) or `http://127.0.0.1:8080/v1` (llama.cpp). Leaving it empty falls back to the LM Studio address."
                 },
                 "avaloniaDesigner.assistant.model": {
                     "type": "string",
