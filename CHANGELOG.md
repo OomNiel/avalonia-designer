@@ -15,6 +15,25 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.13] - 2026-09-14 · *the Apply buttons are where you are looking*
+
+### Added
+- **The decision is now a button directly above the method** (a code lens: *✓ Apply AI change* /
+  *✕ Discard*), refreshed when a proposal appears or is resolved. Reported three times in one day, the
+  status bar and the diff's title bar turned out not to be enough on their own — a developer reviewing a
+  change looks at the code, so that is where the buttons belong now. The status bar entry is also
+  **coloured** instead of being one more grey word, and an unanswered notification leaves a line in the
+  output channel saying where the buttons are.
+- **The status dialog names the running version** (`extension v0.9.13`). A VSIX installed while a window
+  is open changes nothing in that window until it reloads, and "did my reload take effect?" was
+  otherwise guesswork.
+
+### Fixed
+- **A proposal tab left over from a previous window is closed at activation.** A proposal exists only in
+  memory, so a diff pane restored by a window reload can never be applied — it is a dead pane without
+  buttons, which is exactly what "there is no means to apply the diff" and "the tab opens by itself, I
+  had all tabs closed" both turned out to be. Anything of ours found at startup is stale by definition.
+
 ## [0.9.12] - 2026-09-14 · *the bundled model stops repeating itself*
 
 ### Fixed

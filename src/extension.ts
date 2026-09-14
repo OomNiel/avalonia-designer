@@ -7,7 +7,7 @@ import { createNewProject, openLastProject, maybeRunFirstBuild } from './project
 import { ProjectViewProvider, setActiveContext } from './projectView';
 import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor';
 import { disposeIssues } from './codeBehindCheck';
-import { AssistantCodeActionProvider, PROPOSAL_SCHEME, applyProposal, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, showStatus } from './assistantUi';
+import { AssistantCodeActionProvider, PROPOSAL_SCHEME, applyProposal, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, showStatus } from './assistantUi';
 import { initModelRuntime, setupBundledModel, stopModelServer } from './modelRuntime';
 import * as logger from './logger';
 
@@ -118,6 +118,10 @@ export function activate(context: vscode.ExtensionContext): void {
         // gigabytes of weights, so it must never be started twice.
         initModelRuntime(context);
 
+        // A proposal only lives in memory, so a proposal tab restored from a previous window is a dead
+        // pane with no buttons (reported twice, 2026-09-14). Close whatever the last session left behind.
+        void closeStaleProposalTabs();
+
         // Local AI assist — opt-in, one explicit command per flow, no background traffic.
         context.subscriptions.push(
             vscode.commands.registerCommand('avaloniaDesigner.assistant.implement', () => implementInFunction()),
@@ -133,6 +137,9 @@ export function activate(context: vscode.ExtensionContext): void {
             // status bar and the diff editor's title bar, both driven by `avaloniaDesigner.proposalPending`.
             vscode.commands.registerCommand('avaloniaDesigner.assistant.applyProposal', () => applyProposal()),
             vscode.commands.registerCommand('avaloniaDesigner.assistant.discardProposal', () => discardProposal()),
+            // The buttons above the method: the place a developer reviewing a change is actually looking.
+            vscode.languages.registerCodeLensProvider([{ language: 'csharp' }, { language: 'vb' }], proposalLenses),
+            proposalLenses,
             // The right pane of the diff is a read-only virtual document — otherwise closing it asks
             // "do you want to save?" about a pane that is nothing but a preview.
             vscode.workspace.registerTextDocumentContentProvider(PROPOSAL_SCHEME, proposalContent),

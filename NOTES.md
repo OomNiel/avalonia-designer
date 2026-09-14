@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3323 passed, 0 failed / 0 skipped** (2026-09-14, ~43 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3358 passed, 0 failed / 0 skipped** (2026-09-14, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1618,6 +1618,31 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     report into numbers, a root cause and a before/after. When a model misbehaves, reproduce its exact
     request before touching a prompt.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
+- §99 **Three reports, one affordance, and the setting that ate my edits (2026-09-14).** The Apply/Discard
+  decision was moved out of a notification in §97 and still came back twice: *"there is no button or means
+  to apply the diff"*, then *"the tab opens by itself, I had all tabs closed"*. Reading them together is
+  what solved it:
+  - **A decision offered in a toast expires** (§97) → moved to the status bar and the diff's title bar. The
+    user then *found* the title-bar button — so that part worked, and the report that "there is no button"
+    was really the next item.
+  - **A proposal lives in memory**, so a proposal tab restored by a **window reload** is a dead pane with no
+    context key, no buttons and no lens — indistinguishable from "the buttons disappeared". The user
+    reloads often (every build in this session) and had a proposal pending each time. `closeStaleProposalTabs()`
+    now runs at activation and closes anything of ours, saying so in the output channel.
+  - **The buttons now live where the developer is looking**: a **code lens** above the method (*✓ Apply AI
+    change* / *✕ Discard*), plus a coloured status bar entry and the title-bar pair. Three surfaces, because
+    two were not enough.
+  - The status dialog now prints **the running version** (`extension v0.9.13`). "Did my reload take effect?"
+    cost real time in this session and should never be guesswork again — a VSIX installed into an open window
+    changes nothing until that window reloads, and nothing in the UI used to say which build was live.
+  - **And the reason my edits kept vanishing:** `~/.config/Code/User/settings.json` has
+    `files.autoSave = "onFocusChange"` with `editor.formatOnSave = true` (and `task.saveBeforeRun = true`).
+    Every time focus leaves an editor — which any terminal command does — VS Code saves *all* dirty buffers,
+    including ones loaded before my edit, and reformats them. That is how an import, a property name and a
+    test assertion were reverted while the rest of a batch landed. Workaround used here: put new assertions in
+    a **test file that is not open** in the editor (`assistantReview.test.js`). General rule for this repo:
+    after a multi-file edit, verify on disk (grep) and run `tsc`/the suite *before* believing it, and ask the
+    user to close the affected tabs or reload the window.
 ## 7. Feature history
 
 - Original §1–§51: **`NOTES_ARCHIVE.md`** (verbatim).

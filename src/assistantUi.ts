@@ -211,11 +211,15 @@ function publishPending(p: PendingProposal): void {
     applyItem.text = '$(check) Apply AI change';
     applyItem.tooltip = `${p.name}() — ${p.summary}. Applies the diff that is on screen.`;
     applyItem.command = 'avaloniaDesigner.assistant.applyProposal';
+    // A colour, so it is not one more grey word among the branch and the encoding: this is a decision
+    // that is waiting for the developer.
+    applyItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     discardItem.text = '$(close) Discard';
     discardItem.tooltip = `Leave ${p.name}() as it is.`;
     discardItem.command = 'avaloniaDesigner.assistant.discardProposal';
     applyItem.show();
     discardItem.show();
+    proposalLenses.refresh();
     void vscode.commands.executeCommand('setContext', 'avaloniaDesigner.proposalPending', true);
 }
 
@@ -223,8 +227,52 @@ function clearPending(): void {
     pending = undefined;
     applyItem?.hide();
     discardItem?.hide();
+    proposalLenses.refresh();
     void vscode.commands.executeCommand('setContext', 'avaloniaDesigner.proposalPending', false);
 }
+
+/**
+ * The affordance that cannot be missed: a code lens directly above the method that is waiting.
+ *
+ * The status bar and the editor title are there as well, but a developer reviewing a change is looking at
+ * the *code* — and the first version of this flow put the only buttons in a notification, which expired
+ * while the diff was being read (reported twice, 2026-09-14). A lens is where the decision belongs, it
+ * survives scrolling, switching tabs and reloading the window, and it names the method.
+ */
+class ProposalLensProvider implements vscode.CodeLensProvider {
+    private readonly emitter = new vscode.EventEmitter<void>();
+    readonly onDidChangeCodeLenses = this.emitter.event;
+
+    provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+        const p = pending;
+        if (!p || p.documentUri.toString() !== document.uri.toString()) return [];
+        const line = Math.max(0, p.startLine - 1);
+        const range = new vscode.Range(line, 0, line, 0);
+        return [
+            new vscode.CodeLens(range, {
+                title: '$(check) Apply AI change',
+                tooltip: `${p.summary}. Replaces ${p.name}(); Ctrl+Z undoes it.`,
+                command: 'avaloniaDesigner.assistant.applyProposal'
+            }),
+            new vscode.CodeLens(range, {
+                title: '$(close) Discard',
+                tooltip: `Leave ${p.name}() as it is.`,
+                command: 'avaloniaDesigner.assistant.discardProposal'
+            })
+        ];
+    }
+
+    refresh(): void {
+        this.emitter.fire();
+    }
+
+    dispose(): void {
+        this.emitter.dispose();
+    }
+}
+
+/** Registered once in `activate`, for C# and VB. */
+export const proposalLenses = new ProposalLensProvider();
 
 /** Closes the diff tab *by reference*: never "whatever happens to be the active editor". */
 async function closeProposalTab(p: PendingProposal): Promise<void> {
@@ -237,6 +285,41 @@ async function closeProposalTab(p: PendingProposal): Promise<void> {
                 return;
             }
         }
+    }
+}
+
+/** Every URI of ours a tab is showing (a diff's right-hand side, or a plain virtual document). */
+function proposalUrisIn(tab: vscode.Tab): vscode.Uri[] {
+    const input = tab.input;
+    const candidates: (vscode.Uri | undefined)[] = [
+        input instanceof vscode.TabInputTextDiff ? input.modified : undefined,
+        input instanceof vscode.TabInputText ? input.uri : undefined
+    ];
+    return candidates.filter((u): u is vscode.Uri => !!u && u.scheme === PROPOSAL_SCHEME);
+}
+
+/**
+ * Closes proposal tabs left behind by a previous window.
+ *
+ * A proposal lives in memory, so a tab of ours that comes back after a **window reload** can never be
+ * applied: it is a dead pane with no buttons, and it looks exactly like "the buttons disappeared" — the
+ * user reported both symptoms (2026-09-14) after reloading to pick up a new build while a proposal was
+ * pending. Anything of ours found at activation is therefore stale by definition, and saying so in the
+ * output channel keeps it from looking like a bug in the diff itself.
+ */
+export async function closeStaleProposalTabs(): Promise<void> {
+    const stale: vscode.Tab[] = [];
+    for (const group of vscode.window.tabGroups.all) {
+        for (const tab of group.tabs) {
+            if (proposalUrisIn(tab).length > 0) stale.push(tab);
+        }
+    }
+    for (const tab of stale) {
+        proposalContent.forget(proposalUrisIn(tab)[0]);
+        await vscode.window.tabGroups.close(tab);
+    }
+    if (stale.length > 0) {
+        log(`Closed ${stale.length} AI proposal tab(s) left over from a previous window — a proposal only lives in memory, so they could no longer be applied.`);
     }
 }
 
@@ -439,8 +522,15 @@ async function proposeMethod(
         await applyProposal();
         return summarise(code);
     }
-    // The toast expired or was dismissed — the status bar and the diff's title bar still offer the
-    // decision, so nothing is lost and nothing is applied without a word.
+    // The toast expired or was dismissed — the lens on the method, the status bar and the diff's title
+    // bar still offer the decision, so nothing is lost and nothing is applied without a word. Say so in
+    // the output channel as well, so a developer who cannot find the buttons has a breadcrumb.
+    if (pending) {
+        log(
+            `Proposal for ${span.name}() is waiting — apply it with the buttons above the method, in the `
+            + 'status bar (bottom right), or in the diff editor\'s title bar.'
+        );
+    }
     return undefined;
 }
 
@@ -581,6 +671,16 @@ async function offerSetup(): Promise<void> {
     if (pick === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
 }
 
+/** The running extension's version — the status dialog reports it, because "did my reload take effect?"
+ *  is otherwise guesswork (a VSIX installed while a window is open does not change that window). */
+function extensionVersion(): string {
+    try {
+        return String(vscode.extensions.getExtension('grumpy.avalonia-designer')?.packageJSON?.version ?? '?');
+    } catch {
+        return '?';
+    }
+}
+
 /** Reports what the feature would use right now — including the hardware verdict. */
 export async function showStatus(): Promise<void> {
     const cfg = assistantConfig();
@@ -593,7 +693,7 @@ export async function showStatus(): Promise<void> {
     // request, so they are named but not counted as candidates.
     const chatModels = (probe?.models ?? []).filter((m) => !looksLikeEmbeddingModel(m.id));
     const lines = [
-        `AI assist: ${cfg.backend === 'external' ? 'on (local model server)' : cfg.backend === 'bundled' ? 'on (bundled local model)' : 'off'}`,
+        `AI assist: ${cfg.backend === 'external' ? 'on (local model server)' : cfg.backend === 'bundled' ? 'on (bundled local model)' : 'off'}  ·  extension v${extensionVersion()}`,
         cfg.backend === 'bundled' ? 'Endpoint: the bundled runtime supplies one' : `Endpoint: ${cfg.endpoint}`,
         describeModel(cfg, probe && { ok: probe.ok, models: chatModels }),
         `Budget: ${cfg.timeoutSeconds} s, up to ${cfg.maxTokens} tokens, temperature ${cfg.temperature}`,

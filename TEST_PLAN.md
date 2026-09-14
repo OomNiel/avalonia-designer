@@ -276,6 +276,9 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.13` (2026-09-14)** — the review decision becomes a code lens above the method, the
+  status bar entry is coloured, the status dialog names the running version and leftover proposal tabs are
+  closed at activation. New `tests/t2-logic/assistantReview.test.js` (35 assertions). Suite **3358**.
 - **Release `0.9.12` (2026-09-14)** — the bundled runtime uses the model's own chat template (fixing
   the repetition that made answers unusable), prose is never accepted as code, a cut-off block is
   salvaged, and the raw answer is logged and openable. Suite **3323**.
