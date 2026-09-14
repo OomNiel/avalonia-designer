@@ -19,6 +19,7 @@ const {
     buildFixPrompt,
     buildImplementPrompt,
     chat,
+    describeModel,
     detectEol,
     extractCode,
     methodTooLong,
@@ -341,6 +342,32 @@ module.exports = async (t) => {
         t.equal(parseChatCompletion({ choices: [{ message: { content: 'a' } }] }), 'a', 'client', 'chat completion parsing');
         t.equal(parseChatCompletion({ choices: [{ text: 'b' }] }), 'b', 'client', 'and the legacy text shape');
         t.equal(parseChatCompletion({}), '', 'client', 'an empty body yields nothing');
+    }
+
+    // ---------- 6b) the status line says which model will really answer ----------
+    {
+        const base = { backend: 'external', model: '', modelPath: '' };
+        t.ok(/only model the server offers/.test(describeModel(base, { ok: true, models: [{ id: 'qwen3-coder-local' }] })),
+            'status', 'a server with one model is reported by name, not as "the server decides"');
+        t.ok(/qwen3-coder-local/.test(describeModel(base, { ok: true, models: [{ id: 'qwen3-coder-local' }] })),
+            'status', 'and the name is the server\'s own id');
+        const many = describeModel(base, { ok: true, models: [{ id: 'a' }, { id: 'b' }] });
+        t.ok(/picks one of 2/.test(many) && /set "model"/.test(many), 'status',
+            'several models say so, and point at the setting that pins one down (Ollama refuses an unnamed request)');
+        t.ok(/not known yet/.test(describeModel(base, { ok: false, models: [] })), 'status',
+            'an unreachable server is not silently reported as "decides"');
+        t.equal(describeModel(base, undefined), 'Model: (the server decides)', 'status',
+            'without a probe the wording stays honest');
+        t.equal(describeModel({ ...base, model: 'qwen2.5-coder:7b' }, { ok: true, models: [{ id: 'x' }] }),
+            'Model: qwen2.5-coder:7b (asked for by name)', 'status',
+            'a named model wins over the list');
+        t.equal(describeModel({ backend: 'bundled', model: '', modelPath: '/m/x/qwen2.5-coder-3b-q4.gguf' }),
+            'Model: qwen2.5-coder-3b-q4.gguf (bundled runtime)', 'status',
+            'bundled names the file it loads (no probe needed)');
+        t.ok(/none yet/.test(describeModel({ backend: 'bundled', model: '', modelPath: '' })), 'status',
+            'and says what to do when no file is set yet');
+        t.ok(describeModel({ backend: 'bundled', model: '', modelPath: 'C:\\models\\x.gguf' })
+            .includes('x.gguf'), 'status', 'Windows paths are reduced to the file name too');
     }
 
     // ---------- 7) the manifest and the wiring ----------

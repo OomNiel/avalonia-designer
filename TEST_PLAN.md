@@ -276,6 +276,9 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.8` (2026-09-14)** — the status check names the model that will answer, suite grown to
+  **3278** assertions (nine of them for the wording of the `Model:` line: one model offered, several
+  offered, server unreachable, none probed, a named model, and the two `bundled` cases).
 - **Release `0.9.7` (2026-09-14)** — a readable Activity Bar icon, suite grown to **3269** assertions.
   Six of them are new and exist because the old glyph was invisible-faint while passing every check the
   suite had: `packaging.test.js` now decodes the PNG (a ~50-line reader over `zlib.inflateSync` with the

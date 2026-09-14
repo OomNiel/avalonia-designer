@@ -113,6 +113,35 @@ export function assistantEnabled(cfg: AssistantConfig): boolean {
     return cfg.endpoint.length > 0;
 }
 
+/**
+ * The `Model:` line of the status dialog.
+ *
+ * "(the server decides)" is technically true and practically useless — on a server with exactly one
+ * model loaded the answer is known, and on a server with several the developer needs to know that
+ * setting `model` is what pins one down (Ollama, in particular, refuses an unnamed request). Pure, so
+ * every branch is asserted in the suite rather than being discovered in a dialog.
+ */
+export function describeModel(
+    cfg: Pick<AssistantConfig, 'backend' | 'model' | 'modelPath'>,
+    probe?: { ok: boolean; models: { id: string }[] }
+): string {
+    const fileName = (p: string) => p.replace(/\\/g, '/').split('/').pop() ?? p;
+    if (cfg.backend === 'bundled') {
+        return cfg.modelPath
+            ? `Model: ${fileName(cfg.modelPath)} (bundled runtime)`
+            : 'Model: none yet — run "AI: Set Up Local Model…"';
+    }
+    if (cfg.model) return `Model: ${cfg.model} (asked for by name)`;
+    if (probe?.ok && probe.models.length === 1) {
+        return `Model: ${probe.models[0].id} (the only model the server offers)`;
+    }
+    if (probe?.ok && probe.models.length > 1) {
+        return `Model: (the server picks one of ${probe.models.length} — set "model" to pin it down)`;
+    }
+    if (probe && !probe.ok) return 'Model: (not known yet — the server is not answering)';
+    return 'Model: (the server decides)';
+}
+
 // ---------------- hardware ----------------
 
 /** Facts about the machine, read once and passed around (so the verdict is testable). */

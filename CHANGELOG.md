@@ -15,6 +15,17 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.8] - 2026-09-14 · *the status check names the model*
+
+### Changed
+- **AI: Status and Hardware Check now says which model will actually answer**, instead of the
+  placeholder "(the server decides)" — which was accurate and useless: a server with exactly one model
+  loaded makes the answer knowable, and a server with several makes it worth knowing that setting
+  `avaloniaDesigner.assistant.model` is what pins one down (Ollama refuses a request that does not name
+  a model). The command now probes the server first: one model → it is named; several → that is stated
+  with the tip; server not answering → that is stated instead of a guess; `bundled` → the `.gguf` file it
+  loads. The wording is a pure function with nine assertions in the suite.
+
 ## [0.9.7] - 2026-09-14 · *a sidebar icon you can actually see*
 
 ### Changed

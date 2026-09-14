@@ -18,6 +18,7 @@ import {
     buildFixPrompt,
     buildImplementPrompt,
     chat,
+    describeModel,
     extractCode,
     methodTooLong,
     normalizeAssistantConfig,
@@ -355,10 +356,14 @@ async function offerSetup(): Promise<void> {
 export async function showStatus(): Promise<void> {
     const cfg = assistantConfig();
     const hw = assessHardware(readHardwareFacts());
+    // Ask the server first when there is one: "which model will answer" is the question the developer
+    // actually has, and the settings alone cannot answer it. (`bundled` needs no probe — the model file
+    // is the model.)
+    const probe = cfg.backend === 'external' && assistantEnabled(cfg) ? await probeServer(cfg) : undefined;
     const lines = [
         `AI assist: ${cfg.backend === 'external' ? 'on (local model server)' : cfg.backend === 'bundled' ? 'on (bundled local model)' : 'off'}`,
         cfg.backend === 'bundled' ? 'Endpoint: the bundled runtime supplies one' : `Endpoint: ${cfg.endpoint}`,
-        `Model: ${cfg.model || '(the server decides)'}`,
+        describeModel(cfg, probe),
         `Budget: ${cfg.timeoutSeconds} s, up to ${cfg.maxTokens} tokens, temperature ${cfg.temperature}`,
         '',
         `Hardware: ${hw.level === 'good' ? 'comfortable' : hw.level === 'minimal' ? 'minimum only' : 'not usable'}`,
@@ -366,10 +371,14 @@ export async function showStatus(): Promise<void> {
     ];
     if (cfg.backend === 'bundled') {
         lines.push('', ...bundledStatusLines(cfg));
-    } else if (assistantEnabled(cfg)) {
-        const probe = await probeServer(cfg);
+    } else if (probe) {
         lines.push('', probe.ok ? `Server: reachable — ${probe.models.length} model(s) offered` : `Server: ${probe.error}`);
-        if (probe.ok) lines.push(...probe.models.slice(0, 8).map((m) => `• ${m.id}`));
+        if (probe.ok) {
+            lines.push(...probe.models.slice(0, 8).map((m) => `• ${m.id}`));
+            if (probe.models.length > 1 && !cfg.model) {
+                lines.push('', 'Tip: set "avaloniaDesigner.assistant.model" to one of these to pin it down.');
+            }
+        }
     }
     await vscode.window.showInformationMessage(lines.join('\n'), { modal: true }, 'OK');
 }

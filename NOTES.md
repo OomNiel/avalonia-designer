@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3269 passed, 0 failed / 0 skipped** (2026-09-14, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3278 passed, 0 failed / 0 skipped** (2026-09-14, ~43 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1533,6 +1533,16 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     (≥ 30% fully opaque), a transparent background, and an unclipped, centred bbox. On the old file that
     suite would have failed on two of them. Lesson: for an icon, "the file exists and is 128×128" is not
     a test of anything a user can see.
+- §94 **"(the server decides)" was accurate and useless (2026-09-14).** The status dialog reported
+  `Model: (the server decides)` whenever `avaloniaDesigner.assistant.model` was empty — which it is by
+  default, and which is right: the request then carries no `model` field and a single-model server answers
+  with the model it has loaded. But the user asks that dialog *to find out what is going on*, and the
+  answer given was the one thing they already knew. The command now probes first and reports what it
+  found: one model → its id; several → the count plus the tip that setting `model` is what pins one down
+  (Ollama, notably, rejects a request without a name); server silent → that, rather than a guess;
+  `bundled` → the `.gguf` it loads, no probe needed. The wording lives in `describeModel()` in
+  `assistant.ts`, so all nine cases are asserted in the suite instead of being discovered in a dialog —
+  the same rule the rest of the assistant follows: anything the developer reads is a pure function.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 
