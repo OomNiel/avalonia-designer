@@ -890,6 +890,12 @@ Expect it to be **slow and imperfect**. On a CPU-only machine a 3B model answers
 Read the diff: this is for the boilerplate you would otherwise type yourself, not for logic you have not
 decided on yet.
 
+**When a model answers badly**, the extension tells you what happened rather than changing nothing
+quietly: the message names the reason (*empty answer*, *answered with prose instead of code*, or *the code
+block was cut off*), **Show the raw answer** opens exactly what the model said in a read-only tab, and the
+same text goes to the *Avalonia Designer* output channel. A model that rambles or repeats itself is
+usually a sign of a model too small for the job — try the 7B, or a code-specialised one.
+
 #### No model server? Let the extension bring its own
 
 Having no AI at all is the case this feature exists for, so it does not require LM Studio or Ollama:

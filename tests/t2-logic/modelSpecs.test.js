@@ -261,5 +261,19 @@ module.exports = async (t) => {
         t.ok(/data: \[DONE\]/.test(program), 'handshake', 'and closes the stream the way the parser expects');
         t.ok(/delta = new \{ content/.test(program), 'handshake', 'emitting OpenAI-shaped deltas');
         t.ok(/127\.0\.0\.1/.test(program), 'handshake', 'bound to loopback only');
+
+        // The sidecar must speak the MODEL's chat template. Without it LLamaSharp frames the chat the
+        // Llama-2 way, a Qwen/coder model never sees where the assistant turn starts, and it answers by
+        // repeating its first block until the token budget is gone — measured 2026-09-14: the same prompt
+        // that LM Studio answered with one clean block in 17 s came back as 30 copies, 4049 characters,
+        // 40 s, cut off mid-fence. With the template and the stop markers it is one block in ~3 s.
+        t.ok(/PromptTemplateTransformer/.test(program), 'handshake',
+            "the sidecar uses the model's own chat template (tokenizer.chat_template in the GGUF)");
+        t.ok(/AntiPrompts = StopMarkers/.test(program), 'handshake',
+            'and stops at the end-of-turn markers the families actually use');
+        t.ok(/DecodeSpecialTokens = true/.test(program), 'handshake',
+            'with special tokens decoded, or the anti-prompt could never match its own marker');
+        t.ok(/<\|im_end\|>/.test(program) && /<\|eot_id\|>/.test(program), 'handshake',
+            'covering ChatML (Qwen) and Llama 3 by name');
     }
 };

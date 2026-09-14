@@ -18,6 +18,7 @@ import {
     buildFixPrompt,
     buildImplementPrompt,
     chat,
+    describeEmptyAnswer,
     describeModel,
     extractCode,
     looksLikeEmbeddingModel,
@@ -30,6 +31,7 @@ import {
     type ChatMessage
 } from './assistant';
 import { methodsIn, type MethodSpan } from './codeBehindCheck';
+import { log } from './logger';
 import { bundledStatusLines, ensureBundledEndpoint } from './modelRuntime';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
@@ -323,6 +325,19 @@ export async function discardProposal(): Promise<void> {
     void vscode.window.showInformationMessage(`${p.name}() was left as it is.`);
 }
 
+/** Opens what the model actually said, in a read-only tab — the evidence, not a summary of it. */
+async function showRawAnswer(answer: string, span: MethodSpan, cfg: AssistantConfig): Promise<void> {
+    const uri = vscode.Uri.from({ scheme: PROPOSAL_SCHEME, path: `/${++proposalSeq}/raw-answer.txt` });
+    const header = [
+        `# The model's answer, exactly as it arrived`,
+        `# method: ${span.name}()   model: ${cfg.model || '(the bundled model)'}   ${answer.length} characters`,
+        ''
+    ].join('\n');
+    proposalContent.put(uri, header + answer);
+    const document = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(document, { preview: false });
+}
+
 /**
  * Asks the model for a replacement method, shows it as a diff, and applies it only when the developer
  * says so. Returns a short summary, or undefined when the attempt was cancelled or failed.
@@ -361,7 +376,18 @@ async function proposeMethod(
 
     const { code, note } = extractCode(answer);
     if (!code.trim()) {
-        void vscode.window.showWarningMessage('The model returned nothing usable — nothing was changed.');
+        // Never swallow the evidence again: the raw answer goes to the output channel and can be opened
+        // as a read-only tab. The first real failure (2026-09-14) was unactionable for exactly this
+        // reason — the message said "nothing usable" and the answer itself was already gone.
+        const why = describeEmptyAnswer(answer);
+        log(`The AI answer could not be used. ${why}\n--- raw answer (${answer.length} characters) ---\n${answer}\n--- end ---`);
+        const choice = await vscode.window.showWarningMessage(
+            `The model returned nothing usable — nothing was changed. ${why}`,
+            'Show the raw answer',
+            'Show status'
+        );
+        if (choice === 'Show the raw answer') await showRawAnswer(answer, span, cfg);
+        if (choice === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
         return undefined;
     }
 

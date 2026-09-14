@@ -564,11 +564,64 @@ export function extractCode(answer: string): { code: string; note: string } {
     if (blocks.length > 0) {
         const code = tidyCode(blocks[blocks.length - 1]);
         const outside = `${text.slice(0, text.indexOf(CODE_FENCE))}`.trim();
-        return { code, note: blocks.length > 1 ? `The model repeated the code ${blocks.length} times; the last block was used.` : outside.slice(0, 400) };
+        const repeated = blocks.length > 1 ? `The model repeated the code ${blocks.length} times; the last block was used.` : '';
+        return { code, note: repeated || outside.slice(0, 400) };
     }
 
-    // No fence at all: strip a stray opening fence and take what is left.
-    return { code: tidyCode(text.replace(new RegExp('^' + CODE_FENCE + '[^\n]*\n?', 'm'), '')), note: '' };
+    // A fence that was never closed: the answer was cut off, usually by the token budget. What is inside
+    // is still the best thing available, so take it and say so — throwing it away is what produced the
+    // unactionable "returned nothing usable" on the first bundled run (2026-09-14).
+    const openFence = text.lastIndexOf(CODE_FENCE);
+    if (openFence >= 0) {
+        const after = text.slice(openFence + CODE_FENCE.length).replace(/^[^\n]*\n/, '');
+        const salvaged = tidyCode(after);
+        if (salvaged) {
+            return {
+                code: salvaged,
+                note: 'The answer was cut off before its code block closed — check the end of the method.'
+            };
+        }
+    }
+
+    // No fence at all. Only take it if it reads like code: an unfenced answer is at least as likely to be
+    // a sentence about the change, and substituting a method with prose is worse than changing nothing.
+    const bare = tidyCode(text);
+    if (looksLikeCode(bare)) {
+        return { code: bare, note: 'The model answered without a code fence; the whole answer was used.' };
+    }
+    return { code: '', note: '' };
+}
+
+/**
+ * Is this unfenced text source code rather than a sentence about it? Deliberately conservative — the
+ * cost of saying no is a clear message, the cost of saying yes is a method replaced by a paragraph.
+ */
+export function looksLikeCode(text: string): boolean {
+    const body = String(text ?? '').trim();
+    if (!body) return false;
+    if (/[{}]/.test(body)) return true;
+    if (/\b(private|public|internal|protected|static|void|async|Sub|End Sub|Function|End Function|Dim|If\b)\b/.test(body)) return true;
+    // A body without braces or keywords: accept it when its shape is code — several lines, indented or
+    // punctuated like statements — and reject prose, whose lines end in full stops.
+    const lines = body.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    if (lines.length < 2) return false;
+    const codeish = lines.filter((l) => /^\s/.test(l) || /[;{,)]\s*$/.test(l.trim())).length;
+    return codeish * 2 >= lines.length;
+}
+
+/**
+ * Why an answer was not usable — the sentence the developer reads instead of a shrug. Pure, so the
+ * wording is asserted: the first real "returned nothing usable" arrived with no evidence at all, which
+ * is exactly what made it impossible to act on.
+ */
+export function describeEmptyAnswer(answer: string): string {
+    const text = String(answer ?? '');
+    if (!text.trim()) return 'The model returned an empty answer.';
+    if (text.includes(CODE_FENCE)) {
+        return 'The code block in the answer was never closed — it was cut off before it was complete.';
+    }
+    const firstLine = text.trim().split(/\r?\n/)[0].slice(0, 140);
+    return `The model answered with prose instead of code: "${firstLine}"`;
 }
 
 /**
@@ -577,7 +630,14 @@ export function extractCode(answer: string): { code: string; note: string } {
  * *smallest* indentation it finds, that would then push the whole body one level deeper.
  */
 function tidyCode(code: string): string {
-    return String(code ?? '').replace(/^\n+/, '').replace(/\s+$/, '');
+    return String(code ?? '')
+        // The sidecar decodes special tokens on purpose (so it can stop at the model's end-of-turn
+        // marker), which means such a marker can land inside the answer. It is never part of the method.
+        // Trade-off: a marker inside a string literal would be removed too — vanishingly unlikely in a
+        // method body, and the alternative is shipping `<|im_end|>` into the file.
+        .replace(/<\|[a-zA-Z_]+\|>|<\|end_of_turn>|<\|start_of_turn>|<\/s>/g, '')
+        .replace(/^\n+/, '')
+        .replace(/\s+$/, '');
 }
 
 // ---------------- editing text ----------------

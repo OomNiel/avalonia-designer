@@ -15,6 +15,30 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.12] - 2026-09-14 · *the bundled model stops repeating itself*
+
+### Fixed
+- **The bundled runtime now speaks the model's own chat template.** LLamaSharp was framing the
+  conversation the Llama-2 way (`[INST] … [/INST]`), so a Qwen-style model never saw where the assistant
+  turn began and answered by **repeating its first block until the token budget ran out** — the same
+  prompt that LM Studio (`llama-server --jinja`) answered with one clean block came back from the bundled
+  runtime as *30 copies of it, 4 049 characters, in 40 s, cut off mid-fence*. The template is read from
+  the GGUF (`tokenizer.chat_template`) and the runtime stops at the family's end-of-turn marker. Measured
+  after the fix: **one block, 131 characters, 3.1 s**.
+- **An unfenced answer is no longer accepted as code.** A model that replied with a sentence about the
+  change would have had that sentence written into the method. Unfenced text is now used only when it
+  really reads like code (braces, language keywords, or an indented statement body); otherwise nothing is
+  applied and the reason is stated.
+- **A code block that was cut off is salvaged** instead of being thrown away, with a note saying so.
+- **End-of-turn markers never reach the file** (the runtime decodes special tokens on purpose, so a
+  `<|im_end|>` can appear at the end of an answer).
+
+### Added
+- **The raw answer is never thrown away when extraction fails.** It is written to the *Avalonia Designer*
+  output channel and can be opened from the message as a read-only tab ("Show the raw answer"), together
+  with a precise reason — empty answer, prose instead of code, or a block that never closed. The real
+  failure this replaces said only "returned nothing usable", with no evidence to act on.
+
 ## [0.9.11] - 2026-09-14 · *the Apply button stops disappearing*
 
 ### Fixed

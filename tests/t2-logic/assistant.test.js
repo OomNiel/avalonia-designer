@@ -19,9 +19,11 @@ const {
     buildFixPrompt,
     buildImplementPrompt,
     chat,
+    describeEmptyAnswer,
     describeModel,
     detectEol,
     extractCode,
+    looksLikeCode,
     looksLikeEmbeddingModel,
     methodTooLong,
     normalizeAssistantConfig,
@@ -388,6 +390,44 @@ module.exports = async (t) => {
             'the count is the chat models the server offers');
         t.ok(/no chat model offered/.test(describeModel(base, { ok: true, models: [] })), 'status',
             'a server offering only embeddings says so instead of inviting a bad choice');
+    }
+
+    // ---------- 6c) the answer was not usable (2026-09-14) ----------
+    // Three defects found by the first bundled run, all in how a model's answer is read:
+    // the sidecar rambled (fixed in the C#, guarded in modelSpecs.test.js), an unterminated block was
+    // discarded instead of salvaged, and — worst of the three — an unfenced PROSE answer was accepted as
+    // code, i.e. the model's sentence would have replaced the method.
+    {
+        t.equal(looksLikeCode('private void A() { }'), true, 'extract', 'braces mean code');
+        t.equal(looksLikeCode('    RadioButton1.IsChecked = true;\n    _changed = true;'), true, 'extract',
+            'an indented statement body is code, fence or not');
+        t.equal(looksLikeCode('Public Sub A()\nEnd Sub'), true, 'extract', 'so is VB without braces');
+        t.equal(looksLikeCode('Sure! I would set the IsChecked property of the radio button.'), false, 'extract',
+            'a sentence is not code');
+        t.equal(looksLikeCode('Here is what I would do.\nSet the property on the button.\nThat is all.'), false, 'extract',
+            'nor are several sentences (prose lines end in full stops, not in punctuation of code)');
+        t.equal(looksLikeCode(''), false, 'extract', 'and nothing is nothing');
+
+        const prose = extractCode('Sure! I would set the IsChecked property of the radio button.');
+        t.equal(prose.code, '', 'extract', 'a prose answer yields NO code, so the caller can report it');
+
+        const cut = extractCode('Here you go:\n```csharp\n    private void A()\n    {\n        _x = 1;');
+        t.ok(cut.code.includes('private void A()'), 'extract', 'a block that was never closed is salvaged');
+        t.ok(/cut off/.test(cut.note), 'extract', 'with a note that says the answer was truncated');
+
+        const bare = extractCode('    RadioButton1.IsChecked = true;\n    _changed = true;');
+        t.ok(bare.code.includes('IsChecked'), 'extract', 'an unfenced body is still used when it is code');
+        t.ok(/without a code fence/.test(bare.note), 'extract', 'and says why there was no fence to use');
+
+        const marked = extractCode('```csharp\n    private void A()\n    {\n        _x = 1;\n    }\n```<|im_end|>');
+        t.equal(/im_end/.test(marked.code), false, 'extract',
+            'an end-of-turn marker (the sidecar decodes them on purpose) never reaches the file');
+
+        t.ok(/empty answer/.test(describeEmptyAnswer('')), 'extract', 'an empty answer says so');
+        t.ok(/prose instead of code/.test(describeEmptyAnswer('Sure, you should set it.')), 'extract',
+            'prose is named as prose, and quoted, so it is obvious what happened');
+        t.ok(/never closed/.test(describeEmptyAnswer('```csharp\nprivate void A()')), 'extract',
+            'an unterminated block is reported as a truncation');
     }
 
     // ---------- 7) the manifest and the wiring ----------

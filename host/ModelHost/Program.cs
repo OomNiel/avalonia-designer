@@ -1,4 +1,4 @@
-/* ModelHost — a tiny local model server for the Avalonia Designer AI assist.
+﻿/* ModelHost — a tiny local model server for the Avalonia Designer AI assist.
  *
  * WHY THIS EXISTS (NOTES.md §92)
  * The feature has to work for a developer who has no AI at all: no Copilot, no LM Studio, no Ollama.
@@ -28,6 +28,7 @@ using System.Text.Json;
 using LLama;
 using LLama.Common;
 using LLama.Sampling;
+using LLama.Transformers;
 
 namespace ModelHost;
 
@@ -74,6 +75,9 @@ internal sealed class ModelState(Options options)
     public string? Error { get; private set; }
     public string Name => options.Name;
 
+    /// <summary>The loaded weights, needed to read the model's own chat template.</summary>
+    public LLamaWeights? Weights => _weights;
+
     /// <summary>The context has to hold the prompt *and* the answer. The extension caps its request at
     /// 900 tokens, but a hand-edited setting could ask for more than the window holds, so clamp.</summary>
     public int MaxAnswerTokens => Math.Max(64, options.ContextSize - 512);
@@ -118,6 +122,21 @@ internal sealed class ModelState(Options options)
 internal static class Program
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
+
+    /// <summary>
+    /// End-of-turn markers, tried in the order the common families use them. A chat template in the GGUF
+    /// ends the assistant turn with one of these; llama.cpp stops generating when it sees the text.
+    /// </summary>
+    private static readonly string[] StopMarkers =
+    {
+        "<|im_end|>",       // Qwen / ChatML
+        "<|eot_id|>",       // Llama 3
+        "<|end_of_text|>",  // Llama 3
+        "<end_of_turn>",    // Gemma
+        "<|eom_id|>",       // Llama 3.1 tool turns
+        "<|end|>",          // misc
+        "</s>"              // the classic
+    };
 
     private static async Task<int> Main(string[] args)
     {
@@ -266,11 +285,37 @@ internal static class Program
             // to keep, and the KV cache of a finished job dies with the context instead of lingering.
             using var llama = state.CreateContext();
             var session = new ChatSession(new InteractiveExecutor(llama));
+
+            // USE THE MODEL'S OWN CHAT TEMPLATE. This is not a nicety — without it LLamaSharp frames the
+            // conversation the Llama-2 way (`[INST] … [/INST]`), a Qwen/coder model never sees where the
+            // assistant turn begins, and it answers by repeating its first block until the token budget
+            // is gone: measured on this machine 2026-09-14, the same prompt that LM Studio (which passes
+            // `--jinja`) answered with one clean block came back from this sidecar as **30 copies of that
+            // block**, 4049 characters in 40 s, cut off mid-fence — which is what "the model returned
+            // nothing usable" was made of. The template is in the GGUF as `tokenizer.chat_template`.
+            if (state.Weights is not null)
+            {
+                try
+                {
+                    session.WithHistoryTransform(new PromptTemplateTransformer(state.Weights));
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("chat template not usable, falling back to the default: " + ex.Message);
+                }
+            }
+
             if (system.Length > 0) session.AddSystemMessage(system);
             var inference = new InferenceParams
             {
                 MaxTokens = maxTokens,
-                SamplingPipeline = new DefaultSamplingPipeline { Temperature = temperature }
+                SamplingPipeline = new DefaultSamplingPipeline { Temperature = temperature },
+                // A template-driven prompt does not tell llama.cpp where the turn ends, so the markers
+                // are listed explicitly — all the common ones, because being wrong is what causes the
+                // rambling above. Harmless for a model that never emits them.
+                AntiPrompts = StopMarkers.ToList(),
+                // The markers have to survive decoding for the anti-prompts to match them at all.
+                DecodeSpecialTokens = true
             };
 
             var text = new StringBuilder();

@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3304 passed, 0 failed / 0 skipped** (2026-09-14, ~43 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3323 passed, 0 failed / 0 skipped** (2026-09-14, ~43 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1588,6 +1588,35 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
     landed — leaving a file that compiled with three errors and an editor that refused to save. The
     compile errors are what surfaced it; the lesson is to run `tsc` *before* believing any multi-edit turn,
     and to tell the user to revert the buffer (File → Revert File) rather than save it.
+- §98 **"Nothing usable" was a template bug — and it was measured, not guessed (2026-09-14).** The
+  bundled model returned *nothing usable* for the very prompt that had worked 17 s earlier. The user's
+  reading was "same setup, so what changed?"; the answer is that the two runs did **not** use the same
+  backend — their own status dialog proves the successful one ran against LM Studio (`Endpoint:
+  http://127.0.0.1:1234/v1`, `Model: google/gemma-4-e4b`), while the failing one ran against the bundled
+  runtime, which their settings had switched to (`backend: bundled`, `modelPath: …qwen2.5-coder-3b…`).
+  That distinction is only visible because §94/§95 taught the status dialog to name the endpoint and the
+  model, which is why it could be diagnosed at all.
+  - **The bug:** LLamaSharp's `ChatSession` frames a conversation with the classic Llama-2 transform
+    (`[INST] … [/INST]`) unless told otherwise. A Qwen/coder model never sees the start of the assistant
+    turn, so it does not know it is supposed to answer *once* — it repeats its first block until the token
+    budget dies. Measured through the real client (streaming, same prompt, same model): **30 copies, 4 049
+    characters, 39.7 s, cut off mid-fence**, and the cut is what made extraction return nothing usable.
+  - **The fix:** `session.WithHistoryTransform(new PromptTemplateTransformer(weights))` uses the template
+    the GGUF carries (`tokenizer.chat_template`), plus explicit `AntiPrompts` for the families' turn
+    markers (`<|im_end|>`, `<|eot_id|>`, `<|end_of_text|>`, `<end_of_turn>`, …) with
+    `DecodeSpecialTokens = true` so the marker can actually match. Same experiment after the fix: **one
+    block, 131 characters, 3.1 s** — 13× faster, and the note the user had been shown ("repeated 30
+    times") is gone because it does not repeat any more.
+  - **Two more defects fell out of the same investigation**, both in reading the answer: an unfenced
+    **prose** answer was accepted as code (the model's sentence would have replaced the method — worse
+    than doing nothing), and a block that was never closed was discarded instead of salvaged. Both are
+    fixed, and the failure is now self-diagnosing: a precise reason, the raw answer in the output channel,
+    and a **Show the raw answer** button. "Returned nothing usable" with no evidence is exactly the kind
+    of message that wastes a day.
+  - **Method note:** this was found by deliberately running the sidecar headlessly with the extension's own
+    prompt and *its own compiled client* (`out/assistant.js`) — a 45 s experiment that turned a vague
+    report into numbers, a root cause and a before/after. When a model misbehaves, reproduce its exact
+    request before touching a prompt.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 
