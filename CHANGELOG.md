@@ -15,6 +15,18 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.4] - 2026-09-14 · *the `1.0.0-beta.11` build*
+
+### Changed
+- **A new icon.** The extension icon (Marketplace listing, Extensions view, README) is a new badge
+  with the black background outside its blue ring removed, so it no longer reads as a black tile on a
+  light page. Whitespace around the ring is transparent, the file is a 128x128 PNG (the size the
+  Marketplace requires), and the manifest still names it `Grumpy.png` — same field, new artwork.
+- **The Activity Bar uses a white version of the same badge.** The sidebar glyph is white ink on
+  transparency, so it reads against the dark Activity Bar. Its file name is unchanged too
+  (`GrumpyWhite.png`), and the artwork both icons derive from is kept in the repo but left out of the
+  package.
+
 ## [0.9.3] - 2026-09-13 · *the `1.0.0-beta.10` build*
 
 ### Changed

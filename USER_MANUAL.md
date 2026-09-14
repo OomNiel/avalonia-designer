@@ -117,7 +117,7 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The latest published version is **`0.9.3`**, so the command above installs it; add `--force` to
+The latest published version is **`0.9.4`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine.
 
 **Or from GitHub** — take the `.vsix` from the
@@ -129,7 +129,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > The two places number releases differently. GitHub tags are `v1.0.0-beta.N`; the Marketplace accepts
-> plain numbers only, so the same release appears there as `0.9.x` (`0.9.3` = `v1.0.0-beta.10`).
+> plain numbers only, so the same release appears there as `0.9.x` (`0.9.4` = `v1.0.0-beta.11`).
 > Nothing else differs — the packages are the same.
 
 After installing (or after any update), **reload the window** so the changes take effect:

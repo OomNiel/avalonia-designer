@@ -28,7 +28,7 @@ dotnet build host/PreviewerHost.csproj -c Debug   # → host/bin/Debug/net8.0/Pr
 ### Packaging / installing
 ```bash
 npm run package                                              # vsce package (pinned @vscode/vsce@2.15.0)
-code --install-extension avalonia-designer-0.9.3.vsix --force
+code --install-extension avalonia-designer-0.9.4.vsix --force
 npm run publish:stable                                       # Marketplace publish (needs VSCE_PAT)
 ```
 - `activationEvents` is **`[]`** (empty): contributed commands/views/custom editors activate the
@@ -1362,6 +1362,29 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   comparing the packaged files with the working tree (`unzip -q <file> -d /tmp/x && diff -rq /tmp/x .`),
   which is how the stale `0.9.2` package was caught in the first place (5 of 92 files differed, all of
   them docs).
+- §88 **New icons, and the two things that make an extension icon look wrong (2026-09-14).** A new badge
+  arrived (`Grumpy_128x128.png`: the character inside a blue ring on a black field, with a `</>` and the
+  Avalonia mark). Two problems, neither visible without looking at pixels:
+  (a) it was **100% opaque** — every corner pure black — so on the Marketplace's white page the icon
+  read as a black *tile* with a circle inside instead of a floating badge. Fix: mask everything outside
+  the ring to transparent. PIL has no "cut out a circle", so the recipe is: find the badge's bounding box
+  from its non-background pixels (`max(r,g,b) > 40`), take its centre and radius, render an
+  **anti-aliased** circular mask by supersampling 4x and downscaling with `Image.LANCZOS`, then
+  `putalpha(Image.composite(alpha, empty, mask))`. A ~1.5 px feather keeps the ring from looking cut;
+  (b) an **Activity Bar icon must be monochrome on transparency**, and the badge is colour on black. Fix:
+  inside the same mask, colour forced to white with `alpha = max(r,g,b) ** 0.6` (the gamma thickens the
+  thin lines), then scaled to 80 % and centred so it carries the same visual weight as the other sidebar
+  glyphs. White reads on a dark Activity Bar and washes out in a light theme — exactly what the old glyph
+  did, so no regression, and VS Code can't fix it because view-container icons are not recoloured.
+  - Both files keep their names (`Grumpy.png`, `GrumpyWhite.png`), so **the manifest is unchanged** — a
+    new version number was the only route to the listing, because artwork travels inside the VSIX (the
+    same lesson as §87). The source artwork stays in the repo and is `.vscodeignore`d.
+  - **`vsce` rewrites relative README images**: the packaged `README.md` carries
+    `https://github.com/OomNiel/avalonia-designer/raw/HEAD/Grumpy.png` where the repo has `Grumpy.png`,
+    which is how the listing can render a badge that lives in the package. So a packaged README that
+    differs from the repo's is not evidence of a stale package — check the diff before chasing it.
+  - New guards: `packaging.test.js` asserts the icon is **square**, and runs the PNG/size/square check
+    over *every* PNG the manifest names, not just `package.json#icon`.
 - **New features:** add a short note here; put the full write-up in `NOTES_2026-09-03.md` when this file fattens.
 ## 7. Feature history
 

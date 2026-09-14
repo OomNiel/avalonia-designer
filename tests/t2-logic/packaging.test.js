@@ -62,6 +62,8 @@ module.exports = async (t) => {
     t.ok(png.slice(0, 8).equals(signature), 'icon', 'the icon is a real PNG (not a renamed JPEG)');
     const w = png.readUInt32BE(16), h = png.readUInt32BE(20);
     t.ok(w >= 128 && h >= 128, 'icon', `the icon is large enough (${w}x${h}, the minimum is 128x128)`);
+    t.equal(w, h, 'icon', `and square (${w}x${h}) — the listing, the Extensions view and the README all
+        show it in a square box, so a rectangle would be letterboxed`);
 
     // ---------- 4) licence ----------
     t.equal(pkg.license, 'MIT', 'licence', 'the manifest declares the licence');
@@ -197,6 +199,19 @@ module.exports = async (t) => {
         });
         t.ok(excluded === false, 'manifest-assets',
             `${asset} is NOT excluded by .vscodeignore (excluding it would silently break the UI it drives)`);
+    }
+    // Every PNG the manifest names (the Marketplace icon and the Activity Bar container icon) is
+    // scaled by the UI, and nothing errors when the source is wrong — a 64x64 or non-square file just
+    // looks blurry or squashed. Checked here rather than only for `pkg.icon`, because the sidebar icon
+    // is exactly the kind of asset that gets swapped without anyone looking at it in a light theme.
+    for (const asset of assets) {
+        if (/\.png$/i.test(asset) === false) continue;
+        const buf = fs.readFileSync(path.join(ROOT, asset));
+        t.ok(buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+            'manifest-assets', `${asset} is a real PNG`);
+        const aw = buf.readUInt32BE(16), ah = buf.readUInt32BE(20);
+        t.ok(aw >= 128 && ah >= 128, 'manifest-assets', `${asset} is at least 128x128 (${aw}x${ah})`);
+        t.equal(aw, ah, 'manifest-assets', `${asset} is square (${aw}x${ah})`);
     }
 
     // ---------- 7) first-run friendliness: name the missing .NET SDK ----------

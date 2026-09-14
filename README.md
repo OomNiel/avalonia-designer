@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Grumpy.png" width="128" height="128" alt="Avalonia Designer">
+</p>
+
 # Avalonia Designer for VS Code
 
 A **WYSIWYG form designer for the [Avalonia](https://avaloniaui.net) UI framework** that lives inside
@@ -26,7 +30,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The latest published version is **`0.9.3`**, so the command above installs it (add `--force` to
+The latest published version is **`0.9.4`**, so the command above installs it (add `--force` to
 reinstall, or to update a copy that is already on the machine).
 
 **Or from GitHub** — take the `.vsix` from the
@@ -34,7 +38,7 @@ reinstall, or to update a copy that is already on the machine).
 name carries its version, and a GitHub release can lag the Marketplace, so check it):
 
 ```bash
-code --install-extension avalonia-designer-0.9.3.vsix --force
+code --install-extension avalonia-designer-0.9.4.vsix --force
 ```
 
 Either way, **reload the window** afterwards (`Ctrl+Shift+P` → *Developer: Reload Window*). The
@@ -43,7 +47,7 @@ previewer host is compiled with the **.NET SDK** the first time you open a form 
 for the prerequisites.
 
 > **GitHub and the Marketplace number releases differently.** The Marketplace only accepts plain
-> numbers, so the tag `v1.0.0-beta.10` is published there as **`0.9.3`** — `1.0.0` is reserved for the
+> numbers, so the tag `v1.0.0-beta.11` is published there as **`0.9.4`** — `1.0.0` is reserved for the
 > first stable release and `0.9.x` is the current development line. The packages are identical.
 
 ## 1. The preview is real

@@ -276,6 +276,13 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.4` (2026-09-14)** — a new extension icon (the badge with the black field outside its
+  blue ring removed, now 128x128 transparent PNG) plus a white Activity Bar glyph derived from the same
+  artwork, suite grown to **3025** assertions. New guards in `packaging.test.js`: the Marketplace icon
+  must be **square** as well as at least 128x128, and every PNG the manifest names — the extension icon
+  *and* the Activity Bar icon — is checked for the PNG signature, the minimum size and squareness. The
+  sidebar icon used to be covered only by "the file exists and is not excluded by `.vscodeignore`",
+  which would happily ship a 24x24 or squashed file.
 - **Release `0.9.3` (2026-09-13)** — documentation only: the install instructions describe the stable
   releases, and the release workflow's `pre_release` input defaults to off. No code change, so the suite
   stays at **3018** assertions; the package's `README.md`, `USER_MANUAL.md` and `CHANGELOG.md` were
