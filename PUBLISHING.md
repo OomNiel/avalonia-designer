@@ -185,7 +185,7 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `a00d6205a199d8b5285f6f9ec65e55afbd7e980cf3cc36078732ea52d6eb76ca` — uploaded through the publisher
 > portal; the gallery's stored `VsixSha256` matches it byte for byte.
 >
-> **`0.9.4` (2026-09-14) — packaged, awaiting the portal upload.** Fifth listing version, tagged
+> **`0.9.4` (2026-09-14) — GitHub release done, portal upload pending.** Fifth listing version, tagged
 > `v1.0.0-beta.11`, and the first release with the new artwork: the extension icon is the new badge
 > with the black field outside its blue ring removed, and the Activity Bar glyph is a white version of
 > the same badge. Both are 128x128 transparent PNGs, both keep their file names, so **the manifest is
@@ -193,6 +193,12 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `avalonia-designer-0.9.4.vsix`, sha256
 > `7bc26f839116b438268bd305b1c1449e2f02653f527becda70dfa85eb1506379` — and the `0.9.3` file was deleted
 > once this build succeeded.
+>
+> **GitHub `v1.0.0-beta.11` is created** with that VSIX attached; re-downloading the asset and
+> `sha256sum`-ing it matched the local file, so the release carries exactly the build that goes to the
+> Marketplace (as `beta.8`/`beta.9` did). **The tag history has a gap:** `0.9.3` went out through the
+> portal without ever being tagged, so the releases run `v1.0.0-beta.9` → `v1.0.0-beta.11` — the
+> `0.9.3` package can be backfilled from the gallery's stored copy if that ever matters.
 
 ### What “Verifying \<version\>” means — and how to confirm the result
 
