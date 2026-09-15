@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3727 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3730 passed, 0 failed / 0 skipped** (2026-09-15, ~39 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2254,3 +2254,30 @@ to hold for the *display* too. A second entry point that writes state without an
 waiting for a user to find it.
 
 **Suite:** 3727 passed / 0 failed (was 3724).
+
+### §114 — "the picker reverts" and the writer that was hiding in plain sight (2026-09-15, release 0.9.31)
+
+The user corrected my previous diagnosis in one line — they load from the ⚙ panel, not the palette — so §113's fix was
+not the answer, and the symptom was still there. What the evidence said this time:
+
+- `logs/ai.log`: `Bundled runtime answering on http://127.0.0.1:39605/v1` — the load worked.
+- `pgrep`: the ModelHost alive on 0.9.30.
+- `panelState()` run with a **real** context (so `bundledFilesOnDisk()` takes its real path) and the user's
+  settings: `selected: \"bundled:qwen2.5-coder-3b-q4\"` — the state we build is right.
+- `settings.json`: `backend: external`, `model: ''`, and `modelPath` **still pointing at the 3B**.
+
+That last line is the clue: exactly one writer produces that combination — `saveAiSettings` with kind `any` (a Save
+while the dropdown showed *\"Let the server decide\"*). A Save of a bundled selection would have written
+`backend: bundled`. So the panel was still holding a state from before the load when the user pressed Save, and the
+Save cemented it: `external` + `model: ''` + the old `modelPath`, which is precisely the hybrid found on disk.
+
+**Why the panel could still be stale:** the state was posted as its **own message after** the outcome, and
+`postMessage` resolves `false` when it cannot deliver — a queue is not a contract. Fixed by carrying the state **in
+the `aiResult`** (so the outcome and the state cannot be separated) while keeping the separate `aiState` and the
+webview's own re-request: three ways to be told, and one of them has to land.
+
+**And the diagnostics that would have ended this in one read:** `ai.log` now records
+`Load finished (ok) — panel state: backend=… selection=…` and `Panel save: value=… kind=… enabled=…`. Each of the
+three user reports in this area was solved by reading the other side's log; the extension's own log was the gap.
+
+**Suite:** 3730 passed / 0 failed (was 3727).

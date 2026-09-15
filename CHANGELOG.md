@@ -15,6 +15,30 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.31] - 2026-09-15 · *a queue is not a contract*
+
+### Fixed
+
+- **The load result now carries the panel state with it.** Reported as *"the picker reverts to 'Let the server
+  decide…' instead of showing the selected model with a Loaded marker"* after loading a built-in model from the
+  ⚙ panel — while the extension's log, the settings and a running runtime all said the load had worked. The state
+  was sent as a **separate message after** the outcome, and `postMessage` is allowed to resolve `false` when it
+  cannot deliver: the panel then shows the outcome while keeping a picker from before the load. Both `aiResult`
+  messages (load and unload) now include the fresh state, and the webview applies whatever came with the outcome.
+  The separate `aiState` message and the webview's own re-request stay — three ways to be told, one of which must
+  arrive.
+
+### Added
+
+- **`logs/ai.log` now records what the panel was told and what it saved**:
+  `Load finished (ok) — panel state: backend=bundled selection=bundled:qwen2.5-coder-3b-q4` and
+  `Panel save: value=… kind=… enabled=…`. A Save writes whatever the dropdown shows at that moment, and saving
+  *"Let the server decide"* is the only thing that produces the combination found on this machine
+  (`backend: external`, `model: ''`, and a `modelPath` still pointing at the built-in model) — so the next report
+  is one log read instead of a hunt.
+
+Suite **3730** passed / 0 failed.
+
 ## [0.9.30] - 2026-09-15 · *the panel was never told when the palette changed the model*
 
 ### Fixed

@@ -341,6 +341,17 @@ module.exports = async (t) => {
             'the unload handler refreshes the panel state on both the normal and the failing path');
         t.ok(/action === 'load' \|\| msg.action === 'unload'/.test(read('media/designer.js')), 'silent',
             'and the webview asks for a state itself after either action is confirmed');
+        // The state also travels *with* the result. A queue is not a contract: the separate `aiState` message can
+        // be missed or dropped (`postMessage` even resolves `false` when it could not deliver), and then the panel
+        // keeps showing the model it was told about before — the picker reverting to "Let the server decide…"
+        // while the built-in runtime answered (reported 2026-09-15).
+        const resultPost = /type: 'aiResult',[\s\S]*?\}\)/.exec(loadCase);
+        t.ok(/const state = await panelState\(\)/.test(loadCase) && resultPost && /state/.test(resultPost[0]),
+            'silent', 'the load result carries the fresh state as well as posting it separately');
+        t.ok(/msg\.state\) fillAi\(msg\.state\)/.test(read('media/designer.js')), 'silent',
+            'and the webview applies the state that came with the outcome');
+        t.ok(/Panel save: value=\$\{ai\.value/.test(dePanel), 'silent',
+            'a Save logs what it wrote — it is the only writer that can turn a bundled pin back into "the server decides"');
         // "What is in memory right now" is a claim the developer acts on, so it is only made when something
         // could answer it, and the load state is compared exactly (`not-loaded` contains `loaded`).
         const core = read('src/localModelCore.ts');

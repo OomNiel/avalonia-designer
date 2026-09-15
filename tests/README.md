@@ -1,8 +1,8 @@
 # Avalonia Designer — test suite
 
 Automated tests for the Avalonia Designer VS Code extension (see `TEST_PLAN.md` for the full
-plan and log format). The suite runs end-to-end on this machine: **3727 passed / 0 failed /
-0 skipped** (2026-09-15, ~38 s) — `node tests/runner.js` from the workspace root.
+plan and log format). The suite runs end-to-end on this machine: **3730 passed / 0 failed /
+0 skipped** (2026-09-15, ~39 s) — `node tests/runner.js` from the workspace root.
 
 ## How to run
 

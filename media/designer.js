@@ -2797,6 +2797,10 @@
                 // designer's status bar at the bottom of the window. It also no longer vanishes.
                 setAiProgress(msg.ok ? '' : (text ? '✗ ' + text : '✗ the load failed — see Output → Avalonia Designer'));
                 els.status.textContent = (msg.ok ? '' : '✗ ') + text;
+                // The state rides along with the outcome, so the panel shows the model that is actually in use
+                // even if the separate `aiState` message never lands (reported 2026-09-15: the picker reverted
+                // to "Let the server decide…" after a load the runtime had clearly performed).
+                if (msg.state) fillAi(msg.state);
                 // Ask for the state once more *after* the action is confirmed. The state posted as part of
                 // the action is the right one, but if that message is lost (a webview that was not ready, a
                 // second designer tab) the picker would keep showing the old selection forever — which is

@@ -25,6 +25,7 @@ import { bundledComponentSpecs, isStaleBundledCopy } from './bundledComponents';
 import { statusLines } from './assistantUi';
 import { logError } from './logger';
 import {
+    aiLog,
     attachPanel,
     loadChoice,
     panelState,
@@ -1755,13 +1756,23 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     try {
                         const outcome = await loadChoice(this.context, msg.state as PanelAiRequest, String(msg.value ?? ''));
                         stopProgress();
+                        // The state travels *with* the result as well as on its own. Two reasons, both from the
+                        // field: a queue is not a contract (if the separate message is missed or ignored the panel
+                        // keeps showing the model it was told about before), and the same object means the two
+                        // surfaces cannot describe different states (reported 2026-09-15: the picker reverted to
+                        // "Let the server decide…" while the built-in runtime was answering).
+                        const state = await panelState();
+                        aiLog(this.context, `Load finished (${outcome.ok ? 'ok' : 'failed'}) — panel state: `
+                            + `backend=${state.selected ? state.selected.split(':')[0] : '(none)'} `
+                            + `selection=${state.selected || '(empty)'}`);
                         await panel.webview.postMessage({
                             type: 'aiResult',
                             action: 'load',
                             ok: outcome.ok,
-                            message: [outcome.message, outcome.estimate].filter(Boolean).join(' ')
+                            message: [outcome.message, outcome.estimate].filter(Boolean).join(' '),
+                            state
                         });
-                        await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
+                        await panel.webview.postMessage({ type: 'aiState', state });
                         await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
                         await this.postStatus(panel, outcome.ok ? 'AI model loaded' : 'AI model failed to load');
                     } catch (err) {
@@ -1776,7 +1787,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     attachPanel(panel);
                     try {
                         const unloaded = await unloadEverything();
-                        await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: unloaded.ok, message: unloaded.message });
+                        const state = await panelState();
+                        await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: unloaded.ok, message: unloaded.message, state });
                         // The picker tags a model `● loaded` from discovery, so it needs a fresh state before
                         // it can stop claiming a model the user just unloaded is in memory (2026-09-15).
                         await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
@@ -1811,7 +1823,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     // The AI choices are saved through their own module: switching off has a side effect
                     // (the model is unloaded) and that belongs with the model code, not here.
                     const ai = msg.ai as AiSettingsInput | undefined;
-                    if (ai) await saveAiSettings(ai);
+                    if (ai) {
+                        // Logged because a Save writes whatever the dropdown shows, and it was the only writer that
+                        // could have produced the observed state (backend external + `model: ''` + an untouched
+                        // `modelPath`, which is precisely what saving "Let the server decide" does).
+                        aiLog(this.context, `Panel save: value=${ai.value || '(empty)'} `
+                            + `kind=${String(ai.value || '').split(':')[0] || '(none)'} enabled=${ai.enabled !== false}`);
+                        await saveAiSettings(ai);
+                    }
                     await panel.webview.postMessage({ type: 'codeSettings', mode: this.codeCheckMode(), badges: this.codeCheckBadges() });
                     if (ai) await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
                     // Apply the new behaviour immediately: re-check now (it also refreshes the badges).
