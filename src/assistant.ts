@@ -165,6 +165,38 @@ export function describeModel(
     return 'Model: (the server decides)';
 }
 
+/**
+ * What is in memory *right now* — the question the settings cannot answer, and the one that made an unloaded
+ * model look loaded (reported 2026-09-15: after Unload "the picker is not updated and the status check still
+ * shows that model as being loaded").
+ *
+ * "Asked for by name" describes the *next* request; this describes *this moment*. Both are reported because
+ * they disagree exactly when it matters — right after an unload — and one line without the other is
+ * ambiguous in a way a developer notices and a log does not.
+ *
+ * `undefined` for the bundled backend (its runtime reports itself in `bundledStatusLines`) so the caller
+ * never has to phrase a sentence it has no facts for.
+ */
+export function describeLoadedNow(
+    cfg: Pick<AssistantConfig, 'backend' | 'model'>,
+    loaded: string[]
+): string | undefined {
+    if (cfg.backend !== 'external') return undefined;
+    const short = (id: string) => id.replace(/\\/g, '/').split('/').pop() ?? id;
+    if (!loaded.length) {
+        return cfg.model
+            ? `Loaded now: nothing — the next request loads ${short(cfg.model)} first.`
+            : 'Loaded now: nothing — the next request makes the server load one.';
+    }
+    const names = loaded.map(short).join(', ');
+    // A pin may be qualified where the running id is not, or the reverse ("google/gemma-4-e4b" vs
+    // "gemma-4-e4b") — same model, and comparing the short forms is what makes that true.
+    if (!cfg.model || loaded.some((id) => id === cfg.model || short(id) === short(cfg.model))) {
+        return `Loaded now: ${names}`;
+    }
+    return `Loaded now: ${names} — not ${short(cfg.model)}, which is what the next request asks for.`;
+}
+
 // ---------------- hardware ----------------
 
 /** Facts about the machine, read once and passed around (so the verdict is testable). */

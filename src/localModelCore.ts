@@ -136,7 +136,7 @@ export async function discover(): Promise<Discovery> {
         return {
             list: { chat: [], embeddings: [], diskGb: 0 },
             server: { running: !!api },
-            loaded: (api?.ids ?? []).filter((m) => /loaded/i.test(m.state)).map((m) => m.id),
+            loaded: (api?.ids ?? []).filter((m) => isModelLoaded(m.state)).map((m) => m.id),
             kindById: new Map((api?.ids ?? []).map((m) => [m.id, m.kind] as const)),
             api: !!api
         };
@@ -260,7 +260,7 @@ export async function load(req: LoadRequest): Promise<LoadReport> {
     // is how a machine starts swapping. The user asked for this explicitly.
     const before = req.server ?? (await discover()).server;
     saying('freeing whatever is loaded…');
-    const unloaded = (await discoveryLoadedIds(cli)).filter((id) => id !== options.identifier);
+    const unloaded = (await loadedNow(cli)).ids.filter((id) => id !== options.identifier);
     const unload = await unloadAll(cli);
     if (!unload.ok && unloaded.length > 0) {
         log(`Could not unload ${unloaded.join(', ')} first: ${unload.message}`);
@@ -292,20 +292,38 @@ export async function load(req: LoadRequest): Promise<LoadReport> {
     }
 
     // "The CLI exited 0" is not the same as "the model answers": wait for the API to say it is loaded.
+    // The comparison is exact — LM Studio's *unloaded* state is the string `not-loaded`, which contains
+    // `loaded` and made this loop succeed instantly while nothing was in memory (2026-09-15).
     for (let i = 0; i < 60; i++) {
         const api = await readApi();
-        if (api?.ids.some((m) => m.id === options.identifier && /loaded/i.test(m.state))) break;
+        if (api?.ids.some((m) => m.id === options.identifier && isModelLoaded(m.state))) break;
         await new Promise((r) => setTimeout(r, 1000));
     }
     return { ok: true, endpoint, unloaded, estimate };
 }
 
-/** Ids currently in memory, by asking the API (falling back to nothing rather than guessing). */
-async function discoveryLoadedIds(cli: string): Promise<string[]> {
+export interface LoadedNow {
+    /** False when nothing could answer — the caller must then say nothing rather than guess. */
+    known: boolean;
+    ids: string[];
+}
+
+/**
+ * What is in memory *right now*, from the only two things that can know it: LM Studio's REST API, and
+ * `lms ps` (which reports the "no models are currently loaded" case explicitly).
+ *
+ * `known: false` means no source could answer — a foreign server, or an unparsed table. The status line is
+ * then omitted rather than claiming "nothing is loaded", because that claim is the one a developer acts on.
+ */
+export async function loadedNow(cli = findLmsCli()): Promise<LoadedNow> {
     const api = await readApi();
-    if (api) return api.ids.filter((m) => isModelLoaded(m.state)).map((m) => m.id);
+    if (api) return { known: true, ids: api.ids.filter((m) => isModelLoaded(m.state)).map((m) => m.id) };
+    if (!cli) return { known: false, ids: [] };
     const ps = await run(cli, ['ps']);
-    return parseLmsPs(ps.stdout) ?? [];
+    // The parser only recognises the "nothing loaded" answer; a table of running models is not parsed here,
+    // so reading "nothing" out of it would be a guess.
+    const parsed = parseLmsPs(ps.stdout);
+    return parsed ? { known: true, ids: parsed } : { known: false, ids: [] };
 }
 
 // ---------------- files on this machine ----------------

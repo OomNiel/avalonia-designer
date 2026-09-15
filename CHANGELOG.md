@@ -15,6 +15,35 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.24] - 2026-09-15 · *unloading a model left the panel saying it was still loaded*
+
+### Fixed
+
+- **Unloading did not refresh the panel.** The `● loaded` tag and the *"N model(s) in memory right now"*
+  hint come from discovery, so they only clear when a fresh state arrives — and nothing asked for one after
+  an unload (reported: *"the model is unloaded … but the picker is not updated"*). The unload handler now
+  posts the state on both its normal and its failing path, and the webview asks for one itself once an
+  unload is confirmed, exactly as it already did for a load.
+- **The status report never said what was in memory, so an unloaded model still looked loaded.**
+  `Model: google/gemma-4-e4b (asked for by name)` describes the *next* request, not *this moment*, and with
+  only that line the report was ambiguous in the way the user noticed (*"the status check still shows that
+  model as being loaded"*). A `Loaded now:` line now sits directly under it, built from the server itself:
+  `Loaded now: nothing — the next request loads gemma-4-e4b first.` It is **omitted** when no source can
+  answer (a foreign server, an unparsed `lms ps` table) rather than claiming nothing is loaded, because that
+  claim is the one a developer acts on.
+- **`/loaded/i` was still live in the load-confirmation loop.** LM Studio's *unloaded* state is the string
+  `not-loaded`, which contains `loaded`, so the wait-for-the-API loop could break on its first pass while
+  nothing was in memory. Same defect as 0.9.22's tag bug, in the one place it had been missed.
+- Unload now shares Load's busy state and "no answer yet" note, and that note is cleared when the action
+  ends instead of being able to appear after it.
+
+### Tests
+
+- New assertions: the `Loaded now:` wording across all its branches (nothing pinned, one loaded, several
+  loaded, a pin that does not match, a qualified pin matching a short running id, the bundled backend),
+  the unload handler refreshing the state on both paths, the webview re-requesting it after a confirmed
+  unload, and `loadedNow()` reporting "unknown" instead of "nothing" when it cannot tell.
+
 ## [0.9.23] - 2026-09-15 · *the picker named a model that was not the one in use*
 
 ### Fixed

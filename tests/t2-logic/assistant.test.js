@@ -21,6 +21,7 @@ const {
     chat,
     describeEmptyAnswer,
     describeModel,
+    describeLoadedNow,
     detectEol,
     extractCode,
     looksLikeCode,
@@ -392,6 +393,33 @@ module.exports = async (t) => {
             'the count is the chat models the server offers');
         t.ok(/no chat model offered/.test(describeModel(base, { ok: true, models: [] })), 'status',
             'a server offering only embeddings says so instead of inviting a bad choice');
+    }
+
+    // ---------- 6b-ii) "loaded now" is a different question from "asked for by name" ----------
+    // Reported 2026-09-15, after an unload: "the model is unloaded (according to System Resources) but the
+    // status check still shows that model as being loaded". The line above it describes the *next* request,
+    // so both are needed and neither substitutes for the other — they disagree exactly when it matters.
+    {
+        const base = { backend: 'external', model: 'google/gemma-4-e4b' };
+        const nothing = describeLoadedNow(base, []);
+        t.ok(/Loaded now: nothing/.test(nothing), 'status',
+            'an empty memory is stated outright, not left to be inferred from the settings');
+        t.ok(/loads gemma-4-e4b first/.test(nothing), 'status',
+            'and it names the model the next request will load');
+        t.equal(describeLoadedNow({ ...base, model: '' }, []),
+            'Loaded now: nothing — the next request makes the server load one.', 'status',
+            'with nothing pinned the wording promises nothing specific');
+        t.equal(describeLoadedNow(base, ['google/gemma-4-e4b']), 'Loaded now: gemma-4-e4b', 'status',
+            'a loaded model is named (short form — the line above already names it in full)');
+        t.ok(/^Loaded now: gemma-4-e4b$/.test(describeLoadedNow(base, ['gemma-4-e4b'])), 'status',
+            'a qualified pin matches the short running id');
+        const other = describeLoadedNow(base, ['qwen3.8-27b']);
+        t.ok(/not gemma-4-e4b/.test(other) && /what the next request asks for/.test(other), 'status',
+            'a mismatch is spelled out instead of implying the pinned model is up');
+        t.equal(describeLoadedNow({ ...base, model: '' }, ['a', 'b']), 'Loaded now: a, b', 'status',
+            'several loaded models are all named');
+        t.equal(describeLoadedNow({ backend: 'bundled', model: '' }, []), undefined, 'status',
+            'the bundled runtime reports itself elsewhere, so nothing is invented here');
     }
 
     // ---------- 6c) the answer was not usable (2026-09-14) ----------

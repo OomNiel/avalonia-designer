@@ -1213,16 +1213,14 @@
                 : 'loading — this can take a few minutes for a big model');
         // If the extension says nothing at all, say that too: a line that never changes cannot be told
         // apart from a dead one, which is what "downloading is not starting" was.
-        clearTimeout(aiWatchdog);
-        aiWatchdog = setTimeout(() => {
-            if (els.aiProgress.textContent && !els.aiProgress.hidden) {
-                els.aiProgress.textContent += '  —  the extension has not reported back yet (View → Output → "Avalonia Designer")';
-            }
-        }, 10000);
+        armAiWatchdog();
         post({ type: 'aiLoad', value: els.aiModel.value, state: aiPayload() });
     });
     els.aiUnload.addEventListener('click', () => {
+        // Unload is a state change like Load — same busy state, same watchdog, same refresh below.
+        setAiBusy(true);
         setAiProgress('unloading…');
+        armAiWatchdog();
         post({ type: 'aiUnload' });
     });
     // The status check is the same report the "AI: Status and Hardware Check" command shows — the extension
@@ -1238,8 +1236,19 @@
     }
     let aiWatchdog = 0;
     function setAiBusy(busy) {
-        if (busy) clearTimeout(aiWatchdog);
+        // Cleared on both edges: a note that the extension "has not reported back yet" must never appear
+        // after the action has already finished.
+        clearTimeout(aiWatchdog);
         for (const b of [els.aiLoad, els.aiUnload, els.aiScan, els.aiRefresh]) b.disabled = !!busy;
+    }
+    /** Arms the "no answer yet" note both long actions share (see the Load handler). */
+    function armAiWatchdog() {
+        clearTimeout(aiWatchdog);
+        aiWatchdog = setTimeout(() => {
+            if (els.aiProgress.textContent && !els.aiProgress.hidden) {
+                els.aiProgress.textContent += '  —  the extension has not reported back yet (View → Output → "Avalonia Designer")';
+            }
+        }, 10000);
     }
 
     // Right-click on the control list dropdown → context menu to delete the
@@ -2782,11 +2791,13 @@
                 // designer's status bar at the bottom of the window. It also no longer vanishes.
                 setAiProgress(msg.ok ? '' : (text ? '✗ ' + text : '✗ the load failed — see Output → Avalonia Designer'));
                 els.status.textContent = (msg.ok ? '' : '✗ ') + text;
-                // Ask for the state once more *after* the load is confirmed. The state posted as part of the
-                // load is the right one, but if that message is lost (a webview that was not ready, a second
-                // designer tab) the picker would keep showing the old selection forever — which is what the
-                // user saw after loading the built-in 3B (2026-09-15).
-                if (msg.ok && msg.action === 'load') post({ type: 'aiState' });
+                // Ask for the state once more *after* the action is confirmed. The state posted as part of
+                // the action is the right one, but if that message is lost (a webview that was not ready, a
+                // second designer tab) the picker would keep showing the old selection forever — which is
+                // what the user saw after loading the built-in 3B (2026-09-15). Unload needs it just as
+                // much: the `● loaded` tag only disappears when a fresh state arrives, and until then the
+                // panel named a model the user had just unloaded (reported the same day).
+                if (msg.ok && (msg.action === 'load' || msg.action === 'unload')) post({ type: 'aiState' });
                 break;
             }
             case 'aiStatus': {

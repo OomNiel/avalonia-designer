@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3679 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3696 passed, 0 failed / 0 skipped** (2026-09-15, ~43 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2073,3 +2073,40 @@ assertion stands on is invisible in a green run — `0 failed` alongside a stack
 
 **Suite:** 3679 passed / 0 failed (was 3665; `designer.test.js` +14 assertions, including six that would
 have failed if the option rows had stayed the way the fixture built them).
+
+### §109 — "unloaded" and "the status still says it is loaded" (2026-09-15, release 0.9.24)
+
+Reported in two parts, and they are two different bugs that happen to share one cause — **the panel never
+asked what was in memory**:
+
+1. *"If I then unload that model, the model is unloaded (according to System Resources) but the picker is
+   not updated."* The `● loaded` tag and the *"N model(s) in memory right now"* hint on the `any:` entry are
+   built from `discovery.loaded`, so they clear on a **fresh state** and on nothing else. The `aiUnload`
+   handler posted `aiResult` and `aiStatus` — and no `aiState`. The webview's rule was `msg.action === 'load'`
+   too, so neither side refreshed. Both now cover unload, and the webview's own re-request means a lost
+   message cannot leave the tag on a model that is gone.
+2. *"the status check still shows that model as being loaded."* This one was **true and honest**:
+   `Model: google/gemma-4-e4b (asked for by name)` describes what the *next* request will ask for, and with
+   an unloaded model that line is still correct. The report simply had no line for *this moment*. It does
+   now, from the only source that can answer it:
+
+```
+Model: google/gemma-4-e4b (asked for by name)
+Loaded now: nothing — the next request loads gemma-4-e4b first.
+```
+
+`loadedNow()` in `localModelCore.ts` asks LM Studio's REST API (authoritative: `state`), falls back to `lms
+ps` (which reports the "none" case explicitly), and returns `{ known, ids }`. `known: false` — a foreign
+server, an unparsed table — **omits the line** rather than printing "nothing is loaded", because that is
+the claim a developer acts on. `describeLoadedNow()` is the pure wording, asserted for all six branches.
+
+**A leftover of the same defect 0.9.22 fixed:** `/loaded/i` was still in the load-confirmation loop
+(`if (api?.ids.some(… /loaded/i.test(m.state))) break`), so the "wait for the API to say it is loaded"
+loop could break on its first pass while nothing was in memory. Now `isModelLoaded(m.state)`.
+
+**Lesson:** "whatever is loaded" is a *time-dependent* fact and a settings-based report is not a substitute
+for it. Two surfaces read the same state, and both needed the refresh — the picker and the status. Verified
+against the real machine with the user's own settings, which is how the wording was chosen: the report now
+names the model the next request will load rather than leaving the reader to reconcile two lines.
+
+**Suite:** 3696 passed / 0 failed (was 3679; +11 status branches, +6 unload/rerequest assertions).

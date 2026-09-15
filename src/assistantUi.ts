@@ -21,6 +21,7 @@ import {
     chatDetailed,
     describeEmptyAnswer,
     describeModel,
+    describeLoadedNow,
     extractCode,
     looksLikeEmbeddingModel,
     methodTooLong,
@@ -36,6 +37,7 @@ import { methodsIn, type MethodSpan } from './codeBehindCheck';
 import { log } from './logger';
 import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
 import { sidecarContextSize, sidecarGpuLayers } from './localModels';
+import { loadedNow } from './localModelCore';
 import { bundledStatusLines, ensureBundledEndpoint } from './modelRuntime';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
@@ -751,10 +753,15 @@ async function statusFacts(): Promise<StatusFacts> {
     // Embedding models are listed by every local server next to the chat ones and cannot answer a chat
     // request, so they are named but not counted as candidates.
     const chatModels = (probe?.models ?? []).filter((m) => !looksLikeEmbeddingModel(m.id));
+    // "In memory right now" can only come from the server, so it is asked separately — and reported only
+    // when a source could actually answer, because "nothing is loaded" is a claim the developer acts on.
+    const live = cfg.backend === 'external' ? await loadedNow() : undefined;
+    const loadedLine = live?.known ? describeLoadedNow(cfg, live.ids) : undefined;
     const lines = [
         `AI assist: ${cfg.backend === 'external' ? 'on (local model server)' : cfg.backend === 'bundled' ? 'on (bundled local model)' : 'off'}  ·  extension v${extensionVersion()}`,
         cfg.backend === 'bundled' ? 'Endpoint: the bundled runtime supplies one' : `Endpoint: ${cfg.endpoint}`,
         describeModel(cfg, probe && { ok: probe.ok, models: chatModels }),
+        ...(loadedLine ? [loadedLine] : []),
         `Budget: ${cfg.timeoutSeconds} s, up to ${cfg.maxTokens} tokens, temperature ${cfg.temperature}`,
         '',
         `Hardware: ${hw.level === 'good' ? 'comfortable' : hw.level === 'minimal' ? 'minimum only' : 'not usable'}`,

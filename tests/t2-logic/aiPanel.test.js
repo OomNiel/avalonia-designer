@@ -286,6 +286,21 @@ module.exports = async (t) => {
         t.ok(/logError\(/.test(loadCase), 'silent', 'while also logging them');
         t.ok(/stopProgress\(\)/.test(loadCase), 'silent', 'the elapsed-time ticker is stopped when it ends');
         t.ok(/case 'aiUnload'[\s\S]*?try \{/.test(dePanel), 'silent', 'unload is wrapped the same way');
+        // Unloading changes what is in memory, so the panel has to be told the new state and not only the
+        // result: until 0.9.24 the picker kept its ● loaded tag on a model the user had just unloaded and
+        // the status still named it (reported 2026-09-15).
+        const unloadCase = /case 'aiUnload': \{[\s\S]*?\n                \}/.exec(dePanel)[0];
+        t.equal((unloadCase.match(/type: 'aiState'/g) || []).length, 2, 'silent',
+            'the unload handler refreshes the panel state on both the normal and the failing path');
+        t.ok(/action === 'load' \|\| msg.action === 'unload'/.test(read('media/designer.js')), 'silent',
+            'and the webview asks for a state itself after either action is confirmed');
+        // "What is in memory right now" is a claim the developer acts on, so it is only made when something
+        // could answer it, and the load state is compared exactly (`not-loaded` contains `loaded`).
+        const core = read('src/localModelCore.ts');
+        t.ok(/export async function loadedNow[\s\S]*?isModelLoaded\(m\.state\)/.test(core), 'silent',
+            'the live load state is read with the exact comparison');
+        t.ok(/return parsed \? \{ known: true, ids: parsed \} : \{ known: false, ids: \[\] \}/.test(core), 'silent',
+            'and an unparsable answer is reported as unknown rather than as "nothing loaded"');
         t.ok(/The status check failed/.test(dePanel), 'silent', 'and a failing status check still produces text');
 
         const panel = read('src/aiPanel.ts');

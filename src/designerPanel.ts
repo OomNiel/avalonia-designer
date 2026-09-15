@@ -1777,11 +1777,15 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     try {
                         const unloaded = await unloadEverything();
                         await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: unloaded.ok, message: unloaded.message });
+                        // The picker tags a model `● loaded` from discovery, so it needs a fresh state before
+                        // it can stop claiming a model the user just unloaded is in memory (2026-09-15).
+                        await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
                         await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
                     } catch (err) {
                         const message = err instanceof Error ? err.message : String(err);
                         logError(`AI unload failed: ${message}`);
                         await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: false, message });
+                        await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
                     }
                     return;
                 }

@@ -632,6 +632,22 @@ module.exports = async (t) => {
     t.equal(posted.some((m) => m.type === 'aiState'), false, 'ai-picker', 'a failed load does not');
     t.ok(/the download stopped/.test($('aiProgress').textContent), 'ai-picker', 'a failure stays visible in the progress line');
 
+    // --- Unload is a state change, not just a result (reported 2026-09-15) ---
+    // "the model is unloaded ... but the picker is not updated and the status check still shows that model
+    // as being loaded". The `● loaded` tag comes from discovery, so it only clears when a fresh state
+    // arrives — which nothing used to ask for after an unload.
+    posted.length = 0;
+    msg({ type: 'aiResult', action: 'unload', ok: true, message: 'unloaded 1 model(s)' });
+    t.equal(posted.some((m) => m.type === 'aiState'), true, 'ai-picker',
+        'a confirmed unload re-requests the state, so the ● loaded tag cannot survive it');
+    posted.length = 0;
+    $('aiUnload').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'aiUnload', 'ai-picker', 'Unload asks the extension to unload');
+    t.equal($('aiLoad').disabled, true, 'ai-picker', 'and both buttons are disabled while it runs');
+    t.ok(/unloading/.test($('aiProgress').textContent), 'ai-picker', 'with a line that says what is happening');
+    msg({ type: 'aiResult', action: 'unload', ok: true, message: 'unloaded' });
+    t.equal($('aiLoad').disabled, false, 'ai-picker', 'the buttons come back when the extension answers');
+
 
     // --- the FORM is selectable: first control-list entry "Form - <Title>", and clicking empty
     //     design space selects it (posts a select with name null → Window properties resize it). ---

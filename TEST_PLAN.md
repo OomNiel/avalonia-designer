@@ -276,6 +276,13 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.24` (2026-09-15)** — unloading left the panel and the status naming the model as loaded.
+  Two bugs with one cause: the `aiUnload` handler never posted a fresh `aiState` (so the `● loaded` tag,
+  which comes from discovery, survived the unload), and the status had **no line for what is in memory
+  right now** — `Model: … (asked for by name)` describes the next request, and was still true and
+  therefore useless after an unload. A `Loaded now:` line now sits under it, omitted when no source can
+  answer (never "nothing is loaded" as a guess). `/loaded/i` was also still in the load-confirmation loop.
+  Suite **3696**.
 - **Release `0.9.23` (2026-09-15)** — the picker could display a different entry than the model in use
   (reported after a bundled 3B load that had in fact succeeded). Choice values are opaque strings and the
   picker does no index arithmetic, so it was not the off-by-one it looked like — but a `<select>` given a
