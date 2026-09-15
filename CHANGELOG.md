@@ -15,6 +15,20 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.34] - 2026-09-15 · *"unload everything" that only spoke to one runtime*
+
+### Fixed
+
+- **Unload now frees the extension's own runtime.** It only ever ran `lms unload --all` — *LM Studio's* command — so
+  pressing Unload with a built-in model did nothing at all: the sidecar kept the weights and the picker kept its
+  `● in use` marker (reported the moment pinning started working). Unload now stops the built-in runtime **and**
+  unloads LM Studio, and says which of the two it actually did — *"Done — the built-in runtime is stopped, and LM
+  Studio has nothing loaded."*
+- **LM Studio being absent is no longer a failure.** There is simply nothing of its to free; and when neither
+  runtime holds anything, the message says that instead of claiming a success.
+
+Suite **3762** passed / 0 failed.
+
 ## [0.9.33] - 2026-09-15 · *the setting that was written, and then overruled*
 
 ### Fixed

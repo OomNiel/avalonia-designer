@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3748 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3762 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2340,3 +2340,29 @@ nothing.
 when a write "doesn't stick", the answer is usually a scope above yours.
 
 **Suite:** 3748 passed / 0 failed (was 3738).
+
+### §117 — "Unload everything" is not a synonym for "unload LM Studio" (2026-09-15, release 0.9.34)
+
+Reported within minutes of §116 being fixed — *"the Unload for the non-LM Studio models does not work"* — and this
+time the cause was one line of our own:
+
+```ts
+export async function unloadEverything(): Promise<LoadOutcome> {
+    const result = await unloadAll();      // `lms unload --all` — LM Studio's command
+    …
+}
+```
+
+For a built-in model that is a no-op with a success message: the sidecar kept the weights, the picker kept `● in use`,
+and nothing in the UI said otherwise. The extension runs **two** runtimes, so "unload" has to mean both —
+`stopModelServer()` for its own sidecar, `lms unload --all` for LM Studio — and the message now names what it
+actually did. LM Studio being absent is not a failure either (there is nothing of its to free).
+
+**Tests:** driven with the three module functions replaced (the real ones spawn processes) and **restored in a
+`finally`** — the runner shares one process, and a leaked `bundledRuntimeRunning` would make the picker's own tests
+see a running runtime. Four branches: sidecar running, LM Studio installed, nothing loaded anywhere, CLI failing.
+
+**Lesson:** when a feature has two back ends, every verb in its UI has to be implemented twice — and a command
+named "unload everything" that speaks to one of them is a bug that only shows up on the other path.
+
+**Suite:** 3762 passed / 0 failed (was 3748).

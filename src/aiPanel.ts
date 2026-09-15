@@ -41,7 +41,7 @@ import {
     type LocalModel,
     type RequestedLoad
 } from './localModels';
-import { bundledFilesOnDisk, bundledRuntimeRunning, ensureBundledEndpoint, ensureModelFile, modelFileFor } from './modelRuntime';
+import { bundledFilesOnDisk, bundledRuntimeRunning, ensureBundledEndpoint, ensureModelFile, modelFileFor, stopModelServer } from './modelRuntime';
 import { proveItWorks } from './localModelSetup';
 
 export const SETTINGS = 'avaloniaDesigner.assistant';
@@ -481,12 +481,31 @@ async function loadLmStudio(
     };
 }
 
-/** "Unload" — the user chose `lms unload --all`, so this frees everything LM Studio holds. */
+/**
+ * "Unload" — the button has to free **both** runtimes.
+ *
+ * It only ever ran `lms unload --all`, which is LM Studio's command: for a built-in model it did nothing at all,
+ * leaving the sidecar holding the weights and the picker still showing `● in use` (reported 2026-09-15, the moment
+ * pinning started working). Stopping the extension's own runtime is what "unload" means for those models, and it
+ * is harmless when it is not running.
+ *
+ * LM Studio being absent is not a failure either: there is simply nothing of its to free.
+ */
 export async function unloadEverything(): Promise<LoadOutcome> {
-    const result = await unloadAll();
-    return result.ok
-        ? { ok: true, message: 'Every model is unloaded — the memory is free.' }
-        : { ok: false, message: result.message };
+    const done: string[] = [];
+    if (bundledRuntimeRunning().running) {
+        stopModelServer();
+        done.push('the built-in runtime is stopped');
+    }
+    if (foundLms()) {
+        const result = await unloadAll();
+        if (!result.ok) return { ok: false, message: result.message };
+        done.push('LM Studio has nothing loaded');
+    }
+    return {
+        ok: true,
+        message: done.length ? `Done — ${done.join(', and ')}.` : 'Nothing was loaded, so there was nothing to free.'
+    };
 }
 
 /** What the panel's Save sends. The same shape a load carries, read through the same type. */
