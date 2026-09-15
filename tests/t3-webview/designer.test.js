@@ -27,6 +27,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     // the AI assist section of that panel (2026-09-15): switch, model list, load options, actions
     'aiEnabled', 'aiBadge', 'aiBody', 'aiModel', 'aiModelHint', 'aiRefresh', 'aiScan',
     'aiOptions', 'aiContext', 'aiGpu', 'aiTtl', 'aiMaxTokens', 'aiTimeout', 'aiEndpoint',
+    'aiOptContext', 'aiOptGpu', 'aiOptTtl', 'aiOptAddress',
     'aiLoad', 'aiUnload', 'aiStatus', 'aiProgress', 'aiStatusText',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
@@ -72,6 +73,7 @@ function setup(omit = []) {
         if (id === 'settingsSave' || id === 'settingsCancel') return 'button';
         if (id === 'aiEnabled') return 'input';
         if (id === 'aiBody' || id === 'aiOptions') return 'div';
+        if (id.startsWith('aiOpt')) return 'div'; // the option rows the panel hides per runtime
         if (id === 'aiModel' || id === 'aiGpu' || id === 'aiTtl') return 'select';
         if (id === 'aiContext' || id === 'aiMaxTokens' || id === 'aiTimeout' || id === 'aiEndpoint') return 'input';
         if (id === 'aiStatusText' || id === 'aiProgress' || id === 'aiBadge' || id === 'aiModelHint') return 'div';

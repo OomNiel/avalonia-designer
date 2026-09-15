@@ -100,6 +100,10 @@
         aiRefresh: $('aiRefresh'),
         aiScan: $('aiScan'),
         aiOptions: $('aiOptions'),
+        aiOptContext: $('aiOptContext'),
+        aiOptGpu: $('aiOptGpu'),
+        aiOptTtl: $('aiOptTtl'),
+        aiOptAddress: $('aiOptAddress'),
         aiContext: $('aiContext'),
         aiGpu: $('aiGpu'),
         aiTtl: $('aiTtl'),
@@ -1121,6 +1125,28 @@
             // as a broken control (seen in the Chromium render, 2026-09-15).
             els.aiGpu.options[0].textContent = `recommended (${state.options.recommended.gpu})`;
         }
+        applyKindToOptions(chosen);
+    }
+
+    /**
+     * Shows only the rows the selected model's runtime will actually honour, and words the hints for it.
+     *
+     * The two runtimes take different arguments: LM Studio is told a context length, a GPU *ratio* and an
+     * idle-unload timer, while the built-in runtime takes a context length and a GPU *layer count* and
+     * lives only as long as the extension does. A field that is quietly ignored is how a user ends up
+     * trusting a number that does nothing.
+     */
+    function applyKindToOptions(chosen) {
+        const kind = chosen ? chosen.kind : '';
+        const bundled = kind === 'bundled' || kind === 'file';
+        els.aiOptTtl.hidden = bundled;
+        els.aiOptAddress.hidden = kind !== 'custom';
+        els.aiOptGpu.querySelector('.ai-hint').textContent = bundled
+            ? 'max = all layers on the GPU; anything else runs on the CPU (the built-in runtime takes a layer count, not a ratio).'
+            : 'A shared-memory GPU is usually slower than the CPU for big models.';
+        els.aiOptContext.querySelector('.ai-hint').textContent = bundled
+            ? 'tokens the model can hold — handed to the built-in runtime when it starts.'
+            : 'tokens the model can hold. Bigger costs memory.';
     }
 
     els.aiEnabled.addEventListener('change', () => {
@@ -1135,6 +1161,7 @@
         const chosen = aiState && (aiState.choices || []).find((c) => c.value === els.aiModel.value);
         els.aiOptions.hidden = !chosen;
         els.aiModelHint.textContent = [aiState ? aiState.hint : '', chosen ? chosen.detail : ''].filter(Boolean).join('  ·  ');
+        applyKindToOptions(chosen);
         if (chosen && chosen.kind === 'custom') els.aiEndpoint.focus();
     });
     els.aiRefresh.addEventListener('click', () => post({ type: 'aiState', rescan: true }));
@@ -1144,8 +1171,17 @@
     });
     els.aiLoad.addEventListener('click', () => {
         if (!els.aiModel.value) { setAiProgress('choose a model first'); return; }
+        const chosen = aiState && (aiState.choices || []).find((c) => c.value === els.aiModel.value);
+        const kind = chosen ? chosen.kind : '';
         setAiBusy(true);
-        setAiProgress('loading — this can take a few minutes for a big model');
+        // Word it for what is about to happen: a bundled model may have to download first, which is minutes,
+        // while an LM Studio model is already on disk. The extension replaces this line with byte counts as
+        // soon as it knows them ("1.2 GB of 4.7 GB · 26% · 12.4 MB/s").
+        setAiProgress(kind === 'bundled'
+            ? 'downloading (first time) and starting the built-in runtime — this can take a few minutes…'
+            : kind === 'file'
+                ? 'importing the file and loading it — this can take a few minutes…'
+                : 'loading — this can take a few minutes for a big model');
         post({ type: 'aiLoad', value: els.aiModel.value, state: aiPayload() });
     });
     els.aiUnload.addEventListener('click', () => {

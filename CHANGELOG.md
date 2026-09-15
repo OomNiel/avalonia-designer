@@ -15,6 +15,47 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.18] - 2026-09-15 · *downloads resume, and say how far they have got*
+
+### Added
+
+- **Downloads resume.** A 2.1 GB or 4.7 GB model that loses its connection at 90% now continues from where
+  it stopped (an HTTP `Range` request onto the existing `.part` file) instead of starting again. A partial
+  file *larger* than the model is discarded rather than appended to, a server that ignores `Range` (and
+  answers 200 with the whole file) cannot duplicate the first half, and a `416` (our partial is past what
+  the server has) restarts cleanly. A checksum mismatch still deletes the file, because everything after a
+  bad byte is suspect.
+- **The download reports bytes of bytes, live**: `1.2 GB of 4.7 GB · 26% · 12.4 MB/s`, ending at
+  `100%` — the last line used to be whatever the throttled update happened to say, which looked like a
+  stalled download while the checksum ran.
+- **An `http://` model address works.** "Paste the address of one" handed every URL to `https.get`, so a
+  model served over plain HTTP failed with a TLS error that said nothing about the real problem.
+
+### Changed
+
+- **The load options now reach the built-in runtime too.** Context length becomes `--ctx` and the GPU field
+  becomes `--gpu-layers` (LM Studio takes a GPU *ratio*, llama.cpp takes a *layer count*: `max` = all
+  layers, anything else = CPU, because a shared-memory GPU is slower for big models and half of an unknown
+  layer count is not a number of layers). Before this, both fields were shown for bundled models and
+  silently ignored.
+- **Rows that cannot be honoured are hidden instead of shown and ignored**: *Unload when idle* disappears
+  for the built-in runtime (it has no idle-unload concept), and *Address* only appears for "a server I run
+  myself".
+- The dropdown says when a download happens: "This extension's own runtime — **downloaded once when you
+  press Load Model**, then local". "download once" in the label was read as "this downloads now" (the user
+  asked), which is exactly the kind of ambiguity a label should not have.
+
+### Fixed
+
+- **`.ai-opt[hidden]` did nothing.** An author `display` beats the UA stylesheet's `[hidden] { display: none }`
+  regardless of specificity, so the row-hiding above had no effect until the rule existed — caught by
+  rendering the panel in Chromium. (The same trap is why `.modal[hidden]` exists.)
+
+### Tests
+
+- New `tests/t2-logic/modelDownload.test.js` (53 assertions) drives the **real** download function against a
+  **real local HTTP server**: a truncated first attempt, the `Range` request it then sends, byte-identical
+  output, a server that ignores ranges, and a 416 restart. Suite **3603 passed / 0 failed**.
 ## [0.9.17] - 2026-09-15 · *the Settings panel fits on screen*
 
 ### Fixed

@@ -1343,6 +1343,15 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     margin: 4px 0;
 }
 
+/* An author `display` beats the UA stylesheet's `[hidden] { display: none }` — author rules win over UA
+   rules whatever the specificity — so hiding a row from the panel (the idle-unload row for the built-in
+   runtime, the address row for everything else) silently did nothing until this rule existed. Caught by
+   rendering the panel in Chromium and noticing the "hidden" row was still on screen (2026-09-15). Same
+   trap as `.modal[hidden]` above. */
+.ai-opt[hidden] {
+    display: none;
+}
+
 .ai-opt label {
     font-size: 12px;
 }
@@ -1923,7 +1932,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 
 /* Direct child on purpose: the first `.modal-buttons` in the box belongs to `#aiBody` (Refresh/Scan) and
    must scroll with the content; only the Cancel/Save row is pinned. */
-#settingsModal .modal-box > .modal-buttons {
+#settingsModal .modal-box>.modal-buttons {
     position: sticky;
     bottom: 0;
     background: var(--panel);

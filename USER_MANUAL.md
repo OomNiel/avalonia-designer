@@ -966,10 +966,17 @@ before anything is downloaded:
    | Qwen2.5-Coder 7B Instruct (Q4_K_M) | 4.7 GB | noticeably better code, two to three times slower |
 
    You can also point it at a `.gguf` file you already have, or paste the address of one.
-3. Wait for the download — it is shown as a percentage and can be cancelled and resumed by running the
-   command again. The file is checked against the **SHA-256** the publisher lists for it, then stored in
-   the extension's own storage. It is downloaded once, for all your projects.
+3. Wait for the download — the line under the buttons counts it out in bytes (`1.2 GB of 4.7 GB · 26%
+   · 12.4 MB/s`) and ends at 100%. If it is interrupted, running it again **continues from where it
+   stopped** instead of starting over. The file is then checked against the **SHA-256** the publisher
+   lists for it, and stored in the extension's own storage. It is downloaded once, for all your
+   projects.
 4. That is it: `backend` is switched to `bundled` for you and the feature is ready.
+
+While a model from that list is selected, the panel shows only the settings it will honour: context
+length (handed to the built-in runtime when it starts) and GPU offload — where `max` means "all layers on
+the GPU" and anything else runs on the CPU. *Unload when idle* belongs to LM Studio and disappears here,
+as does the address field, which is only for a server you run yourself.
 
 **How is there an AI in my editor with no server?** The extension builds a small C# program (the same
 way it already builds its design previewer) with the .NET SDK on your machine, and *that* program loads

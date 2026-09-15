@@ -42,6 +42,13 @@ export interface AssistantConfig {
     modelPath: string;
     /** Threads for the bundled runtime; 0 = choose automatically. */
     threads: number;
+    /**
+     * Context window handed to the bundled runtime (`--ctx`). LM Studio models get theirs from `lms load`
+     * instead — this is the built-in runtime's own copy of the same decision.
+     */
+    contextSize: number;
+    /** Layers offloaded to the GPU by the bundled runtime (`--gpu-layers`). 0 = CPU only. */
+    gpuLayers: number;
     timeoutSeconds: number;
     maxTokens: number;
     temperature: number;
@@ -54,6 +61,8 @@ export interface RawAssistantSettings {
     model?: unknown;
     modelPath?: unknown;
     threads?: unknown;
+    contextSize?: unknown;
+    gpuLayers?: unknown;
     timeoutSeconds?: unknown;
     maxTokens?: unknown;
     temperature?: unknown;
@@ -99,6 +108,8 @@ export function normalizeAssistantConfig(raw: RawAssistantSettings): AssistantCo
         model: typeof raw.model === 'string' ? raw.model.trim() : '',
         modelPath: typeof raw.modelPath === 'string' ? raw.modelPath.trim() : '',
         threads: num(raw.threads, 0, 0, 32),
+        contextSize: num(raw.contextSize, 4096, 512, 262144),
+        gpuLayers: num(raw.gpuLayers, 0, 0, 999),
         timeoutSeconds: num(raw.timeoutSeconds, 60, 5, 600),
         maxTokens: num(raw.maxTokens, 4096, 64, 8192),
         temperature: num(raw.temperature, 0.2, 0, 1)

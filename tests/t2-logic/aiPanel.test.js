@@ -84,8 +84,12 @@ module.exports = async (t) => {
 
         t.equal(choices.filter((c) => c.kind === 'bundled').length, 2, 'list',
             'both downloadable models are offered');
-        t.ok(/download once/.test(choices.find((c) => c.kind === 'bundled').label), 'list',
-            'labelled as a one-time download, because that is what it costs');
+        const bundled = choices.find((c) => c.kind === 'bundled');
+        // "download once" in the label was read as "this downloads now" (asked 2026-09-15), so the label is
+        // the size and the detail says when the download happens.
+        t.ok(/2\.1 GB|GB/.test(bundled.label), 'list', 'a downloadable model is labelled with its size');
+        t.ok(/downloaded once when you press Load Model/.test(bundled.detail), 'list',
+            'and its detail states exactly when the download happens, instead of a bare "download once"');
 
         const found = choices.find((c) => c.kind === 'file');
         t.ok(found && /~\/Downloads/.test(found.detail), 'list',
@@ -231,7 +235,7 @@ module.exports = async (t) => {
         const settingsWidth = /#settingsModal \.modal-box \{[^}]*width:\s*min\(([^)]*)\)/.exec(css);
         t.ok(settingsWidth && /9[0-9]vw/.test(settingsWidth[1]) && /5\d\dpx/.test(settingsWidth[1]), 'layout',
             'this panel gets its own width (the values + hints need it) without widening the other 8 small dialogs');
-        t.ok(/#settingsModal \.modal-box > \.modal-buttons \{[^}]*position:\s*sticky/.test(css), 'layout',
+        t.ok(/#settingsModal \.modal-box\s*>\s*\.modal-buttons \{[^}]*position:\s*sticky/.test(css), 'layout',
             'and its Save row is pinned, so the last thing the user must press is never off-screen');
 
         // A <select> spends ~18px on its arrow, so a long label silently truncates. Measured: with a 120px

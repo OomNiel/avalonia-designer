@@ -6190,10 +6190,10 @@ ${publishButtons}      <span class="sep"></span>
           <p class="modal-hint" id="aiModelHint"></p>
 
           <div id="aiOptions" hidden>
-            <div class="ai-opt"><label for="aiContext">Context length</label>
+            <div id="aiOptContext" class="ai-opt"><label for="aiContext">Context length</label>
               <input id="aiContext" type="number" min="512" max="262144" step="512"/>
               <span class="ai-hint">tokens the model can hold. Bigger costs memory.</span></div>
-            <div class="ai-opt"><label for="aiGpu">GPU offload</label>
+            <div id="aiOptGpu" class="ai-opt"><label for="aiGpu">GPU offload</label>
               <select id="aiGpu">
                 <option value="auto">recommended</option>
                 <option value="off">off — CPU only</option>
@@ -6201,7 +6201,7 @@ ${publishButtons}      <span class="sep"></span>
                 <option value="0.5">half the layers</option>
               </select>
               <span class="ai-hint">A shared-memory GPU is usually slower than the CPU for big models.</span></div>
-            <div class="ai-opt"><label for="aiTtl">Unload when idle</label>
+            <div id="aiOptTtl" class="ai-opt"><label for="aiTtl">Unload when idle</label>
               <select id="aiTtl">
                 <option value="auto">recommended (15 min)</option>
                 <option value="900">after 15 minutes</option>
@@ -6215,7 +6215,7 @@ ${publishButtons}      <span class="sep"></span>
             <div class="ai-opt"><label for="aiTimeout">Wait for the model</label>
               <input id="aiTimeout" type="number" min="5" max="600" step="5"/>
               <span class="ai-hint">seconds without any output before giving up.</span></div>
-            <div class="ai-opt"><label for="aiEndpoint">Address</label>
+            <div id="aiOptAddress" class="ai-opt"><label for="aiEndpoint">Address</label>
               <input id="aiEndpoint" type="text" spellcheck="false"/>
               <span class="ai-hint">Filled in automatically by Load Model.</span></div>
           </div>

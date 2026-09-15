@@ -34,6 +34,8 @@ import {
 } from './assistant';
 import { methodsIn, type MethodSpan } from './codeBehindCheck';
 import { log } from './logger';
+import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
+import { sidecarContextSize, sidecarGpuLayers } from './localModels';
 import { bundledStatusLines, ensureBundledEndpoint } from './modelRuntime';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
@@ -47,8 +49,12 @@ export function assistantConfig(): AssistantConfig {
         model: cfg.get<string>('model', ''),
         modelPath: cfg.get<string>('modelPath', ''),
         threads: cfg.get<number>('threads', 0),
+        // The built-in runtime reads these when it starts. They are the panel's load options, because a
+        // model started later by a request has to start with the same values the panel showed.
+        contextSize: sidecarContextSize(cfg.get<number>('loadContextLength', 0), DEFAULT_CONTEXT_SIZE),
+        gpuLayers: sidecarGpuLayers(cfg.get<string>('loadGpu', 'auto')),
         timeoutSeconds: cfg.get<number>('timeoutSeconds', 60),
-        maxTokens: cfg.get<number>('maxTokens', 900),
+        maxTokens: cfg.get<number>('maxTokens', 4096),
         temperature: cfg.get<number>('temperature', 0.2)
     });
 }

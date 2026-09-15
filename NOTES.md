@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3547 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3603 passed, 0 failed / 0 skipped** (2026-09-15, ~40 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1822,3 +1822,42 @@ with the labels shortened to fit it.
 **Lesson for this repo:** a webview layout bug is invisible to the whole test suite. When a panel is
 reported as clipped, measure it in a real engine and record the numbers in the code comment — those numbers
 are the only thing that will tell the next reader why the magic `560px` and `calc(100vh - 28px)` are there.
+
+### §102c — the hidden-attribute trap, and what the user asked for (2026-09-15)
+
+**The user's three asks, verbatim:** reword the ambiguous \"download once\" label, wire the load options to the
+built-in runtime, add resume to downloads, and *\"in the 'loading — this can take a few minutes…' add the
+progress (bytes/total size count)\"*. All four shipped in 0.9.18.
+
+**THE TRAP — an author `display` beats `[hidden]`.** `.ai-opt { display: grid }` in our own stylesheet
+overrode the UA stylesheet's `[hidden] { display: none }` (author rules win over UA rules *whatever* the
+specificity), so `els.aiOptTtl.hidden = true` did nothing at all and the row stayed on screen. The suite
+could not see it: the jsdom test asserted that the code sets `.hidden`, which it does. **Found by rendering
+the panel in Chromium and noticing the row that was supposed to be gone.** The fix is one rule
+(`.ai-opt[hidden] { display: none }`) and the same trap already produced `.modal[hidden]` in this codebase —
+so the rule is: **anything you toggle with the `hidden` attribute in this webview needs a matching
+`[hidden] { display: none }` rule if you also set `display` on it.**
+
+**Resume, and the three cases that decide it:**
+
+| Server answer | Meaning | What we do |
+|---|---|---|
+| `206 Partial Content` | it honoured our `Range` | append to the `.part` file, count progress from the partial size |
+| `200` to a ranged request | it ignored `Range`; the body is the whole file | delete the partial first, else the first half lands in the file twice |
+| `416` | our partial is past the end of what it has | delete it and restart from zero |
+
+A partial *larger* than the model is never resumed onto (`resumeFromBytes`), and a checksum mismatch still
+deletes the file — resuming onto a bad tail would preserve the badness. Progress is throttled to two
+updates a second and **a final line is reported at completion**, because the last throttled update could
+read "62%" and then sit there while the file finished and the hash ran, which looks like a stall.
+
+**Two smaller findings from the same work:** `downloadToFile` used `https.get` for every URL, so "paste the
+address of one" with an `http://` address failed with an unrelated TLS error (the transport now follows the
+scheme); and `assistantConfig()` still carried a `maxTokens` default of 900 after the default moved to 4096
+(visible when a setting is missing rather than unset).
+
+**The test that makes resume provable** (`modelDownload.test.js`) starts a real `http.createServer` that
+honours/ignores ranges on demand and records the `Range` header it was asked with — a truncated first
+attempt, then the second attempt's `bytes=262144-`, then a byte-for-byte comparison with the original. It
+drives the **real** `downloadToFile`, which is exported for exactly that reason. A re-implementation of the
+download in the test would have proved nothing about the extension.

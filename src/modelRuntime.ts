@@ -20,6 +20,7 @@
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as http from 'http';
 import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
@@ -43,6 +44,7 @@ import {
     specByFileName,
     type ModelSpec
 } from './modelSpecs';
+import { downloadProgressText, resumeFromBytes } from './localModels';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -151,7 +153,13 @@ class ModelServer {
         const bin = await buildSidecar(this.context);
         const port = await freePort();
         const threads = cfg.threads > 0 ? cfg.threads : defaultThreads(os.cpus().length);
-        const child = cp.spawn(bin, sidecarArgs({ modelPath, port, threads }), { cwd: path.dirname(bin) });
+        const child = cp.spawn(bin, sidecarArgs({
+            modelPath,
+            port,
+            threads,
+            contextSize: cfg.contextSize,
+            gpuLayers: cfg.gpuLayers
+        }), { cwd: path.dirname(bin) });
         this.proc = child;
 
         let stdout = '';
@@ -352,12 +360,20 @@ async function downloadModel(
 ): Promise<void> {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     const part = `${dest}.part`;
-    fs.rmSync(part, { force: true });
+    // Keep a partial file: a 4.7 GB download that dropped at 90% should cost the remaining 10%, not the
+    // whole thing. `resumeFromBytes` decides whether it is trustworthy (a file *larger* than the model is a
+    // stale or different quantisation, and appending to it would corrupt the result).
+    const existing = sizeOf(part) ?? 0;
+    const resume = resumeFromBytes(existing, spec.bytes);
+    if (resume > 0) log(`Resuming the download of ${spec.fileName} at ${formatBytes(resume)}`);
+    else fs.rmSync(part, { force: true });
+    let corrupt = false;
     try {
-        await downloadToFile(spec.url, part, spec.bytes, progress, token);
+        await downloadToFile(spec.url, part, spec.bytes, progress, token, resume);
         progress?.report({ message: 'verifying the checksum…' });
         const hash = await fileSha256(part);
         if (hash !== spec.sha256) {
+            corrupt = true; // a bad tail cannot be resumed onto — start over next time
             throw new Error(
                 `The downloaded file does not match the expected checksum (${shortHash(hash)} instead of `
                 + `${shortHash(spec.sha256)}) — please try again.`
@@ -366,23 +382,39 @@ async function downloadModel(
         fs.renameSync(part, dest);
         fs.writeFileSync(`${dest}.verified`, hash);
     } catch (e) {
-        fs.rmSync(part, { force: true });
+        // Network failures and cancellation keep the partial file (so the next attempt resumes); a checksum
+        // mismatch deletes it, because everything after the first bad byte is suspect.
+        if (corrupt) fs.rmSync(part, { force: true });
         throw e;
     }
 }
 
-/** `https` with redirect following (Hugging Face hands the file over to a CDN), progress and cancel. */
-function downloadToFile(
+/**
+ * `https` with redirect following (Hugging Face hands the file over to a CDN), progress, cancel, resume.
+ *
+ * Exported for the suite: this is the only part of the extension that talks to the network while writing a
+ * file, and the resume behaviour (a Range request, a 200 that ignores it, a 416 that means our partial is
+ * past the end) is exactly the kind of thing that must be proven against a real server rather than
+ * described. Nothing outside this module calls it.
+ */
+export function downloadToFile(
     url: string,
     dest: string,
     expectedBytes: number,
     progress?: vscode.Progress<{ message?: string }>,
     token?: vscode.CancellationToken,
+    resumeFrom = 0,
     redirectsLeft = 5
 ): Promise<void> {
     return new Promise((resolve, reject) => {
         const started = Date.now();
-        const req = https.get(url, { headers: { 'User-Agent': 'avalonia-designer-vscode' } }, (res) => {
+        const headers: Record<string, string> = { 'User-Agent': 'avalonia-designer-vscode' };
+        if (resumeFrom > 0) headers.Range = `bytes=${resumeFrom}-`;
+        // The scheme decides the transport. "Paste the address of one" accepts any URL, and an `http://`
+        // address (a model served by something local) used to be handed to `https.get`, which fails with a
+        // TLS error that says nothing about the real problem.
+        const transport = new URL(url).protocol === 'http:' ? http : https;
+        const req = transport.get(url, { headers }, (res) => {
             const status = res.statusCode ?? 0;
             if (status >= 300 && status < 400 && res.headers.location) {
                 res.resume();
@@ -391,25 +423,45 @@ function downloadToFile(
                     return;
                 }
                 const next = new URL(res.headers.location, url).toString();
-                resolve(downloadToFile(next, dest, expectedBytes, progress, token, redirectsLeft - 1));
+                // A redirect must not lose the resume offset: the CDN hop is where the bytes come from.
+                resolve(downloadToFile(next, dest, expectedBytes, progress, token, resumeFrom, redirectsLeft - 1));
                 return;
             }
-            if (status !== 200) {
+            // 416 means our partial file is past the end of what the server has: drop it and start clean.
+            if (status === 416 && resumeFrom > 0) {
+                res.resume();
+                fs.rmSync(dest, { force: true });
+                resolve(downloadToFile(url, dest, expectedBytes, progress, token, 0, redirectsLeft));
+                return;
+            }
+            // 206 is the server honouring the Range request; 200 means it ignored it, so the body is the
+            // whole file and appending would duplicate the first `resumeFrom` bytes.
+            const partial = status === 206 && resumeFrom > 0;
+            if (status !== 200 && !partial) {
                 res.resume();
                 reject(new Error(`The download failed with HTTP ${status}.`));
                 return;
             }
-            const total = Number(res.headers['content-length']) || expectedBytes;
-            const out = fs.createWriteStream(dest);
-            let got = 0;
-            let ticks = 0;
+            const keep = partial ? resumeFrom : 0;
+            if (!partial && resumeFrom > 0) {
+                log('The server ignored the resume request — downloading from the start.');
+                fs.rmSync(dest, { force: true });
+            }
+            const total = totalFromHeaders(res, expectedBytes, keep);
+            const out = fs.createWriteStream(dest, { flags: keep > 0 ? 'a' : 'w' });
+            let got = keep;
+            let lastReport = 0;
+            progress?.report({ message: `${downloadProgressText(got, total)}  ·  starting…` });
             res.on('data', (chunk: Buffer) => {
                 got += chunk.length;
-                if (++ticks % 40 !== 0) return;
-                const seconds = Math.max(0.5, (Date.now() - started) / 1000);
-                const mbps = got / 1e6 / seconds;
-                const pct = total ? `${Math.round((got / total) * 100)}% of ` : '';
-                progress?.report({ message: `${pct}${formatBytes(total)} — ${mbps.toFixed(1)} MB/s` });
+                const now = Date.now();
+                // Time-throttled (not tick-throttled): the webview progress line must not be flooded by
+                // hundreds of messages a second, and it must update on slow connections too.
+                if (now - lastReport < 500) return;
+                lastReport = now;
+                const seconds = Math.max(0.5, (now - started) / 1000);
+                const rate = (got - keep) / 1e6 / seconds;
+                progress?.report({ message: downloadProgressText(got, total, rate) });
             });
             res.setTimeout(60000, () => {
                 req.destroy(new Error('The download stalled (60 s without data).'));
@@ -417,13 +469,30 @@ function downloadToFile(
             res.on('error', reject);
             res.pipe(out);
             out.on('error', reject);
-            out.on('finish', () => out.close(() => resolve()));
+            out.on('finish', () => out.close(() => {
+                // A final line at 100%. Updates are throttled to two a second, so the last message before
+                // this can read "62%" on a fast connection — and it would then sit there while the tail
+                // arrives and the checksum runs, looking like a stalled download.
+                progress?.report({ message: downloadProgressText(got, total) });
+                resolve();
+            }));
         });
         req.on('error', (e) => reject(new Error(`Could not download the model: ${e.message}`)));
         token?.onCancellationRequested(() => {
             req.destroy(new Error('Cancelled.'));
         });
     });
+}
+
+/** The size to report progress against: `Content-Length`, or the total from a `Content-Range` reply. */
+function totalFromHeaders(res: { headers: Record<string, unknown> }, expectedBytes: number, alreadyHave: number): number {
+    const contentRange = String(res.headers['content-range'] ?? '');
+    const totalInRange = /\/(\d+)\s*$/.exec(contentRange);
+    if (totalInRange) return Number(totalInRange[1]);
+    const length = Number(res.headers['content-length']) || 0;
+    // A 206 answer's Content-Length is only the remaining bytes, so add what we already had.
+    if (alreadyHave > 0 && length > 0) return alreadyHave + length;
+    return length || expectedBytes;
 }
 
 // ---------------- the setup command ----------------

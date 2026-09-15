@@ -276,6 +276,11 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.18` (2026-09-15)** — resumable model downloads with byte-level progress, an `http://`
+  model address that works, the load options reaching the built-in runtime (`--ctx`/`--gpu-layers`), rows
+  hidden where they cannot be honoured, and the `[hidden]`-loses-to-`display` fix. New
+  `tests/t2-logic/modelDownload.test.js` (53 assertions) drives the real download against a real local
+  HTTP server. Suite **3603**.
 - **Release `0.9.17` (2026-09-15)** — the ⚙ Settings panel fits on screen: every modal is capped to the
   window and scrolls inside itself, this panel is 560px wide (scoped), its Save row is pinned, and the
   option values are no longer truncated. Found by measuring the real CSS + markup in Chromium, because

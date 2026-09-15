@@ -27,8 +27,15 @@ import {
     type Discovery,
     type FoundModelFile
 } from './localModelCore';
-import { MODEL_SPECS, specById, specByFileName } from './modelSpecs';
-import { modelLabel, recommendedLoadOptions, type LoadOptions, type LocalModel } from './localModels';
+import { MODEL_SPECS, DEFAULT_CONTEXT_SIZE, specById, specByFileName } from './modelSpecs';
+import {
+    modelLabel,
+    recommendedLoadOptions,
+    sidecarContextSize,
+    sidecarGpuLayers,
+    type LoadOptions,
+    type LocalModel
+} from './localModels';
 import { ensureBundledEndpoint, ensureModelFile } from './modelRuntime';
 
 export const SETTINGS = 'avaloniaDesigner.assistant';
@@ -90,8 +97,10 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
     for (const spec of MODEL_SPECS) {
         choices.push({
             value: choiceValue('bundled', spec.id),
-            label: `${spec.label}  ·  ${Math.round(spec.bytes / (1024 * 1024 * 1024) * 10) / 10} GB  ·  download once`,
-            detail: 'This extension\'s own runtime — needs nothing but the .NET SDK',
+            // "download once" was ambiguous — the user read it as "this downloads now". Nine words of
+            // detail cost nothing and say exactly when the download happens.
+            label: `${spec.label}  ·  ${Math.round(spec.bytes / (1024 * 1024 * 1024) * 10) / 10} GB`,
+            detail: `This extension's own runtime — downloaded once when you press Load Model, then local`,
             kind: 'bundled'
         });
     }
@@ -209,14 +218,14 @@ export async function loadChoice(context: vscode.ExtensionContext, state: PanelS
     if (kind === 'bundled') {
         const spec = specById(key);
         if (!spec) return { ok: false, message: `Unknown bundled model "${key}".` };
-        progress('preparing the extension\'s own runtime…');
+        progress(`preparing ${spec.label} — downloading if this is the first time…`);
         const file = await ensureModelFile(context, spec, {
             report: ({ message }) => progress(message ?? '')
         } as vscode.Progress<{ message?: string }>);
         await cfg.update('backend', 'bundled', vscode.ConfigurationTarget.Global);
         await cfg.update('modelPath', file, vscode.ConfigurationTarget.Global);
         await cfg.update('model', '', vscode.ConfigurationTarget.Global);
-        const endpoint = await startBundled(file, cfg.get<number>('threads', 0));
+        const endpoint = await startBundled(state, file, cfg.get<number>('threads', 0));
         return { ok: true, endpoint, message: `${spec.label} is answering from the extension's own runtime.` };
     }
 
@@ -226,7 +235,7 @@ export async function loadChoice(context: vscode.ExtensionContext, state: PanelS
             progress('starting the extension\'s own runtime for this file…');
             await cfg.update('backend', 'bundled', vscode.ConfigurationTarget.Global);
             await cfg.update('modelPath', key, vscode.ConfigurationTarget.Global);
-            const endpoint = await startBundled(key, cfg.get<number>('threads', 0));
+            const endpoint = await startBundled(state, key, cfg.get<number>('threads', 0));
             return { ok: true, endpoint, message: `${key} is answering from the extension's own runtime.` };
         }
         progress('importing it into LM Studio (a symbolic link, your file stays where it is)…');
@@ -247,11 +256,16 @@ export async function loadChoice(context: vscode.ExtensionContext, state: PanelS
 }
 
 /** Starts (and if needed builds) the extension's own runtime and returns its endpoint. */
-async function startBundled(modelPath: string | undefined, threads: number): Promise<string> {
+async function startBundled(panel: PanelState, modelPath: string | undefined, threads: number): Promise<string> {
+    // The panel's choices reach the built-in runtime too (2026-09-16): context length is `--ctx`, and the
+    // GPU field, which is a *ratio* for LM Studio, becomes a layer count for llama.cpp. Before this, the
+    // built-in runtime always started with its own defaults and the two fields were silently ignored.
     const cfg = normalizeAssistantConfig({
         backend: 'bundled',
         modelPath,
         threads,
+        contextSize: sidecarContextSize(panel.options.contextLength, DEFAULT_CONTEXT_SIZE),
+        gpuLayers: sidecarGpuLayers(panel.options.gpu),
         endpoint: '',
         model: ''
     });

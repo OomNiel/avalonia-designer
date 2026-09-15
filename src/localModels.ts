@@ -15,6 +15,10 @@
  * `--gpu`, `-c/--context-length`, `--ttl`, `--identifier`.
  */
 
+// `formatBytes` is pure and has no dependencies of its own, so importing it keeps this module testable
+// without VS Code while giving the download progress line the same "4.7 GB" wording everywhere.
+import { formatBytes } from './modelSpecs';
+
 /** Which local runtime a model comes from. */
 export type ModelProvider = 'lmstudio' | 'bundled' | 'custom';
 
@@ -345,4 +349,59 @@ export function canImportFile(fileName: string): boolean {
     if (!/\.gguf$/i.test(name)) return false;
     if (/^mmproj[-_.]/i.test(name)) return false;
     return true;
+}
+
+// ---------------- the panel's load options, for the built-in runtime ----------------
+
+/**
+ * The panel's context-length field, as the sidecar wants it: tokens, or the fallback when the user left it
+ * on "recommended". LM Studio gets `-c` through `lms load`; the built-in runtime gets `--ctx`.
+ */
+export function sidecarContextSize(loadContextLength: number, fallback: number): number {
+    const asked = Math.round(Number(loadContextLength) || 0);
+    if (asked <= 0) return Math.max(512, Math.round(fallback));
+    return Math.min(262144, Math.max(512, asked));
+}
+
+/**
+ * The panel's GPU field, as `--gpu-layers`.
+ *
+ * The mismatch is real and worth naming: LM Studio takes a **ratio** (`off`/`max`/`0.5`) while llama.cpp
+ * takes a **count of layers**. So `max` becomes "all of them" (999, which llama.cpp clamps) and anything
+ * else — including `auto`, because this machine's GPU shares its memory with the CPU — becomes CPU-only.
+ * `0.5` is deliberately *not* guessed into a layer count: half of an unknown number of layers is not a
+ * number of layers, and a wrong guess costs more than it buys.
+ */
+export function sidecarGpuLayers(loadGpu: string): number {
+    return String(loadGpu ?? '').trim() === 'max' ? 999 : 0;
+}
+
+/**
+ * The download progress line: **bytes of bytes**, plus the percentage when the total is known.
+ *
+ * Written as a pure function because it is the only feedback a 4.7 GB download gives, and it has to be
+ * right in the two cases that differ: a server that sends `Content-Length` (most) and one that does not
+ * (the "paste a URL" path). `rateMBps` is optional — a stalled download should still show its progress.
+ */
+export function downloadProgressText(receivedBytes: number, totalBytes: number, rateMBps?: number): string {
+    const got = Math.max(0, receivedBytes);
+    const total = Math.max(0, totalBytes);
+    const rate = rateMBps !== undefined && rateMBps > 0 ? `  ·  ${rateMBps.toFixed(1)} MB/s` : '';
+    if (!total) return `${formatBytes(got)} downloaded${rate}`;
+    const pct = Math.min(100, Math.round((got / total) * 100));
+    return `${formatBytes(got)} of ${formatBytes(total)}  ·  ${pct}%${rate}`;
+}
+
+/**
+ * How much of a partial download can be kept, given what the server is about to send.
+ *
+ * Resume is worth the code here: the two published models are 2.1 GB and 4.7 GB, and a dropped connection
+ * at 90% should not cost the whole download. A partial that is *larger* than the file (a stale file, a
+ * different quantisation) is discarded instead — resuming onto it would append to the wrong bytes.
+ */
+export function resumeFromBytes(partialBytes: number, expectedBytes: number): number {
+    const have = Math.max(0, Math.round(partialBytes));
+    if (have === 0) return 0;
+    if (expectedBytes > 0 && have >= expectedBytes) return 0;
+    return have;
 }
