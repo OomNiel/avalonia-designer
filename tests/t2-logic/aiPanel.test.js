@@ -414,6 +414,17 @@ module.exports = async (t) => {
             'and a failed refresh can never become a failed action');
         t.ok(/window\.addEventListener\('focus'[\s\S]{0,200}?aiState/.test(js7b), 'lifecycle',
             'an open panel re-asks when the user comes back to it');
+        // Every open panel, not just the last one that spoke: a designer tab that is not active hears nothing,
+        // so its AI section keeps whatever it was told when it was opened — which is how a picker shows "Let the
+        // server decide" while another tab has a model loaded (reported 2026-09-15).
+        t.ok(/const openPanels = new Set<vscode\.WebviewPanel>\(\)/.test(read('src/aiPanel.ts')), 'lifecycle',
+            'the extension keeps every open panel');
+        t.ok(/for \(const panel of openPanels\) void panel\.webview\.postMessage\(\{ type: 'aiState', state \}\)/.test(read('src/aiPanel.ts')),
+            'lifecycle', 'and broadcasts the state to all of them');
+        t.ok(/webviewPanel\.visible[\s\S]{0,120}?refreshAiState\(\)/.test(read('src/designerPanel.ts')), 'lifecycle',
+            'a tab becoming visible re-asks, so switching tabs cannot show a stale panel');
+        t.ok(/case 'aiApplied'/.test(read('src/designerPanel.ts')), 'lifecycle',
+            'and the webview reports what it applied, so a disagreement is one log line');
     }
 
     // ---------- 8) "loaded" means loaded, and "never" means no flag ----------

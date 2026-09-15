@@ -15,6 +15,29 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.32] - 2026-09-15 · *the panel that was never told*
+
+### Fixed
+
+- **Every open designer tab is kept in step, not only the last one that spoke.** `attachPanel` remembered a
+  single panel, so a designer tab that was **not** the active one heard nothing at all: its AI section kept the
+  state from whenever it was opened — a picker sitting on *"Let the server decide…"* while another tab had a model
+  loaded and answering. The extension now keeps **all** open panels and broadcasts the state (and the progress
+  line) to each of them, and a tab that becomes visible re-asks for the state as well. Reported as *"the picker
+  reverts to 'Let the server decide…' directly after the model loaded and before Save can be pressed"* — which
+  also ruled out the Save path, since nothing had been saved yet.
+- **The picker never falls back to another model.** If a state carries no selection, the placeholder is shown and
+  it is said out loud; before, the *first* entry (`Let the server decide…`) was selected silently — a change that
+  looks exactly like the selection being thrown away.
+
+### Added
+
+- **The webview reports what it actually applied**: `Panel applied: wanted=… shown=… choices=…` in
+  `logs/ai.log`, alongside 0.9.31's `Load finished (ok) — panel state: …`. Between the two lines, "the dropdown is
+  wrong" is now a fact rather than an investigation: one says what was sent, the other what was displayed.
+
+Suite **3738** passed / 0 failed.
+
 ## [0.9.31] - 2026-09-15 · *a queue is not a contract*
 
 ### Fixed

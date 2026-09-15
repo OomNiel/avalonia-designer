@@ -29,6 +29,7 @@ import {
     attachPanel,
     loadChoice,
     panelState,
+    refreshAiState,
     saveAiSettings,
     scan,
     stopProgress,
@@ -1616,6 +1617,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
 
         webviewPanel.onDidChangeViewState(() => {
             if (webviewPanel.active) this.lastActivePanel = webviewPanel;
+            // A tab that becomes visible re-asks for the AI state: its section may have been opened before another
+            // tab changed the model, and before 0.9.32 it simply kept that stale view (reported 2026-09-15: "the
+            // picker reverts to 'Let the server decide…' directly after the model loaded").
+            if (webviewPanel.visible) {
+                attachPanel(webviewPanel);
+                void refreshAiState();
+            }
             // Coming back to the designer (default mode 'onReturn'): re-check the code-behind, which
             // may have been edited in the text editor meanwhile. Read-only — the badges, PROBLEMS
             // and the status hint update; nothing is rewritten.
@@ -1737,6 +1745,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 case 'aiState': {
                     attachPanel(panel);
                     await panel.webview.postMessage({ type: 'aiState', state: await panelState(!!msg.rescan) });
+                    return;
+                }
+                case 'aiApplied': {
+                    // The webview saying what it actually put in the picker. One line, and "the dropdown is wrong"
+                    // becomes a fact instead of a hunt (2026-09-15).
+                    aiLog(this.context, `Panel applied: wanted=${String(msg.wanted ?? '(none)') || '(empty)'} `
+                        + `shown=${String(msg.shown ?? '(none)') || '(empty)'} choices=${String(msg.choices ?? '?')}`);
                     return;
                 }
                 case 'aiScan': {

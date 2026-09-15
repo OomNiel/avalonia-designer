@@ -618,6 +618,19 @@ module.exports = async (t) => {
     msg({ type: 'aiState', state: aiState() });
     t.equal($('aiModel').value, 'bundled:qwen2.5-coder-3b-q4', 'ai-picker',
         'the picker shows the selection the extension sent, not the first entry');
+    // A state without a selection shows the placeholder, never another model: falling back to the first entry is
+    // how a picker names a model nobody chose, which reads as the selection having been thrown away
+    // (reported 2026-09-15: "the picker reverts to 'Let the server decide…' directly after the model loaded").
+    posted.length = 0;
+    msg({ type: 'aiState', state: aiState({ selected: '' }) });
+    t.equal($('aiModel').value, '', 'ai-picker', 'no selection in the state means the placeholder, not model #1');
+    t.ok(/no selection/.test($('aiProgress').textContent), 'ai-picker', 'and it is said out loud');
+    const applied = posted.find((m) => m.type === 'aiApplied');
+    t.ok(applied && applied.wanted === '' && applied.shown === '', 'ai-picker',
+        'the webview reports what it was told and what it showed, so a disagreement is one log line');
+    msg({ type: 'aiState', state: aiState() });
+    t.equal(posted.filter((m) => m.type === 'aiApplied').pop().shown, 'bundled:qwen2.5-coder-3b-q4', 'ai-picker',
+        'and it reports the value it actually applied');
     t.equal($('aiModel').selectedIndex, 3, 'ai-picker',
         'and it is the entry carrying that value (index 0 is the placeholder, so no off-by-one)');
     t.ok(/Pinned/.test($('aiModelHint').textContent), 'ai-picker', 'the hint keeps the pinned sentence alongside it');

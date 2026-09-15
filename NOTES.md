@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3730 passed, 0 failed / 0 skipped** (2026-09-15, ~39 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3738 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2281,3 +2281,28 @@ webview's own re-request: three ways to be told, and one of them has to land.
 three user reports in this area was solved by reading the other side's log; the extension's own log was the gap.
 
 **Suite:** 3730 passed / 0 failed (was 3727).
+
+### §115 — one panel is not all panels (2026-09-15, release 0.9.32)
+
+The user corrected §114 in one line: *"No, the picker reverts … directly after the model loaded and before Save can
+be pressed"* — so the Save path was not the cause, and the two provable halves stayed provable: `panelState()` with
+their settings returns `bundled:qwen2.5-coder-3b-q4`, and the webview applies exactly that (both asserted).
+
+What was left was **which panel hears it**. `attachPanel` kept a single `currentPanel`, assigned on *every message
+from any panel* — so with two designer tabs open, all the broadcasts (progress, `refreshAiState`, the command paths)
+reached only the one that spoke last, and the other kept the state from when it was opened: `Let the server decide…`,
+which is what the user saw. The panel that performed the load was told correctly (that post targets the message's own
+panel), which is exactly why the load worked and the picker still looked wrong.
+
+**Fix:** keep every open panel in a `Set` (pruned on dispose), broadcast the state and the progress line to all of
+them, and refresh when a tab becomes visible (`onDidChangeViewState` → `visible`) — so switching tabs cannot show a
+stale panel either.
+
+**Plus two things that make the next report cheap:** the picker now shows the placeholder instead of silently
+falling back to the first entry when a state carries no selection, and the webview reports what it applied
+(`Panel applied: wanted=… shown=… choices=…`) next to the extension's `Load finished … selection=…`.
+
+**Lesson:** with N surfaces, "send it to the panel" is a bug waiting to happen; the question is *which* panel, and
+the answer has to be "all of them" unless there is a reason.
+
+**Suite:** 3738 passed / 0 failed (was 3730).

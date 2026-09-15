@@ -1111,21 +1111,28 @@
             option.textContent = c.label;
             els.aiModel.appendChild(option);
         });
-        // A selection the settings already point at wins; otherwise the first real choice, so "Load Model"
-        // is never a no-op waiting for a click the user does not know to make.
-        els.aiModel.value = state.selected || ((state.choices || [])[0] ? state.choices[0].value : '');
+        // A selection the settings point at wins. If the state carries no selection at all, the placeholder is
+        // shown — never another model: falling back to the first entry is how a picker ends up naming a model
+        // nobody chose, which reads as the selection having been thrown away (reported 2026-09-15).
+        const wanted = state.selected || '';
+        els.aiModel.value = wanted;
         // A `<select>` given a value with no matching option silently keeps whatever was selected before —
         // the display and the truth part ways, which reads exactly like an off-by-one in the list. The
         // placeholder option has an empty value, so this cannot be caught by comparing indices: check the
         // round trip instead and say so out loud if the browser refused the assignment.
-        if (state.selected && els.aiModel.value !== state.selected) {
-            const fallback = (state.choices || []).findIndex((c) => c.value === state.selected);
-            if (fallback >= 0) els.aiModel.selectedIndex = fallback + 1; // +1: the placeholder is index 0
-            if (els.aiModel.value !== state.selected) {
-                setAiProgress(`the picker cannot show "${state.selected}" — the list the extension sent has no ` +
-                    'such entry; press Refresh list, or report this with View → Output → "Avalonia Designer"');
+        if (wanted && els.aiModel.value !== wanted) {
+            const at = (state.choices || []).findIndex((c) => c.value === wanted);
+            if (at >= 0) els.aiModel.selectedIndex = at + 1; // +1: the placeholder is index 0
+            if (els.aiModel.value !== wanted) {
+                setAiProgress(`the picker cannot show "${wanted}" — the list the extension sent has no such ` +
+                    'entry; press Refresh list, and report this with View → Output → "Avalonia Designer"');
             }
+        } else if (!wanted) {
+            setAiProgress('the extension sent no selection — press Refresh list to ask again');
         }
+        // What the panel was told and what it ended up showing, in this session's log: the two ways a picker can
+        // disagree with the extension, told apart in one line instead of by guessing (2026-09-15).
+        post({ type: 'aiApplied', wanted: wanted, shown: els.aiModel.value, choices: (state.choices || []).length });
 
         const chosen = (state.choices || []).find((c) => c.value === els.aiModel.value);
         // "Did my load take?" answered in words, not left to be inferred from the dropdown: for the

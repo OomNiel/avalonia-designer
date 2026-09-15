@@ -551,11 +551,16 @@ export async function scan(webview: vscode.Webview, onDone: (state: PanelState) 
 }
 
 /**
- * Where progress goes. The panel is the only surface: its own line of text, so a multi-minute load shows
- * what it is doing without a notification stealing focus.
+ * Where progress goes, and which panels to keep in step.
+ *
+ * Every open panel is kept, not just the last one that spoke: a designer tab that is not active hears nothing,
+ * so its AI section keeps the state from whenever it was opened — the picker showing "Let the server decide"
+ * while another tab had loaded a model, and the same panel showing a dropdown that never followed the load the
+ * user had just performed (reported 2026-09-15).
  */
 let progressTarget: vscode.Webview | undefined;
 let currentPanel: vscode.WebviewPanel | undefined;
+const openPanels = new Set<vscode.WebviewPanel>();
 
 /** The last line posted, so the elapsed-time ticker can keep showing it with a growing counter. */
 let lastProgress = '';
@@ -568,16 +573,23 @@ let progressTimer: ReturnType<typeof setInterval> | undefined;
  * message replaces it.
  */
 export function progress(message: string, webview?: vscode.Webview): void {
-    const target = webview ?? progressTarget;
     lastProgress = message;
-    if (!target) return;
-    void target.postMessage({ type: 'aiProgress', message });
+    if (webview) {
+        void webview.postMessage({ type: 'aiProgress', message });
+    } else if (openPanels.size) {
+        // No explicit target: every open panel shows the same line, so a load started in one tab is visible in
+        // the others too instead of leaving them with a line that never changes.
+        for (const panel of openPanels) void panel.webview.postMessage({ type: 'aiProgress', message });
+    } else if (progressTarget) {
+        void progressTarget.postMessage({ type: 'aiProgress', message });
+    }
     if (progressTimer) return;
     progressTimer = setInterval(() => {
         const still = progressTarget;
         if (!still || !lastProgress) return;
         const seconds = Math.round((Date.now() - progressStarted) / 1000);
-        void still.postMessage({ type: 'aiProgress', message: `${lastProgress}  (${seconds} s)` });
+        const line = `${lastProgress}  (${seconds} s)`;
+        for (const panel of openPanels) void panel.webview.postMessage({ type: 'aiProgress', message: line });
     }, 2000);
 }
 
@@ -622,6 +634,17 @@ export function aiLog(context: vscode.ExtensionContext, line: string): void {
 export function attachPanel(panel: vscode.WebviewPanel | undefined): void {
     currentPanel = panel;
     progressTarget = panel?.webview;
+    if (!panel) return;
+    if (!openPanels.has(panel)) {
+        openPanels.add(panel);
+        // Pruned on dispose so a closed designer tab cannot be posted to for the rest of the session.
+        try { panel.onDidDispose(() => openPanels.delete(panel)); } catch { /* already gone */ }
+    }
+}
+
+/** Every designer tab that is open, so a broadcast can reach all of them. */
+export function panelsFor(): vscode.WebviewPanel[] {
+    return [...openPanels];
 }
 
 export function panelFor(): vscode.WebviewPanel | undefined {
@@ -637,13 +660,14 @@ export function panelFor(): vscode.WebviewPanel | undefined {
  * snapshot from whenever the panel was opened (reported 2026-09-15: "as soon as a task is assigned the model
  * is marked as loaded" while the panel still said it was not).
  *
- * Never throws: it is called from paths where a failed refresh must not become a failed action.
+ * Never throws: it is called from paths where a failed refresh must not become a failed action. It reaches
+ * **every** open panel, including designer tabs that are not the active one.
  */
 export async function refreshAiState(): Promise<void> {
-    const panel = currentPanel;
-    if (!panel) return;
+    if (!openPanels.size) return;
     try {
-        await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
+        const state = await panelState();
+        for (const panel of openPanels) void panel.webview.postMessage({ type: 'aiState', state });
     } catch {
         /* the panel may be mid-dispose — a refresh is never worth an error */
     }
