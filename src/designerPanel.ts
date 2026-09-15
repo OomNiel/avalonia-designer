@@ -33,6 +33,7 @@ import {
     stopProgress,
     unloadEverything,
     type AiSettingsInput,
+    type PanelAiRequest,
     type PanelState
 } from './aiPanel';
 
@@ -1746,13 +1747,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 }
                 case 'aiLoad': {
                     attachPanel(panel);
-                    const before = msg.state as PanelState | undefined;
+                    const before = msg.state as PanelAiRequest | undefined;
                     if (!before) return;
                     // A handler that dies silently is exactly what "nothing further happens" was
                     // (2026-09-15): the panel's own line kept promising a download while the extension had
                     // already given up. `loadChoice` no longer throws, but nothing else here may either.
                     try {
-                        const outcome = await loadChoice(this.context, before, String(msg.value ?? ''));
+                        const outcome = await loadChoice(this.context, msg.state as PanelAiRequest, String(msg.value ?? ''));
                         stopProgress();
                         await panel.webview.postMessage({
                             type: 'aiResult',

@@ -1013,7 +1013,11 @@
         ['manual', 'Only when I press Code Fix…', 'No automatic check at all — the original behaviour.']
     ];
     let settingsOpen = false;
-    function closeSettings() { els.settingsModal.hidden = true; settingsOpen = false; }
+    // Set when the user presses ⚙ Settings. Without it, the extension's reply to a *save* (which carries
+    // the same `codeSettings` message) reopened the panel a moment after the user closed it — the flicker
+    // they reported on 2026-09-15. Opening is a user action; filling is not.
+    let settingsPending = false;
+    function closeSettings() { els.settingsModal.hidden = true; settingsOpen = false; settingsPending = false; }
     function fillSettings(msg) {
         const mode = String(msg && msg.mode ? msg.mode : 'onReturn');
         els.settingsModes.innerHTML = '';
@@ -1039,14 +1043,18 @@
             els.settingsModes.appendChild(row);
         });
         els.settingsBadges.checked = !msg || msg.badges !== false;
-        if (settingsOpen === false) {
+        if (settingsPending) {
+            settingsPending = false;
             els.settingsModal.hidden = false;
             settingsOpen = true;
             const first = els.settingsModes.querySelector('input');
             if (first) first.focus();
         }
     }
-    els.btnCodeSettings.addEventListener('click', () => post({ type: 'openCodeSettings' }));
+    els.btnCodeSettings.addEventListener('click', () => {
+        settingsPending = true;
+        post({ type: 'openCodeSettings' });
+    });
     els.settingsSave.addEventListener('click', () => {
         const picked = els.settingsModes.querySelector('input:checked');
         post({

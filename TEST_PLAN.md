@@ -276,6 +276,11 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.20` (2026-09-15)** — `Load Model` fixed (the webview's flat payload against the extension's
+  `state.options.*`: a TypeError before any message, which is what "nothing happens" was), load arguments
+  resolved before they reach `lms load` (`auto`/`-1` would be rejected), and Save no longer reopens the
+  panel it just closed. New `tests/t2-logic/panelContract.test.js` (25 assertions) compares the two sides
+  field by field. Suite **3643**.
 - **Release `0.9.19` (2026-09-15)** — a load can no longer fail in silence: the panel reports every
   outcome, says whether a download is really happening, shows the seconds spent on long steps, admits when
   the extension itself has gone quiet, and writes `logs/ai.log` for failures that only happen on the user's

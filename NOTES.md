@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3616 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3643 passed, 0 failed / 0 skipped** (2026-09-15, ~40 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1892,3 +1892,35 @@ hand over, a file is.
 
 **Diagnosing the next one:** ask for `~/.config/Code/User/globalStorage/grumpy.avalonia-designer/logs/ai.log`
 before theorising. That is the artifact that was missing when this report arrived.
+
+### §105 — the contract between the webview and the extension (2026-09-15, release 0.9.20)
+
+**The user's message after 0.9.19:** `✗ Cannot read properties of undefined (reading 'contextLength')`. That is
+the bug that had been invisible since 0.9.16 — the reporting added in 0.9.19 is what finally named it.
+
+**Cause.** `media/designer.js`'s `aiPayload()` returns a **flat** object
+(`{enabled, value, contextLength, gpu, ttlSeconds, maxTokens, timeoutSeconds, endpoint}`) and both `aiLoad`
+and `saveCodeSettings` send it as `state`/`ai`. `aiPanel.startLoad` read `state.options.contextLength` —
+i.e. it expected the shape `panelState()` *builds for the panel*, not the shape the panel *sends back*.
+`undefined.contextLength` threw before the first `postMessage`, so the panel's own optimistic line stayed on
+screen forever. Two silent failures stacked: a wrong shape and no `catch`.
+
+**Fix.** One payload type, used in both directions: `PanelAiRequest extends RequestedLoad`. The webview's
+flat payload *is* that type, so there is nothing to drift. `tests/t2-logic/panelContract.test.js` reads the
+field lists out of **both files** and compares them — a source-level contract test, because the two halves
+run in different processes and any test of one alone would have passed while the feature was dead.
+
+**Second bug it exposed:** the controls can say "you decide" three ways — context `0`, GPU `auto`, timer
+`-1` — and those went straight into the argv, i.e. `--gpu auto` and `--ttl -1`, which LM Studio rejects.
+`resolveLoadOptions(model, requested, facts)` (pure, tested) now resolves them against this machine, with
+`ttlSeconds: 0` kept as a real choice ("keep it loaded") rather than treated as missing.
+
+**Third bug, reported in the same breath:** "when clicking Save the panel briefly closes then opens again".
+The extension answers a save with the same `codeSettings` message it uses to fill the panel, and
+`fillSettings` opened the modal whenever it was closed — so the echo undid the user's close. Opening is now
+gated on `settingsPending`, set only by the ⚙ Settings button. The T3 webview suite asserts it directly: a
+save echo leaves the modal hidden.
+
+**Rule for this webview:** every message that crosses the boundary needs its shape checked by the suite
+(`panelContract.test.js`), and a handler that *closes* something must never be undone by a handler that
+*fills* something.

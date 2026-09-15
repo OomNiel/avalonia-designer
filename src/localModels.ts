@@ -376,6 +376,35 @@ export function sidecarGpuLayers(loadGpu: string): number {
     return String(loadGpu ?? '').trim() === 'max' ? 999 : 0;
 }
 
+/** What the panel sends for a load: the raw fields as the controls held them, including `auto` markers. */
+export interface RequestedLoad {
+    contextLength: number;
+    gpu: string;
+    ttlSeconds: number;
+}
+
+/**
+ * Turns the panel's controls into the arguments `lms load` actually accepts.
+ *
+ * The controls carry three ways of saying "you decide": context `0`, GPU `auto` (and `''`), and TTL `-1`.
+ * Passing those through would put `--gpu auto` and `--ttl -1` on the command line, which LM Studio rejects —
+ * and it is exactly the sort of thing that only shows up when a real user presses the button, so it lives
+ * here as a pure function with a test rather than inside the click handler.
+ */
+export function resolveLoadOptions(model: LocalModel, requested: RequestedLoad, facts: SetupFacts): LoadOptions {
+    const recommended = recommendedLoadOptions(model, facts);
+    const context = Math.round(Number(requested.contextLength) || 0);
+    const gpu = String(requested.gpu ?? '').trim();
+    const ttl = Math.round(Number(requested.ttlSeconds));
+    return {
+        contextLength: context > 0 ? context : recommended.contextLength,
+        gpu: gpu && gpu !== 'auto' ? gpu : recommended.gpu,
+        ttlSeconds: Number.isFinite(ttl) && ttl >= 0 ? ttl : recommended.ttlSeconds,
+        identifier: model.key,
+        reasons: recommended.reasons
+    };
+}
+
 /**
  * The download progress line: **bytes of bytes**, plus the percentage when the total is known.
  *

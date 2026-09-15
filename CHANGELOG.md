@@ -15,6 +15,31 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.20] - 2026-09-15 · *Load Model works, and Save stops flickering*
+
+### Fixed
+
+- **`Load Model` did nothing on every runtime, and this was the cause.** The panel's webview sent a **flat**
+  request (`{contextLength, gpu, ttlSeconds, …}`) while the extension read `state.options.contextLength` —
+  so the handler threw `Cannot read properties of undefined (reading 'contextLength')` *before* it could
+  post a single message. That is what "downloading (first time)… nothing further happens" always was:
+  0.9.19's reporting is what finally surfaced the message.
+- **A load's arguments are now resolved before they become a command line.** The controls can say "you
+  decide" in three ways (context `0`, GPU `auto`, timer `-1`) and passing those through produced
+  `--gpu auto` and `--ttl -1`, which LM Studio rejects. `resolveLoadOptions()` turns them into real values
+  from this machine, and the suite pins it — including `0` for the timer meaning "keep it loaded" rather
+  than "missing".
+- **Save no longer closes and reopens the panel.** The extension answers a save with the same
+  `codeSettings` message it uses to fill the panel, and filling used to *open* it whenever it was closed —
+  so the panel came straight back. Opening is now tied to the ⚙ Settings button (`settingsPending`), which
+  is the only thing that may show it.
+
+### Tests
+
+- New `tests/t2-logic/panelContract.test.js` (25 assertions) compares the webview's payload with the
+  extension's type **field by field**, names the exact field that threw, and pins `resolveLoadOptions`.
+  The mismatch that broke Load Model for four releases could not have survived it. The T3 webview suite
+  also asserts that a save echo leaves the modal closed. Suite **3643 passed / 0 failed**.
 ## [0.9.19] - 2026-09-15 · *a load can no longer fail in silence*
 
 ### Fixed

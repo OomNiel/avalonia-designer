@@ -555,6 +555,13 @@ module.exports = async (t) => {
     t.equal(savedSettings.mode, 'onType', 'settings', 'with the picked trigger');
     t.equal(savedSettings.badges, false, 'settings', 'and the badge switch');
     t.equal($('settingsModal').hidden, true, 'settings', 'and closes the modal');
+    // The extension answers a Save with the same `codeSettings` message it uses to fill the panel. That echo
+    // must NOT reopen it: reported on 2026-09-15 as "the panel briefly closes then opens again". Opening the
+    // panel is a user action (the ⚙ button), filling it is not.
+    msg({ type: 'codeSettings', mode: 'onReturn', badges: true });
+    t.equal($('settingsModal').hidden, true, 'settings',
+        'the settings the extension echoes back do not reopen the panel');
+    t.equal($('settingsBadges').checked, true, 'settings', 'though they do refresh what it holds');
     // Cancel/Escape close without saving
     fillSettingsFromHost();
     posted.length = 0;

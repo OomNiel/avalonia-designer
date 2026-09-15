@@ -222,7 +222,7 @@ module.exports = async (t) => {
             'the request-time config reads the panel\'s context setting');
         t.ok(/sidecarGpuLayers\(cfg\.get<string>\('loadGpu'/.test(ui), 'sidecar', 'and its GPU setting');
         const panel = read('src/aiPanel.ts');
-        t.ok(/sidecarContextSize\(panel\.options\.contextLength/.test(panel) && /sidecarGpuLayers\(panel\.options\.gpu\)/.test(panel),
+        t.ok(/sidecarContextSize\(request\.contextLength/.test(panel) && /sidecarGpuLayers\(request\.gpu\)/.test(panel),
             'sidecar', 'and so does the panel\'s own Load button');
 
         // The row that cannot be honoured for the built-in runtime is hidden rather than shown and ignored.

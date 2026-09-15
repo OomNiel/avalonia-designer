@@ -33,10 +33,12 @@ import { MODEL_SPECS, DEFAULT_CONTEXT_SIZE, specById, specByFileName, type Model
 import {
     modelLabel,
     recommendedLoadOptions,
+    resolveLoadOptions,
     sidecarContextSize,
     sidecarGpuLayers,
     type LoadOptions,
-    type LocalModel
+    type LocalModel,
+    type RequestedLoad
 } from './localModels';
 import { ensureBundledEndpoint, ensureModelFile, modelFileFor } from './modelRuntime';
 
@@ -190,12 +192,6 @@ export interface LoadOutcome {
     estimate?: string;
 }
 
-/**
- * Loads whatever the dropdown points at. Every kind ends the same way — the extension wired to something
- * that answers — but the road differs: LM Studio models are unloaded-then-loaded, a stray `.gguf` is
- * imported into LM Studio first (or handed to our own runtime when LM Studio is absent), the bundled ones
- * are downloaded and started, and "a server I run myself" is just an address.
- */
 /** True when the weights are already in the extension's storage. */
 function fileOnDisk(context: vscode.ExtensionContext, spec: ModelSpec): boolean {
     try {
@@ -210,15 +206,33 @@ function firstBuildNote(context: vscode.ExtensionContext): boolean {
     return !fs.existsSync(path.join(context.extensionUri.fsPath, 'host', 'ModelHost', 'bin', 'Debug', 'net8.0'));
 }
 
-export async function loadChoice(context: vscode.ExtensionContext, state: PanelState, value: string): Promise<LoadOutcome> {
+/**
+ * What the panel sends, for a **load** and for a **save** alike. Deliberately **flat**, matching
+ * `aiPayload()` in `media/designer.js` field for field — the two used to disagree (the webview sent this,
+ * the extension read `state.options.contextLength`), which threw a TypeError before a single message could
+ * be posted. That mismatch *was* "nothing further happens". One type for both directions means there is
+ * nothing to drift, and `tests/t2-logic/panelContract.test.js` compares the two files field by field.
+ */
+export interface PanelAiRequest extends RequestedLoad {
+    /** The AI switch. A load implies "on", so the load path does not read it; Save does. */
+    enabled: boolean;
+    /** The dropdown value (`lms:<key>`, `file:<path>`, `bundled:<id>`, `custom:<url>`). */
+    value: string;
+    /** Answer budget and timeout — request settings, applied by Save rather than by a load. */
+    maxTokens: number;
+    timeoutSeconds: number;
+    endpoint: string;
+}
+
+export async function loadChoice(context: vscode.ExtensionContext, request: PanelAiRequest, value?: string): Promise<LoadOutcome> {
     const cfg = vscode.workspace.getConfiguration(SETTINGS);
-    const { kind, key } = parseChoiceValue(value);
+    const { kind, key } = parseChoiceValue(value ?? request.value ?? '');
     resetProgressClock();
     aiLog(context, `Load requested: kind=${kind} key=${key}`);
     // Nothing below may throw: a load that dies without a word is what "nothing further happens" was, and
     // the user has no way to tell a slow step from a dead one. Every exit is a LoadOutcome with a sentence.
     try {
-        return await startLoad(context, cfg, state, kind, key);
+        return await startLoad(context, cfg, request, kind, key);
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         aiLog(context, `Load FAILED: ${message}`);
@@ -230,17 +244,10 @@ export async function loadChoice(context: vscode.ExtensionContext, state: PanelS
 async function startLoad(
     context: vscode.ExtensionContext,
     cfg: vscode.WorkspaceConfiguration,
-    state: PanelState,
+    request: PanelAiRequest,
     kind: string,
     key: string
 ): Promise<LoadOutcome> {
-    const options: LoadOptions = {
-        contextLength: state.options.contextLength,
-        gpu: state.options.gpu,
-        ttlSeconds: state.options.ttlSeconds,
-        identifier: '',
-        reasons: []
-    };
     const facts = setupFacts();
     const report = (message: string) => progress(message);
 
@@ -271,7 +278,7 @@ async function startLoad(
         await cfg.update('modelPath', file, vscode.ConfigurationTarget.Global);
         await cfg.update('model', '', vscode.ConfigurationTarget.Global);
         progress('starting the built-in runtime…');
-        const endpoint = await startBundled(state, file, cfg.get<number>('threads', 0));
+        const endpoint = await startBundled(request, file, cfg.get<number>('threads', 0));
         aiLog(context, `Bundled runtime answering on ${endpoint}`);
         return { ok: true, endpoint, message: `${spec.label} is answering from the extension's own runtime.` };
     }
@@ -282,7 +289,7 @@ async function startLoad(
             progress('starting the extension\'s own runtime for this file…');
             await cfg.update('backend', 'bundled', vscode.ConfigurationTarget.Global);
             await cfg.update('modelPath', key, vscode.ConfigurationTarget.Global);
-            const endpoint = await startBundled(state, key, cfg.get<number>('threads', 0));
+            const endpoint = await startBundled(request, key, cfg.get<number>('threads', 0));
             aiLog(context, `File served by the built-in runtime: ${key} → ${endpoint}`);
             return { ok: true, endpoint, message: `${key} is answering from the extension's own runtime.` };
         }
@@ -294,26 +301,26 @@ async function startLoad(
         const refreshed = await discover();
         const model = chatModels(refreshed).find((m) => m.key === imported.key);
         if (!model) return { ok: false, message: `Imported, but "${imported.key}" is not in the model list.` };
-        return await loadLmStudio(model, options, facts, refreshed, report);
+        return await loadLmStudio(model, resolveLoadOptions(model, request, facts), facts, refreshed, report);
     }
 
     const found = await discover();
     const model = chatModels(found).find((m) => m.key === key);
     if (!model) return { ok: false, message: `"${key}" is not in the LM Studio list any more — press Refresh list.` };
-    return await loadLmStudio(model, options, facts, found, report);
+    return await loadLmStudio(model, resolveLoadOptions(model, request, facts), facts, found, report);
 }
 
 /** Starts (and if needed builds) the extension's own runtime and returns its endpoint. */
-async function startBundled(panel: PanelState, modelPath: string | undefined, threads: number): Promise<string> {
-    // The panel's choices reach the built-in runtime too (2026-09-16): context length is `--ctx`, and the
+async function startBundled(request: RequestedLoad, modelPath: string | undefined, threads: number): Promise<string> {
+    // The panel's choices reach the built-in runtime too (2026-09-18): context length is `--ctx`, and the
     // GPU field, which is a *ratio* for LM Studio, becomes a layer count for llama.cpp. Before this, the
     // built-in runtime always started with its own defaults and the two fields were silently ignored.
     const cfg = normalizeAssistantConfig({
         backend: 'bundled',
         modelPath,
         threads,
-        contextSize: sidecarContextSize(panel.options.contextLength, DEFAULT_CONTEXT_SIZE),
-        gpuLayers: sidecarGpuLayers(panel.options.gpu),
+        contextSize: sidecarContextSize(request.contextLength, DEFAULT_CONTEXT_SIZE),
+        gpuLayers: sidecarGpuLayers(request.gpu),
         endpoint: '',
         model: ''
     });
@@ -362,17 +369,8 @@ export async function unloadEverything(): Promise<LoadOutcome> {
         : { ok: false, message: result.message };
 }
 
-/** What the panel's Save sends. Everything here is a setting the user just looked at. */
-export interface AiSettingsInput {
-    enabled: boolean;
-    value: string;
-    contextLength: number;
-    gpu: string;
-    ttlSeconds: number;
-    maxTokens: number;
-    timeoutSeconds: number;
-    endpoint: string;
-}
+/** What the panel's Save sends. The same shape a load carries, read through the same type. */
+export type AiSettingsInput = PanelAiRequest;
 
 /**
  * Saves the AI choices. **Switching off unloads the model**, which is the point of a switch that says
@@ -382,7 +380,7 @@ export interface AiSettingsInput {
  * The load options are stored as settings even though they only matter at load time, so the panel can say
  * "reload to apply" instead of silently ignoring a change.
  */
-export async function saveAiSettings(input: AiSettingsInput): Promise<void> {
+export async function saveAiSettings(input: PanelAiRequest): Promise<void> {
     const cfg = vscode.workspace.getConfiguration(SETTINGS);
     const target = vscode.ConfigurationTarget.Global;
     await cfg.update('maxTokens', Math.min(16384, Math.max(64, Math.round(input.maxTokens) || 4096)), target);
