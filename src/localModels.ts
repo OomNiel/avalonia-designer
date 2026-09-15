@@ -303,6 +303,24 @@ export function modelLabel(model: LocalModel): string {
  */
 export function explainLoadFailure(logTail: string, facts: SetupFacts, modelSizeGb?: number): string | undefined {
     const log = String(logTail ?? '');
+    // Checked before the allocation branch: a Vulkan abort logs "not enough memory for command submission",
+    // which is not the RAM running out and must not be explained as if it were.
+    //
+    // Observed here 2026-09-15 with the 17.7 GB model at 0% offload: `radv/amdgpu: Not enough memory for
+    // command submission` → `ggml_vulkan: device lost on Vulkan0` → `terminate called after throwing an
+    // instance of 'vk::DeviceLostError'` → SIGABRT. LM Studio answers with its own jargon
+    // ("Engine protocol runtime llama-server … exited before becoming healthy"), so this branch is what turns
+    // it into something actionable.
+    if (/device[ _-]?lost|devicelost|command submission|ggml_vulkan|vk::[A-Za-z]*Error/i.test(log)) {
+        return (
+            'The GPU backend crashed while loading'
+            + `${modelSizeGb ? ` the ${modelSizeGb.toFixed(1)} GB model` : ' the model'}`
+            + ': Vulkan reported "device lost". This is not offload — it happens at 0% too, because LM Studio '
+            + 'is running its Vulkan build of llama.cpp and an integrated GPU shares system memory with the '
+            + 'model itself. Select a CPU-only engine instead (`lms runtime ls` lists them, `lms runtime select '
+            + '<engine>` picks one — or LM Studio → Runtime), or load a smaller model.'
+        );
+    }
     if (/GGML_ASSERT\(addr\)|llama_mlock|mlock/i.test(log)) {
         return (
             'LM Studio tried to lock this model in RAM and the kernel refused. "Keep Model in Memory" is on for '

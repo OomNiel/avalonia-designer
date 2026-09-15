@@ -312,7 +312,9 @@ export async function load(req: LoadRequest): Promise<LoadReport> {
         const logTail = serverLogTail();
         const why = explainLoadFailure(`${loadRun.stdout}\n${loadRun.stderr}\n${logTail}`, facts, model.sizeGb);
         const detail = (loadRun.stderr || loadRun.stdout).trim().split(/\r?\n/).slice(-3).join(' ');
-        log(`Loading ${model.label} failed (${loadRun.code}): ${detail}`);
+        // The command line goes in the log too, not just on success: "it does not work" has now twice been
+        // diagnosable only because the argv could be reconstructed by hand (2026-09-15).
+        log(`LM Studio: \`lms ${buildLoadArgs(model, options).join(' ')}\` failed (${loadRun.code}): ${detail}`);
         return { ok: false, unloaded, estimate, message: why ?? detail.slice(0, 300), logTail };
     }
 

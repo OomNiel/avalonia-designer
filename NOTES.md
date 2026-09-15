@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3717 passed, 0 failed / 0 skipped** (2026-09-15, ~44 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3721 passed, 0 failed / 0 skipped** (2026-09-15, ~53 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2159,3 +2159,43 @@ one proved the doing was correct before any change was made.
 
 **Suite:** 3713 passed / 0 failed (was 3696; +17: the four built-in wordings, the shutdown unload, the
 refresh after a request, the focus re-ask, and the duplicate-block cleanup that made one of them real).
+
+### §111 — three failures that were not ours, and the logging that proved it (2026-09-15, releases 0.9.26–0.9.28)
+
+Three reports in a row, all of the shape *"this model does not work"*, and **not one of them was a defect in the
+extension's own work** — which is exactly why the work went into the *telling*, and into logging enough to be
+able to tell.
+
+**1. `--yes` (0.9.26).** `lms load` prompts before loading a model that reaches LM Studio's resource guardrails,
+and we run it without a terminal — so the prompt had nobody to answer it and the child waited out its 30-minute
+timeout while the panel showed only *"loading…"*. `lms import` had always passed `--yes`; `load` never did.
+Verified against the CLI before and after, and every load now carries it.
+
+**2. Who owns \"Keep Model in Memory\" (0.9.27).** The 17.7 GB model aborted with a translated message that named
+the toggle but not its owner, so it read as an extension bug. Verified at the source: LM Studio keeps per-model
+load configs in `~/.lmstudio/.internal/user-concrete-model-default-config/`; this machine had **one** file,
+`google/gemma-4-e4b.json`, containing `llm.load.llama.keepModelInMemory: false` — which is precisely why gemma
+loads — while `qwen3.8-27b` had none and took LM Studio's default of locking. `lms load` has no flag for it and
+the CLI has no settings command at all (`chat get load unload ls ps import server log link runtime clone push dev
+login logout whoami`), so the message now says the setting is LM Studio's, names the Advanced section, and gives
+the `LimitMEMLOCK` alternative with its caveat.
+
+**3. The Vulkan build dying on the iGPU (0.9.28).** After the user turned the lock off — visible in a new
+per-model config with `keepModelInMemory: false` ✓ — the failure changed to LM Studio's own jargon
+(*\"Engine protocol runtime llama-server … signal=SIGABRT\"*). Its log had the reason:
+`radv/amdgpu: Not enough memory for command submission` → `ggml_vulkan: device lost on Vulkan0` →
+`vk::DeviceLostError`. **Our argv was `--gpu off --context-length 8192 --yes`** — 0 % offload — so this was not
+a setting the user got wrong: `lms runtime ls` shows `llama.cpp-linux-x86_64-vulkan-avx2@2.38.0` **selected**, and
+a Vulkan build brings the iGPU up regardless; the Radeon 760M advertises 11.4 GiB of *shared* VRAM while the model
+already holds ~16.5 GB of the same 28 GB. The way out is the CPU-only engine that is already installed next to it
+(`llama.cpp-linux-x86_64-avx2@2.25.2`).
+
+**What this cost, and the fix for the cost:** reconstructing our own command line by hand from the compiled code —
+three times. The success path logged the argv from 0.9.25; the **failure** path logged only the model key, which is
+the one that matters. It now logs the whole `lms …` line either way.
+
+**Lesson:** read the other side's log *first*, and log your own inputs on failure, not just on success. \"It does
+not work\" is a claim about a system, and the extension is one half of it.
+
+**Suite:** 3721 passed / 0 failed (was 3696; +25 across the three releases: the argv, the prompt, the ownership
+sentence and the whole Vulkan branch).

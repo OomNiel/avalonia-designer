@@ -276,6 +276,12 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.28` (2026-09-15)** — LM Studio's own jargon (*"Engine protocol runtime llama-server …
+  signal=SIGABRT"*) now reads as a sentence: its log held `radv/amdgpu: Not enough memory for command submission`
+  → `ggml_vulkan: device lost on Vulkan0` → `vk::DeviceLostError`, at **0 % offload**, because the **Vulkan** build
+  of llama.cpp was selected and an iGPU shares system RAM with the model (11.4 GiB of "VRAM" for a 16.5 GB
+  working set). Also: the `lms` command line is now logged when a load *fails*, not only when it succeeds — that
+  gap cost three manual reconstructions. Suite **3721**.
 - **Release `0.9.27` (2026-09-15)** — the 17.7 GB model aborted because LM Studio passes `--mlock` (its "Keep
   Model in Memory" option) and this machine allows only 3.78 GB locked. Verified at the source: `google/gemma-4-e4b`
   carries its own load config with `llm.load.llama.keepModelInMemory: false` — which is why it loads — while

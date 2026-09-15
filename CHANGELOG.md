@@ -15,6 +15,24 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.28] - 2026-09-15 · *the GPU backend died, and LM Studio said "engine protocol runtime"*
+
+### Fixed
+
+- **The Vulkan abort now reads like a sentence.** Reported after the 17.7 GB model failed with LM Studio's own
+  jargon: *"Engine protocol runtime llama-server for IIp2SC3AkLn3tLrVP+4IIbOg exited before becoming healthy.
+  exitCode=null, signal=SIGABRT"*. Its log holds the reason — `radv/amdgpu: Not enough memory for command
+  submission` → `ggml_vulkan: device lost on Vulkan0` → `vk::DeviceLostError` → SIGABRT — and it happened at
+  **0 % offload**, because LM Studio was running its **Vulkan** build of llama.cpp (`lms runtime ls` marks it
+  selected) and an integrated GPU shares system memory with the model itself: the 27B already occupies ~16.5 GB
+  of the same 28 GB the Radeon 760M advertises 11.4 GiB from. The panel now says so and names the way out
+  (select a CPU-only engine, or load a smaller model) instead of passing the jargon through.
+- **The `lms` command line is logged when a load fails, not only when it succeeds.** This was the third report
+  that needed the argv reconstructed by hand from the compiled code, because the log recorded the model key
+  and nothing else.
+
+Suite **3721** passed / 0 failed.
+
 ## [0.9.27] - 2026-09-15 · *the load that the kernel refused*
 
 ### Fixed

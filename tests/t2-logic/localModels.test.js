@@ -185,6 +185,23 @@ module.exports = async (t) => {
         const prompt = explainLoadFailure('This model exceeds your resource guardrails. Continue? (y/N)', ROOMY, 17.74);
         t.ok(/asked for confirmation/.test(prompt) && /--yes/.test(prompt), 'failure',
             'a confirmation prompt is named as such, with the way out');
+        // The real log lines from 2026-09-15, when the 17.7 GB model aborted at 0% offload: LM Studio's Vulkan
+        // build died on the iGPU. Its own wording is "Engine protocol runtime llama-server … signal=SIGABRT",
+        // which tells a user nothing — hence this translation.
+        const vkAbort = explainLoadFailure([
+            'radv/amdgpu: Not enough memory for command submission.',
+            '0.26.230.650 E ggml_vulkan: device lost on Vulkan0',
+            "terminate called after throwing an instance of 'vk::DeviceLostError'",
+            '  what():  vk::Queue::submit: ErrorDeviceLost',
+            'Error: Engine protocol runtime llama-server for IIp2SC3AkLn3tLrVP+4IIbOg exited before becoming healthy. exitCode=null, signal=SIGABRT'
+        ].join('\n'), ROOMY, 17.74);
+        t.ok(/GPU backend crashed/.test(vkAbort) && /17\.7 GB/.test(vkAbort), 'failure',
+            'a Vulkan device-lost abort is explained, with the model size');
+        t.ok(/not offload — it happens at 0% too/.test(vkAbort), 'failure',
+            'and says outright that this is not a setting the user got wrong');
+        t.ok(/runtime select/.test(vkAbort), 'failure', 'the way out is named: the CPU-only engine');
+        t.ok(/GPU backend crashed/.test(explainLoadFailure('vk::Queue::submit: ErrorDeviceLost', ROOMY)), 'failure',
+            'the branch matches the Vulkan error class on its own');
         t.equal(explainLoadFailure('all good here', ROOMY), undefined, 'failure',
             'an unrelated log produces no invented explanation');
     }
