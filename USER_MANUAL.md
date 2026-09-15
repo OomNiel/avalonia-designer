@@ -988,6 +988,31 @@ leaves the machine.
 `~/.config/Code/User/globalStorage/grumpy.avalonia-designer/models/`. Delete the file to reclaim the
 disk space; set-up will offer it again.
 
+#### What the entries in the model list mean
+
+Each entry says where it comes from, because that decides whether it can work at all:
+
+| Entry says | What it means |
+|---|---|
+| *LM Studio · in My Models, ready to load* | LM Studio is the runtime here. The extension only *asks* it to load a model — so the model has to be one LM Studio knows (anything in its **My Models**, i.e. what its own model list shows). |
+| *This extension's own runtime · weights on disk, ready to load* | This is the built-in model, already downloaded. If it says *not downloaded yet — 4.4 GB to fetch*, press **Load Model** and it downloads it (once, resumable, verified). |
+| *… a partial download is on disk — Load Model resumes it* | An earlier download was interrupted. Loading continues it rather than starting over. |
+| *Found on this machine · … added to LM Studio first (a symbolic link…)* | A `.gguf` the scan found somewhere else. Loading it **adds it to LM Studio** as a link — your file stays where it is — and then loads it. |
+| *A server I run myself* | Anything else already listening (Ollama, your own `llama-server`). Set its address below. |
+
+**After loading, look under the list.** A marker on the entry (`● in use`, `● loaded`, `● pinned, runtime
+stopped`) and a sentence underneath say what is actually true, and **Status & hardware check** adds a *Loaded
+now:* line — the question "did my load take?" should never need a guess.
+
+**Getting the memory back.** **Unload** frees whichever runtime is holding the model — the built-in one *and* LM
+Studio — and everything is freed when you close the IDE, so a 6 GB model is not left in RAM after a session.
+Unloading keeps the model *pinned* (the next request loads it again); it just stops it being resident.
+
+> If a load fails, the panel explains it in plain words instead of showing the server's log. The two that
+> really happen are a model larger than the kernel's locked-memory limit (the message names LM Studio's
+> **Keep Model in Memory** setting, which is LM Studio's to change, not the extension's) and the GPU backend
+> failing on an integrated GPU — where the message tells you to pick a CPU-only runtime instead.
+
 **When it does not fit.** The set-up refuses a model that this machine cannot run well (the 7B on 8 GB
 of RAM, or a CPU without AVX2) and tells you why instead of letting you discover it. *AI: Status and
 Hardware Check* shows the same verdict at any time, together with whether the model server is running,

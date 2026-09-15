@@ -185,13 +185,28 @@ letting you find out the hard way.
 (straight from LM Studio), and picking one starts LM Studio's server if it is not running, warns you
 *before* loading if the model does not fit in the free memory, loads it with recommended start values,
 points the extension at it, and proves it answers — one command, no ports, no model ids, no settings
-to edit. When a load does fail, LM Studio's own log is translated rather than shown (the usual abort is
-a model bigger than the kernel's locked-memory limit), and *AI: Unload the Loaded Model* frees the RAM
-again afterwards.
+to edit.
+
+**The ⚙ Settings panel shows where every entry comes from**, because that is what decides whether it can work:
+*LM Studio · in My Models, ready to load* (the extension is a remote control there — LM Studio is the runtime and
+can only load a name it has), *This extension's own runtime · weights on disk, ready to load* (or *not downloaded
+yet — 4.4 GB to fetch on the first load*), *Found on this machine · … added to LM Studio first by a symbolic link*
+for a file the scan found, and *a server I run myself* for anything else already listening.
+
+**When a load fails, LM Studio's own log is translated rather than shown** — the two aborts that actually happen
+are a model bigger than the kernel's locked-memory limit (with **Keep Model in Memory** named as LM Studio's own
+setting, so it is clear whose to change) and the Vulkan build of llama.cpp losing the integrated GPU (*"not
+enough memory for command submission"*), for which a CPU-only runtime is named as the way out. Failures never
+pass LM Studio's jargon through, and the full `lms …` command line goes to the extension's log either way.
+
+**And the memory comes back.** *Unload* frees whichever runtime is actually holding the model — the extension's
+own sidecar **and** LM Studio — and every model is freed when the IDE closes, so a 6 GB model does not sit in RAM
+after a session. The status report says what is in memory *right now* (*Loaded now: …*), not just what the
+settings point at, so "did my load take?" is answerable from the panel.
 
 ## 11. Engineering discipline
 
-- **~3,650 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~3,750 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

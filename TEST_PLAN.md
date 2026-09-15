@@ -276,6 +276,36 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.34` (2026-09-15)** — *Unload* only ever ran `lms unload --all`, LM Studio's command, so for a
+  built-in model it was a no-op that reported success: the sidecar kept the weights and the picker kept its
+  `● in use` marker (reported minutes after 0.9.33 fixed pinning). It now stops the extension's own runtime as
+  well, says which of the two it freed, and treats "LM Studio is not installed" as *nothing of its to free*
+  rather than a failure. Tests drive all four branches with the module functions replaced — and **restored in a
+  `finally`**, because the runner shares one process. Suite **3762**.
+- **Release `0.9.33` (2026-09-15)** — **the cause of the whole "the picker reverts" saga**:
+  `OptimisedCSTest/.vscode/settings.json` contained `"avaloniaDesigner.assistant.backend": "external"`, a
+  *workspace* setting, and workspace values beat global ones — so every `backend: bundled` the panel saved was
+  shadowed. The extension read the **effective** value and honestly displayed "let the server decide", while the
+  load, the runtime and the log were all correct; it also explains why the two LM Studio models worked in that
+  project and the two built-in ones never could. All AI settings now go through one `configView()` whose `update`
+  writes to the scope that already supplies the key (folder → workspace → user), as VS Code's own Settings UI
+  does. `writeTargetFor()` is pure and asserted for all four scope shapes. Suite **3748**.
+- **Release `0.9.32` (2026-09-15)** — every open designer panel is kept in step, not only the last one that spoke
+  (`attachPanel` remembered a single panel), and a tab that becomes visible re-asks for the state. The picker also
+  stopped falling back to the first entry when a state carries no selection, and the webview reports what it
+  applied (`Panel applied: wanted=… shown=…`) next to the extension's `Load finished … selection=…`. Suite
+  **3738**.
+- **Release `0.9.31` (2026-09-15)** — the load/unload result now **carries the panel state with it**, because
+  `postMessage` may resolve `false` (a queue is not a contract) and the panel would then show the outcome while
+  keeping a picker from before the load. `logs/ai.log` also records what the panel was told and what it saved.
+  Suite **3730**.
+- **Release `0.9.30` (2026-09-15)** — all four paths that change the model tell an open panel (the palette's
+  built-in and custom-address branches return early, which is how they were missed); the status refresh is
+  `quiet`, so it updates the box without popping it open. Suite **3727**.
+- **Release `0.9.29` (2026-09-15)** — every picker entry says where it comes from and what Load will do with it:
+  `LM Studio · in My Models, ready to load`, `… added to LM Studio first (a symbolic link — your file stays where
+  it is)`, `… served by the extension's own runtime (no LM Studio needed)`. Answers *"why do models that are not
+  in My Models not work?"* on screen. Suite **3724**.
 - **Release `0.9.28` (2026-09-15)** — LM Studio's own jargon (*"Engine protocol runtime llama-server …
   signal=SIGABRT"*) now reads as a sentence: its log held `radv/amdgpu: Not enough memory for command submission`
   → `ggml_vulkan: device lost on Vulkan0` → `vk::DeviceLostError`, at **0 % offload**, because the **Vulkan** build

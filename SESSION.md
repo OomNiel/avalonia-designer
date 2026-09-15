@@ -19,34 +19,55 @@
 
 ## Where the last session left off (2026-09-15)
 
-- **Thinking models work now** (release **0.9.15**, `NOTES.md` §101). The extension reads
-  `reasoning_content`, so a reasoning model is no longer indistinguishable from a broken one: the progress
-  message says it is thinking, the thinking is logged and attached to the raw-answer tab, an empty answer
-  is explained with its token counts and `finish_reason`, and the default `maxTokens` is **4096** (a
-  measured thinking model spent 837 tokens on a one-line question). The model wizard measures it and raises
-  the budget itself.
-- **Setting up a local model is one command** (release **0.9.14**, `NOTES.md` §100): *AI: Choose a Local
-  Model…* lists the models LM Studio has on disk, pre-flights the load with LM Studio's own memory estimate
-  (warning before loading), loads it with values recommended from free RAM and the kernel's locked-memory
-  limit, writes `backend`/`endpoint`/`model`, and proves it answers. *AI: Unload the Loaded Model* frees the
-  RAM. A failed load is **translated** (the usual abort is a model bigger than `ulimit -l` — LM Studio's
-  *Keep Model in Memory*).
-- **Why a command and not a settings dropdown:** a `contributes.configuration` `enum` is static manifest
-  text and cannot be filled from LM Studio at runtime.
-- **The local AI assist shipped in two tiers**, written up in `NOTES.md` §90–§99: tier 1 talks to any
-  OpenAI-compatible server on the machine (LM Studio, Ollama, your own `llama-server`); tier 2 brings its
-  own — `host/ModelHost/` is a C# server built on the user's machine with the .NET SDK, so one VSIX fits
-  every platform, and the weights are downloaded once with a SHA-256 check. Both are **off by default**
-  (`avaloniaDesigner.assistant.backend`).
-- **Versions 0.9.5 – 0.9.15 are local builds only.** The Marketplace still carries **0.9.4** (GitHub
-  release `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F
-  (numbers-only version, both GitHub release flags, no BETA suffix).
-- **Gotcha that cost the most time:** `files.autoSave = onFocusChange` + `editor.formatOnSave` in the
-  user's settings save *every* dirty buffer when focus moves (any terminal command does), which silently
-  reverts edits made to files that are open in the editor. Verify edits on disk and run `tsc`/the suite
-  before believing a multi-file change; put new tests in files that are not open (NOTES.md §99).
+**Released and installed: `0.9.34`** (0.9.16 → 0.9.34 all landed today, each one from a report made while the
+user clicked through the real panel; write-ups in `NOTES.md` §100–§117, one-line summaries in `TEST_PLAN.md` §10).
+The whole day was one arc: the AI section of the ⚙ panel, driven by the user's own machine.
+
+- **Model handling is now honest end to end.** The picker shows where each entry comes from and what Load will do
+  with it; the built-in entries say whether their weights are on disk; a model that is loaded is marked
+  (`● in use`, `● pinned, runtime stopped`) and the status carries a **`Loaded now:`** line, so "did my load
+  take?" is answerable from the panel (§109, §112).
+- **The model's life is owned.** `deactivate` frees both runtimes (LM Studio via a detached `lms unload --all`,
+  the sidecar via `stopModelServer`), and **Unload** in the panel frees both too — for a *built-in* model the old
+  Unload was a no-op that reported success (§110, §117).
+- **Failures are translated, never passed through.** `--yes` so a guardrail prompt cannot hang a load with no
+  terminal to answer it (§111); the mlock abort names LM Studio as the owner of *Keep Model in Memory* (§111);
+  the Vulkan `device lost` abort names a CPU-only runtime as the way out (§111).
+- **The real lesson of the day — the settings that were written and then overruled.** Six exchanges on *"the
+  picker reverts to 'Let the server decide…'"* went into delivery defects (§113–§115) before the cause turned out
+  to be outside the extension: `OptimisedCSTest/.vscode/settings.json` pinned
+  `"avaloniaDesigner.assistant.backend": "external"` at **workspace** scope, and workspace values beat global
+  ones — so every write the panel made was invisible to it. Settings are now written **where the value already
+  lives** (`configView()` → folder → workspace → user, like VS Code's own Settings UI) (§116).
+  → **When a setting "does not stick", read the effective value (`inspect()`), not the one you wrote.**
+- **Diagnosis is now cheap.** `logs/ai.log` records the full `lms …` command line on success *and* failure, the
+  panel state that followed a load (`Load finished (ok) — panel state: backend=… selection=…`), what the webview
+  applied (`Panel applied: wanted=… shown=…`), and every Save (`Panel save: value=… kind=…`). Each of the three
+  user reports in that area was solved by reading the other side's log; the extension's own log was the gap.
+- **Standing rule that kept paying:** when the user says "X does not work", read the *other* side's log first
+  (LM Studio's `server-logs/`, `lms runtime ls`, `lms ps`, the model's own config files) before touching code —
+  twice the doing was correct and only the telling was wrong.
+
+Also worth remembering from earlier today: **thinking models** (§101, 0.9.15), **one-command setup** (§100,
+0.9.14), and **the local AI assist's two tiers** (`NOTES.md` §90–§99): tier 1 talks to any OpenAI-compatible
+server (LM Studio, Ollama, your own `llama-server`), tier 2 brings its own — `host/ModelHost/` is a C# server
+built on the user's machine with the .NET SDK, so one VSIX fits every platform, and weights are downloaded once
+with a SHA-256 check. Both are **off by default**.
+
+- **Versions 0.9.5 – 0.9.34 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
+  `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F (numbers-only
+  version, both GitHub release flags, no BETA suffix). The repo tags only the `v1.0.0-beta.N` series — the 0.9.x
+  releases are commits, not tags.
+- **Gotcha that cost the most time:** `files.autoSave = onFocusChange` + `editor.formatOnSave` in the user's
+  settings save *every* dirty buffer when focus moves (any terminal command does), which silently reverts edits
+  made to files that are open in the editor. Verify edits on disk and run `tsc`/the suite before believing a
+  multi-file change; put new tests in files that are not open (NOTES.md §99).
 - Also: a VSIX installed while a window is open changes **nothing** until that window reloads — the status
   command now prints the running version so that is never guesswork.
+
+**Still true from earlier in the day:** why the model list is a command rather than a settings dropdown (a
+`contributes.configuration` `enum` is static manifest text and cannot be filled from LM Studio at runtime), and
+that *AI: Unload the Loaded Model* frees the RAM (now both runtimes, 0.9.34).
 
 ## How to continue
 
