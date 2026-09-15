@@ -254,6 +254,18 @@ module.exports = async (t) => {
             'a file can also be served by the extension\'s own runtime when LM Studio is absent');
 
         // The panel's own three surfaces must agree, or the section renders empty.
+        // Both front doors can change the model: the ⚙ panel, and the palette commands. The panel only heard
+        // about the first, so a model loaded from the palette left an open panel showing `Let the server
+        // decide…` and a status naming a model that was no longer in use (reported 2026-09-15).
+        const setup = read('src/localModelSetup.ts');
+        t.equal((setup.match(/refreshPanels\(\)/g) || []).length, 4, 'panel',
+            'all four command paths tell an open panel (built-in, custom address, LM Studio load, unload) — '
+            + 'the first two return early, which is how they were missed');
+        const uiRef = read('src/assistantUi.ts');
+        t.ok(/export async function refreshPanels[\s\S]*?refreshAiState\(\)[\s\S]*?type: 'aiStatus'[\s\S]*?quiet: true/.test(uiRef),
+            'panel', 'the refresh sends the state *and* the status, and the status is quiet');
+        t.ok(/if \(!msg\.quiet\) els\.aiStatusText\.hidden = false/.test(read('media/designer.js')), 'panel',
+            'a refresh updates the status box without popping it open — opening it is the user\'s action');
         const html = read('src/designerPanel.ts');
         for (const id of ['aiEnabled', 'aiModel', 'aiLoad', 'aiUnload', 'aiScan', 'aiStatusText', 'aiOptions']) {
             t.ok(new RegExp(`id="${id}"`).test(html), 'panel', `the panel markup has #${id}`);

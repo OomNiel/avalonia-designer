@@ -15,6 +15,23 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.30] - 2026-09-15 · *the panel was never told when the palette changed the model*
+
+### Fixed
+
+- **Every path that changes the model now tells an open designer panel.** The panel was refreshed by its own
+  Load/Unload buttons and by a chat request, but **not** by the command palette — and the two early-returning
+  branches there (`setupBundledModel`, the custom-address path) skipped it as well. Loading a model from
+  `AI: Set Up Local Model…` therefore left the panel showing its last state: the dropdown on *"Let the server
+  decide — …"* and the status box naming a model that was no longer in use, while the built-in runtime answered
+  happily in the background (reported 2026-09-15). All four paths now call one shared `refreshPanels()`, which
+  sends both the state and the status — the same rule `wireSettings` already followed for the settings
+  themselves: one implementation, so the two front doors cannot disagree.
+- **A background status refresh no longer pops the status box open.** It updates the text and leaves the box as
+  it was: opening it is the user's action, and a box that appears by itself reads as a fault rather than as news.
+
+Suite **3727** passed / 0 failed.
+
 ## [0.9.29] - 2026-09-15 · *where each entry comes from, and what Load does with it*
 
 ### Changed

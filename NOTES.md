@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3724 passed, 0 failed / 0 skipped** (2026-09-15, ~42 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3727 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2226,3 +2226,31 @@ symbolic link — your file stays where it is)`. Both are asserted, including th
 28 GiB machine, and §111 above).
 
 **Suite:** 3724 passed / 0 failed (was 3721).
+
+### §113 — the built-in runtime was answering while the panel said "no model loaded" (2026-09-15, release 0.9.30)
+
+Reported as *"when I select either of them, the notice says the server is starting and loading into ram, and then
+ the picker reverts again to 'Let the server decide…' and the status shows no model is loaded"* — about the two
+built-in Qwen2.5-Coder models, both of which were downloaded by then.
+
+**The extension's own log said the loads worked** — `Bundled runtime answering on http://127.0.0.1:45767/v1`, and
+`pgrep` showed the ModelHost alive with the 3B. **The settings were right too** (`backend: bundled`, `modelPath`
+→ the 3B), and replaying `panelState()` with them returned `selected: "bundled:qwen2.5-coder-3b-q4"`. So the
+doing was correct and the *telling* was not, once more.
+
+The mechanism: for the picker to show `any:` — "Let the server decide" — the state must have been built while
+`backend` was still `external`, and for the status to say nothing is loaded it must have been the LM Studio
+report. That means the panel was **never told about the load** — and the paths that change the model are four:
+the panel's own buttons (which do tell it), `setupBundledModel` from the palette (returns early), the
+custom-address path from the palette (returns early), and the LM Studio path. Only the panel's own buttons and a
+chat request (`refreshAiState`, added in 0.9.25) refreshed anything.
+
+**Fix:** one shared `refreshPanels()` (state + status) called from all four command paths, with the status marked
+`quiet` so a background refresh updates the box without opening it — opening it is the user's action, and a box
+that appears by itself reads as a fault.
+
+**Lesson:** "the two front doors cannot disagree" was already the rule for the *settings* (`wireSettings`); it has
+to hold for the *display* too. A second entry point that writes state without announcing it is a staleness bug
+waiting for a user to find it.
+
+**Suite:** 3727 passed / 0 failed (was 3724).

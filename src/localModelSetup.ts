@@ -16,6 +16,7 @@
 
 import * as vscode from 'vscode';
 import { chatDetailed, describeEmptyAnswer, normalizeAssistantConfig } from './assistant';
+import { refreshPanels } from './assistantUi';
 import { log } from './logger';
 import { setupBundledModel } from './modelRuntime';
 import {
@@ -83,10 +84,15 @@ export async function chooseLocalModel(context: vscode.ExtensionContext): Promis
 
     if (pick.action === 'bundled') {
         await setupBundledModel(context);
+        // The built-in path changes `backend`/`modelPath` just like the others, and it returns early — without
+        // this, loading the extension's own model from the palette left an open panel naming the old one
+        // (reported 2026-09-15).
+        void refreshPanels();
         return;
     }
     if (pick.action === 'custom') {
         await askForEndpoint();
+        void refreshPanels();
         return;
     }
 
@@ -193,6 +199,10 @@ async function setUpLmStudioModel(model: LocalModel, facts: SetupFacts, found: D
         'OK'
     );
     if (pick === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
+
+    // An open designer panel has to hear about this: the model just changed under it, and it is the panel — not
+    // the notification — that the user looks at next (reported 2026-09-15).
+    void refreshPanels();
 }
 
 /**
@@ -317,5 +327,7 @@ export async function unloadLoadedModel(): Promise<void> {
         return;
     }
     log('LM Studio models unloaded');
+    // Same reason as the load path: the panel would otherwise keep naming the model that is gone.
+    void refreshPanels();
     void vscode.window.showInformationMessage('Every model is unloaded — its memory is free again.');
 }

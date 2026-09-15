@@ -2809,7 +2809,10 @@
             case 'aiStatus': {
                 setAiBusy(false);
                 els.aiStatusText.textContent = (Array.isArray(msg.lines) ? msg.lines : []).join('\n');
-                els.aiStatusText.hidden = false;
+                // A background refresh (the palette changed the model under an open panel) updates the box but
+                // must not pop it open: opening it is the user's action, and a box that appears by itself
+                // reads as a fault rather than as news.
+                if (!msg.quiet) els.aiStatusText.hidden = false;
                 break;
             }
             case 'armTool': {

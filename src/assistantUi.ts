@@ -39,6 +39,7 @@ import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
 import { sidecarContextSize, sidecarGpuLayers } from './localModels';
 import { loadedNow } from './localModelCore';
 import { refreshAiState } from './aiPanel';
+import { panelFor } from './aiPanel';
 import { bundledStatusLines, ensureBundledEndpoint } from './modelRuntime';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
@@ -739,6 +740,27 @@ function extensionVersion(): string {
  */
 export async function statusLines(): Promise<string[]> {
     return (await statusFacts()).lines;
+}
+
+/**
+ * Re-sends an open designer panel its AI state *and* its status.
+ *
+ * The model can be changed from two places — the ⚙ panel and the palette commands — and the panel was only told
+ * about the first. Loading a model from `AI: Set Up Local Model…` therefore left an open panel showing whatever
+ * it had been told last: the dropdown on `Let the server decide…` (the state from when the settings still
+ * pointed at LM Studio) and the status box naming a model that was no longer in use (reported 2026-09-15).
+ * Same rule as `wireSettings`: one implementation, so the two front doors cannot disagree.
+ */
+export async function refreshPanels(): Promise<void> {
+    const panel = panelFor();
+    if (!panel) return;
+    await refreshAiState();
+    try {
+        // `quiet`: update the box, do not open it — opening it is the user's action (see the webview).
+        await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines(), quiet: true });
+    } catch {
+        /* the panel may be mid-dispose — a refresh is never worth an error */
+    }
 }
 
 interface StatusFacts {
