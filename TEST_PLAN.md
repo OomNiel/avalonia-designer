@@ -276,6 +276,11 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.17` (2026-09-15)** — the ⚙ Settings panel fits on screen: every modal is capped to the
+  window and scrolls inside itself, this panel is 560px wide (scoped), its Save row is pinned, and the
+  option values are no longer truncated. Found by measuring the real CSS + markup in Chromium, because
+  jsdom has no layout engine — the three declarations that make it true are now asserted instead. Suite
+  **3547**.
 - **Release `0.9.16` (2026-09-15)** — the AI switch, model dropdown, load settings, Load/Unload buttons and
   the status report move into the designer's ⚙ Settings panel; switching models unloads the previous one;
   a bounded machine scan finds `.gguf` files (excluding `mmproj` projectors) and imports them by symbolic

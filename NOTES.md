@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3539 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3547 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1787,3 +1787,38 @@ reliable mapping (the folder says `lmstudio-community`, the key says `google`).
 `backend`/`endpoint`/`model` itself (through `wireSettings` in `localModelSetup.ts`, shared with the palette),
 because a load that did not wire the extension would be a load that did nothing. Save is what commits the
 switch and the numbers.
+
+### §102b — the panel did not fit, and jsdom cannot see that (2026-09-15)
+
+**The user's report:** "the shape of the settings panel currently hides the top and bottom items". **Cause,
+measured:** `.modal-box` had no `max-height` and no overflow, and `.modal-narrow` is only **340px** wide.
+The AI section made the box **1553px tall**, and since `.modal` centres it, at 1024×700 the title sat
+**426px above** the viewport and Cancel/Save **1127px below** it — with no way to scroll to either.
+
+**How it was measured — reusable, and worth copying.** jsdom (the T3 layer) has **no layout engine**: it
+cannot see clipping, so a test there would have passed while the panel was unusable. Instead: a page is
+generated from the *real* `media/designer.css` plus the *real* modal markup extracted out of
+`designerPanel.ts`, filled by a script with worst-case content (4 code-check rows, 8 model entries, the
+full ~15-line status report), served over `python3 -m http.server`, and measured in the integrated Chromium
+via `page.evaluate`:
+
+```js
+box.scrollHeight > box.clientHeight          // does it need to scroll at all?
+title.getBoundingClientRect().top >= 0       // is the top cut off?
+save.getBoundingClientRect().bottom <= innerHeight   // is the bottom cut off?
+```
+
+Note the integrated browser refuses `file://` outside a trusted folder (403 "File does not reside within a
+trusted folder") — serve it over HTTP. Note also that the option labels were checked by measuring
+text against `clientWidth - 18` (a `<select>` spends ~18px on its arrow): "recommended for this machine
+(off)" needed 199px in a 158px field and rendered as "recommended for [truncated]".
+
+**The fix:** `.modal-box { max-height: calc(100vh - 28px); overflow-y: auto; }` (every modal benefits — an
+unbounded modal was one long findings list away from the same failure), `#settingsModal .modal-box
+{ width: min(94vw, 560px); }` **scoped by id** because eight other dialogs share `.modal-narrow` at 340px,
+a sticky direct-child action row so Save is never off-screen, and the value column widened 120px → 175px
+with the labels shortened to fit it.
+
+**Lesson for this repo:** a webview layout bug is invisible to the whole test suite. When a panel is
+reported as clipped, measure it in a real engine and record the numbers in the code comment — those numbers
+are the only thing that will tell the next reader why the magic `560px` and `calc(100vh - 28px)` are there.

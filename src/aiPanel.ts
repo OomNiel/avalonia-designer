@@ -165,7 +165,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
         },
         hint: found.cli
             ? `${chatModels(found).length} LM Studio model(s) on disk · ${found.loaded.length} loaded`
-                + (scanned.length ? ` · ${scanned.length} file(s) found by the scan` : ' · nothing scanned yet')
+            + (scanned.length ? ` · ${scanned.length} file(s) found by the scan` : ' · nothing scanned yet')
             : `LM Studio is not installed — ${MODEL_SPECS.length} downloadable model(s) and files found on disk still work`
     };
 }
@@ -287,7 +287,7 @@ async function loadLmStudio(
             : `Loaded ${model.key}.`,
         estimate: result.estimate
             ? `Estimated ${result.estimate.totalGiB.toFixed(1)} GB of memory at ${result.estimate.contextLength} tokens `
-                + `(confidence ${result.estimate.confidence}).`
+            + `(confidence ${result.estimate.confidence}).`
             : undefined
     };
 }

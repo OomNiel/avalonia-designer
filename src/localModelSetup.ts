@@ -182,13 +182,13 @@ async function setUpLmStudioModel(model: LocalModel, facts: SetupFacts, found: D
     const proof = await proveItWorks();
     const raised = proof.raisedBudget
         ? ` It thinks before it answers, so the answer budget was raised to ${proof.raisedBudget}`
-            + `${proof.thinkingTokens ? ` (it spent ${proof.thinkingTokens} tokens thinking about a one-word reply)` : ''}.`
+        + `${proof.thinkingTokens ? ` (it spent ${proof.thinkingTokens} tokens thinking about a one-word reply)` : ''}.`
         : '';
     const pick = await vscode.window.showInformationMessage(
         proof.ok
             ? `Ready — ${model.label} is answering on ${report.endpoint}.${raised} Try "AI: Implement in Function…" in a code-behind file.`
             : `The model is loaded on ${report.endpoint}, but the test request came back empty. ${proof.why ?? ''}`
-                + ' Try "AI: Status and Hardware Check".',
+            + ' Try "AI: Status and Hardware Check".',
         'Show status',
         'OK'
     );

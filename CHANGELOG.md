@@ -15,6 +15,32 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.17] - 2026-09-15 · *the Settings panel fits on screen*
+
+### Fixed
+
+- **The ⚙ Settings panel no longer loses its top and bottom.** Reported by the user as "the shape of the
+  settings panel currently hides the top and bottom items". Measured in Chromium with the real CSS and
+  markup: the box was **340 × 1553 px**, and since a modal is centred with nothing scrolling, at 1024×700
+  the title sat **426 px above** the viewport and Cancel/Save **1127 px below** it.
+- **Every modal is now capped to the window and scrolls inside itself**
+  (`max-height: calc(100vh - 28px); overflow-y: auto`). The AI section made this panel the first one tall
+  enough to notice, but a long list of code-check findings could have done the same to the old panel.
+- **The panel is wider** — 560 px instead of 340 px — **scoped to this panel only** (`#settingsModal`),
+  because eight other small dialogs share `.modal-narrow`.
+- **Cancel/Save stay pinned** to the bottom of the panel while the rest scrolls, so the last thing the user
+  has to press is never off-screen.
+- **The option values are no longer truncated.** A `<select>` spends ~18 px on its arrow, so in a 120 px
+  column "recommended for this machine (off)" needed 199 px and rendered as "recommended for [truncated]".
+  The value column is 175 px now and the labels are shorter ("recommended (off)", "max — all on GPU").
+
+### Tests
+
+- `tests/t2-logic/aiPanel.test.js` grew to 74 assertions with a **layout regression guard**: jsdom has no
+  layout engine (which is why this was invisible to the suite), so the declarations that make it fit are
+  asserted instead — the height cap, the internal scroll, the scoped width, the pinned action row, a value
+  column of at least 160 px, and the absence of the three labels that were too wide for the field. Suite
+  **3547 passed / 0 failed**.
 ## [0.9.16] - 2026-09-15 · *the AI switch lives in the designer's Settings panel*
 
 ### Added

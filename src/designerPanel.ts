@@ -6195,18 +6195,18 @@ ${publishButtons}      <span class="sep"></span>
               <span class="ai-hint">tokens the model can hold. Bigger costs memory.</span></div>
             <div class="ai-opt"><label for="aiGpu">GPU offload</label>
               <select id="aiGpu">
-                <option value="auto">recommended for this machine</option>
+                <option value="auto">recommended</option>
                 <option value="off">off — CPU only</option>
-                <option value="max">max — push everything to the GPU</option>
+                <option value="max">max — all on GPU</option>
                 <option value="0.5">half the layers</option>
               </select>
               <span class="ai-hint">A shared-memory GPU is usually slower than the CPU for big models.</span></div>
             <div class="ai-opt"><label for="aiTtl">Unload when idle</label>
               <select id="aiTtl">
-                <option value="auto">recommended (15 minutes)</option>
+                <option value="auto">recommended (15 min)</option>
                 <option value="900">after 15 minutes</option>
                 <option value="3600">after 1 hour</option>
-                <option value="0">never — keep it loaded</option>
+                <option value="0">never — keep loaded</option>
               </select>
               <span class="ai-hint">These three are applied when the model is loaded.</span></div>
             <div class="ai-opt"><label for="aiMaxTokens">Answer budget</label>

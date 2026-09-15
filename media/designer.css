@@ -1200,6 +1200,13 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     border-radius: 6px;
     padding: 14px;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+    /* A modal taller than the window used to lose its top AND bottom off-screen: it is centred by
+       `.modal` and nothing scrolled. Measured (Chromium, real CSS + markup): the ⚙ Settings panel was
+       1553 px tall, so its title sat 426 px above a 700 px viewport and Cancel/Save sat 1127 px below it.
+       Never let the box exceed the window; scroll inside it instead. */
+    max-height: calc(100vh - 28px);
+    overflow-y: auto;
+    box-sizing: border-box;
 }
 
 .modal-box h3 {
@@ -1300,7 +1307,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     margin: 10px 0 6px;
 }
 
-.modal-field > span {
+.modal-field>span {
     display: block;
     font-size: 11px;
     color: var(--fg-dim);
@@ -1327,7 +1334,10 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 
 .ai-opt {
     display: grid;
-    grid-template-columns: 130px 120px 1fr;
+    /* 175px for the value because the recommended values are phrases and a <select> spends ~16px of its own
+       width on the dropdown arrow: at 120px they clipped, which is worse than useless — the recommendation
+       is the whole point of those rows. Measured in Chromium, not guessed. */
+    grid-template-columns: 118px 175px 1fr;
     align-items: center;
     gap: 6px;
     margin: 4px 0;
@@ -1350,7 +1360,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 
 .ai-status {
     margin-top: 8px;
-    max-height: 210px;
+    max-height: 160px;
     overflow: auto;
     background: var(--panel-2);
     border: 1px solid var(--border);
@@ -1901,6 +1911,24 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 /* Dot grid settings popup */
 .modal-narrow {
     width: min(90vw, 340px);
+}
+
+/* The ⚙ Settings panel carries the code-check choices *and* the whole AI section (model list, five
+   options with hints, three buttons, a progress line and the status report), so it needs more room than
+   the small dialogs that share `.modal-narrow` — and its action row has to stay reachable while the rest
+   scrolls, because Save is the last thing the user needs to press. */
+#settingsModal .modal-box {
+    width: min(94vw, 560px);
+}
+
+/* Direct child on purpose: the first `.modal-buttons` in the box belongs to `#aiBody` (Refresh/Scan) and
+   must scroll with the content; only the Cancel/Save row is pinned. */
+#settingsModal .modal-box > .modal-buttons {
+    position: sticky;
+    bottom: 0;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
 }
 
 .grid-settings {

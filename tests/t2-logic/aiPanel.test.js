@@ -216,6 +216,35 @@ module.exports = async (t) => {
         t.ok(/\.ai-opt \{/.test(css) && /\.ai-badge/.test(css) && /\.ai-progress/.test(css), 'panel',
             'with styles for the options, the on/off badge and the progress line');
 
+        // ---------- the panel has to FIT on screen ----------
+        // jsdom (T3) has no layout engine, so this cannot be measured here. It was measured in Chromium
+        // against the real CSS + the real markup on 2026-09-15, at 1000x600, 1024x700 and 1440x900:
+        //   before — box 340x1553, no scrolling, title 426px ABOVE the viewport at 1024x700, Cancel/Save
+        //            1127px below it (the user's report: "hides the top and bottom items")
+        //   after  — box 560 wide, capped to the viewport, scrolls inside, title visible, Save pinned
+        // These three declarations are what makes that true, so they are asserted as a regression guard.
+        const boxRule = /\.modal-box \{[^}]*\}/.exec(css);
+        t.ok(boxRule && /max-height:\s*calc\(100vh/.test(boxRule[0]), 'layout',
+            'a modal box is capped to the viewport height — an uncapped one loses its top and its bottom');
+        t.ok(boxRule && /overflow-y:\s*auto/.test(boxRule[0]), 'layout',
+            'and scrolls inside itself, which is the only way the first and last items stay reachable');
+        const settingsWidth = /#settingsModal \.modal-box \{[^}]*width:\s*min\(([^)]*)\)/.exec(css);
+        t.ok(settingsWidth && /9[0-9]vw/.test(settingsWidth[1]) && /5\d\dpx/.test(settingsWidth[1]), 'layout',
+            'this panel gets its own width (the values + hints need it) without widening the other 8 small dialogs');
+        t.ok(/#settingsModal \.modal-box > \.modal-buttons \{[^}]*position:\s*sticky/.test(css), 'layout',
+            'and its Save row is pinned, so the last thing the user must press is never off-screen');
+
+        // A <select> spends ~18px on its arrow, so a long label silently truncates. Measured: with a 120px
+        // column, "recommended for this machine (off)" lost 100px of text and read as a broken control.
+        const grid = /\.ai-opt \{[^}]*grid-template-columns:\s*\d+px\s+(\d+)px/.exec(css);
+        t.ok(grid && Number(grid[1]) >= 160, 'layout',
+            `the option values get a column wide enough for a recommendation (found ${grid ? grid[1] : '?'}px, need >=160)`);
+        const dePanel = read('src/designerPanel.ts');
+        for (const label of ['recommended for this machine', 'push everything to the GPU', 'never — keep it loaded']) {
+            t.equal(dePanel.includes(label), false, 'layout',
+                `no clipped-era label text survives ("${label}" was too wide for the field)`);
+        }
+
         // One status implementation for both surfaces: the command and the panel must not disagree.
         const ui = read('src/assistantUi.ts');
         t.ok(/export async function statusLines\(/.test(ui), 'panel',

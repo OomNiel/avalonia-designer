@@ -1117,7 +1117,9 @@
         // The recommendation is named, so "auto" is a visible promise rather than a guess.
         els.aiContext.placeholder = String(state.options.recommended.contextLength);
         if (els.aiGpu.options[0]) {
-            els.aiGpu.options[0].textContent = `recommended for this machine (${state.options.recommended.gpu})`;
+            // Short on purpose: the full sentence does not fit the field, and a clipped recommendation reads
+            // as a broken control (seen in the Chromium render, 2026-09-15).
+            els.aiGpu.options[0].textContent = `recommended (${state.options.recommended.gpu})`;
         }
     }
 
