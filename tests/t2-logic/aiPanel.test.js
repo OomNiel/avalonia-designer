@@ -255,4 +255,41 @@ module.exports = async (t) => {
             'the status report is shared, so the panel and the command show the same text');
         t.ok(/statusLines/.test(read('src/designerPanel.ts')), 'panel', 'and the panel asks for exactly that');
     }
+
+    // ---------- 7) a load may never fail silently ----------
+    // "Downloading is not starting … nothing further happens" (2026-09-15) was not a missing feature: work
+    // was happening, or an error was thrown, and either way the panel's line never changed. These assertions
+    // hold the three things that make that impossible: the extension always answers, the webview shows a
+    // failure where the user is looking, and long steps show that they are still alive.
+    {
+        const dePanel = read('src/designerPanel.ts');
+        const loadCase = /case 'aiLoad': \{[\s\S]*?\n                \}/.exec(dePanel)[0];
+        t.ok(/try \{/.test(loadCase) && /catch \(err\)/.test(loadCase), 'silent',
+            'the aiLoad handler catches its own failures');
+        t.ok(/type: 'aiResult'/.test(loadCase.split('catch')[1] || ''), 'silent',
+            'and reports them to the panel as a result — never only to the log');
+        t.ok(/logError\(/.test(loadCase), 'silent', 'while also logging them');
+        t.ok(/stopProgress\(\)/.test(loadCase), 'silent', 'the elapsed-time ticker is stopped when it ends');
+        t.ok(/case 'aiUnload'[\s\S]*?try \{/.test(dePanel), 'silent', 'unload is wrapped the same way');
+        t.ok(/The status check failed/.test(dePanel), 'silent', 'and a failing status check still produces text');
+
+        const panel = read('src/aiPanel.ts');
+        t.ok(/export async function loadChoice[\s\S]*?try \{[\s\S]*?return await startLoad/.test(panel), 'silent',
+            'loadChoice delegates and catches, so no step can escape as a throw');
+        t.ok(/aiLog\(context, `Load FAILED/.test(panel), 'silent', 'a failure is written to the AI log file');
+        t.ok(/progressTimer = setInterval/.test(panel) && /progressStarted/.test(panel)
+            && /\(\$\{seconds\} s\)/.test(panel), 'silent',
+            'and progress repeats with the seconds spent, so a slow step is not mistaken for a dead one');
+        t.ok(/is already on disk — starting the built-in runtime/.test(panel), 'silent',
+            'the extension says which of the two things is happening: the panel used to claim a download was '
+            + 'starting even when the weights were already there, which is what the user went looking for');
+        t.ok(/function aiLog\(/.test(panel) && /ai\.log/.test(panel), 'silent',
+            'field failures are written to globalStorage/logs/ai.log, because the Output channel cannot be sent');
+
+        const js = read('media/designer.js');
+        t.ok(/clearTimeout\(aiWatchdog\)/.test(js) && /the extension has not reported back yet/.test(js), 'silent',
+            'the webview says so when the extension has reported nothing at all after 10 s');
+        t.ok(/setAiProgress\(msg\.ok \? '' : \(text \? '✗ ' \+ text/.test(js), 'silent',
+            'and a failure lands in the progress line instead of only the status bar');
+    }
 };

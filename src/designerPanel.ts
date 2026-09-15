@@ -23,12 +23,14 @@ import { readDataSetFiles } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
 import { bundledComponentSpecs, isStaleBundledCopy } from './bundledComponents';
 import { statusLines } from './assistantUi';
+import { logError } from './logger';
 import {
     attachPanel,
     loadChoice,
     panelState,
     saveAiSettings,
     scan,
+    stopProgress,
     unloadEverything,
     type AiSettingsInput,
     type PanelState
@@ -1746,27 +1748,51 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     attachPanel(panel);
                     const before = msg.state as PanelState | undefined;
                     if (!before) return;
-                    const outcome = await loadChoice(this.context, before, String(msg.value ?? ''));
-                    await panel.webview.postMessage({
-                        type: 'aiResult',
-                        action: 'load',
-                        ok: outcome.ok,
-                        message: [outcome.message, outcome.estimate].filter(Boolean).join(' ')
-                    });
-                    await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
-                    await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
-                    await this.postStatus(panel, outcome.ok ? 'AI model loaded' : 'AI model failed to load');
+                    // A handler that dies silently is exactly what "nothing further happens" was
+                    // (2026-09-15): the panel's own line kept promising a download while the extension had
+                    // already given up. `loadChoice` no longer throws, but nothing else here may either.
+                    try {
+                        const outcome = await loadChoice(this.context, before, String(msg.value ?? ''));
+                        stopProgress();
+                        await panel.webview.postMessage({
+                            type: 'aiResult',
+                            action: 'load',
+                            ok: outcome.ok,
+                            message: [outcome.message, outcome.estimate].filter(Boolean).join(' ')
+                        });
+                        await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
+                        await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                        await this.postStatus(panel, outcome.ok ? 'AI model loaded' : 'AI model failed to load');
+                    } catch (err) {
+                        stopProgress();
+                        const message = err instanceof Error ? err.message : String(err);
+                        logError(`AI load handler failed: ${message}`);
+                        await panel.webview.postMessage({ type: 'aiResult', action: 'load', ok: false, message });
+                    }
                     return;
                 }
                 case 'aiUnload': {
                     attachPanel(panel);
-                    const unloaded = await unloadEverything();
-                    await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: unloaded.ok, message: unloaded.message });
-                    await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                    try {
+                        const unloaded = await unloadEverything();
+                        await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: unloaded.ok, message: unloaded.message });
+                        await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                    } catch (err) {
+                        const message = err instanceof Error ? err.message : String(err);
+                        logError(`AI unload failed: ${message}`);
+                        await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: false, message });
+                    }
                     return;
                 }
                 case 'aiStatus': {
-                    await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                    try {
+                        await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                    } catch (err) {
+                        await panel.webview.postMessage({
+                            type: 'aiStatus',
+                            lines: [`The status check failed: ${err instanceof Error ? err.message : String(err)}`]
+                        });
+                    }
                     return;
                 }
                 case 'saveCodeSettings': {

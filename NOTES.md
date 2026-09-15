@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3603 passed, 0 failed / 0 skipped** (2026-09-15, ~40 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3616 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1861,3 +1861,34 @@ honours/ignores ranges on demand and records the `Range` header it was asked wit
 attempt, then the second attempt's `bytes=262144-`, then a byte-for-byte comparison with the original. It
 drives the **real** `downloadToFile`, which is exported for exactly that reason. A re-implementation of the
 download in the test would have proved nothing about the extension.
+
+### §104 — "Downloading is not starting" — the bug was the silence (2026-09-15, release 0.9.19)
+
+**The report:** "Downloading is not starting: downloading (first time) and starting the built-in runtime —
+this can take a few minutes… Nothing further happens." **The panel's line came from the webview**, which
+guessed. Everything the extension needed was already in place, verified here one piece at a time:
+
+| Step | Evidence | Verdict |
+|---|---|---|
+| the published URLs | `curl -r 0-4095` on both → `206`, `application/octet-stream` | fine |
+| the 3B weights | 2 104 932 800 B + `.verified` in globalStorage since 2026-09-14 | already downloaded |
+| the first-time build | `dotnet build` in the *installed* extension folder → 0 warnings, 2.4 s (NuGet cached) | fine |
+| the sidecar itself | the built binary with the extension's own argv → `MODEL_HOST_READY port=48999` immediately | fine |
+
+So the *work* was fine and the *reporting* was broken: `designerPanel`'s `aiLoad` case awaited
+`loadChoice` with **no `try/catch`**, so any throw (a failed download, a build error, the 60 s start
+handshake timing out) ended the handler with nothing posted — the panel kept showing the webview's own
+optimistic line forever. **Lesson: a UI that promises work it cannot observe is worse than no message.**
+The webview must not guess what the extension is doing, and the extension must answer every request.
+
+**What now exists (all asserted in `aiPanel.test.js`, section "silent"):**
+`loadChoice` wraps every step and returns a sentence for each outcome; the `aiLoad`/`aiUnload`/`aiStatus`
+handlers catch and always post an `aiResult`/`aiStatus`; the webview shows failures **in the progress line**
+(it used to clear it and rely on the designer's status bar at the bottom of the window); the extension says
+whether the weights are on disk or really downloading; progress re-posts with `(N s)` every 2 s so a slow
+first build is visibly alive; the webview itself adds "the extension has not reported back yet" after 10 s;
+and every AI step lands in `globalStorage/logs/ai.log` — the Output channel is not something a user can
+hand over, a file is.
+
+**Diagnosing the next one:** ask for `~/.config/Code/User/globalStorage/grumpy.avalonia-designer/logs/ai.log`
+before theorising. That is the artifact that was missing when this report arrived.

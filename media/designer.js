@@ -1174,14 +1174,21 @@
         const chosen = aiState && (aiState.choices || []).find((c) => c.value === els.aiModel.value);
         const kind = chosen ? chosen.kind : '';
         setAiBusy(true);
-        // Word it for what is about to happen: a bundled model may have to download first, which is minutes,
-        // while an LM Studio model is already on disk. The extension replaces this line with byte counts as
-        // soon as it knows them ("1.2 GB of 4.7 GB · 26% · 12.4 MB/s").
+        // The extension says what is actually happening (weights on disk vs downloading, and how many
+        // bytes) — this is only what shows for the moment before its first line arrives.
         setAiProgress(kind === 'bundled'
-            ? 'downloading (first time) and starting the built-in runtime — this can take a few minutes…'
+            ? 'starting the built-in runtime…'
             : kind === 'file'
                 ? 'importing the file and loading it — this can take a few minutes…'
                 : 'loading — this can take a few minutes for a big model');
+        // If the extension says nothing at all, say that too: a line that never changes cannot be told
+        // apart from a dead one, which is what "downloading is not starting" was.
+        clearTimeout(aiWatchdog);
+        aiWatchdog = setTimeout(() => {
+            if (els.aiProgress.textContent && !els.aiProgress.hidden) {
+                els.aiProgress.textContent += '  —  the extension has not reported back yet (View → Output → "Avalonia Designer")';
+            }
+        }, 10000);
         post({ type: 'aiLoad', value: els.aiModel.value, state: aiPayload() });
     });
     els.aiUnload.addEventListener('click', () => {
@@ -1199,7 +1206,9 @@
         els.aiProgress.hidden = !message;
         els.aiProgress.textContent = message || '';
     }
+    let aiWatchdog = 0;
     function setAiBusy(busy) {
+        if (busy) clearTimeout(aiWatchdog);
         for (const b of [els.aiLoad, els.aiUnload, els.aiScan, els.aiRefresh]) b.disabled = !!busy;
     }
 
@@ -2737,8 +2746,12 @@
                 break;
             case 'aiResult': {
                 setAiBusy(false);
-                setAiProgress('');
-                els.status.textContent = (msg.ok ? '' : '✗ ') + String(msg.message || '');
+                clearTimeout(aiWatchdog);
+                const text = String(msg.message || '');
+                // A failure stays in the progress line, where the user is looking, instead of only in the
+                // designer's status bar at the bottom of the window. It also no longer vanishes.
+                setAiProgress(msg.ok ? '' : (text ? '✗ ' + text : '✗ the load failed — see Output → Avalonia Designer'));
+                els.status.textContent = (msg.ok ? '' : '✗ ') + text;
                 break;
             }
             case 'aiStatus': {

@@ -276,6 +276,10 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.19` (2026-09-15)** — a load can no longer fail in silence: the panel reports every
+  outcome, says whether a download is really happening, shows the seconds spent on long steps, admits when
+  the extension itself has gone quiet, and writes `logs/ai.log` for failures that only happen on the user's
+  machine. Suite **3616**.
 - **Release `0.9.18` (2026-09-15)** — resumable model downloads with byte-level progress, an `http://`
   model address that works, the load options reaching the built-in runtime (`--ctx`/`--gpu-layers`), rows
   hidden where they cannot be honoured, and the `[hidden]`-loses-to-`display` fix. New

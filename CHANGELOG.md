@@ -15,6 +15,38 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.19] - 2026-09-15 · *a load can no longer fail in silence*
+
+### Fixed
+
+- **"Downloading is not starting … nothing further happens" is now impossible.** The panel's `aiLoad`
+  handler awaited the load with no `try/catch`, so any thrown error inside it (a failed download, a build
+  error, the 60-second start handshake timing out) vanished: the panel's own line kept promising a download
+  while the extension had already given up. Every exit now reports to the panel and is logged.
+- **The panel no longer claims a download is starting when the weights are already on disk.** The webview
+  guessed the message; the extension now says what is happening — *"…is already on disk — starting the
+  built-in runtime (its first build downloads the inference library, which can take a few minutes)…"* —
+  and only mentions downloading when it is really downloading. That guess is what sent the user looking for
+  a download that never began.
+- **A failure is shown where the user is looking.** It lands in the panel's progress line (and stays there),
+  not only in the designer's status bar at the bottom of the window.
+- **Long steps show that they are alive**: the progress line repeats with the seconds spent
+  (`… (45 s)`), so a slow first build cannot be mistaken for a dead one.
+- **If the extension reports nothing at all, the panel says that too** (*"the extension has not reported
+  back yet"* after 10 s), which separates "the extension is silent" from "the extension is working".
+
+### Added
+
+- **`logs/ai.log` in the extension's storage** (`~/.config/Code/User/globalStorage/grumpy.avalonia-designer/logs/ai.log`),
+  written by every AI load step and failure with timestamps. The Output channel cannot be handed over when
+  a bug only reproduces on someone else's machine; a file can.
+- Unload and the status check are wrapped the same way, so no AI action can fail without a message.
+
+### Tests
+
+- `tests/t2-logic/aiPanel.test.js` grew to 88 assertions with a **never-silent** section: the handler
+  catches and reports, the webview puts failures in the progress line, the elapsed ticker and the
+  "already on disk" wording exist, and the log file is written. Suite **3616 passed / 0 failed**.
 ## [0.9.18] - 2026-09-15 · *downloads resume, and say how far they have got*
 
 ### Added

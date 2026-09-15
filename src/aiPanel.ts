@@ -11,9 +11,11 @@
  * webview instead of reported in a notification.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { normalizeAssistantConfig } from './assistant';
-import { log } from './logger';
+import { log, logError } from './logger';
 import {
     chatModels,
     discover,
@@ -27,7 +29,7 @@ import {
     type Discovery,
     type FoundModelFile
 } from './localModelCore';
-import { MODEL_SPECS, DEFAULT_CONTEXT_SIZE, specById, specByFileName } from './modelSpecs';
+import { MODEL_SPECS, DEFAULT_CONTEXT_SIZE, specById, specByFileName, type ModelSpec } from './modelSpecs';
 import {
     modelLabel,
     recommendedLoadOptions,
@@ -36,7 +38,7 @@ import {
     type LoadOptions,
     type LocalModel
 } from './localModels';
-import { ensureBundledEndpoint, ensureModelFile } from './modelRuntime';
+import { ensureBundledEndpoint, ensureModelFile, modelFileFor } from './modelRuntime';
 
 export const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -194,9 +196,44 @@ export interface LoadOutcome {
  * imported into LM Studio first (or handed to our own runtime when LM Studio is absent), the bundled ones
  * are downloaded and started, and "a server I run myself" is just an address.
  */
+/** True when the weights are already in the extension's storage. */
+function fileOnDisk(context: vscode.ExtensionContext, spec: ModelSpec): boolean {
+    try {
+        return fs.statSync(modelFileFor(context, spec)).size === spec.bytes;
+    } catch {
+        return false;
+    }
+}
+
+/** True when the sidecar has never been built, so the next start also restores NuGet packages. */
+function firstBuildNote(context: vscode.ExtensionContext): boolean {
+    return !fs.existsSync(path.join(context.extensionUri.fsPath, 'host', 'ModelHost', 'bin', 'Debug', 'net8.0'));
+}
+
 export async function loadChoice(context: vscode.ExtensionContext, state: PanelState, value: string): Promise<LoadOutcome> {
     const cfg = vscode.workspace.getConfiguration(SETTINGS);
     const { kind, key } = parseChoiceValue(value);
+    resetProgressClock();
+    aiLog(context, `Load requested: kind=${kind} key=${key}`);
+    // Nothing below may throw: a load that dies without a word is what "nothing further happens" was, and
+    // the user has no way to tell a slow step from a dead one. Every exit is a LoadOutcome with a sentence.
+    try {
+        return await startLoad(context, cfg, state, kind, key);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        aiLog(context, `Load FAILED: ${message}`);
+        logError(`AI load failed: ${message}`);
+        return { ok: false, message: `${message} (details in ${aiLogFile(context)})` };
+    }
+}
+
+async function startLoad(
+    context: vscode.ExtensionContext,
+    cfg: vscode.WorkspaceConfiguration,
+    state: PanelState,
+    kind: string,
+    key: string
+): Promise<LoadOutcome> {
     const options: LoadOptions = {
         contextLength: state.options.contextLength,
         gpu: state.options.gpu,
@@ -218,14 +255,24 @@ export async function loadChoice(context: vscode.ExtensionContext, state: PanelS
     if (kind === 'bundled') {
         const spec = specById(key);
         if (!spec) return { ok: false, message: `Unknown bundled model "${key}".` };
-        progress(`preparing ${spec.label} — downloading if this is the first time…`);
+        // Say which of the two things is about to happen. The webview cannot know — it used to guess
+        // "downloading (first time)" even when the weights were already on disk (the user's report,
+        // 2026-09-15), which sent them looking for a download that never started.
+        const already = fileOnDisk(context, spec);
+        progress(already
+            ? `${spec.label} is already on disk — starting the built-in runtime${firstBuildNote(context) ? ' (its first build downloads the inference library, which can take a few minutes)' : ''}…`
+            : `downloading ${spec.label} — this can take a few minutes…`);
+        aiLog(context, `Bundled load: file=${already ? 'on disk' : 'to download'} path=${modelFileFor(context, spec)}`);
         const file = await ensureModelFile(context, spec, {
             report: ({ message }) => progress(message ?? '')
         } as vscode.Progress<{ message?: string }>);
+        aiLog(context, `Weights ready: ${file}`);
         await cfg.update('backend', 'bundled', vscode.ConfigurationTarget.Global);
         await cfg.update('modelPath', file, vscode.ConfigurationTarget.Global);
         await cfg.update('model', '', vscode.ConfigurationTarget.Global);
+        progress('starting the built-in runtime…');
         const endpoint = await startBundled(state, file, cfg.get<number>('threads', 0));
+        aiLog(context, `Bundled runtime answering on ${endpoint}`);
         return { ok: true, endpoint, message: `${spec.label} is answering from the extension's own runtime.` };
     }
 
@@ -236,6 +283,7 @@ export async function loadChoice(context: vscode.ExtensionContext, state: PanelS
             await cfg.update('backend', 'bundled', vscode.ConfigurationTarget.Global);
             await cfg.update('modelPath', key, vscode.ConfigurationTarget.Global);
             const endpoint = await startBundled(state, key, cfg.get<number>('threads', 0));
+            aiLog(context, `File served by the built-in runtime: ${key} → ${endpoint}`);
             return { ok: true, endpoint, message: `${key} is answering from the extension's own runtime.` };
         }
         progress('importing it into LM Studio (a symbolic link, your file stays where it is)…');
@@ -387,15 +435,71 @@ export async function scan(webview: vscode.Webview, onDone: (state: PanelState) 
 let progressTarget: vscode.Webview | undefined;
 let currentPanel: vscode.WebviewPanel | undefined;
 
+/** The last line posted, so the elapsed-time ticker can keep showing it with a growing counter. */
+let lastProgress = '';
+let progressTimer: ReturnType<typeof setInterval> | undefined;
+
+/**
+ * Reports progress **and keeps reporting it**: a step that takes minutes (a download, the first NuGet
+ * build, a model load) used to sit on one stale line, which the user read as "nothing further happens"
+ * even while work was in flight. The ticker re-posts the same message with the seconds spent, and any new
+ * message replaces it.
+ */
+export function progress(message: string, webview?: vscode.Webview): void {
+    const target = webview ?? progressTarget;
+    lastProgress = message;
+    if (!target) return;
+    void target.postMessage({ type: 'aiProgress', message });
+    if (progressTimer) return;
+    progressTimer = setInterval(() => {
+        const still = progressTarget;
+        if (!still || !lastProgress) return;
+        const seconds = Math.round((Date.now() - progressStarted) / 1000);
+        void still.postMessage({ type: 'aiProgress', message: `${lastProgress}  (${seconds} s)` });
+    }, 2000);
+}
+
+let progressStarted = Date.now();
+
+export function stopProgress(): void {
+    if (progressTimer) clearInterval(progressTimer);
+    progressTimer = undefined;
+    lastProgress = '';
+}
+
+/** Restarts the elapsed-time clock (called when a new load begins). */
+export function resetProgressClock(): void {
+    progressStarted = Date.now();
+}
+
+/**
+ * A line in the extension's own log file, for the failures that cannot be reproduced from here.
+ *
+ * "Downloading is not starting … nothing further happens" is exactly the kind of report that needs the
+ * other end's log, and the Output channel is not something a user can hand over. Best-effort: a broken log
+ * must never break a load.
+ */
+function aiLogFile(context: vscode.ExtensionContext): string {
+    const dir = path.join(context.globalStorageUri.fsPath, 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    return path.join(dir, 'ai.log');
+}
+
+export function aiLog(context: vscode.ExtensionContext, line: string): void {
+    const text = `[${new Date().toISOString()}] ${line}`;
+    log(text);
+    try {
+        const file = aiLogFile(context);
+        if (fs.existsSync(file) && fs.statSync(file).size > 512 * 1024) fs.rmSync(file, { force: true });
+        fs.appendFileSync(file, text + '\n');
+    } catch {
+        /* logging must never be the reason a load fails */
+    }
+}
+
 export function attachPanel(panel: vscode.WebviewPanel | undefined): void {
     currentPanel = panel;
     progressTarget = panel?.webview;
-}
-
-export function progress(message: string, webview?: vscode.Webview): void {
-    const target = webview ?? progressTarget;
-    if (!target) return;
-    void target.postMessage({ type: 'aiProgress', message });
 }
 
 export function panelFor(): vscode.WebviewPanel | undefined {
