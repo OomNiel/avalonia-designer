@@ -276,6 +276,14 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.23` (2026-09-15)** — the picker could display a different entry than the model in use
+  (reported after a bundled 3B load that had in fact succeeded). Choice values are opaque strings and the
+  picker does no index arithmetic, so it was not the off-by-one it looked like — but a `<select>` given a
+  value it does not know silently keeps *another* entry selected, which is indistinguishable on screen. The
+  panel now verifies the round trip, falls back to the entry's real index, or says so in the progress line,
+  and a confirmed load re-requests `aiState` so a lost refresh cannot leave a stale selection. The fixture
+  also stopped hiding an uncaught `TypeError` from `applyKindToOptions` (empty option rows vs the real
+  `.ai-hint` spans): 8 exceptions, 0 failed tests, for nine releases. Suite **3679**.
 - **Release `0.9.22` (2026-09-15)** — two bugs from real clicks: `/loaded/i` matched LM Studio's
   `not-loaded` state, so **every** model carried the `● loaded` tag (the user asked how more than one model
   could be loaded — it could not; the tag was wrong), and "never — keep loaded" sent `--ttl 0`, which `lms`

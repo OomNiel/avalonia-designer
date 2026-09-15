@@ -98,6 +98,15 @@ function setup(omit = []) {
     const make = (id) => {
         const el = window.document.createElement(tagFor(id));
         el.id = id;
+        // The option rows carry a `.ai-hint` span in the real panel markup and the webview writes into it.
+        // Without the child here, `applyKindToOptions` threw a TypeError on *every* state message — jsdom
+        // reported it as uncaught and the rest of the state application was quietly skipped, so this whole
+        // path went unasserted from 0.9.16 until 2026-09-15.
+        if (id.startsWith('aiOpt')) {
+            const hint = window.document.createElement('span');
+            hint.className = 'ai-hint';
+            el.appendChild(hint);
+        }
         // Mirror the two publish buttons as the extension emits them: Install starts DISABLED (nothing has
         // been published until the extension reports a state), Publish is always available.
         if (id === 'btnInstall') {
@@ -568,6 +577,60 @@ module.exports = async (t) => {
     $('canvas').dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     t.equal($('settingsModal').hidden, true, 'settings', 'Escape closes the settings');
     t.ok(posted.every((m) => m.type !== 'saveCodeSettings'), 'settings', 'without saving');
+
+    // --- the model picker shows the selection the extension sent, never a different entry ---
+    // Reported 2026-09-15: after a built-in 3B load that succeeded (proved by the log, the settings and a
+    // running runtime) the dropdown still read "Let the server decide…". The choice values are opaque
+    // strings — the webview never maps them to indices — but a <select> handed a value it does not know
+    // silently keeps what it had, which reads exactly like an off-by-one. Both halves are pinned here.
+    const aiState = (over = {}) => Object.assign({
+        enabled: true,
+        endpoint: 'http://127.0.0.1:1234/v1',
+        selected: 'bundled:qwen2.5-coder-3b-q4',
+        choices: [
+            { value: 'any:', label: 'Let the server decide — whatever it has loaded', detail: 'whatever is loaded', kind: 'any' },
+            { value: 'lms:google/gemma-4-e4b', label: 'google/gemma-4-e4b  ·  7.5B', detail: '7.5B', kind: 'lmstudio' },
+            { value: 'bundled:qwen2.5-coder-3b-q4', label: 'Qwen2.5-Coder 3B Instruct (Q4_K_M)', detail: '2 GB', kind: 'bundled' }
+        ],
+        options: {
+            contextLength: 8192, gpu: 'auto', ttlSeconds: 0, maxTokens: 4096, timeoutSeconds: 120,
+            recommended: { contextLength: 8192, ttlSeconds: 900 }
+        },
+        hint: '',
+        pinned: 'Pinned: the built-in runtime loads this file at start'
+    }, over);
+    msg({ type: 'aiState', state: aiState() });
+    t.equal($('aiModel').value, 'bundled:qwen2.5-coder-3b-q4', 'ai-picker',
+        'the picker shows the selection the extension sent, not the first entry');
+    t.equal($('aiModel').selectedIndex, 3, 'ai-picker',
+        'and it is the entry carrying that value (index 0 is the placeholder, so no off-by-one)');
+    t.ok(/Pinned/.test($('aiModelHint').textContent), 'ai-picker', 'the hint keeps the pinned sentence alongside it');
+    // The per-runtime hints are written by the same call, so they are asserted here too: the fixture used to
+    // lack the hint spans, and the throw they caused skipped everything after them in the state application.
+    t.equal($('aiOptTtl').hidden, true, 'ai-picker', 'the idle-unload row is hidden for the built-in runtime');
+    t.ok(/layer count, not a ratio/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
+        'the GPU hint is worded for the built-in runtime');
+    t.ok(/handed to the built-in runtime/.test($('aiOptContext').querySelector('.ai-hint').textContent), 'ai-picker',
+        'and so is the context hint');
+    msg({ type: 'aiState', state: aiState({ selected: 'lms:google/gemma-4-e4b' }) });
+    t.equal($('aiModel').value, 'lms:google/gemma-4-e4b', 'ai-picker', 'picking an LM Studio model is applied too');
+    t.equal($('aiOptTtl').hidden, false, 'ai-picker', 'and the idle-unload row comes back for it');
+    t.ok(/shared-memory GPU/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
+        'with the hint reworded for LM Studio');
+    msg({ type: 'aiState', state: aiState({ selected: 'bundled:not-in-the-list', pinned: '', hint: '' }) });
+    t.equal($('aiProgress').hidden, false, 'ai-picker',
+        'a selection with no matching entry is reported rather than silently swapped for another model');
+    t.ok(/cannot show/.test($('aiProgress').textContent), 'ai-picker', 'and the message names the problem');
+    // A confirmed load asks for the state once more: a refresh that is lost (a webview that was not ready, a
+    // second designer tab) must not be able to leave the picker showing the old selection indefinitely.
+    msg({ type: 'aiState', state: aiState() });
+    posted.length = 0;
+    msg({ type: 'aiResult', action: 'load', ok: true, message: 'Bundled runtime answering on http://127.0.0.1:43511/v1' });
+    t.equal(posted.some((m) => m.type === 'aiState'), true, 'ai-picker', 'a confirmed load re-requests the state');
+    posted.length = 0;
+    msg({ type: 'aiResult', action: 'load', ok: false, message: 'the download stopped' });
+    t.equal(posted.some((m) => m.type === 'aiState'), false, 'ai-picker', 'a failed load does not');
+    t.ok(/the download stopped/.test($('aiProgress').textContent), 'ai-picker', 'a failure stays visible in the progress line');
 
 
     // --- the FORM is selectable: first control-list entry "Form - <Title>", and clicking empty

@@ -15,6 +15,34 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.23] - 2026-09-15 · *the picker named a model that was not the one in use*
+
+### Fixed
+
+- **The model picker could display a different entry than the model actually in use.** Reported as
+  *"the model picker still shows 'Let the server decide…', not the picked model"* after a built-in 3B load
+  that had in fact succeeded (the log line, the settings and a running runtime all agreed). The values are
+  opaque strings — the webview never mapped them to indices, so this was not the off-by-one it looked like.
+  The real hazard is that a `<select>` handed a value it does not know **silently keeps what it had**, which
+  is indistinguishable from an indexing bug on screen. The panel now checks the round trip after assigning,
+  falls back to the entry's real index if it can find it, and otherwise says so in the progress line rather
+  than showing another model's name as though it were the selection.
+- **A confirmed load asks for the state once more.** The state posted as part of a load is the right one, but
+  if that message is lost — a webview that was not ready yet, a second designer tab — the picker kept the old
+  selection indefinitely. A successful `aiLoad` result now re-requests it, so the panel cannot stay stale.
+- **The option hints can no longer abort the whole state application.** `applyKindToOptions` wrote into
+  `.ai-hint` spans directly; a missing span threw, and everything after it in `fillAi` was skipped.
+
+### Tests
+
+- **The webview suite had been hiding an uncaught exception since 0.9.16.** The jsdom fixture built the
+  option rows as empty divs while the real markup carries a `.ai-hint` span inside them, so every `aiState`
+  message threw `TypeError: Cannot set properties of null` — jsdom logged it as uncaught and the rest of the
+  state application was quietly skipped. The rows now carry their hint spans in the fixture.
+- New assertions: the picker shows the selection the extension sent (index 3, not the first entry), a
+  selection with no matching entry is reported instead of swapped, a confirmed load re-requests the state
+  while a failed one does not, and the per-runtime hints are reworded for bundled vs LM Studio.
+
 ## [0.9.22] - 2026-09-15 · *every model said "loaded", and "never" was an invalid command*
 
 ### Fixed

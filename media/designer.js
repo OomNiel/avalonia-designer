@@ -1114,6 +1114,18 @@
         // A selection the settings already point at wins; otherwise the first real choice, so "Load Model"
         // is never a no-op waiting for a click the user does not know to make.
         els.aiModel.value = state.selected || ((state.choices || [])[0] ? state.choices[0].value : '');
+        // A `<select>` given a value with no matching option silently keeps whatever was selected before —
+        // the display and the truth part ways, which reads exactly like an off-by-one in the list. The
+        // placeholder option has an empty value, so this cannot be caught by comparing indices: check the
+        // round trip instead and say so out loud if the browser refused the assignment.
+        if (state.selected && els.aiModel.value !== state.selected) {
+            const fallback = (state.choices || []).findIndex((c) => c.value === state.selected);
+            if (fallback >= 0) els.aiModel.selectedIndex = fallback + 1; // +1: the placeholder is index 0
+            if (els.aiModel.value !== state.selected) {
+                setAiProgress(`the picker cannot show "${state.selected}" — the list the extension sent has no ` +
+                    'such entry; press Refresh list, or report this with View → Output → "Avalonia Designer"');
+            }
+        }
 
         const chosen = (state.choices || []).find((c) => c.value === els.aiModel.value);
         // "Did my load take?" answered in words, not left to be inferred from the dropdown: for the
@@ -1152,12 +1164,18 @@
         const bundled = kind === 'bundled' || kind === 'file';
         els.aiOptTtl.hidden = bundled;
         els.aiOptAddress.hidden = kind !== 'custom';
-        els.aiOptGpu.querySelector('.ai-hint').textContent = bundled
+        // Written through a guard: a hint span that is missing must not abort the state application, which
+        // is how a markup change would silently stop the whole ⚙ panel from filling in.
+        const say = (row, text) => {
+            const el = row && row.querySelector('.ai-hint');
+            if (el) el.textContent = text;
+        };
+        say(els.aiOptGpu, bundled
             ? 'max = all layers on the GPU; anything else runs on the CPU (the built-in runtime takes a layer count, not a ratio).'
-            : 'A shared-memory GPU is usually slower than the CPU for big models.';
-        els.aiOptContext.querySelector('.ai-hint').textContent = bundled
+            : 'A shared-memory GPU is usually slower than the CPU for big models.');
+        say(els.aiOptContext, bundled
             ? 'tokens the model can hold — handed to the built-in runtime when it starts.'
-            : 'tokens the model can hold. Bigger costs memory.';
+            : 'tokens the model can hold. Bigger costs memory.');
     }
 
     els.aiEnabled.addEventListener('change', () => {
@@ -2764,6 +2782,11 @@
                 // designer's status bar at the bottom of the window. It also no longer vanishes.
                 setAiProgress(msg.ok ? '' : (text ? '✗ ' + text : '✗ the load failed — see Output → Avalonia Designer'));
                 els.status.textContent = (msg.ok ? '' : '✗ ') + text;
+                // Ask for the state once more *after* the load is confirmed. The state posted as part of the
+                // load is the right one, but if that message is lost (a webview that was not ready, a second
+                // designer tab) the picker would keep showing the old selection forever — which is what the
+                // user saw after loading the built-in 3B (2026-09-15).
+                if (msg.ok && msg.action === 'load') post({ type: 'aiState' });
                 break;
             }
             case 'aiStatus': {

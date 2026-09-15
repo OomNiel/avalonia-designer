@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3665 passed, 0 failed / 0 skipped** (2026-09-15, ~44 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3679 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2021,3 +2021,55 @@ rejected command line. Both bugs were invisible from the code and obvious from o
 one `lms load` in a terminal.
 
 **Suite:** 3665 passed / 0 failed (was 3645; `aiPanel.test.js` grew from 88 to 110 assertions).
+
+### §108 — the picker named a model that was not the one in use (2026-09-15, release 0.9.23)
+
+Reported right after the 0.9.22 fixes, about the **bundled** path this time: the built-in Qwen2.5-Coder 3B
+was loaded — and the log, the settings and a running `ModelHost` all agreed it was — yet the dropdown still
+read *"Let the server decide — whatever it has loaded…"*. The user's own diagnosis was *"I think there may
+be an indexing problem with the items in the picker?"*, which is worth taking seriously: it is exactly what
+an off-by-one looks like on screen.
+
+**The guess was wrong, and the reason is worth writing down.** Choice values are opaque strings
+(`bundled:<id>`, `lms:<key>`, `any:`, `custom:<url>`); the webview never converts them to indices (`fillAi`
+assigns by value, `aiPayload` reads by value back), and there is no `selectedIndex` arithmetic anywhere in
+the picker. Re-run headlessly with the user's own settings, `currentSelection()` returned
+`bundled:qwen2.5-coder-3b-q4` and that value *was* among the options. The extension side was right, so the
+fault had to be downstream — a state message that never arrived, or one that arrived stale.
+
+**But the instinct pointed at a real hole, in the control itself.** `<select>` has a defect that is
+indistinguishable from an indexing bug: assigning a value with no matching option neither throws nor
+clears the box — it leaves *another entry* selected, and the display and the truth part company silently.
+The panel no longer trusts the assignment:
+
+```js
+if (state.selected && els.aiModel.value !== state.selected) {
+    const at = (state.choices || []).findIndex((c) => c.value === state.selected);
+    if (at >= 0) els.aiModel.selectedIndex = at + 1;   // +1: the placeholder owns index 0
+    if (els.aiModel.value !== state.selected) setAiProgress(`the picker cannot show "${…}" — …`);
+}
+```
+
+Empirically the browser *does* refuse an unknown value (jsdom sets `selectedIndex = -1`), so the guard's
+first branch is the one that can fire — which is why the fallback picks the entry by **value**, never by a
+remembered position. A picker that cannot show the truth now says so instead of showing another model's
+name.
+
+**2. A lost refresh can no longer leave a stale selection.** `aiResult {ok:true, action:'load'}` asks for
+`aiState` once more. The state posted as part of the load is the right one; the extra request covers the
+case that motivated the report — a webview that was not ready (or a second designer tab) swallowing a
+message nobody would ever notice was missing.
+
+**3. The suite had been hiding a throw since 0.9.16.** While adding the guard, the run printed a stack
+trace: `applyKindToOptions` wrote into the `.ai-hint` spans inside the option rows, and the jsdom fixture
+built those rows as **empty divs**. Every single `aiState` message threw
+`TypeError: Cannot set properties of null`, jsdom reported it as *uncaught*, and the rest of the state
+application was skipped — 8 exceptions, 0 failed tests, for nine releases. The rows now carry their hint
+spans like the real markup, the writes go through a `say(row, text)` guard (a markup change must not be
+able to kill the whole panel fill), and the per-runtime wording is asserted for both kinds.
+
+**Lesson:** read the output, not just the total. A suite counts assertions, and an exception that no
+assertion stands on is invisible in a green run — `0 failed` alongside a stack trace is still a defect.
+
+**Suite:** 3679 passed / 0 failed (was 3665; `designer.test.js` +14 assertions, including six that would
+have failed if the option rows had stayed the way the fixture built them).
