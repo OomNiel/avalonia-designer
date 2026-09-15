@@ -45,6 +45,7 @@ import {
     type ModelSpec
 } from './modelSpecs';
 import { downloadProgressText, resumeFromBytes } from './localModels';
+import { configView } from './settingWrite';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -631,7 +632,7 @@ export async function setupBundledModel(context: vscode.ExtensionContext): Promi
 
 /** Points the assistant at a model file and switches the backend on. */
 async function activateWith(context: vscode.ExtensionContext, file: string): Promise<void> {
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    const cfg = configView(SETTINGS);
     await cfg.update('modelPath', file, vscode.ConfigurationTarget.Global);
     await cfg.update('backend', 'bundled', vscode.ConfigurationTarget.Global);
     const pick = await vscode.window.showInformationMessage(

@@ -410,6 +410,22 @@ module.exports = async (t) => {
             'the panel can be re-sent its state');
         t.ok(/\} finally \{[\s\S]{0,400}?refreshAiState\(\)/.test(read('src/assistantUi.ts')), 'lifecycle',
             'a request refreshes it — the request is itself what loads the model just-in-time');
+        // Every AI-settings read and write goes through the scope-aware view: writing Global while the project
+        // pins the same key means the write is invisible, which is what made the built-in models impossible to
+        // pin on this machine (found 2026-09-15, after six exchanges).
+        for (const file of ['src/aiPanel.ts', 'src/localModelSetup.ts', 'src/modelRuntime.ts']) {
+            const src = read(file);
+            t.equal(/vscode\.workspace\.getConfiguration\(SETTINGS\)/.test(src), false, 'lifecycle',
+                `${file} reads and writes the AI settings through configView()`);
+        }
+        // assistantUi writes one setting, and it goes through the same helper (the helper takes the raw config
+        // on purpose: it is the thing that knows which scope to write to).
+        t.ok(/updateSetting\(vscode\.workspace\.getConfiguration\(SETTINGS\), 'model', chosen\)/.test(read('src/assistantUi.ts')),
+            'lifecycle', 'the "pin a model" command writes through updateSetting too');
+        t.ok(/configView\(SETTINGS\)/.test(read('src/aiPanel.ts')) && /configView\(SETTINGS\)/.test(read('src/modelRuntime.ts')),
+            'lifecycle', 'so a project-level pin is updated in place instead of being overridden');
+        t.ok(/log\(`Setting "\$\{key\}" written to the \$\{where\} settings/.test(read('src/settingWrite.ts')),
+            'lifecycle', 'and a non-global write is logged, because a shadowed write looks like a load that did nothing');
         t.ok(/catch \{\s*\/\* the panel may be mid-dispose/.test(read('src/aiPanel.ts')), 'lifecycle',
             'and a failed refresh can never become a failed action');
         t.ok(/window\.addEventListener\('focus'[\s\S]{0,200}?aiState/.test(js7b), 'lifecycle',

@@ -282,6 +282,28 @@ export function parseLockLimitGb(limitsText: string, unlimitedGb = 1024): number
     return Number.isFinite(bytes) ? bytes / 1e9 : undefined;
 }
 
+/** Where a setting already lives, as VS Code's `inspect` reports it. */
+export interface SettingScopes {
+    globalValue?: unknown;
+    workspaceValue?: unknown;
+    workspaceFolderValue?: unknown;
+}
+
+/**
+ * The scope that currently supplies a setting — write **there**, or the write is shadowed.
+ *
+ * A workspace value beats a global one, so saving `backend: bundled` to Global while the project pins
+ * `backend: external` in `<project>/.vscode/settings.json` changes nothing that anyone can see: the load works,
+ * the runtime answers, and the panel goes on reading `external` (found on this machine 2026-09-15 — the two
+ * built-in models could never stick while the two LM Studio ones worked, because `external` is what they need).
+ * Pure, so every branch is asserted instead of being discovered in a user's project folder.
+ */
+export function writeTargetFor(scopes: SettingScopes): 'workspaceFolder' | 'workspace' | 'global' {
+    if (scopes.workspaceFolderValue !== undefined) return 'workspaceFolder';
+    if (scopes.workspaceValue !== undefined) return 'workspace';
+    return 'global';
+}
+
 /** How the picker labels a model, and what it says underneath. */
 export function modelLabel(model: LocalModel): string {
     const size = `${model.sizeGb.toFixed(1)} GB`;

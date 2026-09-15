@@ -22,7 +22,8 @@ const {
     parseLoadEstimate,
     parseLockLimitGb,
     parseSizeGb,
-    recommendedLoadOptions
+    recommendedLoadOptions,
+    writeTargetFor
 } = require('../../out/localModels.js');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -153,6 +154,18 @@ module.exports = async (t) => {
         // the approval, and only models near the machine's limits ever reach that prompt — which is how
         // "some models just do not work" would look (2026-09-15).
         t.ok(args.includes('--yes'), 'recommend', 'every load auto-approves the CLI\'s prompts');
+
+        // Where a setting lives decides whether writing it does anything: a workspace value beats a global one, so
+        // "save to Global" is silent when the project pins the same key. Found on this machine 2026-09-15 —
+        // OptimisedCSTest/.vscode/settings.json had "avaloniaDesigner.assistant.backend": "external", and every
+        // built-in load was shadowed by it while the two LM Studio models worked fine (external is what they want).
+        t.equal(writeTargetFor({}), 'global', 'scopes', 'an unwritten setting goes to the user settings, as before');
+        t.equal(writeTargetFor({ globalValue: 'bundled' }), 'global', 'scopes',
+            'and one that only exists there stays there');
+        t.equal(writeTargetFor({ globalValue: 'bundled', workspaceValue: 'external' }), 'workspace', 'scopes',
+            'a project pin is updated in place — writing Global would be shadowed by it');
+        t.equal(writeTargetFor({ workspaceValue: 'external', workspaceFolderValue: 'off' }), 'workspaceFolder',
+            'scopes', 'and a folder pin overrides even that');
     }
 
     // ---------- 5) the picker's labels ----------

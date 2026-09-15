@@ -17,6 +17,7 @@
 import * as vscode from 'vscode';
 import { chatDetailed, describeEmptyAnswer, normalizeAssistantConfig } from './assistant';
 import { refreshPanels } from './assistantUi';
+import { configView } from './settingWrite';
 import { log } from './logger';
 import { setupBundledModel } from './modelRuntime';
 import {
@@ -212,7 +213,7 @@ async function setUpLmStudioModel(model: LocalModel, facts: SetupFacts, found: D
  * — one implementation, so the two front doors cannot end up pointing at different addresses.
  */
 export async function wireSettings(endpoint: string, modelIdentifier: string): Promise<void> {
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    const cfg = configView(SETTINGS);
     await cfg.update('backend', 'external', vscode.ConfigurationTarget.Global);
     await cfg.update('endpoint', endpoint, vscode.ConfigurationTarget.Global);
     await cfg.update('model', modelIdentifier, vscode.ConfigurationTarget.Global);
@@ -240,7 +241,7 @@ export interface ProofResult {
 }
 
 export async function proveItWorks(): Promise<ProofResult> {
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    const cfg = configView(SETTINGS);
     const start = cfg.get<number>('maxTokens', 4096);
     const ask = async (budget: number) => {
         const live = normalizeAssistantConfig({
@@ -298,7 +299,7 @@ export async function proveItWorks(): Promise<ProofResult> {
 
 /** "A server I run myself" — for Ollama, a hand-built llama-server, or anything else. */
 async function askForEndpoint(): Promise<void> {
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    const cfg = configView(SETTINGS);
     const endpoint = await vscode.window.showInputBox({
         title: 'Address of your local server',
         value: cfg.get<string>('endpoint', 'http://127.0.0.1:1234/v1'),

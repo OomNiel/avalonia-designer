@@ -39,6 +39,7 @@ import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
 import { sidecarContextSize, sidecarGpuLayers } from './localModels';
 import { loadedNow } from './localModelCore';
 import { refreshAiState } from './aiPanel';
+import { configView, updateSetting } from './settingWrite';
 import { panelFor } from './aiPanel';
 import { bundledStatusLines, ensureBundledEndpoint } from './modelRuntime';
 
@@ -46,7 +47,7 @@ const SETTINGS = 'avaloniaDesigner.assistant';
 
 /** Reads the settings. Kept in one place so the commands and the Code Action agree. */
 export function assistantConfig(): AssistantConfig {
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    const cfg = configView(SETTINGS);
     return normalizeAssistantConfig({
         backend: cfg.get<string>('backend', 'off'),
         endpoint: cfg.get<string>('endpoint', ''),
@@ -834,7 +835,7 @@ export async function showStatus(): Promise<void> {
             { title: 'Which model should the AI assist use?', ignoreFocusOut: true }
         );
         if (!chosen) return;
-        await vscode.workspace.getConfiguration(SETTINGS).update('model', chosen, vscode.ConfigurationTarget.Global);
+        await updateSetting(vscode.workspace.getConfiguration(SETTINGS), 'model', chosen);
         void vscode.window.showInformationMessage(
             `The AI assist is pinned to "${chosen}". Requests now name it explicitly.`
         );

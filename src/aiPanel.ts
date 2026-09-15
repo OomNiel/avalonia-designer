@@ -30,6 +30,7 @@ import {
     type FoundModelFile
 } from './localModelCore';
 import { MODEL_SPECS, DEFAULT_CONTEXT_SIZE, specById, specByFileName, type ModelSpec } from './modelSpecs';
+import { configView } from './settingWrite';
 import {
     modelLabel,
     recommendedLoadOptions,
@@ -179,7 +180,7 @@ export function currentSelection(choices: ModelChoice[], model: string, backend:
 
 /** Everything the panel needs to draw itself, in one message. */
 export async function panelState(fresh = false): Promise<PanelState> {
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    const cfg = configView(SETTINGS);
     const backend = cfg.get<string>('backend', 'off');
     const endpoint = cfg.get<string>('endpoint', '') || 'http://127.0.0.1:1234/v1';
     if (fresh) scanned = [];
@@ -301,7 +302,7 @@ export interface PanelAiRequest extends RequestedLoad {
 }
 
 export async function loadChoice(context: vscode.ExtensionContext, request: PanelAiRequest, value?: string): Promise<LoadOutcome> {
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    const cfg = configView(SETTINGS);
     const { kind, key } = parseChoiceValue(value ?? request.value ?? '');
     resetProgressClock();
     aiLog(context, `Load requested: kind=${kind} key=${key}`);
@@ -450,7 +451,7 @@ async function loadLmStudio(
     const result = await load({ model, options: withId, facts, server: found.server, onProgress });
     if (result.cancelled) return { ok: false, message: 'Cancelled.' };
     if (!result.ok || !result.endpoint) return { ok: false, message: result.message ?? 'The load failed.' };
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    const cfg = configView(SETTINGS);
     await cfg.update('backend', 'external', vscode.ConfigurationTarget.Global);
     await cfg.update('endpoint', result.endpoint, vscode.ConfigurationTarget.Global);
     await cfg.update('model', model.key, vscode.ConfigurationTarget.Global);
@@ -500,7 +501,7 @@ export type AiSettingsInput = PanelAiRequest;
  * "reload to apply" instead of silently ignoring a change.
  */
 export async function saveAiSettings(input: PanelAiRequest): Promise<void> {
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    const cfg = configView(SETTINGS);
     const target = vscode.ConfigurationTarget.Global;
     await cfg.update('maxTokens', Math.min(16384, Math.max(64, Math.round(input.maxTokens) || 4096)), target);
     await cfg.update('timeoutSeconds', Math.min(600, Math.max(5, Math.round(input.timeoutSeconds) || 60)), target);

@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3738 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3748 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2306,3 +2306,37 @@ falling back to the first entry when a state carries no selection, and the webvi
 the answer has to be "all of them" unless there is a reason.
 
 **Suite:** 3738 passed / 0 failed (was 3730).
+
+### §116 — the write that was overruled: workspace settings beat global ones (2026-09-15, release 0.9.33)
+
+Six exchanges on one symptom — *"the picker reverts to 'Let the server decide…' directly after the model loaded"* —
+with two halves that both checked out: `panelState()` with the user's settings returns
+`bundled:qwen2.5-coder-3b-q4`, and the webview applies exactly that (both asserted in the suite). Each round I
+fixed something real (§113 the palette paths, §114 the state riding with the result, §115 keeping all panels in
+step) and the symptom survived — because the cause was not in the extension's logic at all:
+
+```json
+// /home/niel/Projekte/TestExtApps/OptimisedCSTest/.vscode/settings.json
+{ "avaloniaDesigner.assistant.backend": "external" }
+```
+
+A **workspace** setting. Workspace values override global ones, so every `cfg.update('backend', 'bundled',
+ConfigurationTarget.Global)` succeeded and changed nothing anyone could see: the extension read the *effective*
+value (`external`) and honestly reported "let the server decide" — and the load, the runtime and the log were all
+correct. It also explains the shape of the report precisely: **the two LM Studio models worked in that project and
+the two built-in ones never could**, because `external` is exactly what LM Studio needs.
+
+The final clue was the shape of the persisted state: `backend: external` together with a `modelPath` still pointing
+at the built-in model — a combination only a *save of "let the server decide"* produces… unless the value being
+read is not the value being written. That asymmetry is what sent me to `inspect()` and then to the project folder.
+
+**Fix:** one `configView()` for the AI settings, whose `update` writes to the scope that already supplies the key
+(folder → workspace → user) — what VS Code's own Settings UI does. A project-level pin is updated rather than
+overruled, and a non-global write is logged, because a shadowed write is indistinguishable from a load that did
+nothing.
+
+**Lesson:** read the **effective** value, not the one you wrote. `getConfiguration(section).get(key)` and
+`.inspect(key)` answer different questions — the first says what is in force, the second says who said so — and
+when a write "doesn't stick", the answer is usually a scope above yours.
+
+**Suite:** 3748 passed / 0 failed (was 3738).

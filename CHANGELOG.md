@@ -15,6 +15,30 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.33] - 2026-09-15 · *the setting that was written, and then overruled*
+
+### Fixed
+
+- **Settings are written where the value already lives — this was the real cause of the picker reverting.**
+  `OptimisedCSTest/.vscode/settings.json` contains
+
+  ```json
+  { "avaloniaDesigner.assistant.backend": "external" }
+  ```
+
+  a **workspace** setting — and a workspace value beats a global one. Every `backend: bundled` the panel saved to
+  Global was therefore shadowed: the load really did work, the built-in runtime answered, and the panel — reading
+  the **effective** value — went on saying "let the server decide" the moment it was refreshed. It also explains
+  the shape of the report exactly: the two LM Studio models were fine there (external is what they need) and the two
+  built-in ones could never stick.
+
+  All AI settings now go through one `configView()`, whose `update` writes to the scope that already supplies the
+  key (folder → workspace → user), which is what VS Code's own Settings UI does. A project-level pin is **updated**
+  rather than overruled, and a write to a non-global scope is logged — a shadowed write looks exactly like a load
+  that did nothing.
+
+Suite **3748** passed / 0 failed.
+
 ## [0.9.32] - 2026-09-15 · *the panel that was never told*
 
 ### Fixed
