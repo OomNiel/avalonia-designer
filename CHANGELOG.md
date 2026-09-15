@@ -15,6 +15,22 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.26] - 2026-09-15 · *a load that waits for an answer nobody can give*
+
+### Fixed
+
+- **`lms load` now passes `--yes`.** It never did, while `lms import` always had. The CLI prompts before loading
+  a model that reaches LM Studio's resource guardrails — precisely the models people try when they want more
+  than the small one (the 17.7 GB class on a 28 GB machine) — and the load runs **without a terminal**, so a
+  prompt has nobody to answer it: the child would wait until its 30-minute timeout while the panel showed
+  nothing but "loading…". Pressing **Load Model** *is* the approval, so the flag belongs in every load. It is
+  asserted in the argv tests, and a confirmation prompt that somehow still reaches us is now named in the
+  failure text (`LM Studio asked for confirmation before loading this model …`) instead of being silence.
+- The guardrail explanation points at the way out: `lms load <model> --yes` in a terminal, or a higher limit in
+  LM Studio → Settings → Hardware.
+
+Suite **3715** passed / 0 failed.
+
 ## [0.9.25] - 2026-09-15 · *the model is freed when the session ends, and the panel stops guessing*
 
 ### Added

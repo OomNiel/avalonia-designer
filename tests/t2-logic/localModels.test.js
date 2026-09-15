@@ -146,8 +146,13 @@ module.exports = async (t) => {
 
         const args = buildLoadArgs(list.chat[2], big);
         t.equal(args.join(' '),
-            'load qwen3.8-27b --gpu off --context-length 8192 --ttl 900 --identifier qwen3.8-27b',
+            'load qwen3.8-27b --gpu off --context-length 8192 --yes --ttl 900 --identifier qwen3.8-27b',
             'recommend', 'and the command line is exactly what gets run');
+        // A prompt has nobody to answer it: the child runs without a terminal, so a confirmation would sit
+        // there until the 30-minute timeout while the panel showed only "loading…". Clicking Load Model IS
+        // the approval, and only models near the machine's limits ever reach that prompt — which is how
+        // "some models just do not work" would look (2026-09-15).
+        t.ok(args.includes('--yes'), 'recommend', 'every load auto-approves the CLI\'s prompts');
     }
 
     // ---------- 5) the picker's labels ----------
@@ -169,6 +174,11 @@ module.exports = async (t) => {
         t.ok(/3\.8 GB locked/.test(mlock) && /5\.3 GB/.test(mlock), 'failure', 'with both numbers, so it is checkable');
         const oom = explainLoadFailure('ggml_backend_alloc: failed to allocate 1234 bytes', ROOMY, 17.74);
         t.ok(/Not enough free memory/.test(oom) && /18\.0 GB is free/.test(oom), 'failure', 'an OOM abort says how much is free');
+        // Should be unreachable now that every load passes `--yes`, which is exactly why it is stated: the
+        // alternative was half an hour of silence (see the `--yes` assertion above).
+        const prompt = explainLoadFailure('This model exceeds your resource guardrails. Continue? (y/N)', ROOMY, 17.74);
+        t.ok(/asked for confirmation/.test(prompt) && /--yes/.test(prompt), 'failure',
+            'a confirmation prompt is named as such, with the way out');
         t.equal(explainLoadFailure('all good here', ROOMY), undefined, 'failure',
             'an unrelated log produces no invented explanation');
     }

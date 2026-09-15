@@ -409,7 +409,7 @@ module.exports = async (t) => {
         const never = buildLoadArgs(model, options(0));
         t.equal(never.includes('--ttl'), false, 'ttl',
             '"never unload" omits the flag — `--ttl 0` is rejected by lms ("must be at least 1")');
-        t.equal(never.join(' '), 'load google/gemma-4-e4b --gpu off --context-length 8192 --identifier google/gemma-4-e4b',
+        t.equal(never.join(' '), 'load google/gemma-4-e4b --gpu off --context-length 8192 --yes --identifier google/gemma-4-e4b',
             'ttl', 'and the rest of the command line is untouched');
 
         const facts = { totalRamGb: 28, freeRamGb: 18, cpuCount: 12, lockLimitGb: 3.78 };

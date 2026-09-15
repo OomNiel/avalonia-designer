@@ -243,6 +243,12 @@ export function recommendedLoadOptions(model: LocalModel, facts: SetupFacts): Lo
 /** The exact `lms` argv for those options. Pure, so the command line is asserted rather than assumed. */
 export function buildLoadArgs(model: LocalModel, options: LoadOptions): string[] {
     const args = ['load', model.key, '--gpu', options.gpu, '--context-length', String(options.contextLength)];
+    // `-y` answers any prompt the CLI would raise. Pressing "Load Model" IS the approval, and a prompt here
+    // has no one to answer it: the child process has no terminal, so the load would sit there until the
+    // 30-minute timeout with the panel showing nothing but "loading…". Only models that exceed LM Studio's
+    // resource guardrails (the 17.7 GB class on a 28 GB machine, for one) get that far — which makes this a
+    // "some models simply do not work" bug rather than an obvious one. `lms import` has always passed it.
+    args.push('--yes');
     // `--ttl` must be at least 1: "never unload" is expressed by leaving the flag out entirely, which LM
     // Studio treats as "no timer". Passing 0 was rejected with
     //   error: option '--ttl <seconds>' argument '0' is invalid. Number out of range, must be at least 1
@@ -302,6 +308,16 @@ export function explainLoadFailure(logTail: string, facts: SetupFacts, modelSize
         return (
             `Not enough free memory to load it${modelSizeGb ? ` (about ${modelSizeGb.toFixed(1)} GB)` : ''} — `
             + `${facts.freeRamGb.toFixed(1)} GB is free. Close other models, try a smaller quantization, or pick a smaller model.`
+        );
+    }
+    // A prompt nobody can answer: the load runs without a terminal, so the CLI waits until the timeout. The
+    // extension passes `-y` (the click is the approval), so this branch should be unreachable — it is here so
+    // that the next time it *is* reachable, the panel says why instead of saying nothing for half an hour.
+    if (/guardrail|exceeds|continue\?|\[y\/n\]|\(y\/n\)|are you sure/i.test(log)) {
+        return (
+            'LM Studio asked for confirmation before loading this model (it is close to the machine\'s limits). '
+            + 'Load it from a terminal once with `lms load <model> --yes`, or raise the limit in LM Studio → '
+            + 'Settings → Hardware.'
         );
     }
     return undefined;
