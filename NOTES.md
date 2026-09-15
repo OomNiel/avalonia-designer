@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3721 passed, 0 failed / 0 skipped** (2026-09-15, ~53 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3724 passed, 0 failed / 0 skipped** (2026-09-15, ~42 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2199,3 +2199,30 @@ not work\" is a claim about a system, and the extension is one half of it.
 
 **Suite:** 3721 passed / 0 failed (was 3696; +25 across the three releases: the argv, the prompt, the ownership
 sentence and the whole Vulkan branch).
+
+### §112 — "if the model is not in My Models, it does not work in the extension" (2026-09-15, release 0.9.29)
+
+Asked after the 27B was removed from LM Studio. The answer is an architectural fact that was nowhere on screen,
+and the user's rule is right: **for an LM Studio entry, the extension is a remote control, not the runtime.** It
+runs `lms load <key>` and LM Studio does the loading, so the model has to be a key LM Studio knows — and `lms ls`,
+which the picker is built from, *is* the library that My Models shows. A `.gguf` sitting in some folder has no key.
+
+Two ways a model acquires one:
+
+- download it in LM Studio (or `lms get`), or
+- use the picker's **Scan machine for models…** — on Load, the extension runs `lms import --symbolic-link --yes`
+  (`localModelCore.importModelFile`), which **adds it to My Models** as a link. Without `--symbolic-link` `lms
+  import` *moves* the developer's file, which is why that flag is asserted in the suite.
+
+The other entries do not involve LM Studio at all, and now say so: `bundled:` runs in the extension's own runtime,
+`custom:` is a server the user runs, `any:` loads nothing (so it only works when something is already in memory
+or the server loads just-in-time), and a scanned file is served by the built-in runtime when LM Studio is absent.
+
+**The fix was wording, not mechanism:** `LM Studio · in My Models, ready to load`, `… added to LM Studio first (a
+symbolic link — your file stays where it is)`. Both are asserted, including the LM-Studio-absent variant.
+
+**Also noted:** by then `lms ls` listed three models and `~/.lmstudio/models` held only gemma and Qwen3.5-9B — the
+27B had been removed, which is consistent with it failing inside LM Studio itself (Vulkan engine, 16.5 GiB of a
+28 GiB machine, and §111 above).
+
+**Suite:** 3724 passed / 0 failed (was 3721).

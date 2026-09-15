@@ -15,6 +15,24 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.29] - 2026-09-15 · *where each entry comes from, and what Load does with it*
+
+### Changed
+
+- **Every picker entry now says what it is and what pressing Load will do with it**, because the question
+  *"why do models that are not in My Models not work in the extension?"* had no answer on screen. This is not a
+  limitation of the extension but of the arrangement: for an LM Studio entry the **extension is a remote
+  control** — it runs `lms load <key>` and LM Studio does the loading, so the model must be a key LM Studio
+  knows. Entries now read:
+  - `LM Studio · in My Models, ready to load` — and `lms ls`, which the picker is built from, *is* the library
+    that My Models shows;
+  - `Found on this machine · <folder> · added to LM Studio first (a symbolic link — your file stays where it
+    is)` for a file the scan found outside LM Studio, which is the path that makes such a model loadable;
+  - `… · served by the extension's own runtime (no LM Studio needed)` for the same file when LM Studio is not
+    installed at all.
+
+Suite **3724** passed / 0 failed.
+
 ## [0.9.28] - 2026-09-15 · *the GPU backend died, and LM Studio said "engine protocol runtime"*
 
 ### Fixed

@@ -89,7 +89,15 @@ module.exports = async (t) => {
         t.equal(lms.map((c) => c.value).includes('lms:text-embedding-nomic-embed-text-v1.5'), false, 'list',
             'the embedding model is not — it cannot answer a chat request');
         t.ok(/● loaded/.test(lms[1].label), 'list', 'the loaded model is marked, so the list shows what is in memory');
-        t.ok(/on disk, ready to load/.test(lms[0].detail), 'list', 'and the others say they are ready');
+        t.ok(/in My Models, ready to load/.test(lms[0].detail), 'list',
+            'an LM Studio entry says it is a My Models entry: LM Studio is the runtime, so it can only load a key it has');
+        // A file found on disk is *not* in LM Studio's library, and the step that fixes that was invisible in
+        // the panel — which is why a model outside My Models looked simply unusable (asked 2026-09-15).
+        const foundEntry = choices.find((c) => c.kind === 'file');
+        t.ok(/added to LM Studio first \(a symbolic link/.test(foundEntry.detail), 'list',
+            'a scanned file says it will be added to LM Studio first, by a link');
+        t.ok(/your file stays where it is/.test(foundEntry.detail), 'list',
+            'and that the original file is not moved (lms import without a flag MOVES it)');
 
         t.equal(choices.filter((c) => c.kind === 'bundled').length, 2, 'list',
             'both downloadable models are offered');
@@ -123,6 +131,13 @@ module.exports = async (t) => {
         const found = choices.find((c) => c.kind === 'file');
         t.ok(found && /~\/Downloads/.test(found.detail), 'list',
             'a file found on disk is offered with the folder it came from');
+        // Without LM Studio the same entry is served by the extension's own runtime instead — the detail says
+        // which of the two will happen, because that is the difference between a model that works and one that
+        // looks broken.
+        const noLms = buildChoices({ ...discovery(), cli: undefined, api: false }, files, 'http://127.0.0.1:1234/v1')
+            .find((c) => c.kind === 'file');
+        t.ok(/served by the extension's own runtime \(no LM Studio needed\)/.test(noLms.detail), 'list',
+            'with LM Studio absent the file is served by the built-in runtime, and the detail says so');
         t.ok(/Llama-3-8B/.test(found.label) && /4\.9 GB/.test(found.label), 'list', 'and its size');
 
         t.equal(choices[choices.length - 1].kind, 'custom', 'list',

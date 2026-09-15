@@ -110,7 +110,10 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
         choices.push({
             value: choiceValue('lms', model.key),
             label: `${modelLabel(model)}${loaded ? '   ● loaded' : ''}`,
-            detail: `LM Studio · ${loaded ? 'in memory now' : 'on disk, ready to load'}`,
+            // These *are* LM Studio's library entries (`lms ls` is what My Models shows), and saying so is the
+            // answer to "why does a model have to be in My Models?": the extension is only a remote control
+            // here — LM Studio is the runtime, and it can only load what it has an entry for (2026-09-15).
+            detail: `LM Studio · ${loaded ? 'in memory now' : 'in My Models, ready to load'}`,
             kind: 'lmstudio',
             live: loaded
         });
@@ -147,7 +150,11 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
         choices.push({
             value: choiceValue('file', file.file),
             label: `${file.name}  ·  ${file.sizeGb.toFixed(1)} GB`,
-            detail: `Found on this machine · ${file.folder}`,
+            // What pressing Load will actually do with a file that is *not* in LM Studio yet — the step that
+            // was invisible, and the reason a model outside My Models looked unusable (2026-09-15).
+            detail: found.cli
+                ? `Found on this machine · ${file.folder} · added to LM Studio first (a symbolic link — your file stays where it is)`
+                : `Found on this machine · ${file.folder} · served by the extension's own runtime (no LM Studio needed)`,
             kind: 'file'
         });
     }
