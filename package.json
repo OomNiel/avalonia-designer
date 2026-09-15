@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.14",
+    "version": "0.9.15",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -339,14 +339,14 @@
                     "default": 60,
                     "minimum": 5,
                     "maximum": 600,
-                    "description": "How long to wait without any output before giving up — the clock restarts with every token, so a slow CPU is fine and a stalled server is caught. Inference in system RAM is slow: 10 s is optimistic for a 3B model, 30 s is normal on an older CPU."
+                    "description": "How long to wait without any output before giving up — the clock restarts with every token, so a slow CPU is fine and a stalled server is caught. Inference in system RAM is slow: 10 s is optimistic for a 3B model, 30 s is normal on an older CPU. A model that thinks before answering is busy, not stalled, so it is not cut off either."
                 },
                 "avaloniaDesigner.assistant.maxTokens": {
                     "type": "number",
-                    "default": 900,
+                    "default": 4096,
                     "minimum": 64,
                     "maximum": 8192,
-                    "description": "Upper bound on the generated code — 900 tokens is roughly a 60-line method."
+                    "description": "Upper bound on the generated code. 4096 leaves room for a model that thinks before it answers (a reasoning model can spend 800+ tokens on a one-line question); 900 is fine for a coder model that answers directly."
                 },
                 "avaloniaDesigner.assistant.temperature": {
                     "type": "number",

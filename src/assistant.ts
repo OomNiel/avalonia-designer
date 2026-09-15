@@ -100,7 +100,7 @@ export function normalizeAssistantConfig(raw: RawAssistantSettings): AssistantCo
         modelPath: typeof raw.modelPath === 'string' ? raw.modelPath.trim() : '',
         threads: num(raw.threads, 0, 0, 32),
         timeoutSeconds: num(raw.timeoutSeconds, 60, 5, 600),
-        maxTokens: num(raw.maxTokens, 900, 64, 8192),
+        maxTokens: num(raw.maxTokens, 4096, 64, 8192),
         temperature: num(raw.temperature, 0.2, 0, 1)
     };
 }
@@ -314,52 +314,123 @@ export async function probeServer(
 }
 
 /**
- * Extracts the answer text out of one SSE line. Streaming matters for the 10 s budget: the developer
- * sees tokens arrive instead of a frozen notification. Pure, so the parser is tested directly.
+ * One streamed chunk, as far as this extension cares about it. Pure.
+ *
+ * `reasoning` exists because thinking models put their chain of thought in its own field. Measured
+ * 2026-09-15 against LM Studio with `qwen/qwen3.5-9b`: a one-method request spent **837 reasoning
+ * tokens** (3 186 characters) before writing a 71-character answer, and with a 900-token budget it
+ * produced `finish_reason: length` and **nothing else** — which is what "0 characters" was. Reading the
+ * field is what makes that explicable instead of silent.
  */
-export function parseSseDelta(line: string): string | undefined {
+export interface SseChunk {
+    /** The answer text. */
+    content?: string;
+    /** The model's thinking, when it thinks. Never used as code — always kept as evidence. */
+    reasoning?: string;
+    /** `stop` when it finished on its own, `length` when the token budget ran out. */
+    finishReason?: string;
+    /** Token counts, when the server reports them. */
+    usage?: { completionTokens?: number; reasoningTokens?: number };
+}
+
+/**
+ * Parses one SSE line into everything it carries. Streaming matters: the developer sees progress
+ * instead of a frozen notification, and the inactivity watchdog is re-armed per chunk. Pure, so the
+ * parser is tested directly against real captured chunks.
+ */
+export function parseSseChunk(line: string): SseChunk | undefined {
     const trimmed = line.trim();
     if (!trimmed.startsWith('data:')) return undefined;
     const payload = trimmed.slice(5).trim();
     if (!payload || payload === '[DONE]') return undefined;
     try {
-        const obj = JSON.parse(payload) as { choices?: { delta?: { content?: unknown } }[] };
-        const text = obj.choices?.[0]?.delta?.content;
-        return typeof text === 'string' ? text : undefined;
+        const obj = JSON.parse(payload) as {
+            choices?: { delta?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown }; finish_reason?: unknown }[];
+            usage?: { completion_tokens?: unknown; completion_tokens_details?: { reasoning_tokens?: unknown } };
+        };
+        const choice = obj.choices?.[0];
+        const delta = choice?.delta ?? {};
+        const chunk: SseChunk = {};
+        if (typeof delta.content === 'string' && delta.content) chunk.content = delta.content;
+        // LM Studio uses `reasoning_content`, llama.cpp/vLLM also emit `reasoning`; either counts.
+        const reasoning = typeof delta.reasoning_content === 'string' ? delta.reasoning_content
+            : typeof delta.reasoning === 'string' ? delta.reasoning
+                : '';
+        if (reasoning) chunk.reasoning = reasoning;
+        if (typeof choice?.finish_reason === 'string') chunk.finishReason = choice.finish_reason;
+        if (obj.usage) {
+            chunk.usage = {
+                completionTokens: typeof obj.usage.completion_tokens === 'number' ? obj.usage.completion_tokens : undefined,
+                reasoningTokens: typeof obj.usage.completion_tokens_details?.reasoning_tokens === 'number'
+                    ? obj.usage.completion_tokens_details.reasoning_tokens
+                    : undefined
+            };
+        }
+        return chunk.content || chunk.reasoning || chunk.finishReason || chunk.usage ? chunk : undefined;
     } catch {
         return undefined;
     }
 }
 
+/** The answer text of one SSE line — the narrow view of {@link parseSseChunk}. */
+export function parseSseDelta(line: string): string | undefined {
+    return parseSseChunk(line)?.content;
+}
+
+/** The text and the thinking out of a non-streaming `/chat/completions` body. Pure. */
+export function parseChatCompletionFull(body: unknown): { text: string; reasoning: string } {
+    const obj = body as {
+        choices?: { message?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown }; text?: unknown }[];
+    };
+    const first = obj?.choices?.[0];
+    const reasoning = typeof first?.message?.reasoning_content === 'string' ? first.message.reasoning_content
+        : typeof first?.message?.reasoning === 'string' ? first.message.reasoning
+            : '';
+    if (typeof first?.message?.content === 'string') return { text: first.message.content, reasoning };
+    if (typeof first?.text === 'string') return { text: first.text, reasoning };
+    return { text: '', reasoning };
+}
+
 /** Pulls the full text out of a non-streaming `/chat/completions` body. Pure. */
 export function parseChatCompletion(body: unknown): string {
-    const obj = body as { choices?: { message?: { content?: unknown }; text?: unknown }[] };
-    const first = obj?.choices?.[0];
-    if (typeof first?.message?.content === 'string') return first.message.content;
-    if (typeof first?.text === 'string') return first.text;
-    return '';
+    return parseChatCompletionFull(body).text;
 }
 
 export interface ChatOptions {
     onToken?: (text: string) => void;
+    /** Progress only: the model is still thinking (reasoning models). `chars` is the running total. */
+    onReasoning?: (chars: number) => void;
     signal?: AbortSignal;
     fetchImpl?: FetchLike;
 }
 
+/** What a request produced — including the evidence needed to explain an empty answer. */
+export interface ChatOutcome {
+    text: string;
+    /** The model's thinking, when it thinks. Never code, but never thrown away either: it is the only
+     * explanation for an answer that never came. */
+    reasoning: string;
+    /** `stop` when it finished on its own, `length` when the token budget ran out. */
+    finishReason?: string;
+    completionTokens?: number;
+    reasoningTokens?: number;
+}
+
 /**
- * Sends a chat request and returns the answer text. Streams when the server supports it (every local
- * runtime does) and falls back to a single JSON read when it does not.
+ * Sends a chat request and returns the answer **and** the thinking behind it. Streams when the server
+ * supports it (every local runtime does) and falls back to a single JSON read when it does not.
  *
  * `timeoutSeconds` is an **inactivity** budget, not a total one: the watchdog is re-armed every time
  * data arrives, so a 3B model on a CPU taking two minutes for a long method is fine while a server that
  * has stopped talking is caught in seconds. A total budget would have killed exactly the slow-but-busy
- * case this feature exists for.
+ * case this feature exists for — and a thinking model is busy while it thinks, so this is also what lets
+ * a 27B reason for a minute without being killed.
  */
-export async function chat(
+export async function chatDetailed(
     cfg: AssistantConfig,
     messages: ChatMessage[],
     opts: ChatOptions = {}
-): Promise<string> {
+): Promise<ChatOutcome> {
     const doFetch = opts.fetchImpl ?? defaultFetch();
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -370,6 +441,20 @@ export async function chat(
     armWatchdog();
     const onAbort = () => controller.abort();
     opts.signal?.addEventListener('abort', onAbort);
+    const apply = (chunk: SseChunk | undefined, into: ChatOutcome) => {
+        if (!chunk) return;
+        if (chunk.content) {
+            into.text += chunk.content;
+            opts.onToken?.(chunk.content);
+        }
+        if (chunk.reasoning) {
+            into.reasoning += chunk.reasoning;
+            opts.onReasoning?.(into.reasoning.length);
+        }
+        if (chunk.finishReason) into.finishReason = chunk.finishReason;
+        if (chunk.usage?.completionTokens !== undefined) into.completionTokens = chunk.usage.completionTokens;
+        if (chunk.usage?.reasoningTokens !== undefined) into.reasoningTokens = chunk.usage.reasoningTokens;
+    };
     try {
         const res = await doFetch(`${cfg.endpoint}/chat/completions`, {
             method: 'POST',
@@ -380,7 +465,11 @@ export async function chat(
                 messages,
                 temperature: cfg.temperature,
                 max_tokens: cfg.maxTokens,
-                stream: true
+                stream: true,
+                // Ask for the token counts in the closing chunk: the reasoning count is what turns "0
+                // characters" into "837 of its 900 tokens went on thinking". A server that does not know
+                // the field ignores it.
+                stream_options: { include_usage: true }
             })
         });
         if (!res.ok) {
@@ -390,13 +479,17 @@ export async function chat(
 
         // The response is an SSE stream; read it chunk by chunk and hand every delta to the caller.
         const body = res.body as { getReader?: () => { read(): Promise<{ done: boolean; value?: Uint8Array }> } } | undefined;
-        if (typeof body?.getReader !== 'function') return parseChatCompletion(await res.json());
+        if (typeof body?.getReader !== 'function') {
+            const full = parseChatCompletionFull(await res.json());
+            if (full.text) opts.onToken?.(full.text);
+            return { text: full.text, reasoning: full.reasoning };
+        }
 
         const reader = body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
         let raw = '';
-        let text = '';
+        const outcome: ChatOutcome = { text: '', reasoning: '' };
         for (; ;) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -406,36 +499,39 @@ export async function chat(
             buffer += chunk;
             const lines = buffer.split('\n');
             buffer = lines.pop() ?? ''; // the last line may be half-received
-            for (const line of lines) {
-                const delta = parseSseDelta(line);
-                if (delta) {
-                    text += delta;
-                    opts.onToken?.(delta);
-                }
-            }
+            for (const line of lines) apply(parseSseChunk(line), outcome);
         }
         buffer += decoder.decode();
-        const tail = parseSseDelta(buffer);
-        if (tail) {
-            text += tail;
-            opts.onToken?.(tail);
-        }
+        apply(parseSseChunk(buffer), outcome);
         // A server that ignores `stream: true` sends one plain JSON body: no `data:` lines at all, so
-        // the accumulated text is empty and the answer is in the raw body.
-        if (!text) {
+        // nothing was accumulated and the answer is in the raw body.
+        if (!outcome.text && !outcome.reasoning) {
             try {
-                return parseChatCompletion(JSON.parse(raw));
+                const full = parseChatCompletionFull(JSON.parse(raw));
+                if (full.text || full.reasoning) {
+                    if (full.text) opts.onToken?.(full.text);
+                    return { ...outcome, text: full.text, reasoning: full.reasoning };
+                }
             } catch {
                 /* not JSON either — fall through with whatever arrived */
             }
         }
-        return text;
+        return outcome;
     } catch (err) {
         throw new Error(describeError(err));
     } finally {
         if (timer) clearTimeout(timer);
         opts.signal?.removeEventListener('abort', onAbort);
     }
+}
+
+/** The answer text on its own, for callers that do not care how it was reached. */
+export async function chat(
+    cfg: AssistantConfig,
+    messages: ChatMessage[],
+    opts: ChatOptions = {}
+): Promise<string> {
+    return (await chatDetailed(cfg, messages, opts)).text;
 }
 
 // ---------------- prompts and parsing ----------------
@@ -614,9 +710,33 @@ export function looksLikeCode(text: string): boolean {
  * wording is asserted: the first real "returned nothing usable" arrived with no evidence at all, which
  * is exactly what made it impossible to act on.
  */
-export function describeEmptyAnswer(answer: string): string {
+/** Why an answer came back empty — the numbers that make it actionable. */
+export interface EmptyAnswerDiagnostics {
+    /** Characters of thinking the model produced before it stopped. */
+    reasoningChars?: number;
+    reasoningTokens?: number;
+    /** `length` means the budget ran out; that is the difference between "too small" and "rambled". */
+    finishReason?: string;
+}
+
+export function describeEmptyAnswer(answer: string, diag: EmptyAnswerDiagnostics = {}): string {
     const text = String(answer ?? '');
-    if (!text.trim()) return 'The model returned an empty answer.';
+    if (!text.trim()) {
+        const thinking = diag.reasoningChars ?? 0;
+        if (thinking > 0) {
+            const tokens = diag.reasoningTokens ? ` — ${diag.reasoningTokens} tokens` : '';
+            const spentAll = diag.finishReason === 'length';
+            return `This model thinks before it answers: it wrote ${thinking} characters of reasoning${tokens} `
+                + `${spentAll ? 'and then ran out of budget before writing any code' : 'but no code'}. `
+                + `Raise "avaloniaDesigner.assistant.maxTokens" (4096 is enough for a thinking model), `
+                + `or choose a coder model that answers directly.`;
+        }
+        if (diag.finishReason === 'length') {
+            return 'The answer budget ran out before the model wrote anything — raise '
+                + '"avaloniaDesigner.assistant.maxTokens".';
+        }
+        return 'The model returned an empty answer.';
+    }
     if (text.includes(CODE_FENCE)) {
         return 'The code block in the answer was never closed — it was cut off before it was complete.';
     }

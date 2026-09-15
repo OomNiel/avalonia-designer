@@ -885,6 +885,7 @@ LM Studio, Ollama and `llama-server` all expose. Install one, load a small code 
 | `avaloniaDesigner.assistant.backend` | `external` — enables the feature |
 | `avaloniaDesigner.assistant.endpoint` | the address of your server: `http://127.0.0.1:1234/v1` (**the default**, LM Studio) · `http://127.0.0.1:11434/v1` (Ollama) · `http://127.0.0.1:8080/v1` (llama.cpp). An empty value falls back to the LM Studio address |
 | `avaloniaDesigner.assistant.model` | the model id, e.g. `qwen2.5-coder-7b`. Empty lets the server decide — Ollama needs a name here |
+| `avaloniaDesigner.assistant.maxTokens` | how long the answer may be (default 4096). See *models that think* below |
 | `avaloniaDesigner.assistant.timeoutSeconds` | how long to wait (default 60). Inference in RAM is slow: 10 s is optimistic, 30 s is normal on an older CPU |
 
 **AI: Status and Hardware Check** (Command Palette) shows what the feature sees right now: the endpoint,
@@ -909,6 +910,15 @@ long as it takes, and a notification that vanishes after a few seconds is the wr
 pane of the diff is a read-only preview, so nothing ever asks you to save it. The extension then offers
 **Build to verify**, which saves your unsaved files first (that is what a build compiles) and runs your
 project's `build` task, reporting the exit code — the check that actually matters for generated code.
+
+**Models that think before they answer.** Some models (Qwen3.5, DeepSeek-R1 and friends) first write a long
+chain of thought and only then write the code. That is fine — the extension understands both parts: while it
+thinks, the progress message says *"the model is thinking… (N characters so far)"*, and the thinking is kept
+as evidence rather than shown to you as code. One thing to know: thinking **costs from the same budget as the
+answer**, and a thinking model can burn several hundred tokens on a trivial question — which is why
+`maxTokens` defaults to 4096. If you ever see *"the model returned nothing usable"*, the message now tells
+you exactly what happened, with the numbers. **AI: Choose a Local Model…** handles this for you: it measures
+the model when it sets it up and raises the budget itself if the model thinks.
 
 Expect it to be **slow and imperfect**. On a CPU-only machine a 3B model answers a short method in
 5–15 s, a 7B takes two to three times longer, and both are noticeably better at **C#** than at VB.NET.

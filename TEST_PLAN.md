@@ -276,6 +276,12 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.15` (2026-09-15)** — models that think before they answer: `reasoning_content` is read,
+  
+  shown as progress, logged and attached to the raw-answer tab, an empty answer is explained with its
+  token counts, the default `maxTokens` rises to 4096, and the model wizard raises it itself when it
+  measures thinking. New `tests/t2-logic/assistantThinking.test.js` (48 assertions) replays the **real
+  captured stream** from `qwen/qwen3.5-9b`. Suite **3471**.
 - **Release `0.9.14` (2026-09-15)** — setting up a local model becomes one command (`AI: Choose a Local
   Model…`: list LM Studio's models, pre-flight the load, load with recommended values, wire the settings,
   prove it answers). New `tests/t2-logic/localModels.test.js` (65 assertions) pins every parser against

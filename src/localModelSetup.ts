@@ -23,7 +23,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { chat, normalizeAssistantConfig, readHardwareFacts } from './assistant';
+import { chatDetailed, describeEmptyAnswer, normalizeAssistantConfig, readHardwareFacts } from './assistant';
 import { log } from './logger';
 import { setupBundledModel } from './modelRuntime';
 import {
@@ -271,11 +271,16 @@ async function setUpLmStudioModel(
     log(`AI assist wired to ${result.endpoint} with model "${options.identifier}"`);
 
     // Prove it before the user touches code.
-    const ok = await proveItWorks();
+    const proof = await proveItWorks();
+    const raised = proof.raisedBudget
+        ? ` It thinks before it answers, so the answer budget was raised to ${proof.raisedBudget}`
+            + `${proof.thinkingTokens ? ` (it spent ${proof.thinkingTokens} tokens thinking about a one-word reply)` : ''}.`
+        : '';
     const pick = await vscode.window.showInformationMessage(
-        ok
-            ? `Ready — ${model.label} is answering on ${result.endpoint}. Try "AI: Implement in Function…" in a code-behind file.`
-            : `The model is loaded on ${result.endpoint}, but the test request did not come back. Try "AI: Status and Hardware Check".`,
+        proof.ok
+            ? `Ready — ${model.label} is answering on ${result.endpoint}.${raised} Try "AI: Implement in Function…" in a code-behind file.`
+            : `The model is loaded on ${result.endpoint}, but the test request came back empty. ${proof.why ?? ''}`
+                + ' Try "AI: Status and Hardware Check".',
         'Show status',
         'OK'
     );
@@ -355,22 +360,80 @@ async function loadModel(
     return { endpoint };
 }
 
-/** A one-line round trip, so "ready" means ready rather than "the CLI exited 0". */
-async function proveItWorks(): Promise<boolean> {
+/**
+ * A one-line round trip, so "ready" means ready rather than "the CLI exited 0".
+ *
+ * It also **measures whether the model thinks**, because that is not visible from the model list and it
+ * is the difference between working and silence: measured 2026-09-15, `qwen/qwen3.5-9b` spent 837 reasoning
+ * tokens before answering a one-line question, so with a 900-token budget it wrote `content: ""` and the
+ * extension reported "0 characters". When thinking is detected the answer budget is raised here, because
+ * that is precisely the setting a novice would never know to change.
+ */
+interface ProofResult {
+    ok: boolean;
+    /** Characters of thinking the test request produced (0 for a model that answers directly). */
+    thinkingChars: number;
+    thinkingTokens?: number;
+    /** Set when the answer budget had to be raised, and to what. */
+    raisedBudget?: number;
+    /** Why the test came back empty, when it did. */
+    why?: string;
+}
+
+async function proveItWorks(): Promise<ProofResult> {
     const cfg = vscode.workspace.getConfiguration(SETTINGS);
-    const live = normalizeAssistantConfig({
-        backend: 'external',
-        endpoint: cfg.get<string>('endpoint', ''),
-        model: cfg.get<string>('model', ''),
-        timeoutSeconds: 180
-    });
+    const start = cfg.get<number>('maxTokens', 4096);
+    const ask = async (budget: number) => {
+        const live = normalizeAssistantConfig({
+            backend: 'external',
+            endpoint: cfg.get<string>('endpoint', ''),
+            model: cfg.get<string>('model', ''),
+            maxTokens: budget,
+            timeoutSeconds: 180
+        });
+        return chatDetailed(live, [{ role: 'user', content: 'Reply with the single word: ready' }], {});
+    };
+
     try {
-        const answer = await chat(live, [{ role: 'user', content: 'Reply with the single word: ready' }], {});
-        log(`Test request answered: ${answer.trim().slice(0, 60)}`);
-        return answer.trim().length > 0;
+        let outcome = await ask(start);
+        // A thinking model needs room to think *and* to answer. Retry once at the working floor, then at
+        // the maximum — only ever when an empty answer is explained by thinking. Never guess otherwise.
+        let raised: number | undefined;
+        for (const budget of [4096, 8192]) {
+            if (outcome.text.trim() || !outcome.reasoning || budget <= start || budget <= (raised ?? 0)) break;
+            log(`The test request produced no answer but ${outcome.reasoning.length} characters of thinking `
+                + `— retrying with maxTokens = ${budget}.`);
+            raised = budget;
+            outcome = await ask(budget);
+        }
+        const thinkingChars = outcome.reasoning.length;
+        log(`Test request: ${outcome.text.trim().slice(0, 60) || '(no answer)'}`
+            + `${thinkingChars ? ` after ${thinkingChars} characters of thinking` : ''}`
+            + `${outcome.reasoningTokens ? ` (${outcome.reasoningTokens} thinking tokens)` : ''}`
+            + `, finish reason "${outcome.finishReason ?? 'unknown'}".`);
+
+        if (!outcome.text.trim()) {
+            return {
+                ok: false,
+                thinkingChars,
+                thinkingTokens: outcome.reasoningTokens,
+                raisedBudget: raised,
+                why: describeEmptyAnswer(outcome.text, {
+                    reasoningChars: thinkingChars,
+                    reasoningTokens: outcome.reasoningTokens,
+                    finishReason: outcome.finishReason
+                })
+            };
+        }
+        // It answered — but if it thinks, keep the budget at the floor so real methods are not cut off.
+        if (thinkingChars > 0 && start < 4096) {
+            await cfg.update('maxTokens', 4096, vscode.ConfigurationTarget.Global);
+            raised = 4096;
+        }
+        return { ok: true, thinkingChars, thinkingTokens: outcome.reasoningTokens, raisedBudget: raised };
     } catch (err) {
         log(`Test request failed: ${err instanceof Error ? err.message : String(err)}`);
-        return false;
+        return { ok: false, thinkingChars: 0, why: err instanceof Error ? err.message : String(err) };
     }
 }
 

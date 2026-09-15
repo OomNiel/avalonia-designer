@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3423 passed, 0 failed / 0 skipped** (2026-09-15, ~42 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3471 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1711,3 +1711,36 @@ installed. `src/localModelSetup.ts` is the thin VS Code half (quick picks, progr
 **Safety properties worth not regressing:** pre-flight before load; never guess the port; report *why* a load
 failed (translated) rather than showing a log; prove the model answers before declaring success; leave the
 `backend`/`endpoint`/`model` settings written to the user's global settings so the next session just works.
+
+## 12. §101 — thinking models, and the "0 characters" bug (2026-09-15, release 0.9.15)
+
+**Symptom:** the first run with `qwen/qwen3.5-9b` produced a raw-answer tab reading
+`# The model's answer, exactly as it arrived  …  0 characters`.
+
+**Cause, measured rather than guessed:** that model is a *reasoning* model. It puts its chain of thought in
+`delta.reasoning_content` and only then streams `delta.content`; the extension read `content` alone.
+
+| `max_tokens` | `finish_reason` | reasoning tokens | content | reasoning |
+|---|---|---|---|---|
+| 120 | `length` | 120 | **""** | 385 chars |
+| 200 | `length` | 200 | **""** | 811 chars |
+| 1500 | `stop` | 837 | 71 chars | 3 186 chars |
+
+It *does* answer — after ~840 tokens of thinking — so the old default budget (**900**) was smaller than the
+model's thinking, which is why nothing ever arrived. Reproduce any of it without LM Studio's UI:
+`curl :1234/v1/chat/completions` with `"stream":false` and read `usage.completion_tokens_details`.
+
+**Two switches that do NOT work for this model** (both tried, both ignored by LM Studio):
+`chat_template_kwargs: {enable_thinking: false}`, and the Qwen3 `/no_think` convention in the user message.
+Do not reach for either as a fix — raise the budget instead.
+
+**What changed:** `parseSseChunk` (+ `parseSseDelta` kept as the narrow view) and `chatDetailed` return
+`{text, reasoning, finishReason, completionTokens, reasoningTokens}`; both `reasoning_content` and
+`reasoning` (llama.cpp/vLLM) are accepted; `stream_options: {include_usage: true}` (LM Studio honours it —
+verified) makes the reasoning token count knowable; the default `maxTokens` is 4096 (manifest + code);
+`describeEmptyAnswer(answer, diag)` names the thinking and the setting to change; the progress notification
+reports thinking; the raw-answer tab appends the thinking. The wizard's `proveItWorks()` **measures** thinking
+and raises `maxTokens` itself, because that is the setting a novice would never know about.
+
+**Lesson for this repo:** when an answer is empty, capture *and measure* the evidence — token counts, finish
+reason, and the reasoning text. A UI that says "0 characters" while discarding the rest is not a diagnostic.

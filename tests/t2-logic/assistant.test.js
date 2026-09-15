@@ -80,7 +80,9 @@ module.exports = async (t) => {
         t.equal(clamped.temperature, 1, 'config', 'and the temperature');
         const junk = normalizeAssistantConfig({ timeoutSeconds: 'abc', maxTokens: null, temperature: '0.7' });
         t.equal(junk.timeoutSeconds, 60, 'config', 'junk keeps the default');
-        t.equal(junk.maxTokens, 900, 'config', 'ditto');
+        t.equal(junk.maxTokens, 4096, 'config',
+            'ditto — and 4096 is deliberate: a thinking model spends ~840 tokens thinking about a one-line '
+            + 'question before it writes a character (measured 2026-09-15), so 900 quietly produced empty answers');
         t.equal(junk.temperature, 0.7, 'config', 'but a numeric string is accepted');
 
         // The pure core must stay free of `vscode`, or the whole test story above collapses.

@@ -15,6 +15,39 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.15] - 2026-09-15 · *models that think before they answer*
+
+### Fixed
+
+- **A thinking model no longer looks like a broken one.** Reasoning models (Qwen3.5, DeepSeek-R1, …) put
+  their chain of thought in `reasoning_content` and only then write the answer. The extension read
+  `content` alone, so when the thinking used up the token budget it showed **nothing**: the raw-answer tab
+  said "0 characters", which explains nothing to anyone. Measured here with `qwen/qwen3.5-9b`: **837
+  reasoning tokens** (3 186 characters) were spent before a 71-character answer, and with the old
+  900-token budget the answer was `finish_reason: length` with empty content.
+- The thinking is now read (`reasoning_content`, or `reasoning` as llama.cpp and vLLM spell it), shown as
+  *"the model is thinking… (N characters so far)"* while it works, logged, and included in the
+  raw-answer tab — so an empty answer always arrives with its explanation.
+- An empty answer is explained with the numbers instead of a shrug: *"it wrote 3 186 characters of
+  reasoning — 837 tokens — and then ran out of budget before writing any code"*, plus the setting to
+  change. `finish_reason` is reported too, which separates "budget too small" from "rambled".
+
+### Changed
+
+- **The default `avaloniaDesigner.assistant.maxTokens` is 4096, not 900.** 900 was less than this model's
+  thinking; nothing else changed, and a model that answers directly still stops at its own end-of-turn
+  marker. The inactivity watchdog (not a total budget) means the larger ceiling costs nothing.
+- The request now asks for token usage (`stream_options.include_usage`), which is what makes "837 thinking
+  tokens" knowable rather than guessed.
+- **AI: Choose a Local Model…** measures this during its test request: if a model thinks, it raises the
+  answer budget to the working value in your settings itself and says so — "It thinks before it answers,
+  so the answer budget was raised to 4096 (it spent 837 tokens thinking about a one-word reply)". Choosing
+  a local model should not require knowing any of this.
+
+### Tests
+
+- New `tests/t2-logic/assistantThinking.test.js` (48 assertions), driven by the **captured stream** from
+  the real model (120-token and 1500-token runs, both replayed). Suite **3471 passed / 0 failed**.
 ## [0.9.14] - 2026-09-15 · *setting up a local model is now one command*
 
 ### Added

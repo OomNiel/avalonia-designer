@@ -18,6 +18,7 @@ import {
     buildFixPrompt,
     buildImplementPrompt,
     chat,
+    chatDetailed,
     describeEmptyAnswer,
     describeModel,
     extractCode,
@@ -409,14 +410,25 @@ export async function discardProposal(): Promise<void> {
 }
 
 /** Opens what the model actually said, in a read-only tab — the evidence, not a summary of it. */
-async function showRawAnswer(answer: string, span: MethodSpan, cfg: AssistantConfig): Promise<void> {
+async function showRawAnswer(
+    answer: string,
+    span: MethodSpan,
+    cfg: AssistantConfig,
+    thinking = ''
+): Promise<void> {
     const uri = vscode.Uri.from({ scheme: PROPOSAL_SCHEME, path: `/${++proposalSeq}/raw-answer.txt` });
+    // The thinking is included whenever there is any: with a reasoning model it is often the *only*
+    // thing that arrived, and "0 characters" with nothing else on screen is not evidence of anything.
     const header = [
         `# The model's answer, exactly as it arrived`,
-        `# method: ${span.name}()   model: ${cfg.model || '(the bundled model)'}   ${answer.length} characters`,
+        `# method: ${span.name}()   model: ${cfg.model || '(the bundled model)'}   ${answer.length} characters`
+        + (thinking ? `   + ${thinking.length} characters of thinking (below, never used as code)` : ''),
         ''
     ].join('\n');
-    proposalContent.put(uri, header + answer);
+    const body = thinking
+        ? `${answer}\n\n# ---- the model's thinking, in full (it is not part of the answer) ----\n\n${thinking}`
+        : answer;
+    proposalContent.put(uri, header + body);
     const document = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(document, { preview: false });
 }
@@ -434,21 +446,37 @@ async function proposeMethod(
 ): Promise<string | undefined> {
     let chunks = 0;
     let answer = '';
+    let thinking = '';
+    let finishReason: string | undefined;
+    let reasoningTokens: number | undefined;
     try {
-        answer = await vscode.window.withProgress(
+        const outcome = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: what, cancellable: true },
             async (progress, token) => {
                 const controller = new AbortController();
                 token.onCancellationRequested(() => controller.abort());
-                return chat(cfg, messages, {
+                return chatDetailed(cfg, messages, {
                     signal: controller.signal,
                     onToken: () => {
                         chunks += 1;
                         if (chunks % 12 === 0) progress.report({ message: `${chunks} chunks received…` });
-                    }
+                    },
+                    // A thinking model can be silent for a long time in `content` terms. Saying so is the
+                    // difference between "it is working" and "it is stuck" (2026-09-15).
+                    onReasoning: (chars) =>
+                        progress.report({ message: `the model is thinking… (${chars} characters so far)` })
                 });
             }
         );
+        answer = outcome.text;
+        thinking = outcome.reasoning;
+        finishReason = outcome.finishReason;
+        reasoningTokens = outcome.reasoningTokens;
+        if (thinking) {
+            log(`The model wrote ${thinking.length} characters of reasoning before its answer`
+                + `${reasoningTokens ? ` (${reasoningTokens} thinking tokens)` : ''}`
+                + `, finish reason "${finishReason ?? 'unknown'}".`);
+        }
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const pick = await vscode.window.showErrorMessage(`AI assist failed: ${message}`, 'Show status', 'Settings');
@@ -462,14 +490,20 @@ async function proposeMethod(
         // Never swallow the evidence again: the raw answer goes to the output channel and can be opened
         // as a read-only tab. The first real failure (2026-09-14) was unactionable for exactly this
         // reason — the message said "nothing usable" and the answer itself was already gone.
-        const why = describeEmptyAnswer(answer);
-        log(`The AI answer could not be used. ${why}\n--- raw answer (${answer.length} characters) ---\n${answer}\n--- end ---`);
+        const why = describeEmptyAnswer(answer, {
+            reasoningChars: thinking.length,
+            reasoningTokens,
+            finishReason
+        });
+        log(`The AI answer could not be used. ${why}\n--- raw answer (${answer.length} characters) ---\n${answer}\n`
+            + (thinking ? `--- thinking (${thinking.length} characters, not used as code) ---\n${thinking}\n` : '')
+            + `--- end ---`);
         const choice = await vscode.window.showWarningMessage(
             `The model returned nothing usable — nothing was changed. ${why}`,
             'Show the raw answer',
             'Show status'
         );
-        if (choice === 'Show the raw answer') await showRawAnswer(answer, span, cfg);
+        if (choice === 'Show the raw answer') await showRawAnswer(answer, span, cfg, thinking);
         if (choice === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
         return undefined;
     }
