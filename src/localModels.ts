@@ -306,3 +306,43 @@ export function explainLoadFailure(logTail: string, facts: SetupFacts, modelSize
     }
     return undefined;
 }
+
+// ---------------- files on this machine ----------------
+
+/**
+ * Where a `.gguf` a developer actually wants might live, most likely first.
+ *
+ * LM Studio's own folder is first because it is the common case, but note what the scan does with those
+ * files: they are already in the `lms ls` list, so they are counted and then left out of the results
+ * rather than offered twice under two different names (LM Studio's model *key* and its file path have no
+ * reliable mapping — the folder says `lmstudio-community` where the key says `google`).
+ */
+export function scanRoots(homeDir: string): string[] {
+    const home = homeDir || '';
+    // `/media` and `/mnt` are listed as roots on purpose: an external drive appears one directory deep
+    // inside them, and the walker descends by itself — so nothing here needs to look at the filesystem.
+    return [
+        `${home}/.lmstudio/models`,
+        `${home}/Downloads`,
+        `${home}/models`,
+        `${home}/llama.cpp`,
+        `${home}/.cache/huggingface/hub`,
+        `${home}/.cache/lm-studio/models`,
+        '/media',
+        '/mnt'
+    ];
+}
+
+/**
+ * Is this file name a model a chat request could be sent to?
+ *
+ * The `mmproj-*.gguf` files are the reason this is not just an extension check: they sit in the same
+ * folders as the weights (all six `.gguf` files found on this machine on 2026-09-15 included two of them)
+ * and are *vision projectors* — loading one produces a failure that says nothing about the real problem.
+ */
+export function canImportFile(fileName: string): boolean {
+    const name = String(fileName ?? '');
+    if (!/\.gguf$/i.test(name)) return false;
+    if (/^mmproj[-_.]/i.test(name)) return false;
+    return true;
+}

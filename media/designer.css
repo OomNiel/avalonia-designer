@@ -1259,6 +1259,108 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     color: #fff;
 }
 
+.modal-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* ---- AI assist section of the ⚙ Settings panel ----
+   The switch is the first decision, the model the second, its settings the third: the flow the user asked
+   for, so `#aiBody` is hidden until the switch is on and `#aiOptions` until a model is chosen. */
+.modal-sep {
+    border-top: 1px solid var(--border);
+    margin: 14px 0 12px;
+}
+
+.modal-box h3.modal-sub {
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ai-badge {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    color: var(--fg-dim);
+}
+
+.ai-badge.on {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.modal-field {
+    display: block;
+    margin: 10px 0 6px;
+}
+
+.modal-field > span {
+    display: block;
+    font-size: 11px;
+    color: var(--fg-dim);
+    margin-bottom: 3px;
+}
+
+.modal-field select,
+.ai-opt input,
+.ai-opt select {
+    width: 100%;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-size: 12px;
+    font-family: inherit;
+}
+
+.modal-buttons-tight {
+    justify-content: flex-start;
+    margin-top: 6px;
+}
+
+.ai-opt {
+    display: grid;
+    grid-template-columns: 130px 120px 1fr;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0;
+}
+
+.ai-opt label {
+    font-size: 12px;
+}
+
+.ai-opt .ai-hint {
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+.ai-progress {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--accent);
+}
+
+.ai-status {
+    margin-top: 8px;
+    max-height: 210px;
+    overflow: auto;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 8px;
+    font-size: 11px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
 /* Event picker (wire an event when a control is placed / Add event… from the context menu) */
 .event-list {
     display: flex;

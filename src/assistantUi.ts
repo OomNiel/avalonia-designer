@@ -29,7 +29,8 @@ import {
     readHardwareFacts,
     spliceMethod,
     type AssistantConfig,
-    type ChatMessage
+    type ChatMessage,
+    type ServerModelInfo
 } from './assistant';
 import { methodsIn, type MethodSpan } from './codeBehindCheck';
 import { log } from './logger';
@@ -715,8 +716,26 @@ function extensionVersion(): string {
     }
 }
 
-/** Reports what the feature would use right now — including the hardware verdict. */
-export async function showStatus(): Promise<void> {
+/**
+ * The status report as text.
+ *
+ * One implementation for two surfaces: the dialog below and the designer's ⚙ Settings panel, which
+ * renders these exact lines. A panel that showed its own summary would eventually disagree with the
+ * command, and "which is right?" is not a question a user should ever have about status output.
+ */
+export async function statusLines(): Promise<string[]> {
+    return (await statusFacts()).lines;
+}
+
+interface StatusFacts {
+    cfg: AssistantConfig;
+    lines: string[];
+    probe?: Awaited<ReturnType<typeof probeServer>>;
+    chatModels: ServerModelInfo[];
+}
+
+/** The status, as data: the text plus what the dialog needs to offer to pin a model. */
+async function statusFacts(): Promise<StatusFacts> {
     const cfg = assistantConfig();
     const hw = assessHardware(readHardwareFacts());
     // Ask the server first when there is one: "which model will answer" is the question the developer
@@ -748,6 +767,12 @@ export async function showStatus(): Promise<void> {
             }
         }
     }
+    return { cfg, lines, probe, chatModels };
+}
+
+/** Reports what the feature would use right now — including the hardware verdict. */
+export async function showStatus(): Promise<void> {
+    const { cfg, lines, probe, chatModels } = await statusFacts();
 
     const needsPin = !!probe?.ok && chatModels.length > 1 && !cfg.model;
     const actions = needsPin ? ['Pin a model…', 'Open settings', 'Copy'] : ['OK', 'Copy'];

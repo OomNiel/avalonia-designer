@@ -1,173 +1,61 @@
-/* The one-command setup: pick a model by name, the extension does the rest.
+/* The Command Palette front door for local models: the same operations the designer's ⚙ Settings panel
+ * offers, asked for with quick picks and reported with notifications.
  *
- * WHAT THIS REPLACES (2026-09-15). Doing it by hand meant knowing five things a developer should not have
- * to know: which port LM Studio serves on, the exact model id to pin, a context length, an offload ratio,
- * and that `Keep Model in Memory` has to be off because the kernel's lock limit is smaller than the model.
- * The user called that "way too complicated for a novice" and asked for a dropdown — this is that dropdown,
- * as a command (VS Code settings cannot enumerate models: `enum` is baked into the manifest at build time).
+ * WHAT THE SETUP REPLACES (2026-09-15). Doing it by hand meant knowing five things a developer should not
+ * have to know: which port LM Studio serves on, the exact model id to pin, a context length, an offload
+ * ratio, and that `Keep Model in Memory` has to be off because the kernel's lock limit is smaller than the
+ * model. The user called that "way too complicated for a novice" and asked for a dropdown — this is that
+ * dropdown, as a command (VS Code settings cannot enumerate models: `enum` is baked into the manifest at
+ * build time).
  *
- * HOW IT WORKS, all of it verified against a real LM Studio on this machine (NOTES.md §100):
- *   `lms ls`                        → what is on disk (with params/arch/size, LLM vs EMBEDDING)
- *   `lms ps`                        → what is loaded (only its *empty* answer is parsed; the REST API's
- *                                     `state` field is the verified source for the loaded case)
- *   `lms server status`             → the port, or that the server is stopped
- *   `GET /api/v0/models`            → ids, `type` (embeddings excluded properly), quantization, state
- *   `lms load … --estimate-only`    → what the load would cost, WITHOUT loading it
- *   `lms load <key> --gpu … -c … `  → the load itself, with the values derived from the machine
- * and on failure the newest log under `~/.lmstudio/server-logs` is read and translated, because the two
- * failures that actually happen (mlock abort, out of memory) are invisible in the LM Studio UI.
+ * All the mechanics live in `localModelCore.ts` (NOTES.md §100–§101): `lms ls` for what is on disk, the
+ * REST API's `state` for what is loaded, `lms server status` for the port, `--estimate-only` for what a
+ * load would cost *before* paying it, and the newest server log to translate a failure. The two front
+ * doors share them; this file only asks the questions and reports the answers.
  */
 
-import * as cp from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import * as vscode from 'vscode';
-import { chatDetailed, describeEmptyAnswer, normalizeAssistantConfig, readHardwareFacts } from './assistant';
+import { chatDetailed, describeEmptyAnswer, normalizeAssistantConfig } from './assistant';
 import { log } from './logger';
 import { setupBundledModel } from './modelRuntime';
 import {
-    buildLoadArgs,
-    explainLoadFailure,
-    lmsCandidates,
+    chatModels,
+    discover,
+    findLmsCli,
+    load,
+    setupFacts,
+    unloadAll,
+    type Discovery
+} from './localModelCore';
+import {
     modelLabel,
-    parseLmsList,
-    parseLmsPs,
-    parseLmsServerStatus,
-    parseLoadEstimate,
-    parseLockLimitGb,
     recommendedLoadOptions,
     type LoadOptions,
     type LocalModel,
-    type LocalModelList,
     type SetupFacts
 } from './localModels';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
-const LMSTUDIO_API = 'http://127.0.0.1:1234/api/v0/models';
 
-interface LmStudioState {
-    cli: string;
-    list: LocalModelList;
-    server: { running: boolean; port?: number };
-    /** ids the server reports as loaded, when the API answered */
-    loaded: string[];
-    /** `type` per id, from the API (better than guessing from the name) */
-    kindById: Map<string, 'chat' | 'embeddings' | 'unknown'>;
-}
-
-async function run(cmd: string, args: string[], timeoutMs = 20000): Promise<{ code: number; stdout: string; stderr: string }> {
-    return new Promise((resolve) => {
-        cp.execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-            const code = err && typeof (err as { code?: unknown }).code === 'number' ? Number((err as { code: number }).code) : err ? 1 : 0;
-            resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
-        });
-    });
-}
-
-/** The `lms` binary, or undefined when LM Studio is not on this machine. */
-export function findLmsCli(): string | undefined {
-    for (const candidate of lmsCandidates(os.homedir())) {
-        try {
-            if (candidate === 'lms' || fs.existsSync(candidate)) return candidate;
-        } catch {
-            /* ignore */
-        }
-    }
-    return undefined;
-}
-
-/** `/proc/self/limits` — the locked-memory ceiling that decides whether mlock can work. */
-function lockLimitGb(): number {
-    try {
-        return parseLockLimitGb(fs.readFileSync('/proc/self/limits', 'utf8')) ?? 8;
-    } catch {
-        return 8; // Windows/macOS have no such file; assume a sane default rather than warning wrongly
-    }
-}
-
-function setupFacts(): SetupFacts {
-    const hw = readHardwareFacts();
-    return { totalRamGb: hw.totalRamGb, freeRamGb: hw.freeRamGb, cpuCount: hw.cpuCount, lockLimitGb: lockLimitGb() };
-}
-
-/** Asks LM Studio's REST API rather than parsing a table whose loaded format has never been observed. */
-async function readApi(): Promise<{ ids: { id: string; kind: 'chat' | 'embeddings' | 'unknown'; state: string }[] } | undefined> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
-    try {
-        const res = await fetch(LMSTUDIO_API, { signal: controller.signal });
-        if (!res.ok) return undefined;
-        const body = (await res.json()) as { data?: { id?: unknown; type?: unknown; state?: unknown }[] };
-        return {
-            ids: (body.data ?? [])
-                .filter((m) => typeof m.id === 'string')
-                .map((m) => ({
-                    id: String(m.id),
-                    kind: m.type === 'embeddings' ? 'embeddings' : m.type === 'llm' || m.type === 'vlm' ? 'chat' : 'unknown',
-                    state: String(m.state ?? '')
-                }))
-        };
-    } catch {
-        return undefined;
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-async function readLmStudio(cli: string): Promise<LmStudioState> {
-    const [ls, ps, status, api] = await Promise.all([
-        run(cli, ['ls']),
-        run(cli, ['ps']),
-        run(cli, ['server', 'status']),
-        readApi()
-    ]);
-    const list = parseLmsList(ls.stdout || ls.stderr);
-    const kindById = new Map<string, 'chat' | 'embeddings' | 'unknown'>();
-    for (const m of api?.ids ?? []) kindById.set(m.id, m.kind);
-    const loaded = api ? api.ids.filter((m) => /loaded/i.test(m.state)).map((m) => m.id) : parseLmsPs(ps.stdout) ?? [];
-    log(`LM Studio: ${list.chat.length} chat + ${list.embeddings.length} embedding model(s) on disk, ${loaded.length} loaded`);
-    return { cli, list, server: parseLmsServerStatus(status.stdout || status.stderr), loaded, kindById };
-}
-
-/** Reads the newest LM Studio server log — the only place the crash reasons actually appear. */
-function newestServerLogTail(lines = 60): string {
-    try {
-        const root = path.join(os.homedir(), '.lmstudio', 'server-logs');
-        const files: string[] = [];
-        for (const dir of fs.readdirSync(root)) {
-            const full = path.join(root, dir);
-            if (!fs.statSync(full).isDirectory()) continue;
-            for (const f of fs.readdirSync(full)) files.push(path.join(full, f));
-        }
-        if (files.length === 0) return '';
-        const newest = files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
-        return fs.readFileSync(newest, 'utf8').split(/\r?\n/).slice(-lines).join('\n');
-    } catch {
-        return '';
-    }
+/** The models a developer could pick, with the kind the REST API reported folded in. */
+function modelsOf(found: Discovery): LocalModel[] {
+    return chatModels(found);
 }
 
 /** "AI: Choose a Local Model…" — the whole setup, with two confirmations and no jargon. */
 export async function chooseLocalModel(context: vscode.ExtensionContext): Promise<void> {
     const facts = setupFacts();
-    const cli = findLmsCli();
+    const found = await discover();
     const items: (vscode.QuickPickItem & { model?: LocalModel; action?: 'bundled' | 'custom' })[] = [];
 
-    let lm: LmStudioState | undefined;
-    if (cli) {
-        lm = await readLmStudio(cli);
-        for (const model of lm.list.chat) {
-            const kind = lm.kindById.get(model.key);
-            if (kind === 'embeddings') continue;
-            const loaded = lm.loaded.some((id) => id === model.key || id.endsWith(model.key));
-            items.push({
-                label: `${loaded ? '$(circle-filled) ' : '$(circle-outline) '}${modelLabel(model)}`,
-                description: loaded ? 'loaded' : '',
-                detail: `LM Studio · ${model.arch}${loaded ? ' · already in memory' : ''}`,
-                model: { ...model, kind: kind ?? model.kind }
-            });
-        }
+    for (const model of modelsOf(found)) {
+        const loaded = found.loaded.some((id) => id === model.key || id.endsWith(model.key));
+        items.push({
+            label: `${loaded ? '$(circle-filled) ' : '$(circle-outline) '}${modelLabel(model)}`,
+            description: loaded ? 'loaded' : '',
+            detail: `LM Studio · ${model.arch}${loaded ? ' · already in memory' : ''}`,
+            model
+        });
     }
 
     items.push({
@@ -185,8 +73,8 @@ export async function chooseLocalModel(context: vscode.ExtensionContext): Promis
 
     const pick = await vscode.window.showQuickPick(items, {
         title: 'Which local model should write the code?',
-        placeHolder: cli
-            ? `LM Studio found · ${lm?.list.chat.length ?? 0} chat model(s) on disk · ${facts.freeRamGb.toFixed(0)} GB RAM free`
+        placeHolder: found.cli
+            ? `LM Studio found · ${found.list.chat.length} chat model(s) on disk · ${facts.freeRamGb.toFixed(0)} GB RAM free`
             : 'LM Studio is not installed — its own model needs nothing but the .NET SDK',
         ignoreFocusOut: true,
         matchOnDetail: true
@@ -203,8 +91,8 @@ export async function chooseLocalModel(context: vscode.ExtensionContext): Promis
     }
 
     const model = pick.model;
-    if (!model || !cli) return;
-    await setUpLmStudioModel(model, facts, lm?.server ?? { running: false });
+    if (!model || !found.cli) return;
+    await setUpLmStudioModel(model, facts, found);
 }
 
 /** Recommended values, one confirmation, with everything visible that a novice is trusting us with. */
@@ -249,26 +137,46 @@ async function askLoadOptions(model: LocalModel, facts: SetupFacts): Promise<Loa
     return { ...recommended, contextLength: Number(context), gpu: gpu.label, ttlSeconds: ttl.seconds };
 }
 
-async function setUpLmStudioModel(
-    model: LocalModel,
-    facts: SetupFacts,
-    server: { running: boolean; port?: number }
-): Promise<void> {
+async function setUpLmStudioModel(model: LocalModel, facts: SetupFacts, found: Discovery): Promise<void> {
     const options = await askLoadOptions(model, facts);
     if (!options) return;
 
-    const result = await vscode.window.withProgress(
+    const report = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Loading ${model.label}…`, cancellable: false },
-        async (progress) => loadModel(model, options, facts, server, progress)
+        async (progress) =>
+            load({
+                model,
+                options,
+                facts,
+                server: found.server,
+                onProgress: (message) => progress.report({ message }),
+                confirmOverBudget: async (estimate) => {
+                    const answer = await vscode.window.showWarningMessage(
+                        `${model.label} needs about ${estimate.totalGiB.toFixed(1)} GB and only ${facts.freeRamGb.toFixed(1)} GB is free. `
+                        + 'Loading it may push the machine into swap.',
+                        { modal: true },
+                        'Load anyway',
+                        'Cancel'
+                    );
+                    return answer === 'Load anyway';
+                }
+            })
     );
-    if (!result) return;
+    if (report.cancelled) return;
+    if (!report.ok || !report.endpoint) {
+        const pick = await vscode.window.showErrorMessage(
+            `Loading ${model.label} failed. ${report.message ?? ''}`,
+            'Copy details',
+            'Show status'
+        );
+        if (pick === 'Copy details') {
+            await vscode.env.clipboard.writeText(`lms load failed\n${report.message ?? ''}\n\n${report.logTail ?? ''}`);
+        }
+        if (pick === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
+        return;
+    }
 
-    // Wire the extension to what we just started.
-    const cfg = vscode.workspace.getConfiguration(SETTINGS);
-    await cfg.update('backend', 'external', vscode.ConfigurationTarget.Global);
-    await cfg.update('endpoint', result.endpoint, vscode.ConfigurationTarget.Global);
-    await cfg.update('model', options.identifier, vscode.ConfigurationTarget.Global);
-    log(`AI assist wired to ${result.endpoint} with model "${options.identifier}"`);
+    await wireSettings(report.endpoint, options.identifier);
 
     // Prove it before the user touches code.
     const proof = await proveItWorks();
@@ -278,8 +186,8 @@ async function setUpLmStudioModel(
         : '';
     const pick = await vscode.window.showInformationMessage(
         proof.ok
-            ? `Ready — ${model.label} is answering on ${result.endpoint}.${raised} Try "AI: Implement in Function…" in a code-behind file.`
-            : `The model is loaded on ${result.endpoint}, but the test request came back empty. ${proof.why ?? ''}`
+            ? `Ready — ${model.label} is answering on ${report.endpoint}.${raised} Try "AI: Implement in Function…" in a code-behind file.`
+            : `The model is loaded on ${report.endpoint}, but the test request came back empty. ${proof.why ?? ''}`
                 + ' Try "AI: Status and Hardware Check".',
         'Show status',
         'OK'
@@ -287,77 +195,18 @@ async function setUpLmStudioModel(
     if (pick === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
 }
 
-/** Pre-flight, start the server if needed, load, then verify — reporting each step. */
-async function loadModel(
-    model: LocalModel,
-    options: LoadOptions,
-    facts: SetupFacts,
-    server: { running: boolean; port?: number },
-    progress: vscode.Progress<{ message?: string }>
-): Promise<{ endpoint: string } | undefined> {
-    const cli = findLmsCli();
-    if (!cli) return undefined;
-
-    progress.report({ message: 'checking what it will cost…' });
-    const estimate = await run(cli, [...buildLoadArgs(model, options), '--estimate-only'], 120000);
-    const parsed = parseLoadEstimate(estimate.stdout || estimate.stderr);
-    if (parsed && parsed.totalGiB > facts.freeRamGb + 0.5) {
-        const pick = await vscode.window.showWarningMessage(
-            `${model.label} needs about ${parsed.totalGiB.toFixed(1)} GB and only ${facts.freeRamGb.toFixed(1)} GB is free. `
-            + 'Loading it may push the machine into swap.',
-            { modal: true },
-            'Load anyway',
-            'Cancel'
-        );
-        if (pick !== 'Load anyway') return undefined;
-    }
-    if (parsed) {
-        log(`Estimate for ${model.label}: ${parsed.totalGiB.toFixed(2)} GiB at ${parsed.contextLength} tokens (confidence ${parsed.confidence})`);
-    }
-
-    let endpoint = `http://127.0.0.1:${server.port ?? 1234}/v1`;
-    if (!server.running) {
-        progress.report({ message: 'starting the LM Studio server…' });
-        const started = await run(cli, ['server', 'start'], 60000);
-        const status = parseLmsServerStatus(started.stdout || started.stderr);
-        if (!status.running) {
-            void vscode.window.showErrorMessage(
-                `Could not start the LM Studio server: ${(started.stderr || started.stdout).trim().slice(0, 300)}`
-            );
-            return undefined;
-        }
-        if (status.port) endpoint = `http://127.0.0.1:${status.port}/v1`;
-    }
-
-    progress.report({ message: `loading ${model.label} (this can take a few minutes)…` });
-    const started = Date.now();
-    const ticker = setInterval(() => progress.report({ message: `loading ${model.label}… ${Math.round((Date.now() - started) / 1000)} s` }), 2000);
-    const load = await run(cli, buildLoadArgs(model, options), 30 * 60 * 1000);
-    clearInterval(ticker);
-
-    if (load.code !== 0) {
-        const why = explainLoadFailure(`${load.stdout}\n${load.stderr}\n${newestServerLogTail()}`, facts, model.sizeGb);
-        const detail = (load.stderr || load.stdout).trim().split(/\r?\n/).slice(-3).join(' ');
-        log(`Loading ${model.label} failed (${load.code}): ${detail}`);
-        const pick = await vscode.window.showErrorMessage(
-            `Loading ${model.label} failed. ${why ?? detail.slice(0, 300)}`,
-            'Copy details',
-            'Show status'
-        );
-        if (pick === 'Copy details') {
-            await vscode.env.clipboard.writeText(`lms load failed (${load.code})\n${detail}\n\n${newestServerLogTail(120)}`);
-        }
-        if (pick === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
-        return undefined;
-    }
-
-    progress.report({ message: 'waiting for it to answer…' });
-    for (let i = 0; i < 60; i++) {
-        const api = await readApi();
-        if (api?.ids.some((m) => m.id === options.identifier && /loaded/i.test(m.state))) break;
-        await new Promise((r) => setTimeout(r, 1000));
-    }
-    return { endpoint };
+/**
+ * Writes the three settings that make the feature work.
+ *
+ * Shared with the designer's ⚙ Settings panel, which performs exactly this step after a successful load
+ * — one implementation, so the two front doors cannot end up pointing at different addresses.
+ */
+export async function wireSettings(endpoint: string, modelIdentifier: string): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration(SETTINGS);
+    await cfg.update('backend', 'external', vscode.ConfigurationTarget.Global);
+    await cfg.update('endpoint', endpoint, vscode.ConfigurationTarget.Global);
+    await cfg.update('model', modelIdentifier, vscode.ConfigurationTarget.Global);
+    log(`AI assist wired to ${endpoint} with model "${modelIdentifier}"`);
 }
 
 /**
@@ -369,7 +218,7 @@ async function loadModel(
  * extension reported "0 characters". When thinking is detected the answer budget is raised here, because
  * that is precisely the setting a novice would never know to change.
  */
-interface ProofResult {
+export interface ProofResult {
     ok: boolean;
     /** Characters of thinking the test request produced (0 for a model that answers directly). */
     thinkingChars: number;
@@ -380,7 +229,7 @@ interface ProofResult {
     why?: string;
 }
 
-async function proveItWorks(): Promise<ProofResult> {
+export async function proveItWorks(): Promise<ProofResult> {
     const cfg = vscode.workspace.getConfiguration(SETTINGS);
     const start = cfg.get<number>('maxTokens', 4096);
     const ask = async (budget: number) => {
@@ -458,16 +307,15 @@ async function askForEndpoint(): Promise<void> {
 
 /** "AI: Unload the Loaded Model" — frees the memory without hunting for the GUI. */
 export async function unloadLoadedModel(): Promise<void> {
-    const cli = findLmsCli();
-    if (!cli) {
+    if (!findLmsCli()) {
         void vscode.window.showWarningMessage('LM Studio is not installed on this machine.');
         return;
     }
-    const result = await run(cli, ['unload', '--all'], 60000);
-    if (result.code !== 0) {
-        void vscode.window.showErrorMessage(`Could not unload: ${(result.stderr || result.stdout).trim().slice(0, 300)}`);
+    const result = await unloadAll();
+    if (!result.ok) {
+        void vscode.window.showErrorMessage(`Could not unload: ${result.message ?? ''}`);
         return;
     }
     log('LM Studio models unloaded');
-    void vscode.window.showInformationMessage('The loaded model has been unloaded — its memory is free again.');
+    void vscode.window.showInformationMessage('Every model is unloaded — its memory is free again.');
 }

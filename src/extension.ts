@@ -23,6 +23,20 @@ export function activate(context: vscode.ExtensionContext): void {
         log(`activate start (vscode ${vscode.version})`);
         setActiveContext(context);
 
+        // The AI switch lives in the designer's ⚙ Settings panel, and its value gates every AI command
+        // (see the `when` clauses in package.json): "when off, all AI features become unavailable" is a
+        // promise the command palette has to keep too, not just the panel.
+        const syncAiContext = () => {
+            const backend = vscode.workspace.getConfiguration('avaloniaDesigner.assistant').get<string>('backend', 'off');
+            void vscode.commands.executeCommand('setContext', 'avaloniaDesigner.aiEnabled', backend !== 'off');
+        };
+        syncAiContext();
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeConfiguration((e) => {
+                if (e.affectsConfiguration('avaloniaDesigner.assistant.backend')) syncAiContext();
+            })
+        );
+
         // Register the Activity bar views FIRST — before any heavier work — so they never
         // sit without a data provider (a webview view shown before its provider is registered
         // can stay stuck on "There is no data provider registered that can provide view data.").

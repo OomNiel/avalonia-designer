@@ -24,6 +24,10 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'eventModal', 'eventTitle', 'eventHint', 'eventList', 'eventRemember', 'eventRememberWrap', 'eventSkip', 'eventWire',
     'handlerModal', 'handlerTitle', 'handlerHint', 'handlerList', 'handlerAdd', 'handlerClose',
     'btnCodeSettings', 'settingsModal', 'settingsHint', 'settingsModes', 'settingsBadges', 'settingsSave', 'settingsCancel',
+    // the AI assist section of that panel (2026-09-15): switch, model list, load options, actions
+    'aiEnabled', 'aiBadge', 'aiBody', 'aiModel', 'aiModelHint', 'aiRefresh', 'aiScan',
+    'aiOptions', 'aiContext', 'aiGpu', 'aiTtl', 'aiMaxTokens', 'aiTimeout', 'aiEndpoint',
+    'aiLoad', 'aiUnload', 'aiStatus', 'aiProgress', 'aiStatusText',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
@@ -66,6 +70,12 @@ function setup(omit = []) {
         if (id === 'handlerAdd' || id === 'handlerClose') return 'button';
         if (id === 'settingsBadges') return 'input';
         if (id === 'settingsSave' || id === 'settingsCancel') return 'button';
+        if (id === 'aiEnabled') return 'input';
+        if (id === 'aiBody' || id === 'aiOptions') return 'div';
+        if (id === 'aiModel' || id === 'aiGpu' || id === 'aiTtl') return 'select';
+        if (id === 'aiContext' || id === 'aiMaxTokens' || id === 'aiTimeout' || id === 'aiEndpoint') return 'input';
+        if (id === 'aiStatusText' || id === 'aiProgress' || id === 'aiBadge' || id === 'aiModelHint') return 'div';
+        if (id === 'aiLoad' || id === 'aiUnload' || id === 'aiStatus' || id === 'aiRefresh' || id === 'aiScan') return 'button';
         if (id.startsWith('dotGridSpacing') || id === 'dotGridColor' || id === 'dotGridDotSize') return 'input';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
             || id === 'dotGridSave' || id === 'dotGridCancel'

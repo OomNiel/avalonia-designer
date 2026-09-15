@@ -22,6 +22,17 @@ import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTable
 import { readDataSetFiles } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
 import { bundledComponentSpecs, isStaleBundledCopy } from './bundledComponents';
+import { statusLines } from './assistantUi';
+import {
+    attachPanel,
+    loadChoice,
+    panelState,
+    saveAiSettings,
+    scan,
+    unloadEverything,
+    type AiSettingsInput,
+    type PanelState
+} from './aiPanel';
 
 const DEFAULT_SIZE = { width: 800, height: 450 };
 
@@ -1708,12 +1719,54 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     return;
                 }
                 case 'openCodeSettings': {
-                    // The toolbar's ⚙ Settings button: reply with the current code-check settings.
+                    // The toolbar's ⚙ Settings button: reply with the current code-check settings and the
+                    // whole AI section state (models, options, what is loaded).
                     await panel.webview.postMessage({
                         type: 'codeSettings',
                         mode: this.codeCheckMode(),
                         badges: this.codeCheckBadges()
                     });
+                    attachPanel(panel);
+                    await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
+                    return;
+                }
+                case 'aiState': {
+                    attachPanel(panel);
+                    await panel.webview.postMessage({ type: 'aiState', state: await panelState(!!msg.rescan) });
+                    return;
+                }
+                case 'aiScan': {
+                    attachPanel(panel);
+                    await scan(panel.webview, async (state) => {
+                        await panel.webview.postMessage({ type: 'aiState', state });
+                    });
+                    return;
+                }
+                case 'aiLoad': {
+                    attachPanel(panel);
+                    const before = msg.state as PanelState | undefined;
+                    if (!before) return;
+                    const outcome = await loadChoice(this.context, before, String(msg.value ?? ''));
+                    await panel.webview.postMessage({
+                        type: 'aiResult',
+                        action: 'load',
+                        ok: outcome.ok,
+                        message: [outcome.message, outcome.estimate].filter(Boolean).join(' ')
+                    });
+                    await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
+                    await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                    await this.postStatus(panel, outcome.ok ? 'AI model loaded' : 'AI model failed to load');
+                    return;
+                }
+                case 'aiUnload': {
+                    attachPanel(panel);
+                    const unloaded = await unloadEverything();
+                    await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: unloaded.ok, message: unloaded.message });
+                    await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                    return;
+                }
+                case 'aiStatus': {
+                    await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
                     return;
                 }
                 case 'saveCodeSettings': {
@@ -1724,7 +1777,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         await cfg.update('codeCheck.mode', mode, vscode.ConfigurationTarget.Global);
                         await cfg.update('codeCheck.badges', msg.badges !== false, vscode.ConfigurationTarget.Global);
                     } catch { /* read-only in some hosts — the choice then lasts for this session only */ }
+                    // The AI choices are saved through their own module: switching off has a side effect
+                    // (the model is unloaded) and that belongs with the model code, not here.
+                    const ai = msg.ai as AiSettingsInput | undefined;
+                    if (ai) await saveAiSettings(ai);
                     await panel.webview.postMessage({ type: 'codeSettings', mode: this.codeCheckMode(), badges: this.codeCheckBadges() });
+                    if (ai) await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
                     // Apply the new behaviour immediately: re-check now (it also refreshes the badges).
                     await this.runSilentCheck(doc, panel);
                     await this.postStatus(panel, mode === 'manual'
@@ -6114,6 +6172,63 @@ ${publishButtons}      <span class="sep"></span>
         <p class="modal-hint" id="settingsHint">When should the designer check the code-behind against the form? The check is read-only: it reports (PROBLEMS pane, ⚠ badges on the canvas) and never rewrites your code.</p>
         <div id="settingsModes" class="settings-modes"></div>
         <label class="modal-check"><input type="checkbox" id="settingsBadges"/> Mark controls whose wired handler is missing with a ⚠ badge</label>
+
+        <div class="modal-sep"></div>
+        <h3 class="modal-sub">AI assist <span id="aiBadge" class="ai-badge">off</span></h3>
+        <p class="modal-hint">A local model on this machine can write a handler from a sentence, or repair a
+          finding a rule cannot express. Nothing is sent anywhere — the address is always <code>127.0.0.1</code>.</p>
+        <label class="modal-check"><input type="checkbox" id="aiEnabled"/> Use a local model for Code Fix and Implement</label>
+
+        <div id="aiBody" hidden>
+          <label class="modal-field"><span>Model</span>
+            <select id="aiModel"></select>
+          </label>
+          <div class="modal-buttons modal-buttons-tight">
+            <button id="aiRefresh" type="button" class="modal-btn">Refresh list</button>
+            <button id="aiScan" type="button" class="modal-btn">Scan machine for models…</button>
+          </div>
+          <p class="modal-hint" id="aiModelHint"></p>
+
+          <div id="aiOptions" hidden>
+            <div class="ai-opt"><label for="aiContext">Context length</label>
+              <input id="aiContext" type="number" min="512" max="262144" step="512"/>
+              <span class="ai-hint">tokens the model can hold. Bigger costs memory.</span></div>
+            <div class="ai-opt"><label for="aiGpu">GPU offload</label>
+              <select id="aiGpu">
+                <option value="auto">recommended for this machine</option>
+                <option value="off">off — CPU only</option>
+                <option value="max">max — push everything to the GPU</option>
+                <option value="0.5">half the layers</option>
+              </select>
+              <span class="ai-hint">A shared-memory GPU is usually slower than the CPU for big models.</span></div>
+            <div class="ai-opt"><label for="aiTtl">Unload when idle</label>
+              <select id="aiTtl">
+                <option value="auto">recommended (15 minutes)</option>
+                <option value="900">after 15 minutes</option>
+                <option value="3600">after 1 hour</option>
+                <option value="0">never — keep it loaded</option>
+              </select>
+              <span class="ai-hint">These three are applied when the model is loaded.</span></div>
+            <div class="ai-opt"><label for="aiMaxTokens">Answer budget</label>
+              <input id="aiMaxTokens" type="number" min="64" max="16384" step="256"/>
+              <span class="ai-hint">tokens. A model that thinks before answering needs room for both.</span></div>
+            <div class="ai-opt"><label for="aiTimeout">Wait for the model</label>
+              <input id="aiTimeout" type="number" min="5" max="600" step="5"/>
+              <span class="ai-hint">seconds without any output before giving up.</span></div>
+            <div class="ai-opt"><label for="aiEndpoint">Address</label>
+              <input id="aiEndpoint" type="text" spellcheck="false"/>
+              <span class="ai-hint">Filled in automatically by Load Model.</span></div>
+          </div>
+
+          <div class="modal-buttons modal-buttons-tight">
+            <button id="aiLoad" type="button" class="modal-btn primary">Load Model</button>
+            <button id="aiUnload" type="button" class="modal-btn">Unload</button>
+            <button id="aiStatus" type="button" class="modal-btn">Status &amp; hardware check</button>
+          </div>
+          <div id="aiProgress" class="ai-progress" hidden></div>
+          <pre id="aiStatusText" class="ai-status" hidden></pre>
+        </div>
+
         <div class="modal-buttons">
           <button id="settingsCancel" type="button" class="modal-btn">Cancel</button>
           <button id="settingsSave" type="button" class="modal-btn primary">Save</button>

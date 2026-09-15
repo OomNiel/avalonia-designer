@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.15",
+    "version": "0.9.16",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -243,7 +243,7 @@
                 },
                 {
                     "command": "avaloniaDesigner.assistant.implement",
-                    "when": "editorLangId == csharp || editorLangId == vb"
+                    "when": "(editorLangId == csharp || editorLangId == vb) && avaloniaDesigner.aiEnabled"
                 },
                 {
                     "command": "avaloniaDesigner.assistant.status"
@@ -279,7 +279,7 @@
             "editor/context": [
                 {
                     "command": "avaloniaDesigner.assistant.implement",
-                    "when": "editorLangId == csharp || editorLangId == vb",
+                    "when": "(editorLangId == csharp || editorLangId == vb) && avaloniaDesigner.aiEnabled",
                     "group": "avaloniaAI@1"
                 }
             ]
@@ -475,6 +475,31 @@
                     },
                     "default": [],
                     "description": "Extra Debian packages the app needs, added to the .deb's \"Depends\" (e.g. libcanberra0). The .NET runtime and the Avalonia native libraries are declared automatically."
+                },
+                "avaloniaDesigner.assistant.loadContextLength": {
+                    "type": "number",
+                    "default": 0,
+                    "minimum": 0,
+                    "maximum": 262144,
+                    "description": "Context length handed to LM Studio when the extension loads a model (0 = recommend one from free RAM). Only used at load time — reload to apply a change."
+                },
+                "avaloniaDesigner.assistant.loadGpu": {
+                    "type": "string",
+                    "enum": [
+                        "auto",
+                        "off",
+                        "max",
+                        "0.5"
+                    ],
+                    "default": "auto",
+                    "description": "GPU offload used when the extension loads a model. 'auto' picks 'off' for models over 8 GB, because a shared-memory GPU is slower than the CPU for those."
+                },
+                "avaloniaDesigner.assistant.loadTtlSeconds": {
+                    "type": "number",
+                    "default": -1,
+                    "minimum": -1,
+                    "maximum": 86400,
+                    "description": "Unload the model after this many idle seconds (-1 = recommend 15 minutes, 0 = keep it loaded). Only used at load time."
                 }
             }
         }

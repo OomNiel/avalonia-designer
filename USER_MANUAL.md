@@ -877,6 +877,27 @@ Model* gives the memory back when you are finished.
 The same list also offers **This extension's own model** (no LM Studio needed — see below) and **A
 server I run myself** (Ollama, `llama-server`, or anything else already running).
 
+**Turning it on — in the designer's own Settings panel.** Click **⚙ Settings** in the designer toolbar. The
+panel holds the code-check choices and, below them, an **AI assist** section:
+
+1. **Switch it on.** While it is off, the AI commands are not offered anywhere (the menu entries are hidden,
+   not just refused) and the model is unloaded — turning this off really does free the memory.
+2. **Choose a model** from the dropdown. It lists every chat model **LM Studio** has on disk (the loaded one
+   is marked ●), both models the extension can download, **every `.gguf` file found on your machine** after
+   you press *Scan machine for models…*, and *a server I run myself* for anything else (Ollama, your own
+   `llama-server`).
+3. **Adjust the settings if you want.** They appear once a model is chosen: context length, GPU offload and
+   an idle-unload timer — the values handed to LM Studio when it loads — plus the answer budget and the
+   timeout. The recommended values are shown as the defaults; leave them alone and they are what this
+   machine gets.
+4. **Press Load Model.** It frees whatever is loaded first (so two big models never share your RAM), tells
+   you *before* loading if the model does not fit in the free memory, loads it, points the extension at it,
+   and runs the status check below.
+5. **Read the status.** *Status & hardware check* shows exactly the same report as the palette command:
+   the endpoint, which model will answer, the memory and thread verdict for this machine.
+6. **Save.** The panel closes and the designer is ready — *AI: Implement in Function…* and *✨ Fix with AI…*
+   now work.
+
 **Or set it up by hand.** You need a local model server; the extension speaks the OpenAI-compatible API that
 LM Studio, Ollama and `llama-server` all expose. Install one, load a small code model, then set:
 

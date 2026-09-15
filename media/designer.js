@@ -92,6 +92,25 @@
         settingsBadges: $('settingsBadges'),
         settingsSave: $('settingsSave'),
         settingsCancel: $('settingsCancel'),
+        aiEnabled: $('aiEnabled'),
+        aiBadge: $('aiBadge'),
+        aiBody: $('aiBody'),
+        aiModel: $('aiModel'),
+        aiModelHint: $('aiModelHint'),
+        aiRefresh: $('aiRefresh'),
+        aiScan: $('aiScan'),
+        aiOptions: $('aiOptions'),
+        aiContext: $('aiContext'),
+        aiGpu: $('aiGpu'),
+        aiTtl: $('aiTtl'),
+        aiMaxTokens: $('aiMaxTokens'),
+        aiTimeout: $('aiTimeout'),
+        aiEndpoint: $('aiEndpoint'),
+        aiLoad: $('aiLoad'),
+        aiUnload: $('aiUnload'),
+        aiStatus: $('aiStatus'),
+        aiProgress: $('aiProgress'),
+        aiStatusText: $('aiStatusText'),
         helpPanel: $('helpPanel'),
         helpTitle: $('helpTitle'),
         helpBody: $('helpBody'),
@@ -1029,15 +1048,122 @@
         post({
             type: 'saveCodeSettings',
             mode: picked ? picked.value : 'onReturn',
-            badges: els.settingsBadges.checked
+            badges: els.settingsBadges.checked,
+            ai: aiPayload()
         });
         closeSettings();
-        els.status.textContent = 'Code-check settings saved.';
+        els.status.textContent = els.aiEnabled.checked
+            ? 'Code-check and AI settings saved.'
+            : 'Code-check settings saved. AI assist is off.';
     });
     els.settingsCancel.addEventListener('click', closeSettings);
     els.settingsModal.addEventListener('click', (e) => {
         if (e.target === els.settingsModal) closeSettings(); // click outside cancels
     });
+
+    // ---------------- AI assist (the panel's second section) ----------------
+    // The extension owns every decision here — the panel only shows state and posts intents. Load, unload
+    // and the status check all happen extension-side through the same code the Command Palette uses.
+    let aiState = null;
+
+    function aiPayload() {
+        const picked = els.aiModel.value;
+        return {
+            enabled: els.aiEnabled.checked,
+            value: picked,
+            contextLength: Number(els.aiContext.value) || 0,
+            gpu: els.aiGpu.value === 'auto' ? 'auto' : els.aiGpu.value,
+            ttlSeconds: els.aiTtl.value === 'auto' ? -1 : Number(els.aiTtl.value),
+            maxTokens: Number(els.aiMaxTokens.value) || 4096,
+            timeoutSeconds: Number(els.aiTimeout.value) || 60,
+            endpoint: els.aiEndpoint.value.trim()
+        };
+    }
+
+    function fillAi(state) {
+        if (!state) return;
+        aiState = state;
+        els.aiEnabled.checked = !!state.enabled;
+        els.aiBadge.textContent = state.enabled ? 'on' : 'off';
+        els.aiBadge.className = 'ai-badge ' + (state.enabled ? 'on' : 'off');
+        els.aiBody.hidden = !state.enabled;
+
+        els.aiModel.innerHTML = '';
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = state.choices.length ? '— choose a model —' : '— nothing available —';
+        els.aiModel.appendChild(none);
+        (state.choices || []).forEach((c) => {
+            const option = document.createElement('option');
+            option.value = c.value;
+            option.textContent = c.label;
+            els.aiModel.appendChild(option);
+        });
+        // A selection the settings already point at wins; otherwise the first real choice, so "Load Model"
+        // is never a no-op waiting for a click the user does not know to make.
+        els.aiModel.value = state.selected || ((state.choices || [])[0] ? state.choices[0].value : '');
+
+        const chosen = (state.choices || []).find((c) => c.value === els.aiModel.value);
+        els.aiModelHint.textContent = [state.hint, chosen ? chosen.detail : ''].filter(Boolean).join('  ·  ');
+        els.aiOptions.hidden = !chosen;
+        els.aiContext.value = String(state.options.contextLength);
+        els.aiGpu.value = ['off', 'max', '0.5'].includes(state.options.gpu) ? state.options.gpu : 'auto';
+        els.aiTtl.value = state.options.ttlSeconds === 0 ? '0'
+            : state.options.ttlSeconds === 3600 ? '3600'
+                : state.options.ttlSeconds === state.options.recommended.ttlSeconds ? 'auto' : '900';
+        els.aiMaxTokens.value = String(state.options.maxTokens);
+        els.aiTimeout.value = String(state.options.timeoutSeconds);
+        if (!els.aiEndpoint.value) els.aiEndpoint.value = state.endpoint;
+        // The recommendation is named, so "auto" is a visible promise rather than a guess.
+        els.aiContext.placeholder = String(state.options.recommended.contextLength);
+        if (els.aiGpu.options[0]) {
+            els.aiGpu.options[0].textContent = `recommended for this machine (${state.options.recommended.gpu})`;
+        }
+    }
+
+    els.aiEnabled.addEventListener('change', () => {
+        els.aiBody.hidden = !els.aiEnabled.checked;
+        els.aiBadge.textContent = els.aiEnabled.checked ? 'on' : 'off';
+        els.aiBadge.className = 'ai-badge ' + (els.aiEnabled.checked ? 'on' : 'off');
+        if (els.aiEnabled.checked && aiState && !els.aiModel.value) post({ type: 'aiState' });
+    });
+    // Choosing a model reveals the settings, per the flow the user asked for: the options are the second
+    // decision, not something to hunt for first.
+    els.aiModel.addEventListener('change', () => {
+        const chosen = aiState && (aiState.choices || []).find((c) => c.value === els.aiModel.value);
+        els.aiOptions.hidden = !chosen;
+        els.aiModelHint.textContent = [aiState ? aiState.hint : '', chosen ? chosen.detail : ''].filter(Boolean).join('  ·  ');
+        if (chosen && chosen.kind === 'custom') els.aiEndpoint.focus();
+    });
+    els.aiRefresh.addEventListener('click', () => post({ type: 'aiState', rescan: true }));
+    els.aiScan.addEventListener('click', () => {
+        setAiProgress('scanning this machine for model files…');
+        post({ type: 'aiScan' });
+    });
+    els.aiLoad.addEventListener('click', () => {
+        if (!els.aiModel.value) { setAiProgress('choose a model first'); return; }
+        setAiBusy(true);
+        setAiProgress('loading — this can take a few minutes for a big model');
+        post({ type: 'aiLoad', value: els.aiModel.value, state: aiPayload() });
+    });
+    els.aiUnload.addEventListener('click', () => {
+        setAiProgress('unloading…');
+        post({ type: 'aiUnload' });
+    });
+    // The status check is the same report the "AI: Status and Hardware Check" command shows — the extension
+    // builds it, so the panel and the command cannot disagree.
+    els.aiStatus.addEventListener('click', () => {
+        setAiProgress('checking…');
+        post({ type: 'aiStatus' });
+    });
+
+    function setAiProgress(message) {
+        els.aiProgress.hidden = !message;
+        els.aiProgress.textContent = message || '';
+    }
+    function setAiBusy(busy) {
+        for (const b of [els.aiLoad, els.aiUnload, els.aiScan, els.aiRefresh]) b.disabled = !!busy;
+    }
 
     // Right-click on the control list dropdown → context menu to delete the
     // selected control (and clean up its code-behind references).
@@ -2565,6 +2691,24 @@
             case 'codeSettings':
                 fillSettings(msg);
                 break;
+            case 'aiState':
+                fillAi(msg.state);
+                break;
+            case 'aiProgress':
+                setAiProgress(String(msg.message || ''));
+                break;
+            case 'aiResult': {
+                setAiBusy(false);
+                setAiProgress('');
+                els.status.textContent = (msg.ok ? '' : '✗ ') + String(msg.message || '');
+                break;
+            }
+            case 'aiStatus': {
+                setAiBusy(false);
+                els.aiStatusText.textContent = (Array.isArray(msg.lines) ? msg.lines : []).join('\n');
+                els.aiStatusText.hidden = false;
+                break;
+            }
             case 'armTool': {
                 state.pendingTag = msg.tag;
                 updatePendingTool();

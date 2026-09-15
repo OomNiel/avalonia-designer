@@ -204,12 +204,19 @@ module.exports = async (t) => {
         const pure = read('src/localModels.ts');
         t.ok(/vscode'/.test(pure) === false && /from 'vscode'/.test(pure) === false, 'wiring',
             'src/localModels.ts does not import vscode');
-        const wizard = read('src/localModelSetup.ts');
-        t.ok(/--estimate-only'/.test(wizard), 'wiring',
-            'the wizard asks what a load would cost BEFORE loading it');
-        t.ok(/'server', 'status'/.test(wizard), 'wiring', 'it asks the CLI for the port instead of assuming 1234');
-        t.ok(/newestServerLogTail/.test(wizard) && /explainLoadFailure/.test(wizard), 'wiring',
+        const core = read('src/localModelCore.ts');
+        // The mechanics moved into the shared core once the designer's Settings panel needed the same
+        // operations: both front doors call these, so the behaviour cannot drift between them.
+        t.ok(/'--estimate-only'/.test(core), 'wiring',
+            'the load asks what it would cost BEFORE loading it (in the shared core)');
+        t.ok(/'server', 'status'/.test(core), 'wiring', 'it asks the CLI for the port instead of assuming 1234');
+        t.ok(/serverLogTail/.test(core) && /explainLoadFailure/.test(core), 'wiring',
             'and it translates the server log when a load fails');
+        t.ok(/unloadAll|freeing whatever is loaded/.test(core), 'wiring',
+            'and it frees what is in memory before loading something else — 17 GB beside a new model is swap');
+        const wizard = read('src/localModelSetup.ts');
         t.ok(/proveItWorks/.test(wizard), 'wiring', 'it proves the model answers before claiming success');
+        t.ok(/from '\.\/localModelCore'/.test(wizard), 'wiring',
+            'and the palette flow delegates to the core rather than keeping its own copy');
     }
 };

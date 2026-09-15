@@ -15,6 +15,50 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.16] - 2026-09-15 · *the AI switch lives in the designer's Settings panel*
+
+### Added
+
+- **An AI assist section in the designer's ⚙ Settings panel** (the toolbar button), so setting it up no
+  longer means knowing about commands, ports or model ids:
+  1. **On/off switch** — off makes every AI command unavailable (a context key gates the menu entries) and
+     **unloads the model**, because leaving 17 GB resident after choosing "no AI" would be a strange
+     machine to hand back.
+  2. **A model dropdown** listing every chat model LM Studio has on disk (with the loaded one marked),
+     both downloadable models, **every `.gguf` found on this machine**, and "a server I run myself".
+  3. **The load settings appear once a model is chosen** — context length, GPU offload and idle-unload -
+     plus the answer budget (`maxTokens`) and the timeout.
+  4. **Load Model** — frees what is in memory first, pre-flights the memory cost, loads with the values
+     shown, wires `backend`/`endpoint`/`model`, and then runs the status check.
+  5. **Status & hardware check** shows the *same* report the palette command shows (one implementation).
+  6. **Save** stores everything and closes; the designer is ready.
+- **Scan machine for models…** — a bounded walk of `~`, `~/Downloads`, `~/models`, `~/llama.cpp`,
+  `~/.cache/huggingface`, `/media` and `/mnt` (depth-limited, >100 MB, 12 s budget, progress shown). It
+  **filters out `mmproj-*.gguf`** — the vision projectors that sit beside the weights and cannot answer a
+  chat request — and skips files already inside LM Studio's folder, which `lms ls` already lists.
+- **A discovered file just works.** A `.gguf` outside LM Studio's folder is imported with
+  `lms import --symbolic-link` (the documented flags omit this: with no flag at all, `lms import` **moves**
+  your file), and with no LM Studio installed it is handed to the extension's own runtime instead.
+- **Three new settings** (`loadContextLength`, `loadGpu`, `loadTtlSeconds`) so the panel's choices persist;
+  `0`/`auto`/`-1` mean "recommend one from this machine".
+
+### Changed
+
+- **Switching models unloads the previous one.** Reported by the user: selecting a new model used to leave
+  the old one in memory. `lms unload --all` now runs before every load (`localModelCore.load`).
+- **The model layer was split in two** — `localModelCore.ts` (discovery, load, unload, status, scan,
+  import; no UI) and the two front doors that ask the questions: the Command Palette flows
+  (`localModelSetup.ts`) and this panel (`aiPanel.ts`). Both call the same operations, so they cannot
+  drift apart, and `assistantUi.statusLines()` is now shared with the panel for the same reason.
+- `AI: Choose a Local Model…` and `AI: Unload the Loaded Model` stay in the palette (the user's choice:
+  "keep both").
+
+### Tests
+
+- New `tests/t2-logic/aiPanel.test.js` (65 assertions) — the dropdown contract, the choice-value round
+  trip (a model key contains a slash, an address contains a colon), the four groups in the list, and a
+  **real scan of a temporary directory tree** containing a 120 MB sparse `.gguf`, an `mmproj` projector
+  and a 4-byte blob: only the weights may come back. Suite **3539 passed / 0 failed**.
 ## [0.9.15] - 2026-09-15 · *models that think before they answer*
 
 ### Fixed

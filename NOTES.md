@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3471 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3539 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1744,3 +1744,46 @@ and raises `maxTokens` itself, because that is the setting a novice would never 
 
 **Lesson for this repo:** when an answer is empty, capture *and measure* the evidence — token counts, finish
 reason, and the reasoning text. A UI that says "0 characters" while discarding the rest is not a diagnostic.
+
+## 13. §102 — the AI switch moves into the designer's Settings panel (2026-09-15, release 0.9.16)
+
+**The user's flow, verbatim:** ⚙ Settings → AI on/off switch → model dropdown → load options → *Load Model*
+(unloading first) → status check → Save → ready. Their complaints behind it: "the current loaded model does
+not unload automatically" when switching, and the palette-only setup being "way too complicated for a novice".
+
+**Structure it produced — copy this if a third front door ever appears:**
+
+| Layer | File | Rule |
+|---|---|---|
+| pure decisions | `localModels.ts` | parsers, argv, recommendations, scan filters. **Never imports `vscode`** |
+| the mechanics | `localModelCore.ts` | discovery, load (unload-first), unload, status, scan, import — **no dialogs**, progress via callback |
+| palette front door | `localModelSetup.ts` | quick picks + notifications, calls the core |
+| panel front door | `aiPanel.ts` | builds the panel state, answers its messages, calls the core |
+| the panel's own UI | `designerPanel.ts` (HTML) + `media/designer.js` + `.css` | the ⚙ Settings modal |
+
+**Decisions the user made explicitly (do not "improve" them silently):** *unload everything* on switching
+(`lms unload --all`, not just our own model); **keep** the palette commands as well as the panel; the panel
+**stays open with an inline progress line** during a multi-minute load (buttons disabled); and the panel
+also exposes `maxTokens` and the timeout, not just the three load arguments.
+
+**Three traps this work found:**
+
+- **`lms import` moves the file by default.** `-c/--copy`, `-L/--hard-link`, `-l/--symbolic-link` are the
+  only ways not to. We always pass `--symbolic-link`, or a scan-and-load would take a model out of the folder
+  the developer keeps it in.
+- **`mmproj-*.gguf` are not models.** They are vision projectors, they live beside the weights (two of the
+  six `.gguf` files on this machine are `mmproj`), and loading one fails in a way that says nothing about the
+  real problem. `canImportFile()` excludes them and the suite pins the real file names.
+- **`when` clauses bind `&&` tighter than `||`.** Gating `editorLangId == csharp || editorLangId == vb`
+  naively yields `csharp || (vb && aiEnabled)` — the gate leaks on C#. The language test must be parenthesised.
+
+**A bounded scan is a promise, not an optimisation:** depth ≤ 5, size > 100 MB, 12 s budget, `proc/sys/dev/
+run/snap/node_modules` skipped, progress on every third find. The real scan of this machine takes ~6 s; an
+unbounded walk that hits a network mount is exactly how an editor gets a reputation for hanging. Files inside
+`~/.lmstudio/models` are counted and then **skipped** — LM Studio's model *key* and its file path have no
+reliable mapping (the folder says `lmstudio-community`, the key says `google`).
+
+**In the panel, `Save` is not the only door that changes settings.** *Load Model* writes
+`backend`/`endpoint`/`model` itself (through `wireSettings` in `localModelSetup.ts`, shared with the palette),
+because a load that did not wire the extension would be a load that did nothing. Save is what commits the
+switch and the numbers.

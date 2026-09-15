@@ -276,6 +276,11 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.16` (2026-09-15)** — the AI switch, model dropdown, load settings, Load/Unload buttons and
+  the status report move into the designer's ⚙ Settings panel; switching models unloads the previous one;
+  a bounded machine scan finds `.gguf` files (excluding `mmproj` projectors) and imports them by symbolic
+  link. New `tests/t2-logic/aiPanel.test.js` (65 assertions, including a real scan of a temp tree).
+  Suite **3539**.
 - **Release `0.9.15` (2026-09-15)** — models that think before they answer: `reasoning_content` is read,
   
   shown as progress, logged and attached to the raw-answer tab, an empty answer is explained with its
