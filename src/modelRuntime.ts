@@ -302,6 +302,32 @@ export function modelFileFor(context: vscode.ExtensionContext, spec: ModelSpec):
     return path.join(modelFolder(context), spec.fileName);
 }
 
+/**
+ * Whether the built-in runtime's weights are already on this machine, per spec.
+ *
+ * The panel showed only "downloaded once when you press Load Model" for these entries, which reads the same
+ * whether the 2 GB file is sitting in storage or has never been fetched — so a 4.4 GB entry looked exactly
+ * like a ready one (asked 2026-09-15: *"the Qwen models does not work - Not downloaded?"*). A partial
+ * download is reported as a partial: `downloadToFile` writes to `.part`, so the final name means complete,
+ * and the `.verified` marker means the hash was checked.
+ */
+export function bundledFilesOnDisk(): Record<string, { onDisk: boolean; bytes: number }> {
+    const out: Record<string, { onDisk: boolean; bytes: number }> = {};
+    if (!activeContext) return out;
+    for (const spec of MODEL_SPECS) {
+        const file = modelFileFor(activeContext, spec);
+        let bytes = 0;
+        let partial = 0;
+        try { bytes = fs.statSync(file).size; } catch { bytes = 0; }
+        try { partial = fs.statSync(`${file}.part`).size; } catch { partial = 0; }
+        out[spec.id] = {
+            onDisk: bytes > 0 && fs.existsSync(`${file}.verified`),
+            bytes: bytes > 0 ? bytes : partial
+        };
+    }
+    return out;
+}
+
 /** The model this configuration will use: the setting, else a known file already in storage. */
 export function resolveModelPath(context: vscode.ExtensionContext, cfg: AssistantConfig): string | undefined {
     if (cfg.modelPath && fs.existsSync(cfg.modelPath)) return cfg.modelPath;

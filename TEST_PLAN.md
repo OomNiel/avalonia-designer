@@ -276,6 +276,15 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.25` (2026-09-15)** — reported after a real session: closing the IDE left the model resident
+  (nothing owned its lifetime), and "the Qwen models does not work - Not downloaded???". Three logs proved
+  the Qwen load *did* work — LM Studio loaded it and answered our own request in 11.6 s — so the failure was
+  in the telling: every built-in entry was described as "downloaded once when you press Load Model", which
+  is equally true of a 4.4 GB file that has never been fetched. The entries now state whether the weights are
+  on disk (or partially, or not at all); `deactivate` frees both runtimes (LM Studio via a detached
+  `lms unload --all`, the sidecar via `stopModelServer`); the panel is refreshed after every request and when
+  it regains focus (a server loads a model just-in-time, so a snapshot goes stale); and the whole `lms …`
+  command line is logged. Suite **3713**.
 - **Release `0.9.24` (2026-09-15)** — unloading left the panel and the status naming the model as loaded.
   Two bugs with one cause: the `aiUnload` handler never posted a fresh `aiState` (so the `● loaded` tag,
   which comes from discovery, survived the unload), and the status had **no line for what is in memory

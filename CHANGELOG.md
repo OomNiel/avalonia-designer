@@ -15,6 +15,43 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.25] - 2026-09-15 · *the model is freed when the session ends, and the panel stops guessing*
+
+### Added
+
+- **Models are unloaded when the IDE closes.** Requested as *"when closing the IDE after a coding session,
+  the model in use must be unloaded to free memory"*. `deactivate` now frees both runtimes: LM Studio's
+  server gets `lms unload --all`, and the extension's own sidecar process is stopped. The unload is spawned
+  **detached**, because freeing several gigabytes outlives the moment VS Code allows `deactivate` — a child
+  that outlives the extension host is what makes the memory actually free. Nothing is spawned when nothing
+  is loaded, and the state is re-read on the next start, so the panel shows "no models loaded" again.
+- **The built-in entries say whether their weights are on this machine**: *weights on disk, ready to load*,
+  *a partial download is on disk — Load Model resumes it*, or *not downloaded yet — 4.4 GB to fetch on the
+  first load*. The old detail (*"downloaded once when you press Load Model"*) was true of every entry and
+  therefore told the user nothing — a built-in model that had never been fetched looked exactly like the one
+  sitting in storage (asked 2026-09-15: *"the Qwen models does not work - Not downloaded???"*). When the
+  models folder was not checked, the wording stays neutral rather than claiming either way.
+
+### Fixed
+
+- **An open panel is refreshed after a task, and when it regains focus.** A local server loads its model
+  **just-in-time** when a request arrives, so the panel could sit there showing "not in memory yet" while the
+  model was answering (reported: *"as soon as a task is assigned the model is marked as loaded"*). The
+  request path refreshes the panel's state afterwards — on success and on failure, since a failing request
+  can have loaded the model too — and the webview re-asks for the state whenever the window regains focus
+  while the panel is open (a closed panel stays quiet).
+- **`lms` loads are logged with their full command line and outcome.** For LM Studio loads the AI log had
+  only *"Load requested: …"*, so "it does not work" could not be diagnosed from the extension's side even
+  when the server had loaded the model perfectly. The whole `lms …` line is now recorded on success.
+
+### Tests
+
+- New assertions: the four built-in entry wordings (on disk, partial, never fetched, unknown), the shutdown
+  unload (async `deactivate`, detached spawn, nothing spawned when nothing is loaded, an unknown state never
+  treated as "nothing to do"), the refresh after a request, and the focus re-ask.
+
+Suite **3713** passed / 0 failed.
+
 ## [0.9.24] - 2026-09-15 · *unloading a model left the panel saying it was still loaded*
 
 ### Fixed

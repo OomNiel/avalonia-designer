@@ -97,8 +97,28 @@ module.exports = async (t) => {
         // "download once" in the label was read as "this downloads now" (asked 2026-09-15), so the label is
         // the size and the detail says when the download happens.
         t.ok(/2\.1 GB|GB/.test(bundled.label), 'list', 'a downloadable model is labelled with its size');
-        t.ok(/downloaded once when you press Load Model/.test(bundled.detail), 'list',
+        t.ok(/downloads once when you press Load Model/.test(bundled.detail), 'list',
             'and its detail states exactly when the download happens, instead of a bare "download once"');
+        // …but "downloads once when you press Load Model" was true of *every* built-in entry, so it told the
+        // user nothing about the one thing they need to know: whether these weights are already here. A
+        // 4.4 GB entry that had never been fetched looked exactly like the ready one (asked 2026-09-15:
+        // "the Qwen models does not work - Not downloaded???"), and with no on-disk information the wording
+        // must stay neutral rather than claim either way.
+        const disk = (over) => buildChoices(discovery(), [], 'http://127.0.0.1:1234/v1', 'bundled',
+            '/m/qwen2.5-coder-3b-instruct-q4_k_m.gguf', over);
+        const detailOf = (all, value) => (all.find((c) => c.value === value) || {}).detail || '';
+        t.ok(/weights on disk, ready to load/.test(detailOf(disk({
+            'qwen2.5-coder-3b-q4': { onDisk: true, bytes: 2104932800 },
+            'qwen2.5-coder-7b-q4': { onDisk: false, bytes: 0 }
+        }), 'bundled:qwen2.5-coder-3b-q4')), 'list', 'a built-in model already downloaded says so');
+        t.ok(/not downloaded yet — 4\.4 GB to fetch/.test(detailOf(disk({
+            'qwen2.5-coder-7b-q4': { onDisk: false, bytes: 0 }
+        }), 'bundled:qwen2.5-coder-7b-q4')), 'list',
+            'one that was never fetched says that, with the size of the download');
+        t.ok(/partial download is on disk/.test(detailOf(disk({
+            'qwen2.5-coder-7b-q4': { onDisk: false, bytes: 1200000000 }
+        }), 'bundled:qwen2.5-coder-7b-q4')), 'list',
+            'an interrupted download is reported as a partial (which Load Model resumes), not as missing');
 
         const found = choices.find((c) => c.kind === 'file');
         t.ok(found && /~\/Downloads/.test(found.detail), 'list',
@@ -321,6 +341,41 @@ module.exports = async (t) => {
             'the webview says so when the extension has reported nothing at all after 10 s');
         t.ok(/setAiProgress\(msg\.ok \? '' : \(text \? '✗ ' \+ text/.test(js), 'silent',
             'and a failure lands in the progress line instead of only the status bar');
+    }
+
+    // ---------- 7b) a model must not outlive the session, and the panel must not go stale ----------
+    // Asked for 2026-09-15: "when closing the IDE after a coding session, the model in use must be unloaded to
+    // free memory, and the model selection state must be updated to show that no models are loaded when the
+    // IDE is restarted". The second half is a *staleness* problem: an LM Studio model enters memory
+    // just-in-time when a request arrives, which nothing in the panel can see on its own.
+    {
+        const ext = read('src/extension.ts');
+        const deactivate = /export async function deactivate[\s\S]*?\n\}/.exec(ext)[0];
+        t.ok(/unloadOnExit/.test(deactivate), 'lifecycle',
+            'shutting down unloads the model instead of leaving several GB resident');
+        t.ok(/stopModelServer/.test(deactivate), 'lifecycle',
+            'and stops the extension\'s own runtime too (a reload can skip the disposables)');
+        t.ok(/^export async function deactivate/m.test(ext), 'lifecycle',
+            'deactivate is async, so the unload is not cut short by the host being killed');
+
+        const core = read('src/localModelCore.ts');
+        t.ok(/export async function unloadOnExit[\s\S]*?detached: true/.test(core), 'lifecycle',
+            'the unload is spawned detached: freeing GBs outlives the short deactivate budget');
+        t.ok(/live\.ids\.length === 0\) return 'nothing was loaded\.'/.test(core), 'lifecycle',
+            'nothing is spawned when nothing was loaded');
+        t.ok(/if \(!live\.known\) return 'could not tell what was in memory\.'/.test(core), 'lifecycle',
+            'and an unknown state is not silently treated as "nothing to do"');
+
+        // The panel's own view can be overtaken by the server loading a model on demand.
+        const js7b = read('media/designer.js');
+        t.ok(/export async function refreshAiState/.test(read('src/aiPanel.ts')), 'lifecycle',
+            'the panel can be re-sent its state');
+        t.ok(/\} finally \{[\s\S]{0,400}?refreshAiState\(\)/.test(read('src/assistantUi.ts')), 'lifecycle',
+            'a request refreshes it — the request is itself what loads the model just-in-time');
+        t.ok(/catch \{\s*\/\* the panel may be mid-dispose/.test(read('src/aiPanel.ts')), 'lifecycle',
+            'and a failed refresh can never become a failed action');
+        t.ok(/window\.addEventListener\('focus'[\s\S]{0,200}?aiState/.test(js7b), 'lifecycle',
+            'an open panel re-asks when the user comes back to it');
     }
 
     // ---------- 8) "loaded" means loaded, and "never" means no flag ----------

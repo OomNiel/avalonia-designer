@@ -1195,6 +1195,12 @@
         if (chosen && chosen.kind === 'custom') els.aiEndpoint.focus();
     });
     els.aiRefresh.addEventListener('click', () => post({ type: 'aiState', rescan: true }));
+    // State the panel cannot see change on its own: a local server loads its model just-in-time when a
+    // request arrives, so an open panel would keep showing "not in memory yet" while the model answers
+    // (reported 2026-09-15). Coming back to the window is the moment to re-ask.
+    window.addEventListener('focus', () => {
+        if (els.settingsModal && !els.settingsModal.hidden) post({ type: 'aiState' });
+    });
     els.aiScan.addEventListener('click', () => {
         setAiProgress('scanning this machine for model files…');
         post({ type: 'aiScan' });

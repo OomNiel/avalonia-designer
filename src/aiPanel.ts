@@ -40,7 +40,7 @@ import {
     type LocalModel,
     type RequestedLoad
 } from './localModels';
-import { bundledRuntimeRunning, ensureBundledEndpoint, ensureModelFile, modelFileFor } from './modelRuntime';
+import { bundledFilesOnDisk, bundledRuntimeRunning, ensureBundledEndpoint, ensureModelFile, modelFileFor } from './modelRuntime';
 import { proveItWorks } from './localModelSetup';
 
 export const SETTINGS = 'avaloniaDesigner.assistant';
@@ -92,7 +92,7 @@ export function parseChoiceValue(value: string): { kind: string; key: string } {
 }
 
 /** Builds the dropdown: everything that could be loaded, in the order a developer would look. */
-export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string, backend = 'off', modelPath = ''): ModelChoice[] {
+export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string, backend = 'off', modelPath = '', bundled: Record<string, { onDisk: boolean; bytes: number }> = {}): ModelChoice[] {
     const choices: ModelChoice[] = [];
     // "Whatever is loaded" is a real answer, and it is the one the settings most often hold (`model` empty).
     // Without an entry for it the dropdown showed the *first* LM Studio model as if it had been chosen — and
@@ -121,11 +121,24 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
         // nothing had happened (reported 2026-09-15).
         const running = bundledRuntimeRunning();
         const isPinned = backend === 'bundled' && !!modelPath && modelPath.endsWith(spec.fileName);
+        // Whether these weights are already on this machine, said outright. "Downloaded once when you press
+        // Load Model" was true of every entry and therefore told the user nothing — a 4.4 GB entry that had
+        // never been fetched looked exactly like the ready one (asked 2026-09-15: "the Qwen models does not
+        // work - Not downloaded???").
+        const disk = bundled[spec.id];
+        const sizeGb = Math.round(spec.bytes / (1024 * 1024 * 1024) * 10) / 10;
+        const state = disk?.onDisk
+            ? 'weights on disk, ready to load'
+            : disk && disk.bytes > 0
+                ? 'a partial download is on disk — Load Model resumes it'
+                : disk
+                    ? `not downloaded yet — ${sizeGb} GB to fetch on the first load`
+                    : `downloads once when you press Load Model (${sizeGb} GB)`;
         choices.push({
             value: choiceValue('bundled', spec.id),
             label: `${spec.label}  ·  ${Math.round(spec.bytes / (1024 * 1024 * 1024) * 10) / 10} GB`
                 + `${isPinned && running.running ? '   ● in use' : isPinned ? '   ● pinned, runtime stopped' : ''}`,
-            detail: `This extension's own runtime — downloaded once when you press Load Model, then local`,
+            detail: `This extension's own runtime · ${state}`,
             kind: 'bundled',
             live: isPinned && running.running
         });
@@ -164,7 +177,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
     const endpoint = cfg.get<string>('endpoint', '') || 'http://127.0.0.1:1234/v1';
     if (fresh) scanned = [];
     const found = await discover();
-    const choices = buildChoices(found, scanned, endpoint, backend, cfg.get<string>('modelPath', ''));
+    const choices = buildChoices(found, scanned, endpoint, backend, cfg.get<string>('modelPath', ''), bundledFilesOnDisk());
     if (choices.length === 0 && !found.cli) {
         choices.push({
             value: choiceValue('custom', endpoint),
@@ -606,4 +619,25 @@ export function attachPanel(panel: vscode.WebviewPanel | undefined): void {
 
 export function panelFor(): vscode.WebviewPanel | undefined {
     return currentPanel;
+}
+
+/**
+ * Re-sends the panel its state, if a panel is open.
+ *
+ * The state it draws is not only the settings: an LM Studio model can enter memory *outside* the panel — a
+ * request loads it just-in-time — and the panel has no way to hear about that. Refreshing after a request,
+ * and when the panel regains focus, is what keeps `● loaded` and the "in memory" hint true instead of a
+ * snapshot from whenever the panel was opened (reported 2026-09-15: "as soon as a task is assigned the model
+ * is marked as loaded" while the panel still said it was not).
+ *
+ * Never throws: it is called from paths where a failed refresh must not become a failed action.
+ */
+export async function refreshAiState(): Promise<void> {
+    const panel = currentPanel;
+    if (!panel) return;
+    try {
+        await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
+    } catch {
+        /* the panel may be mid-dispose — a refresh is never worth an error */
+    }
 }

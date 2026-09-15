@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3696 passed, 0 failed / 0 skipped** (2026-09-15, ~43 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3713 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2110,3 +2110,52 @@ against the real machine with the user's own settings, which is how the wording 
 names the model the next request will load rather than leaving the reader to reconcile two lines.
 
 **Suite:** 3696 passed / 0 failed (was 3679; +11 status branches, +6 unload/rerequest assertions).
+
+### §110 — who loads the model, who frees it, and who is allowed to say "not downloaded" (2026-09-15, release 0.9.25)
+
+Two reports, one theme: **the panel was a snapshot and the model's life was not owned by anything.**
+
+**1. The model outlived the session.** "When closing the IDE after a coding session, the model in use must be
+unloaded to free memory." Nothing did that: LM Studio keeps a model resident until told otherwise, so the
+6.3 GB was still there after the IDE was gone. `deactivate()` is now async and frees both runtimes —
+`lms unload --all` for LM Studio, `stopModelServer()` for the extension's own sidecar (the same belt-and-braces
+reasoning as the C# host in the same function: a window reload or a crashed host skips disposables).
+
+The unload is **spawned detached and not waited for in full**: VS Code allows `deactivate` only a moment,
+while freeing 6 GB takes longer than that. A child process that outlives the extension host is what makes
+"the memory is free" true rather than hopeful — the same reasoning as `host/Program.cs` exiting by itself
+when its WebSocket client disconnects.
+
+**2. "The Qwen models does not work - Not downloaded???"** — and the answer was in three logs, which is the
+lesson. In order:
+
+- `logs/ai.log` (UTC): `16:35:43 Load requested: kind=lms key=qwen/qwen3.5-9b`, then nothing until
+  `16:36:29 kind=bundled key=qwen2.5-coder-3b-q4` — i.e. the user gave up and picked another model.
+- LM Studio's own `server-logs/2026-09/2026-09-15.1.log` (**local** time, UTC+2 — the mismatch cost a
+  detour): `18:35:44 Endpoint=loadModel Loading model: qwen/qwen3.5-9b` → `model loaded` → and our proof
+  request arriving at `18:35:51`, answered with `Finished streaming response` at `18:36:02` (11.6 s,
+  123 tokens, 11.2 tok/s). **The load and the request both worked.**
+- The argv, rebuilt from our own compiled code, was byte-identical to what the CLI accepted:
+  `lms load qwen/qwen3.5-9b --gpu max --context-length 16384 --identifier qwen/qwen3.5-9b`, and the dry run
+  (`--estimate-only`) passed for it exactly as for the model that "works".
+
+So the failure was **in the telling, not in the doing** — and the most probable telling is the built-in
+entries' own text. The picker described every built-in model as *"This extension's own runtime — downloaded
+once when you press Load Model, then local"*, which is true of the 2 GB file sitting in storage **and** of the
+4.4 GB one that has never been fetched. Selecting a built-in Qwen and reading that line is exactly a
+"Not downloaded???" question. The entries now answer it: *weights on disk, ready to load* / *a partial
+download is on disk — Load Model resumes it* / *not downloaded yet — 4.4 GB to fetch on the first load*, and
+the wording stays neutral when the folder was not checked.
+
+**3. Two more staleness holes closed.** The log line for an LM Studio load was the last thing anyone could
+learn: `load()` logged the key but never the command line or the outcome, so a load that the server performed
+perfectly looked like a failure from the extension's side. It now logs the whole `lms …` line on success.
+And because a local server loads a model **just-in-time** when a request arrives, the panel's state can be
+overtaken entirely: `refreshAiState()` is called after every request (success or failure — a failed request
+can have loaded the model too) and the webview re-asks on window focus while the panel is open.
+
+**Lesson:** when a user says "X does not work", read the *other* side's log before touching the code — this
+one proved the doing was correct before any change was made.
+
+**Suite:** 3713 passed / 0 failed (was 3696; +17: the four built-in wordings, the shutdown unload, the
+refresh after a request, the focus re-ask, and the duplicate-block cleanup that made one of them real).

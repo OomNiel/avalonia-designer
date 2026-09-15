@@ -38,6 +38,7 @@ import { log } from './logger';
 import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
 import { sidecarContextSize, sidecarGpuLayers } from './localModels';
 import { loadedNow } from './localModelCore';
+import { refreshAiState } from './aiPanel';
 import { bundledStatusLines, ensureBundledEndpoint } from './modelRuntime';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
@@ -492,6 +493,11 @@ async function proposeMethod(
         if (pick === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
         if (pick === 'Settings') await vscode.commands.executeCommand('workbench.action.openSettings', SETTINGS);
         return undefined;
+    } finally {
+        // A request can make the server load the model just-in-time, which changes what is in memory — and
+        // a failing request can have loaded it too, so both paths refresh. Fire-and-forget: showing the
+        // diff must not wait on a round trip to the server.
+        void refreshAiState();
     }
 
     const { code, note } = extractCode(answer);

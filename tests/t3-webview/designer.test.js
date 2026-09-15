@@ -577,6 +577,22 @@ module.exports = async (t) => {
     $('canvas').dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     t.equal($('settingsModal').hidden, true, 'settings', 'Escape closes the settings');
     t.ok(posted.every((m) => m.type !== 'saveCodeSettings'), 'settings', 'without saving');
+    // An open panel re-asks for the AI state when the user comes back to it: a local server loads its model
+    // just-in-time when a request arrives, so the panel's own view can be overtaken while it sits there
+    // (reported 2026-09-15). A closed panel must stay quiet, or every focus change would cost a scan.
+    // The ⚙ button is what opens the panel — an echo of the settings alone does not (see above).
+    $('btnCodeSettings').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    fillSettingsFromHost();
+    t.equal($('settingsModal').hidden, false, 'settings', 'the panel is open for the focus test');
+    posted.length = 0;
+    s.window.dispatchEvent(new s.window.Event('focus'));
+    t.equal(posted.some((m) => m.type === 'aiState'), true, 'settings',
+        'an open panel re-asks for the AI state on focus');
+    $('settingsCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal($('settingsModal').hidden, true, 'settings', 'Cancel closes the settings');
+    posted.length = 0;
+    s.window.dispatchEvent(new s.window.Event('focus'));
+    t.equal(posted.some((m) => m.type === 'aiState'), false, 'settings', 'a closed panel stays quiet');
 
     // --- the model picker shows the selection the extension sent, never a different entry ---
     // Reported 2026-09-15: after a built-in 3B load that succeeded (proved by the log, the settings and a

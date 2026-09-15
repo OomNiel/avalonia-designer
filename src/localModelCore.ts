@@ -184,6 +184,31 @@ export async function unloadAll(cli?: string): Promise<{ ok: boolean; message?: 
     return { ok: true };
 }
 
+/**
+ * Frees the models on the way out of a session (asked for 2026-09-15: "when closing the IDE … the model in
+ * use must be unloaded to free memory").
+ *
+ * The unload is spawned **detached, and deliberately not waited for in full**: VS Code allows `deactivate`
+ * only a moment, while freeing several gigabytes takes longer than that. A child that outlives the
+ * extension host is what makes "the memory really is free" true instead of hoped for. The grace period is
+ * only so the log line can say what is happening; the unload continues either way.
+ */
+export async function unloadOnExit(graceMs = 4000): Promise<string> {
+    const cli = findLmsCli();
+    if (!cli) return 'LM Studio is not installed — no server-side models to free.';
+    const live = await loadedNow(cli);
+    if (!live.known) return 'could not tell what was in memory.';
+    if (live.ids.length === 0) return 'nothing was loaded.';
+    const child = child_process.spawn(cli, ['unload', '--all'], { detached: true, stdio: 'ignore' });
+    child.unref();
+    await Promise.race([
+        new Promise<void>((resolve) => child.once('exit', () => resolve())),
+        new Promise<void>((resolve) => setTimeout(resolve, graceMs))
+    ]);
+    log(`LM Studio: asked to unload ${live.ids.length} model(s) on exit: ${live.ids.join(', ')}`);
+    return `asked LM Studio to unload ${live.ids.length} model(s) (${live.ids.join(', ')}).`;
+}
+
 export interface LoadReport {
     ok: boolean;
     /** The base URL to write into `endpoint`. */
@@ -299,6 +324,11 @@ export async function load(req: LoadRequest): Promise<LoadReport> {
         if (api?.ids.some((m) => m.id === options.identifier && isModelLoaded(m.state))) break;
         await new Promise((r) => setTimeout(r, 1000));
     }
+    // The whole command line is logged, not just the model key: "it does not work" is otherwise
+    // undiagnosable from the extension's side, because the server may have loaded the model perfectly
+    // while our own request was what failed (2026-09-15: a Qwen load that succeeded on the server and
+    // still looked like a failure in the panel).
+    log(`LM Studio: loaded — \`lms ${buildLoadArgs(model, options).join(' ')}\``);
     return { ok: true, endpoint, unloaded, estimate };
 }
 

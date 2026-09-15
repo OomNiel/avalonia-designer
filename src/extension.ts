@@ -9,6 +9,7 @@ import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor'
 import { disposeIssues } from './codeBehindCheck';
 import { AssistantCodeActionProvider, PROPOSAL_SCHEME, applyProposal, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, showStatus } from './assistantUi';
 import { initModelRuntime, stopModelServer } from './modelRuntime';
+import { unloadOnExit } from './localModelCore';
 import { chooseLocalModel, unloadLoadedModel } from './localModelSetup';
 import * as logger from './logger';
 
@@ -182,7 +183,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 }
 
-export function deactivate(): void {
+export async function deactivate(): Promise<void> {
+    // Free the models first — the memory belongs to the user, and once the IDE is gone nothing is using it
+    // (asked for 2026-09-15). Both runtimes are covered: LM Studio's server via `lms`, and the extension's
+    // own sidecar process. Both steps are bounded, so a slow unload cannot hold the shutdown open.
+    try {
+        logger.log(`Shutting down: ${await unloadOnExit()}`);
+    } catch {
+        /* never fail a shutdown over this */
+    }
+    try { stopModelServer(); } catch { /* already gone */ }
     // VS Code disposes `context.subscriptions`, but a window reload / crashed extension host can
     // skip that — so kill the C# host here too. The host ALSO exits by itself as soon as its
     // WebSocket client disconnects (host/Program.cs), which covers even a SIGKILLed host.
