@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.13",
+    "version": "0.9.14",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -119,9 +119,15 @@
             },
             {
                 "command": "avaloniaDesigner.assistant.setupModel",
-                "title": "AI: Set Up Local Model…",
+                "title": "AI: Choose a Local Model…",
                 "category": "Avalonia",
                 "icon": "$(cloud-download)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.unloadModel",
+                "title": "AI: Unload the Loaded Model",
+                "category": "Avalonia",
+                "icon": "$(debug-disconnect)"
             },
             {
                 "command": "avaloniaDesigner.assistant.stopModel",
@@ -244,6 +250,9 @@
                 },
                 {
                     "command": "avaloniaDesigner.assistant.setupModel"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.unloadModel"
                 },
                 {
                     "command": "avaloniaDesigner.assistant.stopModel"

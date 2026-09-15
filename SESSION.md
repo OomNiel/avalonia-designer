@@ -17,14 +17,22 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-14)
+## Where the last session left off (2026-09-15)
 
+- **Setting up a local model is now one command** (release **0.9.14**, written up in `NOTES.md` §100).
+  *AI: Choose a Local Model…* lists the models LM Studio has on disk, pre-flights the load with LM Studio's
+  own memory estimate (warning before loading), loads it with values recommended from free RAM and the
+  kernel's locked-memory limit, writes `backend`/`endpoint`/`model`, and proves it answers with a one-line
+  round trip. *AI: Unload the Loaded Model* frees the RAM. A failed load is **translated** (the usual abort
+  is a model bigger than `ulimit -l` — LM Studio's *Keep Model in Memory*).
+- **Why a command and not a settings dropdown:** a `contributes.configuration` `enum` is static manifest
+  text and cannot be filled from LM Studio at runtime.
 - **The local AI assist shipped in two tiers**, written up in `NOTES.md` §90–§99: tier 1 talks to any
   OpenAI-compatible server on the machine (LM Studio, Ollama, your own `llama-server`); tier 2 brings its
   own — `host/ModelHost/` is a C# server built on the user's machine with the .NET SDK, so one VSIX fits
   every platform, and the weights are downloaded once with a SHA-256 check. Both are **off by default**
   (`avaloniaDesigner.assistant.backend`).
-- **Versions 0.9.5 – 0.9.13 are local builds only.** The Marketplace still carries **0.9.4** (GitHub
+- **Versions 0.9.5 – 0.9.14 are local builds only.** The Marketplace still carries **0.9.4** (GitHub
   release `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F
   (numbers-only version, both GitHub release flags, no BETA suffix).
 - **Gotcha that cost the most time:** `files.autoSave = onFocusChange` + `editor.formatOnSave` in the

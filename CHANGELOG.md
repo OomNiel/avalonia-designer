@@ -15,6 +15,46 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.14] - 2026-09-15 · *setting up a local model is now one command*
+
+### Added
+
+- **AI: Choose a Local Model…** — the whole local-model setup in one command. It lists the models
+  **LM Studio** already has on disk (read from LM Studio's own `lms` CLI), and picking one does
+  everything: start LM Studio's server if needed, **pre-flight** the load with LM Studio's own memory
+  estimate (warning *before* loading when the model does not fit in what is free), load the model with
+  recommended start values, fill in `backend` / `endpoint` / `model` for you, and prove it answers with
+  a one-line round trip before you touch any code.
+- **Recommended start values, with reasons.** Context length, GPU offload and an idle-unload timer are
+  derived from free RAM and the kernel's locked-memory limit (`/proc/self/limits` → `ulimit -l`), each
+  with a one-line explanation shown before anything is loaded. **Change them…** overrides all three.
+- **AI: Unload the Loaded Model** — frees the memory again when you are done (`lms unload --all`).
+- **Translated load failures.** When a load aborts, LM Studio's own server log is read and translated:
+  the common abort is a model larger than the kernel's locked-memory limit (LM Studio's **Keep Model in
+  Memory**), and the message says so with both numbers — the lock limit and the model size. **Copy
+  details** puts the log on the clipboard for anything else.
+- **Two escape hatches in the same list:** *This extension's own model* (the bundled runtime, for a
+  machine with no LM Studio) and *A server I run myself* (any OpenAI-compatible address — Ollama, a
+  hand-built `llama-server`).
+
+### Changed
+
+- `avaloniaDesigner.assistant.setupModel` is retitled **AI: Choose a Local Model…**, because choosing is
+  now what it does. `AI: Set Up Local Model…` still works (same command).
+- The picker shows **embedding models separately** and never offers them as a chat model, using the type
+  LM Studio's REST API reports rather than guessing from the name.
+- The port is **read from LM Studio** (`lms server status`) instead of assuming 1234.
+
+### Fixed
+
+- An empty **PARAMS** column (embedding models) no longer shifts the architecture into the size column.
+  Found by the new suite while writing it.
+
+### Tests
+
+- New `tests/t2-logic/localModels.test.js` (65 assertions) — every parser is pinned against **real
+  captured `lms` output** from this machine, plus the recommendations, the exact `lms load` argv, and
+  the wiring. Suite **3423 passed / 0 failed**.
 ## [0.9.13] - 2026-09-14 · *the Apply buttons are where you are looking*
 
 ### Added

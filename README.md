@@ -181,9 +181,17 @@ and the same build check. Either way nothing leaves the machine, the feature shi
 hardware check (RAM, CPU threads, AVX2) refuses the models this machine cannot run well instead of
 letting you find out the hard way.
 
+**Or let it set the model up for you.** *AI: Choose a Local Model…* lists the models you already have
+(straight from LM Studio), and picking one starts LM Studio's server if it is not running, warns you
+*before* loading if the model does not fit in the free memory, loads it with recommended start values,
+points the extension at it, and proves it answers — one command, no ports, no model ids, no settings
+to edit. When a load does fail, LM Studio's own log is translated rather than shown (the usual abort is
+a model bigger than the kernel's locked-memory limit), and *AI: Unload the Loaded Model* frees the RAM
+again afterwards.
+
 ## 11. Engineering discipline
 
-- **~3,360 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~3,420 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

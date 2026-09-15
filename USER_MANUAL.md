@@ -852,7 +852,32 @@ The checker's fixes are exact because each one is a rule. That leaves a gap: a h
 those the extension can ask a **local language model** — one running on your own machine. Nothing is
 sent anywhere: the request goes to `127.0.0.1`, and the feature ships **off**.
 
-**Turning it on.** You need a local model server; the extension speaks the OpenAI-compatible API that
+**Turning it on — one command.** Run **AI: Choose a Local Model…** from the Command Palette. The list
+shows every chat model **LM Studio** already has on disk — its size, its parameter count, and whether it
+is loaded right now — and picking one does the rest:
+
+- LM Studio's server is started if it is not running, on **its** port (the extension asks LM Studio
+  rather than assuming 1234);
+- the load is **pre-flighted**: LM Studio estimates the memory the model needs, and if that is more than
+  is free you are told *before* anything is loaded, not after the machine has started swapping;
+- start values are proposed from your own machine — context length, GPU offload and an idle-unload
+  timer — each with a one-line reason, and **Change them…** if you would rather decide;
+- the model is loaded, `backend`, `endpoint` and `model` are filled in for you, and a one-line request
+  proves the model answers **before** you touch any code.
+
+That is the whole setup: no port numbers, no model ids, no settings dialog. *AI: Unload the Loaded
+Model* gives the memory back when you are finished.
+
+> **If a load fails**, the message translates LM Studio's own log instead of dumping it. The usual abort
+> is a model larger than the kernel's *locked memory* limit (`ulimit -l`) — LM Studio offers a **Keep
+> Model in Memory** toggle, and turning it off is what fixes it. The message names both numbers so you
+> can see that for yourself, and **Copy details** puts the server log on the clipboard if the cause is
+> something else.
+
+The same list also offers **This extension's own model** (no LM Studio needed — see below) and **A
+server I run myself** (Ollama, `llama-server`, or anything else already running).
+
+**Or set it up by hand.** You need a local model server; the extension speaks the OpenAI-compatible API that
 LM Studio, Ollama and `llama-server` all expose. Install one, load a small code model, then set:
 
 | Setting | Value |
@@ -900,9 +925,9 @@ usually a sign of a model too small for the job — try the 7B, or a code-specia
 
 Having no AI at all is the case this feature exists for, so it does not require LM Studio or Ollama:
 
-1. Run **AI: Set Up Local Model…** from the Command Palette.
-2. Pick a model. Two code-specialised ones are offered, and the size is shown before anything is
-downloaded:
+1. Run **AI: Choose a Local Model…** from the Command Palette.
+2. Pick **This extension's own model**. Two code-specialised models are offered, and the size is shown
+before anything is downloaded:
 
    | Model | Size | Trade-off |
    |---|---|---|

@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3358 passed, 0 failed / 0 skipped** (2026-09-14, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3423 passed, 0 failed / 0 skipped** (2026-09-15, ~42 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1676,3 +1676,38 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   `/home/niel/Projekte/Avalonia/DevHelper/DesignerHost/`.
 - Reusable `ChromeWindow` component (master): `/home/niel/Projekte/Avalonia/ChromeWindow/`.
 - Spec: `/home/niel/Projekte/Avalonia/DesignerCS_Ext/DesignerCS/Designer Extension.md`.
+
+## 11. §100 — one-command local model setup (2026-09-15, release 0.9.14)
+
+**The requirement was a dropdown in the settings dialog.** That is not possible: a `contributes.configuration`
+`enum` is static text in `package.json` — it cannot be filled at runtime from LM Studio. The correct shape is a
+**command + quick pick** (`AI: Choose a Local Model…`), which is what shipped. Keep this in mind if a "model
+dropdown" is ever requested again.
+
+**What the `lms` CLI actually does (verified on this machine, 2026-09-15 — these are the fixtures in
+`tests/t2-logic/localModels.test.js`):**
+
+| Command | Real output | Used for |
+|---|---|---|
+| `lms ls` | `You have 4 models, taking up 30.70 GB of disk space.` + `LLM` and `EMBEDDING` tables (`google/gemma-4-e4b (1 variant)  7.5B  gemma4  6.33 GB  Local`) | the model list |
+| `lms ps` | `No models are currently loaded.` | only the empty case is parsed — the loaded-table format has never been observed, so loaded state comes from the **REST API** instead |
+| `lms server status` | `The server is running on port 1234.` | the port, instead of assuming 1234 |
+| `lms load <key> --gpu off -c 8192 --estimate-only` | `Estimated Total Memory: 16.52 GiB` / `Confidence: LOW` | the pre-flight warning |
+| `GET :1234/api/v0/models` | `{id, type:"vlm"|"embeddings", arch, quantization, state, max_context_length}` | the `type` and `state` fields — the reliable source for "is this a chat model / is it loaded" |
+| `/proc/self/limits` (line `Max locked memory`) | `3783143424 … bytes` → 3.78 GB | the mlock warning (`ulimit -l` says 3694476 kB — same number, different unit) |
+
+**Design rules that made it testable:** all parsing and all decisions live in `src/localModels.ts`, which must
+**not import `vscode`** (asserted) — so the suite pins every parser against the real text above without LM Studio
+installed. `src/localModelSetup.ts` is the thin VS Code half (quick picks, progress, settings writes).
+
+**Two traps to remember:**
+
+- **A `**/*` glob inside a `/* … */` comment closes the comment** (`**/*.log` contains `*/`). This produced
+  `TS1109`/`TS1443` cascades 300 lines away from the real cause — the error line is not where the comment broke.
+- The embedding row's **PARAMS column is empty**, so a fixed column index reads the size as the architecture.
+  Derive it positionally (drop the last two columns, then find the params cell by shape). The suite caught this;
+  the first version shipped the bug into the test run.
+
+**Safety properties worth not regressing:** pre-flight before load; never guess the port; report *why* a load
+failed (translated) rather than showing a log; prove the model answers before declaring success; leave the
+`backend`/`endpoint`/`model` settings written to the user's global settings so the next session just works.

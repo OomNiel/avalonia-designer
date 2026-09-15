@@ -276,6 +276,11 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.14` (2026-09-15)** — setting up a local model becomes one command (`AI: Choose a Local
+  Model…`: list LM Studio's models, pre-flight the load, load with recommended values, wire the settings,
+  prove it answers). New `tests/t2-logic/localModels.test.js` (65 assertions) pins every parser against
+  **real captured `lms` output**, plus the recommendations, the exact `lms load` argv and the wiring.
+  Suite **3423**.
 - **Release `0.9.13` (2026-09-14)** — the review decision becomes a code lens above the method, the
   status bar entry is coloured, the status dialog names the running version and leftover proposal tabs are
   closed at activation. New `tests/t2-logic/assistantReview.test.js` (35 assertions). Suite **3358**.
