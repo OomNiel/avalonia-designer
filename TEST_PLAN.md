@@ -276,6 +276,17 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.27` (2026-09-15)** — the 17.7 GB model aborted because LM Studio passes `--mlock` (its "Keep
+  Model in Memory" option) and this machine allows only 3.78 GB locked. Verified at the source: `google/gemma-4-e4b`
+  carries its own load config with `llm.load.llama.keepModelInMemory: false` — which is why it loads — while
+  `qwen3.8-27b` has no per-model config, takes LM Studio's default, and aborts three times in four seconds.
+  `lms load` has no flag for it, so the failure text now names the owner of the setting (LM Studio, not the
+  extension), where to turn it off, and the system-wide alternative with its caveat. `--yes` (0.9.26) is what made
+  this fail *fast and explained* instead of hanging on a prompt nobody could answer. Suite **3717**.
+- **Release `0.9.26` (2026-09-15)** — every `lms load` passes `--yes`: a load that reaches LM Studio's resource
+  guardrails gets a confirmation prompt, and the CLI runs without a terminal, so the child waited for an answer
+  nobody could give (up to its 30-minute timeout) while the panel showed only "loading…". `lms import` always had
+  the flag; `load` never did. Suite **3715**.
 - **Release `0.9.25` (2026-09-15)** — reported after a real session: closing the IDE left the model resident
   (nothing owned its lifetime), and "the Qwen models does not work - Not downloaded???". Three logs proved
   the Qwen load *did* work — LM Studio loaded it and answered our own request in 11.6 s — so the failure was

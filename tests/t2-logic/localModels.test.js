@@ -171,7 +171,13 @@ module.exports = async (t) => {
     {
         const mlock = explainLoadFailure(MLOCK_ABORT, ROOMY, 5.34);
         t.ok(/Keep Model in Memory/.test(mlock), 'failure', 'an mlock abort names the toggle to turn off');
-        t.ok(/3\.8 GB locked/.test(mlock) && /5\.3 GB/.test(mlock), 'failure', 'with both numbers, so it is checkable');
+        t.ok(/3\.8 GB of locked memory/.test(mlock) && /5\.3 GB/.test(mlock), 'failure', 'with both numbers, so it is checkable');
+        // The setting is LM Studio's, and the 17.7 GB case proved the user has to be told that: nothing in this
+        // extension can change the `--mlock` flag (verified 2026-09-15: gemma carries its own load config with
+        // keepModelInMemory=false and loads, the 27B takes LM Studio's default and aborts).
+        t.ok(/setting in LM Studio, not in this extension/.test(mlock), 'failure',
+            'and says who owns the setting, so it is not read as an extension bug');
+        t.ok(/press Load Model again/.test(mlock), 'failure', 'it ends with what to do next');
         const oom = explainLoadFailure('ggml_backend_alloc: failed to allocate 1234 bytes', ROOMY, 17.74);
         t.ok(/Not enough free memory/.test(oom) && /18\.0 GB is free/.test(oom), 'failure', 'an OOM abort says how much is free');
         // Should be unreachable now that every load passes `--yes`, which is exactly why it is stated: the

@@ -292,16 +292,25 @@ export function modelLabel(model: LocalModel): string {
 /**
  * A load failure is explained from LM Studio's own log, because the two failures that actually happen are
  * both invisible in the UI: llama.cpp aborting on `mlock` (`GGML_ASSERT(addr) failed` in `llama_mlock::grow_to`
- * — the lock limit is smaller than the model; observed here on 2026-09-14 with a 5.34 GB model and a 3.5 GB
- * limit) and running out of memory. Pure: takes the log text and the facts, returns the sentence to show.
+ * — the lock limit is smaller than the model) and running out of memory. Pure: takes the log text and the
+ * facts, returns the sentence to show.
+ *
+ * The mlock branch is the one a big model hits, and the *setting* is LM Studio's, not ours: verified on this
+ * machine 2026-09-15 — `google/gemma-4-e4b` has its own load config with `llm.load.llama.keepModelInMemory:
+ * false` and loads fine, while `qwen3.8-27b` (no per-model config, so LM Studio's default) is started with
+ * `--mlock` and aborts three times in four seconds. Our `lms load` command line cannot change it; the two
+ * real ways out are the toggle in LM Studio and the kernel's locked-memory limit.
  */
 export function explainLoadFailure(logTail: string, facts: SetupFacts, modelSizeGb?: number): string | undefined {
     const log = String(logTail ?? '');
     if (/GGML_ASSERT\(addr\)|llama_mlock|mlock/i.test(log)) {
         return (
-            'LM Studio tried to lock the model in RAM ("Keep Model in Memory") and the kernel refused: this '
-            + `machine allows ${facts.lockLimitGb.toFixed(1)} GB locked${modelSizeGb ? ` and the model needs about ${modelSizeGb.toFixed(1)} GB` : ''}. `
-            + 'Turn "Keep Model in Memory" OFF in the model\'s load settings (Advanced), then load it again.'
+            'LM Studio tried to lock this model in RAM and the kernel refused. "Keep Model in Memory" is on for '
+            + 'this model — that is a setting in LM Studio, not in this extension — and this machine allows only '
+            + `${facts.lockLimitGb.toFixed(1)} GB of locked memory${modelSizeGb ? ` while the model needs about ${modelSizeGb.toFixed(1)} GB` : ''}. `
+            + 'Turn "Keep Model in Memory" OFF in this model\'s load settings in LM Studio (the Advanced section), '
+            + 'then press Load Model again. Raising the limit system-wide (a systemd `LimitMEMLOCK=`) is the other '
+            + 'way, but locking 17 GB of a 28 GB machine means the weights can never be swapped out.'
         );
     }
     if (/failed to allocate|out of memory|std::bad_alloc|CUDA error|out of host memory/i.test(log)) {

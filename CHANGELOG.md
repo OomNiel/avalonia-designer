@@ -15,6 +15,22 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.27] - 2026-09-15 · *the load that the kernel refused*
+
+### Fixed
+
+- **The `mlock` failure now says who owns the setting, with both ways out.** Reported after the 17.7 GB model
+  aborted with *"LM Studio tried to lock the model in RAM (…)"*. Verified at the source on this machine:
+  `google/gemma-4-e4b` carries **its own** load config with `llm.load.llama.keepModelInMemory: false` — which
+  is exactly why it loads — while `qwen3.8-27b` has no per-model config, takes LM Studio's default, is started
+  with `--mlock`, and aborts three times in four seconds (`GGML_ASSERT(addr) failed` in `llama_mlock::grow_to`).
+  `lms load` has no flag for it, and `--yes` (0.9.26) cannot answer a kernel refusal. The message now says the
+  setting is **LM Studio's, not this extension's**, names where to turn it off (the model's load settings,
+  Advanced), and mentions the system-wide alternative — with the caveat that locking 17 GB of a 28 GB machine
+  means the weights can never be swapped out.
+
+Suite **3717** passed / 0 failed.
+
 ## [0.9.26] - 2026-09-15 · *a load that waits for an answer nobody can give*
 
 ### Fixed
