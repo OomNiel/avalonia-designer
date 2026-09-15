@@ -242,18 +242,14 @@ export function recommendedLoadOptions(model: LocalModel, facts: SetupFacts): Lo
 
 /** The exact `lms` argv for those options. Pure, so the command line is asserted rather than assumed. */
 export function buildLoadArgs(model: LocalModel, options: LoadOptions): string[] {
-    return [
-        'load',
-        model.key,
-        '--gpu',
-        options.gpu,
-        '--context-length',
-        String(options.contextLength),
-        '--ttl',
-        String(options.ttlSeconds),
-        '--identifier',
-        options.identifier
-    ];
+    const args = ['load', model.key, '--gpu', options.gpu, '--context-length', String(options.contextLength)];
+    // `--ttl` must be at least 1: "never unload" is expressed by leaving the flag out entirely, which LM
+    // Studio treats as "no timer". Passing 0 was rejected with
+    //   error: option '--ttl <seconds>' argument '0' is invalid. Number out of range, must be at least 1
+    // — reported by the user on 2026-09-15 after choosing the panel's "never — keep loaded" option.
+    if (options.ttlSeconds >= 1) args.push('--ttl', String(options.ttlSeconds));
+    args.push('--identifier', options.identifier);
+    return args;
 }
 
 /** Where `lms` may live, most likely first. Pure (the caller checks existence). */
@@ -364,6 +360,18 @@ export function sidecarContextSize(loadContextLength: number, fallback: number):
 }
 
 /**
+ * Is this REST `state` a model that is in memory?
+ *
+ * A **comparison, not a substring test** — and that is the whole point: `"not-loaded".includes("loaded")` is
+ * true, so the original `/loaded/i` marked *every* model as loaded. The panel then showed "● loaded" on all
+ * three LM Studio models while the server had nothing in memory, which is how a user ends up loading a model
+ * that "does not have the tag" and concluding the picker is broken (reported 2026-09-15).
+ */
+export function isModelLoaded(state: unknown): boolean {
+    return String(state ?? '').trim().toLowerCase() === 'loaded';
+}
+
+/**
  * The panel's GPU field, as `--gpu-layers`.
  *
  * The mismatch is real and worth naming: LM Studio takes a **ratio** (`off`/`max`/`0.5`) while llama.cpp
@@ -390,6 +398,9 @@ export interface RequestedLoad {
  * Passing those through would put `--gpu auto` and `--ttl -1` on the command line, which LM Studio rejects —
  * and it is exactly the sort of thing that only shows up when a real user presses the button, so it lives
  * here as a pure function with a test rather than inside the click handler.
+ *
+ * `ttlSeconds: 0` is kept as **0**, meaning "no timer": `buildLoadArgs` leaves the flag out for it, because
+ * `--ttl 0` is itself invalid (`must be at least 1`).
  */
 export function resolveLoadOptions(model: LocalModel, requested: RequestedLoad, facts: SetupFacts): LoadOptions {
     const recommended = recommendedLoadOptions(model, facts);

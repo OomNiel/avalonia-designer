@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3645 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3665 passed, 0 failed / 0 skipped** (2026-09-15, ~44 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1970,3 +1970,54 @@ public void Button1_Click(object sender, RoutedEventArgs e)
 
 **Lesson:** the difference between "the CLI exited 0" and "a request answers" is exactly where a green tick
 becomes a lie. Prove every load the same way, and never let a dropdown imply a choice the settings do not hold.
+
+### §107 — `not-loaded` contains `loaded`, and `--ttl 0` is an invalid command (2026-09-15, release 0.9.22)
+
+Two defects reported together, and they turned out to be **one symptom seen from both ends**: a model
+loaded from the panel neither got pinned nor moved the picker.
+
+**1. Every model wore `● loaded`.** The tag came from a substring test:
+
+```js
+const loaded = found.some((m) => /loaded/i.test(String(m.state)));   // LM Studio says "not-loaded"
+```
+
+LM Studio's REST state is `"not-loaded"`, which *contains* `loaded` — so the test was true for the entire
+list, and the panel honestly showed what it was told. `'not-loaded'.find('loaded') = 4`.
+
+Fix: one exact comparison, in `localModels.ts` (pure, unit-tested), used by both `discover()` and the picker:
+
+```js
+export function isModelLoaded(state: unknown): boolean {
+    return String(state ?? '').trim().toLowerCase() === 'loaded';
+}
+```
+
+**2. `--ttl 0` is rejected by `lms load`.** "never — keep it loaded" was translated to `--ttl 0`, and the CLI
+answers *`option '--ttl <seconds>' argument '0' is invalid. Number out of range, must be at least 1`*. The
+load failed **before** the model key was written to `model`, so nothing was pinned and the picker kept its
+old value — the user's *"the selected model does not update and the model is not pinned"*. There is no
+"never" value: the flag must be **omitted** to leave the model resident.
+
+```js
+if (opts.ttlSeconds >= 1) args.push('--ttl', String(opts.ttlSeconds));   // no flag = no timer
+```
+
+`resolveLoadOptions` keeps `0` as the user's explicit choice (not "missing") while `-1`/`NaN`/`''` fall back
+to the recommendation — and every resolved request is now asserted to be a legal argv:
+
+```js
+for (const ttl of [0, -1, NaN, 3600, 1]) { … t.ok(at < 0 || Number(args[at + 1]) >= 1, …) }
+```
+
+**3. A successful load now shows itself.** For a bundled model the pin lives in `modelPath`, not `model`, so
+*"did my load take?"* was unanswerable from the panel. `describePin()` writes it in words under the dropdown
+(*Pinned: … — the built-in runtime is not running; the next request starts it*), and a bundled entry that is
+pinned but idle reads `● pinned, runtime stopped` / `● in use` rather than nothing.
+
+**Lesson:** a substring test against an API's state vocabulary is a guess about that vocabulary — `not-X`
+matches `/X/`. And when a CLI needs "unset", unset it: passing a sentinel `0` turns "no timer" into a
+rejected command line. Both bugs were invisible from the code and obvious from one `curl` of the API plus
+one `lms load` in a terminal.
+
+**Suite:** 3665 passed / 0 failed (was 3645; `aiPanel.test.js` grew from 88 to 110 assertions).

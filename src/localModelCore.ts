@@ -20,6 +20,7 @@ import {
     buildLoadArgs,
     canImportFile,
     explainLoadFailure,
+    isModelLoaded,
     lmsCandidates,
     parseLmsList,
     parseLmsPs,
@@ -149,7 +150,7 @@ export async function discover(): Promise<Discovery> {
     const list = parseLmsList(ls.stdout || ls.stderr);
     const kindById = new Map<string, 'chat' | 'embeddings' | 'unknown'>();
     for (const m of api?.ids ?? []) kindById.set(m.id, m.kind);
-    const loaded = api ? api.ids.filter((m) => /loaded/i.test(m.state)).map((m) => m.id) : parseLmsPs(ps.stdout) ?? [];
+    const loaded = api ? api.ids.filter((m) => isModelLoaded(m.state)).map((m) => m.id) : parseLmsPs(ps.stdout) ?? [];
     log(`LM Studio: ${list.chat.length} chat + ${list.embeddings.length} embedding model(s) on disk, `
         + `${loaded.length} loaded, server ${parseLmsServerStatus(status.stdout || status.stderr).running ? 'running' : 'stopped'}`);
     return { cli, list, server: parseLmsServerStatus(status.stdout || status.stderr), loaded, kindById, api: !!api };
@@ -302,7 +303,7 @@ export async function load(req: LoadRequest): Promise<LoadReport> {
 /** Ids currently in memory, by asking the API (falling back to nothing rather than guessing). */
 async function discoveryLoadedIds(cli: string): Promise<string[]> {
     const api = await readApi();
-    if (api) return api.ids.filter((m) => /loaded/i.test(m.state)).map((m) => m.id);
+    if (api) return api.ids.filter((m) => isModelLoaded(m.state)).map((m) => m.id);
     const ps = await run(cli, ['ps']);
     return parseLmsPs(ps.stdout) ?? [];
 }

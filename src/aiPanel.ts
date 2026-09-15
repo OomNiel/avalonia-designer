@@ -40,7 +40,7 @@ import {
     type LocalModel,
     type RequestedLoad
 } from './localModels';
-import { ensureBundledEndpoint, ensureModelFile, modelFileFor } from './modelRuntime';
+import { bundledRuntimeRunning, ensureBundledEndpoint, ensureModelFile, modelFileFor } from './modelRuntime';
 import { proveItWorks } from './localModelSetup';
 
 export const SETTINGS = 'avaloniaDesigner.assistant';
@@ -52,6 +52,8 @@ export interface ModelChoice {
     detail: string;
     /** What kind of thing it is, so the panel can explain why a load will take a while. */
     kind: 'lmstudio' | 'file' | 'bundled' | 'custom' | 'any';
+    /** True for the entry that is serving requests right now — what "● loaded" means. */
+    live?: boolean;
 }
 
 export interface PanelState {
@@ -71,6 +73,8 @@ export interface PanelState {
     };
     /** A line under the dropdown: what is loaded, what was found by a scan, or why the list is empty. */
     hint: string;
+    /** What requests will actually use, in words — the panel's answer to "did my load take?". */
+    pinned: string;
 }
 
 /** Anything a scan found this session, kept so the dropdown does not lose it on the next refresh. */
@@ -88,7 +92,7 @@ export function parseChoiceValue(value: string): { kind: string; key: string } {
 }
 
 /** Builds the dropdown: everything that could be loaded, in the order a developer would look. */
-export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string): ModelChoice[] {
+export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string, backend = 'off', modelPath = ''): ModelChoice[] {
     const choices: ModelChoice[] = [];
     // "Whatever is loaded" is a real answer, and it is the one the settings most often hold (`model` empty).
     // Without an entry for it the dropdown showed the *first* LM Studio model as if it had been chosen — and
@@ -96,7 +100,9 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
     choices.push({
         value: choiceValue('any', ''),
         label: 'Let the server decide — whatever it has loaded',
-        detail: 'Requests name no model, so the server serves what is in memory (pin one to make answers reproducible)',
+        detail: found.loaded.length
+            ? `${found.loaded.length} model(s) in memory right now`
+            : 'nothing is in memory right now — a request would fail until something is loaded',
         kind: 'any'
     });
     for (const model of chatModels(found)) {
@@ -104,18 +110,24 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
         choices.push({
             value: choiceValue('lms', model.key),
             label: `${modelLabel(model)}${loaded ? '   ● loaded' : ''}`,
-            detail: `LM Studio · ${loaded ? 'already in memory' : 'on disk, ready to load'}`,
-            kind: 'lmstudio'
+            detail: `LM Studio · ${loaded ? 'in memory now' : 'on disk, ready to load'}`,
+            kind: 'lmstudio',
+            live: loaded
         });
     }
     for (const spec of MODEL_SPECS) {
+        // A bundled model pins through `modelPath`, and the runtime shows it is up — so this is the marker
+        // that tells the user their load took. Without it, loading the extension's own model looked like
+        // nothing had happened (reported 2026-09-15).
+        const running = bundledRuntimeRunning();
+        const isPinned = backend === 'bundled' && !!modelPath && modelPath.endsWith(spec.fileName);
         choices.push({
             value: choiceValue('bundled', spec.id),
-            // "download once" was ambiguous — the user read it as "this downloads now". Nine words of
-            // detail cost nothing and say exactly when the download happens.
-            label: `${spec.label}  ·  ${Math.round(spec.bytes / (1024 * 1024 * 1024) * 10) / 10} GB`,
+            label: `${spec.label}  ·  ${Math.round(spec.bytes / (1024 * 1024 * 1024) * 10) / 10} GB`
+                + `${isPinned && running.running ? '   ● in use' : isPinned ? '   ● pinned, runtime stopped' : ''}`,
             detail: `This extension's own runtime — downloaded once when you press Load Model, then local`,
-            kind: 'bundled'
+            kind: 'bundled',
+            live: isPinned && running.running
         });
     }
     for (const file of files) {
@@ -152,7 +164,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
     const endpoint = cfg.get<string>('endpoint', '') || 'http://127.0.0.1:1234/v1';
     if (fresh) scanned = [];
     const found = await discover();
-    const choices = buildChoices(found, scanned, endpoint);
+    const choices = buildChoices(found, scanned, endpoint, backend, cfg.get<string>('modelPath', ''));
     if (choices.length === 0 && !found.cli) {
         choices.push({
             value: choiceValue('custom', endpoint),
@@ -189,8 +201,42 @@ export async function panelState(fresh = false): Promise<PanelState> {
         hint: found.cli
             ? `${chatModels(found).length} LM Studio model(s) on disk · ${found.loaded.length} loaded`
             + (scanned.length ? ` · ${scanned.length} file(s) found by the scan` : ' · nothing scanned yet')
-            : `LM Studio is not installed — ${MODEL_SPECS.length} downloadable model(s) and files found on disk still work`
+            : `LM Studio is not installed — ${MODEL_SPECS.length} downloadable model(s) and files found on disk still work`,
+        pinned: describePin(backend, cfg.get<string>('model', ''), cfg.get<string>('modelPath', ''), endpoint, found)
     };
+}
+
+/**
+ * What requests will actually use, said in words.
+ *
+ * The panel used to leave this to be inferred from the dropdown, and for a **bundled** model that inference
+ * was impossible: the pin lives in `modelPath`, not `model`, and no bundled entry ever showed a loaded
+ * marker — so a successful load looked like nothing had happened (reported 2026-09-15).
+ */
+function describePin(
+    backend: string,
+    model: string,
+    modelPath: string,
+    endpoint: string,
+    found: Discovery
+): string {
+    if (backend === 'off') return 'AI assist is off — nothing is pinned.';
+    const runtime = bundledRuntimeRunning();
+    if (backend === 'bundled') {
+        const spec = modelPath ? specByFileName(modelPath) : undefined;
+        const name = spec?.label ?? (modelPath ? path.basename(modelPath) : 'the built-in model');
+        return runtime.running
+            ? `Pinned: ${name} — serving requests on ${runtime.endpoint}`
+            : `Pinned: ${name} — the built-in runtime is not running; the next request starts it`;
+    }
+    if (model) {
+        const inMemory = found.loaded.some((id) => id === model || id.endsWith(model));
+        return `Pinned: ${model} on ${endpoint}${inMemory ? ' (in memory)' : ' — not in memory yet; the next request loads it'}`;
+    }
+    const loaded = found.loaded.filter((id) => !looksLikeEmbeddingModel(id));
+    return loaded.length
+        ? `Not pinned — ${endpoint} serves whatever is loaded (${loaded.join(', ')})`
+        : `Not pinned, and nothing is loaded on ${endpoint} — a request will fail until something is loaded.`;
 }
 
 export interface LoadOutcome {
@@ -409,7 +455,7 @@ async function loadLmStudio(
             : `Loaded ${model.key} and it answered a test request.`,
         estimate: result.estimate
             ? `Estimated ${result.estimate.totalGiB.toFixed(1)} GB of memory at ${result.estimate.contextLength} tokens `
-                + `(confidence ${result.estimate.confidence}).`
+            + `(confidence ${result.estimate.confidence}).`
             : undefined
     };
 }

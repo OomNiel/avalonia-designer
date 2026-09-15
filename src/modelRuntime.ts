@@ -265,6 +265,18 @@ export function stopModelServer(): void {
     server?.stop();
 }
 
+/**
+ * Whether the extension's own runtime is up, and on which address.
+ *
+ * The panel needs this to mark the bundled entry as the one actually serving requests: bundled models pin
+ * through `modelPath` rather than `model`, so without it the picker showed no sign that a load had worked
+ * (reported 2026-09-15).
+ */
+export function bundledRuntimeRunning(): { running: boolean; endpoint?: string } {
+    const running = server?.current();
+    return running ? { running: true, endpoint: running.endpoint } : { running: false };
+}
+
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }

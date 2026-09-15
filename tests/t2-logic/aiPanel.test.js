@@ -17,7 +17,13 @@ const os = require('os');
 const path = require('path');
 const { buildChoices, choiceValue, currentSelection, parseChoiceValue } = require('../../out/aiPanel.js');
 const { scanForModelFiles } = require('../../out/localModelCore.js');
-const { canImportFile, scanRoots } = require('../../out/localModels.js');
+const {
+    buildLoadArgs,
+    canImportFile,
+    isModelLoaded,
+    resolveLoadOptions,
+    scanRoots
+} = require('../../out/localModels.js');
 
 const ROOT = path.join(__dirname, '..', '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -174,7 +180,9 @@ module.exports = async (t) => {
         fs.rmSync(empty, { recursive: true, force: true });
     }
 
-    // ---------- 6) the manifest and the wiring a stub cannot prove ----------
+    // ---------- 6) the manifest, the panel and the webview must agree ----------
+    // The three halves are edited separately, so a disagreement here renders an empty section or a switch
+    // that does nothing. Every assertion below is a wire, not a feature.
     {
         const pkg = JSON.parse(read('package.json'));
         const props = pkg.contributes.configuration.properties;
@@ -298,5 +306,54 @@ module.exports = async (t) => {
             'the webview says so when the extension has reported nothing at all after 10 s');
         t.ok(/setAiProgress\(msg\.ok \? '' : \(text \? '✗ ' \+ text/.test(js), 'silent',
             'and a failure lands in the progress line instead of only the status bar');
+    }
+
+    // ---------- 8) "loaded" means loaded, and "never" means no flag ----------
+    // Both reported by the user on 2026-09-15, from real clicks:
+    //   * every LM Studio model showed "● loaded" while the server had nothing in memory — `/loaded/i`
+    //     matches "not-loaded" (`'not-loaded'.indexOf('loaded') === 4`), so the tag meant nothing and
+    //     loading a model "without the tag" looked like it had done nothing;
+    //   * choosing "never — keep loaded" sent `--ttl 0`, which lms rejects:
+    //     "argument '0' is invalid. Number out of range, must be at least 1".
+    {
+        t.equal(isModelLoaded('loaded'), true, 'state', 'the API saying "loaded" means loaded');
+        t.equal(isModelLoaded('not-loaded'), false, 'state',
+            'and "not-loaded" does NOT — the substring bug that tagged every model');
+        t.equal(isModelLoaded('Not-Loaded'), false, 'state', 'in any capitalisation');
+        t.equal(isModelLoaded('unloaded'), false, 'state', 'as does "unloaded"');
+        t.equal(isModelLoaded('loading'), false, 'state', 'a model still coming up is not loaded yet');
+        t.equal(isModelLoaded(''), false, 'state', 'an empty state is not loaded');
+        t.equal(isModelLoaded(undefined), false, 'state', 'nor a missing one');
+        // The marker itself has to follow: with nothing in memory, no entry may claim to be loaded.
+        const idle = discovery();
+        idle.loaded = [];
+        t.equal(buildChoices(idle, [], 'http://127.0.0.1:1234/v1').filter((c) => /●/.test(c.label)).length, 0,
+            'state', 'and a dropdown built from an idle server shows no loaded tag at all');
+        t.ok(buildChoices(discovery(), [], 'http://127.0.0.1:1234/v1')
+            .some((c) => c.kind === 'lmstudio' && c.live === true && /● loaded/.test(c.label)), 'state',
+            'while the model that *is* in memory is marked, so the tag still means something');
+
+        const model = { provider: 'lmstudio', key: 'google/gemma-4-e4b', label: 'gemma', params: '7.5B', arch: 'gemma4', sizeGb: 6.33, kind: 'chat' };
+        const options = (ttl) => ({ contextLength: 8192, gpu: 'off', ttlSeconds: ttl, identifier: 'google/gemma-4-e4b', reasons: [] });
+        t.ok(buildLoadArgs(model, options(900)).includes('--ttl'), 'ttl', 'a timer is passed when there is one');
+        const never = buildLoadArgs(model, options(0));
+        t.equal(never.includes('--ttl'), false, 'ttl',
+            '"never unload" omits the flag — `--ttl 0` is rejected by lms ("must be at least 1")');
+        t.equal(never.join(' '), 'load google/gemma-4-e4b --gpu off --context-length 8192 --identifier google/gemma-4-e4b',
+            'ttl', 'and the rest of the command line is untouched');
+
+        const facts = { totalRamGb: 28, freeRamGb: 18, cpuCount: 12, lockLimitGb: 3.78 };
+        const resolved = (ttl) => resolveLoadOptions(model, { contextLength: 0, gpu: 'auto', ttlSeconds: ttl }, facts);
+        t.equal(resolved(0).ttlSeconds, 0, 'ttl',
+            'the resolver keeps 0 as the user\'s choice ("no timer") rather than treating it as missing');
+        t.equal(resolved(-1).ttlSeconds, 900, 'ttl', 'while -1 ("recommended") becomes a real timer');
+        t.equal(resolved(NaN).ttlSeconds, 900, 'ttl', 'and junk falls back to the recommendation');
+        for (const ttl of [0, -1, NaN, 3600, 1]) {
+            const args = buildLoadArgs(model, resolved(ttl));
+            const at = args.indexOf('--ttl');
+            t.ok(at < 0 || Number(args[at + 1]) >= 1, 'ttl',
+                `a request built from the panel can never send an out-of-range --ttl (ttl=${String(ttl)} → `
+                + `${at < 0 ? 'omitted' : args[at + 1]})`);
+        }
     }
 };

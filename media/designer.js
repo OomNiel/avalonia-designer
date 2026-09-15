@@ -1116,7 +1116,10 @@
         els.aiModel.value = state.selected || ((state.choices || [])[0] ? state.choices[0].value : '');
 
         const chosen = (state.choices || []).find((c) => c.value === els.aiModel.value);
-        els.aiModelHint.textContent = [state.hint, chosen ? chosen.detail : ''].filter(Boolean).join('  ·  ');
+        // "Did my load take?" answered in words, not left to be inferred from the dropdown: for the
+        // built-in runtime the pin lives in `modelPath`, so nothing else in the panel showed it.
+        els.aiModelHint.textContent = [state.hint, chosen ? chosen.detail : '', state.pinned]
+            .filter(Boolean).join('  ·  ');
         els.aiOptions.hidden = !chosen;
         els.aiContext.value = String(state.options.contextLength);
         els.aiGpu.value = ['off', 'max', '0.5'].includes(state.options.gpu) ? state.options.gpu : 'auto';
@@ -1168,7 +1171,8 @@
     els.aiModel.addEventListener('change', () => {
         const chosen = aiState && (aiState.choices || []).find((c) => c.value === els.aiModel.value);
         els.aiOptions.hidden = !chosen;
-        els.aiModelHint.textContent = [aiState ? aiState.hint : '', chosen ? chosen.detail : ''].filter(Boolean).join('  ·  ');
+        els.aiModelHint.textContent = [aiState ? aiState.hint : '', chosen ? chosen.detail : '', aiState ? aiState.pinned : '']
+            .filter(Boolean).join('  ·  ');
         applyKindToOptions(chosen);
         if (chosen && chosen.kind === 'custom') els.aiEndpoint.focus();
     });

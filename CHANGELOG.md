@@ -15,6 +15,36 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.22] - 2026-09-15 · *every model said "loaded", and "never" was an invalid command*
+
+### Fixed
+
+- **Every LM Studio model was tagged `● loaded`.** The check was `/loaded/i.test(state)` and LM Studio's
+  *unloaded* state is the string `not-loaded` — which contains `loaded`. The tag was therefore true for the
+  whole list (reported 2026-09-15: *"how is it possible to have more than 1 model tagged 'Loaded'?"*).
+  A single `isModelLoaded()` now compares the state exactly, and both `discover()` and the picker use it.
+- **Loading a model failed with `--ttl 0`.** "never — keep it loaded" was passed to `lms load` as
+  `--ttl 0`, and the CLI rejects it: *option '--ttl <seconds>' argument '0' is invalid. Number out of range,
+  must be at least 1*. The load failed, so the model was never pinned and the picker never moved — which is
+  the reported *"the selected model in the modelpicker does not update and the model is not pinned"*
+  (the same failure, seen from the other end). `buildLoadArgs` now **omits the flag** when there is no timer,
+  and `resolveLoadOptions` keeps `0` as the user's choice while `-1`/junk still fall back to the
+  recommendation.
+- **A load could succeed without the panel showing it.** For a bundled model the pin lives in `modelPath`,
+  not in `model`, so a successful load looked like nothing had happened. The picker now says what is pinned
+  in words under the dropdown — *"Pinned: … — serving requests on …"*, *"… the built-in runtime is not
+  running; the next request starts it"*, or *"Not pinned, and nothing is loaded on … — a request will fail
+  until something is loaded"* — and a bundled entry that is pinned but idle reads `● pinned, runtime
+  stopped` instead of nothing.
+
+### Tests
+
+- `tests/t2-logic/aiPanel.test.js` gains a truth table for `isModelLoaded` (`'loaded'` only, not
+  `'not-loaded'`/`'Not-Loaded'`/`'unloaded'`/`'loading'`), a check that an empty `loaded` list produces
+  **zero** `● loaded` markers while a live one produces exactly the loaded entries, the exact argv for "no
+  timer" (`--ttl` absent), and a loop over `0 / -1 / NaN / 3600 / 1` proving no resolved request can emit an
+  out-of-range `--ttl`. Suite **3665 passed / 0 failed**.
+
 ## [0.9.21] - 2026-09-15 · *the selected model has to be able to answer*
 
 ### Fixed

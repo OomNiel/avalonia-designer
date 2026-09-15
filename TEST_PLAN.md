@@ -276,10 +276,16 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.22` (2026-09-15)** — two bugs from real clicks: `/loaded/i` matched LM Studio's
+  `not-loaded` state, so **every** model carried the `● loaded` tag (the user asked how more than one model
+  could be loaded — it could not; the tag was wrong), and "never — keep loaded" sent `--ttl 0`, which `lms`
+  rejects ("must be at least 1"), so the load failed and the model was never pinned. The panel now also
+  states what is pinned in words, under the dropdown, including bundled models whose pin lives in
+  `modelPath`. Suite **3665**.
 - **Release `0.9.21` (2026-09-15)** — found by verifying the selection against the user's own app: a load is
   only "Loaded" once a test request has answered (the LM Studio path never proved itself), and the dropdown
   stopped showing the first model as selected when the settings really say "let the server decide". Suite
-  **3645**.
+  **3665**.
 - **Release `0.9.20` (2026-09-15)** — `Load Model` fixed (the webview's flat payload against the extension's
   `state.options.*`: a TypeError before any message, which is what "nothing happens" was), load arguments
   resolved before they reach `lms load` (`auto`/`-1` would be rejected), and Save no longer reopens the
