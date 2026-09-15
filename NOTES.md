@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3643 passed, 0 failed / 0 skipped** (2026-09-15, ~40 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3645 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -1924,3 +1924,49 @@ save echo leaves the modal hidden.
 **Rule for this webview:** every message that crosses the boundary needs its shape checked by the suite
 (`panelContract.test.js`), and a handler that *closes* something must never be undone by a handler that
 *fills* something.
+
+### §106 — verifying the selection against the user's own app (2026-09-15, release 0.9.21)
+
+The user asked for a verification run: *"run my testapp 'OptimisedCSTest' to verify the selection of a model"*.
+That app lives at `~/Projekte/TestExtApps/OptimisedCSTest` and its `Button1_Click` already holds the handler
+from the earlier session (`RadioButton1.IsChecked = true;`). It builds 0/0.
+
+**How to verify this without the designer's webview** (there is no way to drive a VS Code webview with the
+browser tools; the useful question is what the *model* does): drive the extension's own compiled modules from
+Node with the user's real settings — `normalizeAssistantConfig(settings)` → `buildImplementPrompt(...)` with
+the real method text out of their `.axaml.cs` → `chatDetailed(...)` → `extractCode(...)`. A reusable version is
+`/tmp/verify-selection.js` (takes project dir, prompt, method name). It is the same path
+"AI: Implement in Function…" takes, so its verdict is about the product, not about the harness.
+
+**First result: the selection did not work.** `probe` listed 4 models but the request failed with
+`HTTP 400 {"error":{"message":"No models loaded. Please load a model in the developer page or use the 'lms
+load' command."}}` — because the settings said `backend: external`, `model: ''`, and LM Studio had nothing in
+memory. The `ai.log` shows why it got there: the **bundled** load succeeded twice at 14:39/14:40
+("Bundled runtime answering on http://127.0.0.1:33861/v1"), and a later Save moved the selection to an
+external server with nothing loaded.
+
+**Second result, after `lms load google/gemma-4-e4b --gpu max -c 8192 --ttl 900` (8.3 s, 5.89 GiB):**
+18.6 s, `finish=stop`, 318 tokens, and the model wrote exactly
+
+```csharp
+public void Button1_Click(object sender, RoutedEventArgs e)
+{
+    RadioButton1.IsChecked = true;
+}
+```
+
+**Two defects that verification exposed, both fixed in 0.9.21:**
+
+1. **A load was announced as done before anything asked it a question.** The bundled path proves itself with a
+   one-line round trip; the LM Studio path reported `lms load` exiting 0. That is why the panel could show
+   *on* while the wire answered `HTTP 400`. `loadLmStudio` now runs the same proof (`proveItWorks`) and
+   reports the failure reason instead of a tick.
+2. **The dropdown lied about `model: ''`.** `currentSelection()` returned `''` and `fillAi` fell back to
+   `choices[0]` — so the panel displayed the *first* LM Studio model as selected, and Save pinned a model the
+   user never chose. There is now an explicit `any:` entry ("Let the server decide — whatever it has loaded")
+   at the top of the list, `currentSelection` falls back to it instead of to the first model, and
+   `saveAiSettings` keeps `model` empty for it. Choosing it also *checks* the endpoint (probe + one-line
+   round trip) and says how many models it offers, or that nothing is loaded.
+
+**Lesson:** the difference between "the CLI exited 0" and "a request answers" is exactly where a green tick
+becomes a lie. Prove every load the same way, and never let a dropdown imply a choice the settings do not hold.

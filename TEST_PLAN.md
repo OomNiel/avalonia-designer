@@ -276,6 +276,10 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.21` (2026-09-15)** — found by verifying the selection against the user's own app: a load is
+  only "Loaded" once a test request has answered (the LM Studio path never proved itself), and the dropdown
+  stopped showing the first model as selected when the settings really say "let the server decide". Suite
+  **3645**.
 - **Release `0.9.20` (2026-09-15)** — `Load Model` fixed (the webview's flat payload against the extension's
   `state.options.*`: a TypeError before any message, which is what "nothing happens" was), load arguments
   resolved before they reach `lms load` (`auto`/`-1` would be rejected), and Save no longer reopens the

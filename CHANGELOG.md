@@ -15,6 +15,28 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.21] - 2026-09-15 · *the selected model has to be able to answer*
+
+### Fixed
+
+- **A load is only "Loaded" once it has answered.** The LM Studio path reported success when `lms load`
+  exited 0; the bundled path has always proven itself with a one-line round trip. That difference is how the
+  panel could say *on* while the wire said `HTTP 400 No models loaded` (found while verifying the selection
+  against a real app, 2026-09-15). Both paths now run the same test request, and a failure is reported with
+  the reason instead of a green tick.
+- **The dropdown no longer claims a model is selected when the server is free to choose.** With `model`
+  empty — the state the settings most often hold — the panel showed the *first* LM Studio model as if it had
+  been picked, and pressing Save then pinned a model nobody chose. There is now an explicit first entry,
+  **"Let the server decide — whatever it has loaded"**, which is what the settings actually say, and Save
+  keeps `model` empty for it.
+- **Choosing it checks the server rather than assuming**: it asks which models the endpoint offers, reports
+  how many and warns when nothing is loaded, instead of leaving "on" pointing at an empty server.
+
+### Tests
+
+- `tests/t2-logic/aiPanel.test.js` pins the new entry, the fallback for a model that has vanished from disk
+  (it must not silently select the first one), and that an off switch still starts from a sensible value.
+  Suite **3645 passed / 0 failed**.
 ## [0.9.20] - 2026-09-15 · *Load Model works, and Save stops flickering*
 
 ### Fixed

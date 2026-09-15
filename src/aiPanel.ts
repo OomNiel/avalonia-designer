@@ -14,7 +14,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { normalizeAssistantConfig } from './assistant';
+import { normalizeAssistantConfig, looksLikeEmbeddingModel, probeServer } from './assistant';
 import { log, logError } from './logger';
 import {
     chatModels,
@@ -41,6 +41,7 @@ import {
     type RequestedLoad
 } from './localModels';
 import { ensureBundledEndpoint, ensureModelFile, modelFileFor } from './modelRuntime';
+import { proveItWorks } from './localModelSetup';
 
 export const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -50,7 +51,7 @@ export interface ModelChoice {
     label: string;
     detail: string;
     /** What kind of thing it is, so the panel can explain why a load will take a while. */
-    kind: 'lmstudio' | 'file' | 'bundled' | 'custom';
+    kind: 'lmstudio' | 'file' | 'bundled' | 'custom' | 'any';
 }
 
 export interface PanelState {
@@ -89,6 +90,15 @@ export function parseChoiceValue(value: string): { kind: string; key: string } {
 /** Builds the dropdown: everything that could be loaded, in the order a developer would look. */
 export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string): ModelChoice[] {
     const choices: ModelChoice[] = [];
+    // "Whatever is loaded" is a real answer, and it is the one the settings most often hold (`model` empty).
+    // Without an entry for it the dropdown showed the *first* LM Studio model as if it had been chosen — and
+    // pressing Save then pinned a model nobody picked (found while verifying the selection, 2026-09-15).
+    choices.push({
+        value: choiceValue('any', ''),
+        label: 'Let the server decide — whatever it has loaded',
+        detail: 'Requests name no model, so the server serves what is in memory (pin one to make answers reproducible)',
+        kind: 'any'
+    });
     for (const model of chatModels(found)) {
         const loaded = found.loaded.some((id) => id === model.key || id.endsWith(model.key));
         choices.push({
@@ -132,7 +142,7 @@ export function currentSelection(choices: ModelChoice[], model: string, backend:
         return choiceValue('bundled', (byName ?? MODEL_SPECS[0]).id);
     }
     const match = choices.find((c) => c.kind === 'lmstudio' && c.value === choiceValue('lms', model));
-    return match ? match.value : '';
+    return match ? match.value : choiceValue('any', '');
 }
 
 /** Everything the panel needs to draw itself, in one message. */
@@ -259,6 +269,37 @@ async function startLoad(
         return { ok: true, endpoint: key };
     }
 
+    if (kind === 'any') {
+        // Nothing to load: the point is to check that the server this points at has something to serve.
+        // Today's failure mode was exactly that — "on" in the panel, `HTTP 400 No models loaded` on the wire.
+        progress('asking the server what it has loaded…');
+        const live = normalizeAssistantConfig({
+            backend: 'external',
+            endpoint: request.endpoint || cfg.get<string>('endpoint', ''),
+            model: '',
+            timeoutSeconds: request.timeoutSeconds
+        });
+        await cfg.update('backend', 'external', vscode.ConfigurationTarget.Global);
+        await cfg.update('model', '', vscode.ConfigurationTarget.Global);
+        const answer = await proveItWorks();
+        const probe = await probeServer(live);
+        const chat = (probe.models ?? []).filter((m) => !looksLikeEmbeddingModel(m.id));
+        aiLog(context, `Any-model load: ${chat.length} chat model(s) offered, test request ${answer.ok ? 'answered' : 'failed'}`);
+        if (!answer.ok) {
+            return {
+                ok: false,
+                endpoint: live.endpoint,
+                message: `Nothing is answering on ${live.endpoint}. ${answer.why ?? ''} Load a model there, or pick one from the list.`
+            };
+        }
+        return {
+            ok: true,
+            endpoint: live.endpoint,
+            message: `Ready — ${live.endpoint} answers, and requests will use whichever model it has loaded`
+                + `${chat.length > 1 ? ` (it offers ${chat.length} — pick one above to make answers reproducible)` : ''}.`
+        };
+    }
+
     if (kind === 'bundled') {
         const spec = specById(key);
         if (!spec) return { ok: false, message: `Unknown bundled model "${key}".` };
@@ -347,16 +388,28 @@ async function loadLmStudio(
     await cfg.update('backend', 'external', vscode.ConfigurationTarget.Global);
     await cfg.update('endpoint', result.endpoint, vscode.ConfigurationTarget.Global);
     await cfg.update('model', model.key, vscode.ConfigurationTarget.Global);
-    log(`Panel load: ${model.key} → ${result.endpoint}`);
+    // "lms load exited 0" is not "a request works". The bundled path proves itself with a one-line round trip
+    // and this one did not — which is how the panel could say "on" while the wire said
+    // `HTTP 400 No models loaded` (2026-09-15). Same proof, both paths.
+    onProgress('checking that it answers…');
+    const proof = await proveItWorks();
+    log(`Panel load: ${model.key} → ${result.endpoint} (test request ${proof.ok ? 'answered' : 'FAILED'})`);
+    if (!proof.ok) {
+        return {
+            ok: false,
+            endpoint: result.endpoint,
+            message: `${model.key} is loaded on ${result.endpoint}, but a test request failed: ${proof.why ?? 'no answer'}`
+        };
+    }
     return {
         ok: true,
         endpoint: result.endpoint,
         message: result.unloaded.length
-            ? `Loaded ${model.key} (unloaded ${result.unloaded.join(', ')} first).`
-            : `Loaded ${model.key}.`,
+            ? `Loaded ${model.key} (unloaded ${result.unloaded.join(', ')} first) and it answered a test request.`
+            : `Loaded ${model.key} and it answered a test request.`,
         estimate: result.estimate
             ? `Estimated ${result.estimate.totalGiB.toFixed(1)} GB of memory at ${result.estimate.contextLength} tokens `
-            + `(confidence ${result.estimate.confidence}).`
+                + `(confidence ${result.estimate.confidence}).`
             : undefined
     };
 }
@@ -393,6 +446,11 @@ export async function saveAiSettings(input: PanelAiRequest): Promise<void> {
         // The kind decides which setting owns the answer: `model` for a server, `modelPath` for a file.
         if (kind === 'bundled' || kind === 'file') {
             await cfg.update('backend', 'bundled', target);
+        } else if (kind === 'any') {
+            // "Let the server decide" must stay that way — writing a model key here is what pinned a model the
+            // user never chose.
+            await cfg.update('backend', 'external', target);
+            await cfg.update('model', '', target);
         } else {
             await cfg.update('backend', 'external', target);
             await cfg.update('model', kind === 'lmstudio' ? parseChoiceValue(input.value).key : '', target);

@@ -77,6 +77,9 @@ module.exports = async (t) => {
 
         const lms = choices.filter((c) => c.kind === 'lmstudio');
         t.equal(lms.length, 3, 'list', 'every chat model LM Studio has is offered');
+        t.equal(choices[0].kind, 'any', 'list',
+            'first of all: "let the server decide" — the state the settings most often hold, which the panel '
+            + 'used to misrepresent by showing the first model as if it had been chosen');
         t.equal(lms.map((c) => c.value).includes('lms:text-embedding-nomic-embed-text-v1.5'), false, 'list',
             'the embedding model is not — it cannot answer a chat request');
         t.ok(/● loaded/.test(lms[1].label), 'list', 'the loaded model is marked, so the list shows what is in memory');
@@ -98,7 +101,7 @@ module.exports = async (t) => {
 
         t.equal(choices[choices.length - 1].kind, 'custom', 'list',
             '"a server I run myself" is last: it is the least common answer, and it needs the address field');
-        t.equal(choices.length, 3 + 2 + 1 + 1, 'list', 'and the list is exactly those four groups');
+        t.equal(choices.length, 3 + 2 + 1 + 1 + 1, 'list', '"decide" + LM Studio + downloads + found + address');
     }
 
     // ---------- 3) which entry the settings point at ----------
@@ -106,12 +109,16 @@ module.exports = async (t) => {
         const choices = buildChoices(discovery(), [], 'http://127.0.0.1:1234/v1');
         t.equal(currentSelection(choices, 'qwen/qwen3.5-9b', 'external', ''), 'lms:qwen/qwen3.5-9b', 'selection',
             'a pinned LM Studio model selects its own entry');
-        t.equal(currentSelection(choices, 'gone/model', 'external', ''), '', 'selection',
-            'a model that is no longer on disk selects nothing (the panel then starts on the first entry)');
+        t.equal(currentSelection(choices, 'gone/model', 'external', ''), 'any:', 'selection',
+            'a model that is no longer on disk falls back to "let the server decide" — it does *not* silently '
+            + 'select the first model in the list, which is how Save used to pin one nobody chose');
+        t.equal(currentSelection(choices, '', 'external', ''), 'any:', 'selection',
+            'and so does an empty model setting, which is the same thing');
         t.equal(currentSelection(choices, '', 'bundled', '/home/niel/.config/Code/User/globalStorage/x/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf'),
             'bundled:qwen2.5-coder-3b-q4', 'selection',
             'the bundled backend selects the spec it was set up for, from the file path alone');
-        t.equal(currentSelection(choices, '', 'off', ''), '', 'selection', 'and an off switch selects nothing');
+        t.equal(currentSelection(choices, '', 'off', ''), 'any:', 'selection',
+            'an off switch still shows a sensible starting point for when it is switched on');
     }
 
     // ---------- 4) what files are even candidates ----------
