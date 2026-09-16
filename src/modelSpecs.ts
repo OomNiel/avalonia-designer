@@ -55,6 +55,45 @@ export const MODEL_SPECS: ModelSpec[] = [
         bytes: 4683073536,
         sha256: '509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c',
         minRamGb: 16
+    },
+    {
+        // DeepSeek-Coder-V2-Lite: a 16.8 B MoE (only 2.9 B params are active) at 4-bit. The file is large
+        // because all 16 experts are stored, but live RAM tracks the active expert — it runs on 16 GB. The
+        // IQ4_XS quant from bartowski's mirror keeps the download under 9 GB and is the one pinned here.
+        id: 'deepseek-coder-v2-lite-iq4xs',
+        label: 'DeepSeek-Coder-V2-Lite 16.8B MoE (IQ4_XS)',
+        detail: '8.0 GB — DeepSeek 16.8 B MoE (2.9 B active) at 4-bit; strong on C#, fits 16 GB RAM',
+        fileName: 'DeepSeek-Coder-V2-Lite-Instruct-IQ4_XS.gguf',
+        url: 'https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Instruct-IQ4_XS.gguf',
+        bytes: 8571593472,
+        sha256: 'ac0a996714d4e8ed06b4398096bae88a32c349ceab42ffe629c2ddf4c4e0706c',
+        minRamGb: 16
+    },
+    {
+        // Same 16.8 B MoE, the largest quant that still fits under 8 GB — a faster, smaller-footprint choice.
+        id: 'deepseek-coder-v2-lite-iq3m',
+        label: 'DeepSeek-Coder-V2-Lite 16.8B MoE (IQ3_M)',
+        detail: '7.0 GB — DeepSeek 16.8 B MoE (2.9 B active) at 4-bit; the smaller/faster quant of the pair',
+        fileName: 'DeepSeek-Coder-V2-Lite-Instruct-IQ3_M.gguf',
+        url: 'https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Instruct-IQ3_M.gguf',
+        bytes: 7553175296,
+        sha256: '08db93121a9e6fa3cb4978c4b4e9c37e9407160ceec77f0894c45f43bf2d91d1',
+        minRamGb: 16
+    },
+    {
+        // Gemma-4, code-tuned, at 12 B — from the community GGUF repo `yuxinlu1/gemma-4-12B-coder-…`
+        // (its card declares `base_model: google/gemma-4-12B-it`), so the label names the size and the
+        // quant and the detail says where it comes from: it is a code-tuned Gemma, not a first-party
+        // Google release. Q4_K_M is the best quant that still lands under 8 GB; 16 GB RAM is the gate
+        // for a 12 B dense model. Size and SHA-256 re-checked against the Hub on 2026-09-15.
+        id: 'gemma-4-coder-12b-q4',
+        label: 'Gemma-4-Coder 12B (Q4_K_M)',
+        detail: '6.9 GB — community GGUF of Google\'s Gemma-4 12B, code-tuned; good C# at a 12 B size',
+        fileName: 'gemma4-coding-Q4_K_M.gguf',
+        url: 'https://huggingface.co/yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF/resolve/main/gemma4-coding-Q4_K_M.gguf',
+        bytes: 7381381664,
+        sha256: '1fe90b72e105d7bc71650aa59883edece3e84751af489075217a7ae717b1fe8d',
+        minRamGb: 16
     }
 ];
 

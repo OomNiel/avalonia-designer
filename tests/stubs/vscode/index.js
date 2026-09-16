@@ -49,6 +49,9 @@ module.exports = {
     window,
     commands,
     EventEmitter,
+    // The scope a setting is written to. `configView().update` resolves this through `writeTargetFor`, so a
+    // test that stubs `workspace.getConfiguration` needs the enum to exist (0.9.35).
+    ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
     ThemeIcon: class { constructor(id) { this.id = id; } },
     TreeItem: class { constructor(label, collapsibleState) { this.label = label; this.collapsibleState = collapsibleState; this.description = ''; this.tooltip = ''; this.iconPath = undefined; } },
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },

@@ -172,7 +172,10 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
 export function currentSelection(choices: ModelChoice[], model: string, backend: string, modelPath: string): string {
     if (backend === 'bundled') {
         const byName = modelPath ? specByFileName(modelPath) : undefined;
-        return choiceValue('bundled', (byName ?? MODEL_SPECS[0]).id);
+        // No weights pinned to the setting: the placeholder (`""`), never the first spec. Falling back to the
+        // first entry is how a picker ends up naming a model nobody chose — the webview already refused that
+        // (2026-09-15), and the host now agrees with it. Only a real, on-disk pin selects a bundled model.
+        return byName ? choiceValue('bundled', byName.id) : '';
     }
     const match = choices.find((c) => c.kind === 'lmstudio' && c.value === choiceValue('lms', model));
     return match ? match.value : choiceValue('any', '');
@@ -506,6 +509,67 @@ export async function unloadEverything(): Promise<LoadOutcome> {
         ok: true,
         message: done.length ? `Done — ${done.join(', and ')}.` : 'Nothing was loaded, so there was nothing to free.'
     };
+}
+
+/**
+ * "Remove Model" — deletes the selected model's weights from local storage so the file is gone until the
+ * next "Load Model" re-downloads it.
+ *
+ * The host shows the confirmation (not the panel): it can validate the selection first (only a
+ * downloaded bundled model can be removed) and it can stop the built-in runtime first — the sidecar
+ * holds the `.gguf` open while it serves it, and Windows locks files that are in use, so deleting
+ * a loaded model without stopping it would fail mid-`unlink`. Both the final weights file and the
+ * `.part`/`.verified` sidecar markers are removed, so the entry returns to its "download once when you
+ * press Load Model" state instead of lingering as a half-downloaded file.
+ */
+export async function confirmAndRemoveModel(context: vscode.ExtensionContext, value: string): Promise<{ ok: boolean; message?: string }> {
+    const { kind, key } = parseChoiceValue(value);
+    if (kind !== 'bundled' || !key) return { ok: false, message: 'Pick a downloaded model to remove it from disk.' };
+    const spec = specById(key);
+    if (!spec) return { ok: false, message: `The chosen model (${key}) is no longer in the built-in list.` };
+    const file = modelFileFor(context, spec);
+    if (!fs.existsSync(file)) return { ok: false, message: `${spec.fileName} is not on disk — there is nothing to remove.` };
+
+    // "Confirm Removal" warning — the panel never deletes without this host-side answer.
+    const confirmed = await vscode.window.showWarningMessage(
+        `Remove ${spec.fileName} from disk?\n\nIt will re-download the next time you press Load Model. This cannot be undone.`,
+        { modal: true }, 'Remove', 'Cancel'
+    );
+    if (confirmed !== 'Remove') return { ok: false, message: 'removal cancelled' };
+
+    const cfg = configView(SETTINGS);
+    const backend = cfg.get<string>('backend', 'off');
+    const modelPath = cfg.get<string>('modelPath', '');
+    const isActive = backend === 'bundled' && !!modelPath && modelPath.endsWith(spec.fileName);
+
+    // If this is the model currently in use, the sidecar holds its file open (Windows locks files that are
+    // in use) and it is loaded in RAM — stopping the runtime is what unloads it and frees the file.
+    if (isActive && bundledRuntimeRunning().running) { try { stopModelServer(); } catch { /* ignore — best-effort */ } }
+    // Only files that are really gone count. `unlinkSync` fails when another process holds the file open —
+    // exactly the case the unload above is meant to prevent, and one a silent `catch` would turn into a
+    // cheerful "removed" for a 7 GB file that is still there (found out only at the next download).
+    const kept: string[] = [];
+    for (const p of [file, `${file}.part`, `${file}.verified`]) {
+        try { fs.unlinkSync(p); } catch { /* already gone — e.g. another tab removed it first */ }
+        if (fs.existsSync(p)) kept.push(path.basename(p));
+    }
+    if (kept.length) {
+        aiLog(context, `Remove failed — still on disk: ${kept.join(', ')}`);
+        return {
+            ok: false,
+            message: `${kept.join(', ')} could not be deleted. A runtime may still hold the file open — ` +
+                'press Unload, then try again.'
+        };
+    }
+    // The loaded model is gone: drop the pin so the picker returns to "— choose a model —" instead of
+    // leaving a selection that names a file which no longer exists. AI stays on; only the selection resets.
+    // `configView.update` writes to the scope that already owns the value (2026-09-15), so no target here.
+    if (isActive) {
+        await cfg.update('modelPath', '');
+        await cfg.update('model', '');
+    }
+    aiLog(context, `Removed model file from disk: ${spec.fileName}`);
+    return { ok: true, message: `${spec.fileName} removed. It will re-download on next Load Model.` };
 }
 
 /** What the panel's Save sends. The same shape a load carries, read through the same type. */

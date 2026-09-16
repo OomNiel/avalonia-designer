@@ -112,6 +112,7 @@
         aiEndpoint: $('aiEndpoint'),
         aiLoad: $('aiLoad'),
         aiUnload: $('aiUnload'),
+        aiRemove: $('aiRemove'),
         aiStatus: $('aiStatus'),
         aiProgress: $('aiProgress'),
         aiStatusText: $('aiStatusText'),
@@ -211,6 +212,9 @@
         // The toolbar CATEGORIES the user folded away (e.g. { align: true }). Every group starts
         // UNFOLDED; the same webview state as the Properties folds (see loadToolbarFolds).
         toolbarFolds: {},
+        // Which sections of the ⚙ Settings dialog are folded (e.g. { codeCheck: true } = hidden).
+        // Defaults: Code check folded, AI assist expanded; the choice is remembered per designer tab.
+        settingsFolds: {},
         helpOpen: true,
         lastProps: null,
         clipboard: false,
@@ -1047,8 +1051,16 @@
             settingsPending = false;
             els.settingsModal.hidden = false;
             settingsOpen = true;
-            const first = els.settingsModes.querySelector('input');
-            if (first) first.focus();
+            applySettingsFolds();
+            // Focus something the user can actually see: the code-check radios sit in a section that
+            // starts folded, and focusing a hidden input is a silent no-op — so fall back to the AI
+            // checkbox when Code check is tucked away.
+            if (!isSettingsFolded('codeCheck')) {
+                const first = els.settingsModes.querySelector('input');
+                if (first) first.focus();
+            } else if (!isSettingsFolded('aiAssist') && els.aiEnabled) {
+                els.aiEnabled.focus();
+            }
         }
     }
     els.btnCodeSettings.addEventListener('click', () => {
@@ -1070,8 +1082,68 @@
     });
     els.settingsCancel.addEventListener('click', closeSettings);
     els.settingsModal.addEventListener('click', (e) => {
-        if (e.target === els.settingsModal) closeSettings(); // click outside cancels
+        if (e.target === els.settingsModal) { closeSettings(); return; }
+        const head = e.target && e.target.closest ? e.target.closest('.settings-section-head') : null;
+        if (head) {
+            const section = head.closest('.settings-section');
+            if (section) toggleSettingsSection(section.getAttribute('data-section') || '');
+        }
     });
+
+    // ---------------- foldable Settings (⚙) dialog sections ----------------
+    // "Code check settings" and "AI assist" fold like the Properties-panel groups: ▾ open / ▸ folded,
+    // and the open/closed state is remembered per designer tab through the webview state. Code check
+    // folds by default; AI assist starts expanded.
+    const DEFAULT_SETTINGS_FOLDS = { codeCheck: true }; // aiAssist is expanded unless saved folded
+
+    function isSettingsFolded(id) {
+        if (!id) return false;
+        if (id in state.settingsFolds) return state.settingsFolds[id] === true;
+        return DEFAULT_SETTINGS_FOLDS[id] === true;
+    }
+
+    function loadSettingsFolds() {
+        try {
+            const saved = typeof vscode.getState === 'function' ? vscode.getState() : null;
+            if (saved && saved.settingsFolds && typeof saved.settingsFolds === 'object') {
+                state.settingsFolds = Object.assign({}, saved.settingsFolds);
+            }
+        } catch (e) { /* defaults apply: Code check folded, AI assist expanded */ }
+    }
+
+    function persistSettingsFolds() {
+        try {
+            if (typeof vscode.setState !== 'function') return;
+            const prev = (typeof vscode.getState === 'function' ? vscode.getState() : null) || {};
+            const next = Object.assign({}, prev);
+            next.settingsFolds = state.settingsFolds;
+            vscode.setState(next);
+        } catch (e) { /* ignore */ }
+    }
+
+    function toggleSettingsSection(id) {
+        if (!id) return;
+        state.settingsFolds[id] = isSettingsFolded(id) ? false : true; // flip
+        persistSettingsFolds();
+        applySettingsFolds();
+    }
+
+    function applySettingsFolds() {
+        if (!els.settingsModal) return;
+        const heads = els.settingsModal.querySelectorAll('.settings-section-head');
+        for (const head of heads) {
+            const section = head.closest('.settings-section');
+            if (!section) continue;
+            const id = section.getAttribute('data-section') || '';
+            const folded = !!id && isSettingsFolded(id);
+            const body = section.querySelector('.settings-section-body');
+            if (body) body.hidden = folded;
+            head.setAttribute('aria-expanded', folded ? 'false' : 'true');
+            const arrow = head.querySelector('.settings-section-arrow');
+            if (arrow) arrow.textContent = folded ? '▸' : '▾';
+            head.title = folded ? 'Click to expand' : 'Click to collapse';
+        }
+    }
 
     // ---------------- AI assist (the panel's second section) ----------------
     // The extension owns every decision here — the panel only shows state and posts intents. Load, unload
@@ -1128,7 +1200,10 @@
                     'entry; press Refresh list, and report this with View → Output → "Avalonia Designer"');
             }
         } else if (!wanted) {
-            setAiProgress('the extension sent no selection — press Refresh list to ask again');
+            // No selection is a *state*, not a fault: a built-in backend with nothing pinned, and the moment
+            // after "Remove Model", both arrive as `selected: ''` on purpose (2026-09-15). The old wording
+            // sent the user to "Refresh list", which cannot change either one — say what to do instead.
+            setAiProgress('no model chosen yet — pick one, then press Load Model');
         }
         // What the panel was told and what it ended up showing, in this session's log: the two ways a picker can
         // disagree with the extension, told apart in one line instead of by guessing (2026-09-15).
@@ -1236,6 +1311,14 @@
         armAiWatchdog();
         post({ type: 'aiUnload' });
     });
+    // "Remove Model" deletes the selected weights from disk. The host shows the confirmation warning and
+    // validates the pick (only a downloaded bundled model can be removed), so this button only posts.
+    els.aiRemove.addEventListener('click', () => {
+        setAiBusy(true);
+        setAiProgress('removing…');
+        armAiWatchdog();
+        post({ type: 'aiRemove', value: els.aiModel.value });
+    });
     // The status check is the same report the "AI: Status and Hardware Check" command shows — the extension
     // builds it, so the panel and the command cannot disagree.
     els.aiStatus.addEventListener('click', () => {
@@ -1252,7 +1335,7 @@
         // Cleared on both edges: a note that the extension "has not reported back yet" must never appear
         // after the action has already finished.
         clearTimeout(aiWatchdog);
-        for (const b of [els.aiLoad, els.aiUnload, els.aiScan, els.aiRefresh]) b.disabled = !!busy;
+        for (const b of [els.aiLoad, els.aiUnload, els.aiRemove, els.aiScan, els.aiRefresh]) b.disabled = !!busy;
     }
     /** Arms the "no answer yet" note both long actions share (see the Load handler). */
     function armAiWatchdog() {
@@ -4143,6 +4226,8 @@
     loadCollapsed(); // restore the Properties sections the user folded last time
     loadToolbarFolds(); // and the toolbar categories they folded away
     applyToolbarFolds(); // apply that state; this also runs the first wrap/separator pass
+    loadSettingsFolds(); // restore the Settings dialog folds (Code check folded, AI assist expanded by default)
+    applySettingsFolds(); // apply to the markup — a no-op until the dialog is opened
     // VS Code sizes the webview frame just after load — re-run once the real width is known.
     setTimeout(() => layoutToolbar(), 0);
 

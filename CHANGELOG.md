@@ -15,6 +15,50 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.35] - 2026-09-15 · *the 7 GB button, a third built-in model, and a dialog that folds*
+
+### Added
+
+- **Remove Model — the weights can be deleted from inside the panel.** Downloading a model is a one-way
+  gesture: `Load Model` fetches several gigabytes into the extension's storage and nothing in the UI could
+  give the disk space back. The new button sits between **Unload** and **Status**, is styled as the
+  destructive action it is (red, never the Load colour), and always asks first — a host-side modal warning
+  naming the file and saying it will be re-downloaded, because a panel-side `confirm()` is easy to dismiss
+  without reading. It removes the weights **and** the `.part`/`.verified` sidecars, so the entry returns to
+  its "not downloaded yet" wording instead of lingering as a half-download. If the file is the one in use,
+  the built-in runtime is stopped first (it holds the `.gguf` open — Windows locks files in use) and the pin
+  is cleared, so the picker returns to *“— choose a model —”* instead of naming a file that is gone.
+  It refuses what it cannot do (an LM Studio key, an id no longer in the table, a model that is not on disk)
+  and — the part that matters — **a delete that did not take is reported as a failure**, not as success: a
+  file that survives the unlink because a process still holds it would otherwise be found out only at the
+  next download.
+- **A third built-in model: Gemma-4-Coder 12B (Q4_K_M).** 6.9 GB, min. 16 GB RAM — a code-tuned Gemma-4 at
+  12 B, between the 3B's speed and the 7B's quality. It is a **community GGUF** of `google/gemma-4-12B-it`
+  (the repo's own card says so), which the picker states rather than implying a first-party release. Size and
+  SHA-256 were read back from the Hub before pinning: `7,381,381,664` bytes,
+  `1fe90b72…b1fe8d`. The table now offers five downloads: Qwen 3B/7B, DeepSeek-Coder-V2-Lite (IQ4_XS and
+  IQ3_M) and this one.
+- **The ⚙ Settings dialog folds.** *Code check settings* and *AI assist* collapse like the Properties
+  groups — click the heading row (▸ folded / ▾ open), the choice is remembered per designer tab, and Code
+  check starts folded since most visits are there for the AI switch. Opening the dialog now focuses
+  something visible: it used to focus a radio button inside the folded section, which is a silent no-op.
+
+### Fixed
+
+- **No selection means the placeholder — never the first model.** `currentSelection` fell back to
+  `MODEL_SPECS[0]` for a built-in backend with nothing pinned, so the panel could name a model nobody had
+  chosen (the last surface still doing this after 0.9.32 taught the webview not to). It now returns the
+  placeholder, which makes "nothing chosen yet" a state the UI can hold honestly — including right after
+  **Remove Model**.
+- **The note for an empty picker stopped sending the user in circles.** It read *"the extension sent no
+  selection — press Refresh list to ask again"*, but refreshing cannot change a pin that is empty on purpose.
+  It now says *"no model chosen yet — pick one, then press Load Model"*.
+- **DeepSeek-Coder-V2-Lite IQ4_XS is internally consistent again.** The entry carried IQ4_XS bytes and hash
+  with a Q4_K_M file name; all three fields are now the IQ4_XS ones, re-checked against the Hub
+  (`8,571,593,472` bytes, `ac0a9967…c4e0706c`).
+
+Suite **3841** passed / 0 failed.
+
 ## [0.9.34] - 2026-09-15 · *"unload everything" that only spoke to one runtime*
 
 ### Fixed

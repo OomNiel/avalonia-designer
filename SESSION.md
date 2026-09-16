@@ -19,9 +19,22 @@
 
 ## Where the last session left off (2026-09-15)
 
-**Released and installed: `0.9.34`** (0.9.16 → 0.9.34 all landed today, each one from a report made while the
-user clicked through the real panel; write-ups in `NOTES.md` §100–§117, one-line summaries in `TEST_PLAN.md` §10).
+**Released and installed: `0.9.35`** (0.9.16 → 0.9.35 all landed today, each one from a report made while the
+user clicked through the real panel, except the last one, which the *user* wrote and this session verified;
+write-ups in `NOTES.md` §100–§118, one-line summaries in `TEST_PLAN.md` §10).
 The whole day was one arc: the AI section of the ⚙ panel, driven by the user's own machine.
+
+- **The last change set (0.9.35) was the user's own** — 7 files, +283/−20 — and it added **Remove Model**, a
+  **fifth download** (`gemma-4-coder-12b-q4`), a `currentSelection` fix and a **foldable ⚙ Settings dialog**
+  that the accompanying inventory never mentioned. Verifying it meant: reading the diff rather than the summary;
+  re-reading every new spec's size and SHA-256 from the Hugging Face API (all three matched); driving the
+  removal path for real in a temp `globalStorage` (cancel, confirm, not-on-disk, not-ours, and a delete that
+  **fails** — which the code silently reported as success, now fixed); and renaming the *"press Refresh list"*
+  note, since an empty selection is a legitimate state now. Suite **3841** passed / 0 failed.
+- **A destructive button needs three things to be honest:** a confirmation that names what will be removed, an
+  unload **before** the delete (the runtime holds the `.gguf` open), and a *verified* delete. The third is what
+  no green suite will tell you — `try { unlink } catch {}` plus "removed" is a success message for a file that is
+  still there.
 
 - **Model handling is now honest end to end.** The picker shows where each entry comes from and what Load will do
   with it; the built-in entries say whether their weights are on disk; a model that is loaded is marked
@@ -54,7 +67,7 @@ server (LM Studio, Ollama, your own `llama-server`), tier 2 brings its own — `
 built on the user's machine with the .NET SDK, so one VSIX fits every platform, and weights are downloaded once
 with a SHA-256 check. Both are **off by default**.
 
-- **Versions 0.9.5 – 0.9.34 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
+- **Versions 0.9.5 – 0.9.35 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
   `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F (numbers-only
   version, both GitHub release flags, no BETA suffix). The repo tags only the `v1.0.0-beta.N` series — the 0.9.x
   releases are commits, not tags.

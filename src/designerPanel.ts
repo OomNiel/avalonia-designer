@@ -27,6 +27,7 @@ import { logError } from './logger';
 import {
     aiLog,
     attachPanel,
+    confirmAndRemoveModel,
     loadChoice,
     panelState,
     refreshAiState,
@@ -1813,6 +1814,36 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         logError(`AI unload failed: ${message}`);
                         await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: false, message });
                         await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
+                    }
+                    return;
+                }
+                case 'aiRemove': {
+                    attachPanel(panel);
+                    try {
+                        // The host validates the selection and shows the confirmation warning, so the
+                        // panel never deletes without the user being asked first.
+                        const outcome = await confirmAndRemoveModel(this.context, String(msg.value ?? ''));
+                        stopProgress();
+                        const state = await panelState();
+                        await panel.webview.postMessage({
+                            type: 'aiResult',
+                            action: 'remove',
+                            ok: outcome.ok,
+                            message: outcome.message,
+                            state
+                        });
+                        // The on-disk footprint changed, so the picker's "already downloaded / ● loaded"
+                        // markers need to refresh too — but only on the path that did something.
+                        if (outcome.ok) {
+                            await panel.webview.postMessage({ type: 'aiState', state });
+                            await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                        }
+                        await this.postStatus(panel, outcome.ok ? 'Model removed from disk' : 'Model not removed');
+                    } catch (err) {
+                        stopProgress();
+                        const message = err instanceof Error ? err.message : String(err);
+                        logError(`AI remove handler failed: ${message}`);
+                        await panel.webview.postMessage({ type: 'aiResult', action: 'remove', ok: false, message });
                     }
                     return;
                 }
@@ -6233,18 +6264,30 @@ ${publishButtons}      <span class="sep"></span>
     </div>
     <div id="settingsModal" class="modal" hidden>
       <div class="modal-box modal-narrow">
-        <h3>Code check settings</h3>
-        <p class="modal-hint" id="settingsHint">When should the designer check the code-behind against the form? The check is read-only: it reports (PROBLEMS pane, ⚠ badges on the canvas) and never rewrites your code.</p>
-        <div id="settingsModes" class="settings-modes"></div>
-        <label class="modal-check"><input type="checkbox" id="settingsBadges"/> Mark controls whose wired handler is missing with a ⚠ badge</label>
+        <div class="settings-section" data-section="codeCheck">
+          <div class="settings-section-head" role="button" aria-expanded="false" title="Click to expand">
+            <span class="settings-section-arrow">▸</span>
+            <h3>Code check settings</h3>
+          </div>
+          <div class="settings-section-body" hidden>
+            <p class="modal-hint" id="settingsHint">When should the designer check the code-behind against the form? The check is read-only: it reports (PROBLEMS pane, ⚠ badges on the canvas) and never rewrites your code.</p>
+            <div id="settingsModes" class="settings-modes"></div>
+            <label class="modal-check"><input type="checkbox" id="settingsBadges"/> Mark controls whose wired handler is missing with a ⚠ badge</label>
+          </div>
+        </div>
 
         <div class="modal-sep"></div>
-        <h3 class="modal-sub">AI assist <span id="aiBadge" class="ai-badge">off</span></h3>
-        <p class="modal-hint">A local model on this machine can write a handler from a sentence, or repair a
-          finding a rule cannot express. Nothing is sent anywhere — the address is always <code>127.0.0.1</code>.</p>
-        <label class="modal-check"><input type="checkbox" id="aiEnabled"/> Use a local model for Code Fix and Implement</label>
+        <div class="settings-section" data-section="aiAssist">
+          <div class="settings-section-head" role="button" aria-expanded="true" title="Click to collapse">
+            <span class="settings-section-arrow">▾</span>
+            <h3 class="modal-sub">AI assist <span id="aiBadge" class="ai-badge">off</span></h3>
+          </div>
+          <div class="settings-section-body">
+            <p class="modal-hint">A local model on this machine can write a handler from a sentence, or repair a
+              finding a rule cannot express. Nothing is sent anywhere — the address is always <code>127.0.0.1</code>.</p>
+            <label class="modal-check"><input type="checkbox" id="aiEnabled"/> Use a local model for Code Fix and Implement</label>
 
-        <div id="aiBody" hidden>
+            <div id="aiBody" hidden>
           <label class="modal-field"><span>Model</span>
             <select id="aiModel"></select>
           </label>
@@ -6288,10 +6331,13 @@ ${publishButtons}      <span class="sep"></span>
           <div class="modal-buttons modal-buttons-tight">
             <button id="aiLoad" type="button" class="modal-btn primary">Load Model</button>
             <button id="aiUnload" type="button" class="modal-btn">Unload</button>
+            <button id="aiRemove" type="button" class="modal-btn warning">Remove Model</button>
             <button id="aiStatus" type="button" class="modal-btn">Status &amp; hardware check</button>
           </div>
           <div id="aiProgress" class="ai-progress" hidden></div>
           <pre id="aiStatusText" class="ai-status" hidden></pre>
+        </div>
+        </div>
         </div>
 
         <div class="modal-buttons">

@@ -28,7 +28,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'aiEnabled', 'aiBadge', 'aiBody', 'aiModel', 'aiModelHint', 'aiRefresh', 'aiScan',
     'aiOptions', 'aiContext', 'aiGpu', 'aiTtl', 'aiMaxTokens', 'aiTimeout', 'aiEndpoint',
     'aiOptContext', 'aiOptGpu', 'aiOptTtl', 'aiOptAddress',
-    'aiLoad', 'aiUnload', 'aiStatus', 'aiProgress', 'aiStatusText',
+    'aiLoad', 'aiUnload', 'aiRemove', 'aiStatus', 'aiProgress', 'aiStatusText',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
@@ -77,7 +77,7 @@ function setup(omit = []) {
         if (id === 'aiModel' || id === 'aiGpu' || id === 'aiTtl') return 'select';
         if (id === 'aiContext' || id === 'aiMaxTokens' || id === 'aiTimeout' || id === 'aiEndpoint') return 'input';
         if (id === 'aiStatusText' || id === 'aiProgress' || id === 'aiBadge' || id === 'aiModelHint') return 'div';
-        if (id === 'aiLoad' || id === 'aiUnload' || id === 'aiStatus' || id === 'aiRefresh' || id === 'aiScan') return 'button';
+        if (id === 'aiLoad' || id === 'aiUnload' || id === 'aiRemove' || id === 'aiStatus' || id === 'aiRefresh' || id === 'aiScan') return 'button';
         if (id.startsWith('dotGridSpacing') || id === 'dotGridColor' || id === 'dotGridDotSize') return 'input';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
             || id === 'dotGridSave' || id === 'dotGridCancel'
@@ -594,6 +594,56 @@ module.exports = async (t) => {
     s.window.dispatchEvent(new s.window.Event('focus'));
     t.equal(posted.some((m) => m.type === 'aiState'), false, 'settings', 'a closed panel stays quiet');
 
+    // --- the ⚙ dialog's two sections fold, and the fold survives a close/reopen ---
+    // The fixture is deliberately flat, so the two section wrappers are built here exactly as
+    // `designerPanel.ts` emits them (a real markup guard lives in T2). Clicking the heading row folds a
+    // section the way the Properties groups do; the body itself must not fold, or every click on a radio
+    // inside it would close what you are clicking in.
+    const sectionOf = (id) => $('settingsModal').querySelector(`.settings-section[data-section="${id}"]`);
+    const headOf = (id) => sectionOf(id).querySelector('.settings-section-head');
+    const bodyOf = (id) => sectionOf(id).querySelector('.settings-section-body');
+    const arrowOf = (id) => headOf(id).querySelector('.settings-section-arrow');
+    const clickOn = (el) => el.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    for (const id of ['codeCheck', 'aiAssist']) {
+        const wrap = s.window.document.createElement('div');
+        wrap.className = 'settings-section';
+        wrap.setAttribute('data-section', id);
+        const head = s.window.document.createElement('div');
+        head.className = 'settings-section-head';
+        head.setAttribute('role', 'button');
+        const arrow = s.window.document.createElement('span');
+        arrow.className = 'settings-section-arrow';
+        head.appendChild(arrow);
+        const body = s.window.document.createElement('div');
+        body.className = 'settings-section-body';
+        wrap.appendChild(head);
+        wrap.appendChild(body);
+        $('settingsModal').appendChild(wrap);
+    }
+    $('btnCodeSettings').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    fillSettingsFromHost();
+    t.equal(bodyOf('codeCheck').hidden, true, 'folds', 'Code check starts folded — most visits are for the AI switch');
+    t.equal(bodyOf('aiAssist').hidden, false, 'folds', 'AI assist starts expanded');
+    t.equal(headOf('codeCheck').getAttribute('aria-expanded'), 'false', 'folds', 'and the folded row says so to a screen reader');
+    t.equal(arrowOf('codeCheck').textContent, '▸', 'folds', 'with a ▸ arrow, like the folded Properties groups');
+    clickOn(headOf('codeCheck'));
+    t.equal(bodyOf('codeCheck').hidden, false, 'folds', 'clicking the heading opens the section');
+    t.equal(arrowOf('codeCheck').textContent, '▾', 'folds', 'and the arrow turns down');
+    t.equal(headOf('codeCheck').getAttribute('aria-expanded'), 'true', 'folds', 'aria-expanded follows');
+    clickOn(bodyOf('codeCheck'));
+    t.equal(bodyOf('codeCheck').hidden, false, 'folds', 'clicking *inside* the body does not fold it back');
+    t.equal($('settingsModal').hidden, false, 'folds', 'and neither click closed the dialog');
+    clickOn(headOf('aiAssist'));
+    t.equal(bodyOf('aiAssist').hidden, true, 'folds', 'AI assist folds the same way');
+    t.equal(s.vscodeState.settingsFolds && s.vscodeState.settingsFolds.aiAssist, true, 'folds',
+        'the fold is remembered in the webview state, so the choice belongs to this tab');
+    $('settingsCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    $('btnCodeSettings').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    fillSettingsFromHost();
+    t.equal(bodyOf('codeCheck').hidden, false, 'folds', 'reopening the dialog keeps the section you opened open');
+    t.equal(bodyOf('aiAssist').hidden, true, 'folds', 'and the one you folded folded');
+    $('settingsCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+
     // --- the model picker shows the selection the extension sent, never a different entry ---
     // Reported 2026-09-15: after a built-in 3B load that succeeded (proved by the log, the settings and a
     // running runtime) the dropdown still read "Let the server decide…". The choice values are opaque
@@ -624,7 +674,11 @@ module.exports = async (t) => {
     posted.length = 0;
     msg({ type: 'aiState', state: aiState({ selected: '' }) });
     t.equal($('aiModel').value, '', 'ai-picker', 'no selection in the state means the placeholder, not model #1');
-    t.ok(/no selection/.test($('aiProgress').textContent), 'ai-picker', 'and it is said out loud');
+    // "No selection" became a *state* rather than a symptom in 0.9.35: a built-in backend with nothing pinned
+    // sends `selected: ''` on purpose (`currentSelection`), and so does the moment after "Remove Model". The
+    // note therefore says what to do instead of sending the user to "Refresh list", which cannot change it.
+    t.ok(/no model chosen yet/.test($('aiProgress').textContent), 'ai-picker',
+        'and it says what to do — pick one and load it — rather than "press Refresh list"');
     const applied = posted.find((m) => m.type === 'aiApplied');
     t.ok(applied && applied.wanted === '' && applied.shown === '', 'ai-picker',
         'the webview reports what it was told and what it showed, so a disagreement is one log line');

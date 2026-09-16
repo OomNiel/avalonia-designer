@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3762 passed, 0 failed / 0 skipped** (2026-09-15, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3841 passed, 0 failed / 0 skipped** (2026-09-15, ~40 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2366,3 +2366,48 @@ see a running runtime. Four branches: sidecar running, LM Studio installed, noth
 named "unload everything" that speaks to one of them is a bug that only shows up on the other path.
 
 **Suite:** 3762 passed / 0 failed (was 3748).
+
+### §118 — Remove Model, a fifth spec, and a dialog that folds (2026-09-15, release 0.9.35)
+
+This change set came from the user: 7 files, +283/−20, adding a **Remove Model** button, a fifth download
+(`gemma-4-coder-12b-q4`), a `currentSelection` fix — and, not mentioned in their own inventory, a **foldable
+⚙ Settings dialog**. Their verification covered the parts that are cheap to check (`tsc` clean, T2 2000/0,
+T3 607/0, `npm run package` valid, 103 files). What is left is everything a package cannot check about itself:
+
+- **The specs, against the Hub.** A wrong byte count or hash here is a broken download for *every* user — the
+  sidecar deletes a file that does not match. All three non-Qwen entries were read back from the Hugging Face
+  API and matched exactly: `gemma4-coding-Q4_K_M.gguf` `7,381,381,664` / `1fe90b72…`, IQ4_XS `8,571,593,472` /
+  `ac0a9967…`, IQ3_M `7,553,175,296` / `08db9312…`. (The two Qwen files were already proven on this disk by
+  their `.verified` markers.) The Gemma repo is a **community GGUF** of `google/gemma-4-12B-it` — its own card
+  declares that base model — so the comment and the picker text now say so rather than implying a first-party
+  Google release.
+- **The removal path, driven for real** in a temporary `globalStorage`, with the modal and the configuration
+  stubbed: it refuses an LM Studio key, an id that is no longer in the table and a file that is not on disk;
+  Cancel leaves the weights alone; a confirm removes `.gguf` **and** `.part`/`.verified`; the model in use is
+  stopped first and both pins are cleared. The bug that survives a stub is the one about *failure* —
+  `unlinkSync` errors were swallowed and the panel said "removed". For a 7 GB file that another process still
+  holds open, that is a success message for a file that is still there, found out only at the next download.
+  It now checks the file is really gone, reports the failure with the way out (press **Unload**, try again) and
+  **keeps the pin**, because clearing a selection while the file survives would load nothing.
+- **"No selection" became a state.** `currentSelection` returning `''` is right, but the webview's note for an
+  empty picker still read *"the extension sent no selection — press Refresh list to ask again"*, and refreshing
+  cannot change a pin that is empty on purpose. It now reads *"no model chosen yet — pick one, then press
+  Load Model"*.
+- **The folds, modelled in jsdom.** The T3 fixture is flat, so the two `.settings-section` wrappers are built
+  the way `designerPanel.ts` emits them: Code check starts folded, AI assist expanded, the heading row
+  toggles, the body does not (or every click on a radio would fold the section you are clicking in), and the
+  choice survives a close/reopen because it lives in the webview state. Opening the dialog also stopped
+  focusing a radio inside the folded section — a silent no-op.
+
+**Verification:** `tsc` clean · `dotnet build host` 0 warnings / 0 errors · **suite 3841 passed / 0 failed** ·
+PROBLEMS clean · VSIX inspected before installing.
+
+**Lesson:** a destructive button needs three things to be honest — a confirmation that names what will be
+removed, an unload **before** the delete (the runtime holds the `.gguf` open), and a *verified* delete. The
+third is exactly what a green suite will not tell you: `try { unlink } catch {}` followed by "removed" is a
+success message for a file that is still there.
+
+**Lesson:** check the change set against its own description. The diff held a whole feature (the foldable
+dialog) that the inventory did not mention; reading the diff, not the summary, is what found it.
+
+**Suite:** 3841 passed / 0 failed (was 3762).

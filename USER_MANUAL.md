@@ -957,16 +957,23 @@ usually a sign of a model too small for the job — try the 7B, or a code-specia
 Having no AI at all is the case this feature exists for, so it does not require LM Studio or Ollama:
 
 1. Run **AI: Choose a Local Model…** from the Command Palette.
-2. Pick **This extension's own model**. Two code-specialised models are offered, and the size is shown
+2. Pick **This extension's own model**. Five code-specialised models are offered, and the size is shown
 before anything is downloaded:
 
-   | Model | Size | Trade-off |
-   |---|---|---|
-   | Qwen2.5-Coder 3B Instruct (Q4_K_M) | 2.1 GB | answers in 5–15 s on a CPU — the practical choice |
-   | Qwen2.5-Coder 7B Instruct (Q4_K_M) | 4.7 GB | noticeably better code, two to three times slower |
+   | Model | Size | Min. RAM | Trade-off |
+   |---|---|---|---|
+   | Qwen2.5-Coder 3B Instruct (Q4_K_M) | 2.0 GB | 8 GB | answers in 5–15 s on a CPU — the practical choice |
+   | Qwen2.5-Coder 7B Instruct (Q4_K_M) | 4.4 GB | 16 GB | noticeably better code, two to three times slower |
+   | Gemma-4-Coder 12B (Q4_K_M) | 6.9 GB | 16 GB | a code-tuned Gemma-4 at 12 B — good C# without the 7B's wait |
+   | DeepSeek-Coder-V2-Lite 16.8B MoE (IQ3_M) | 7.0 GB | 16 GB | the smaller of the two DeepSeek quants — 16.8 B MoE with 2.9 B active |
+   | DeepSeek-Coder-V2-Lite 16.8B MoE (IQ4_XS) | 8.0 GB | 16 GB | the most capable of the five, and the largest download |
+
+   Sizes are the ones the picker counts in (binary units); the model pages count decimal, so the
+   6.9 GB entry is the same file as the 7.4 GB one they show. Gemma-4-Coder is a **community GGUF** of
+   Google's Gemma-4 12B — a code-tuned build, not a first-party release — which the entry says outright.
 
    You can also point it at a `.gguf` file you already have, or paste the address of one.
-3. Wait for the download — the line under the buttons counts it out in bytes (`1.2 GB of 4.7 GB · 26%
+3. Wait for the download — the line under the buttons counts it out in bytes (`1.2 GB of 4.4 GB · 26%
    · 12.4 MB/s`) and ends at 100%. If it is interrupted, running it again **continues from where it
    stopped** instead of starting over. The file is then checked against the **SHA-256** the publisher
    lists for it, and stored in the extension's own storage. It is downloaded once, for all your
@@ -986,7 +993,7 @@ leaves the machine.
 
 **Where the model lives:** in this extension's global storage — on Linux
 `~/.config/Code/User/globalStorage/grumpy.avalonia-designer/models/`. Delete the file to reclaim the
-disk space; set-up will offer it again.
+disk space, or press **Remove Model** in the panel (see below); set-up will offer it again.
 
 #### What the entries in the model list mean
 
@@ -1007,6 +1014,16 @@ now:* line — the question "did my load take?" should never need a guess.
 **Getting the memory back.** **Unload** frees whichever runtime is holding the model — the built-in one *and* LM
 Studio — and everything is freed when you close the IDE, so a 6 GB model is not left in RAM after a session.
 Unloading keeps the model *pinned* (the next request loads it again); it just stops it being resident.
+
+**Getting the disk space back.** Downloads stay on disk until you say otherwise, and one of them can be
+several gigabytes. **Remove Model** deletes the weights of the model currently selected in the list: it asks
+first, in a dialog that names the file and warns that the next **Load Model** downloads it again, then removes
+the file together with its partial-download and checksum markers. If you remove the model that is in use, the
+runtime is stopped first and the selection returns to *“— choose a model —”* — nothing else about your settings
+changes. The other entries are untouched, and a file that cannot be deleted (still held open by a running
+runtime) is reported as a failure rather than a success, with the way out: press **Unload**, then try again.
+Removing is worth doing before switching to a different built-in model on a small disk — the entries stay in the
+list and report *not downloaded yet* until you load them again.
 
 > If a load fails, the panel explains it in plain words instead of showing the server's log. The two that
 > really happen are a model larger than the kernel's locked-memory limit (the message names LM Studio's

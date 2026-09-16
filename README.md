@@ -174,8 +174,12 @@ build so generated code is not taken on trust.
 **It brings its own model.** For a developer with no AI at all there is nothing to install and no
 account to create: *AI: Set Up Local Model…* builds a small C# model server with the .NET SDK the
 designer already uses — one extension package for every platform and architecture, because the native
-code is resolved by NuGet on your machine — and downloads a code-specialised model (2.1 GB, or 4.7 GB
-for the better one) **once**, verified against its published SHA-256, into the extension's own storage.
+code is resolved by NuGet on your machine — and offers **five code-specialised downloads** (2.0 GB and
+4.4 GB Qwen2.5-Coder, 7.0 GB and 8.0 GB DeepSeek-Coder-V2-Lite, 6.9 GB Gemma-4-Coder 12B), fetched
+**once**, verified against the SHA-256 the Hub publishes, into the extension's own storage. Sizes are
+the ones the picker shows (binary units — the model pages count decimal, so a 6.9 GB entry is the same
+file as a 7.4 GB one). Nothing is fetched until you press **Load Model**, and **Remove Model** gives
+the disk space back when you are done with one.
 A second developer who already runs LM Studio or Ollama can point it there instead, with the same diff
 and the same build check. Either way nothing leaves the machine, the feature ships **off**, and a
 hardware check (RAM, CPU threads, AVX2) refuses the models this machine cannot run well instead of

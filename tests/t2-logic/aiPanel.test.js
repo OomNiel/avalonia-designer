@@ -17,6 +17,7 @@ const os = require('os');
 const path = require('path');
 const { buildChoices, choiceValue, currentSelection, parseChoiceValue } = require('../../out/aiPanel.js');
 const { scanForModelFiles } = require('../../out/localModelCore.js');
+const { MODEL_SPECS } = require('../../out/modelSpecs.js');
 const {
     buildLoadArgs,
     canImportFile,
@@ -99,8 +100,8 @@ module.exports = async (t) => {
         t.ok(/your file stays where it is/.test(foundEntry.detail), 'list',
             'and that the original file is not moved (lms import without a flag MOVES it)');
 
-        t.equal(choices.filter((c) => c.kind === 'bundled').length, 2, 'list',
-            'both downloadable models are offered');
+        t.equal(choices.filter((c) => c.kind === 'bundled').length, MODEL_SPECS.length, 'list',
+            'every built-in (downloadable) model is offered');
         const bundled = choices.find((c) => c.kind === 'bundled');
         // "download once" in the label was read as "this downloads now" (asked 2026-09-15), so the label is
         // the size and the detail says when the download happens.
@@ -142,7 +143,7 @@ module.exports = async (t) => {
 
         t.equal(choices[choices.length - 1].kind, 'custom', 'list',
             '"a server I run myself" is last: it is the least common answer, and it needs the address field');
-        t.equal(choices.length, 3 + 2 + 1 + 1 + 1, 'list', '"decide" + LM Studio + downloads + found + address');
+        t.equal(choices.length, 3 + MODEL_SPECS.length + 1 + 1 + 1, 'list', '"decide" + LM Studio + downloads + found + address');
     }
 
     // ---------- 3) which entry the settings point at ----------
@@ -267,7 +268,7 @@ module.exports = async (t) => {
         t.ok(/if \(!msg\.quiet\) els\.aiStatusText\.hidden = false/.test(read('media/designer.js')), 'panel',
             'a refresh updates the status box without popping it open — opening it is the user\'s action');
         const html = read('src/designerPanel.ts');
-        for (const id of ['aiEnabled', 'aiModel', 'aiLoad', 'aiUnload', 'aiScan', 'aiStatusText', 'aiOptions']) {
+        for (const id of ['aiEnabled', 'aiModel', 'aiLoad', 'aiUnload', 'aiRemove', 'aiScan', 'aiStatusText', 'aiOptions']) {
             t.ok(new RegExp(`id="${id}"`).test(html), 'panel', `the panel markup has #${id}`);
         }
         const js = read('media/designer.js');
@@ -276,6 +277,7 @@ module.exports = async (t) => {
             'the change-them options appear only once a model is chosen (the flow the user asked for)');
         t.ok(/post\(\{ type: 'aiLoad'/.test(js) && /post\(\{ type: 'aiUnload'/.test(js), 'panel',
             'Load and Unload are the extension\'s operations, not the panel\'s own logic');
+        t.ok(/post\(\{ type: 'aiRemove'/.test(js), 'panel', 'so is removing a model from disk');
         t.ok(/post\(\{ type: 'aiStatus'/.test(js), 'panel', 'so is the status check');
         t.ok(/ai: aiPayload\(\)/.test(js), 'panel', 'and Save carries the AI choices with the code-check ones');
         const css = read('media/designer.css');
@@ -341,6 +343,13 @@ module.exports = async (t) => {
             'the unload handler refreshes the panel state on both the normal and the failing path');
         t.ok(/action === 'load' \|\| msg.action === 'unload'/.test(read('media/designer.js')), 'silent',
             'and the webview asks for a state itself after either action is confirmed');
+        const removeCase = /case 'aiRemove': \{[\s\S]*?\n                \}/.exec(dePanel)[0];
+        t.ok(/try \{/.test(removeCase) && /catch \(err\)/.test(removeCase), 'silent',
+            'the Remove Model handler catches its own failures');
+        t.ok(/type: 'aiResult'[\s\S]*?action: 'remove'/.test(removeCase), 'silent',
+            'and reports removal as an outcome the panel recognises');
+        t.ok(/stopProgress\(\)/.test(removeCase), 'silent',
+            'and stops the elapsed-time ticker when it ends');
         // The state also travels *with* the result. A queue is not a contract: the separate `aiState` message can
         // be missed or dropped (`postMessage` even resolves `false` when it could not deliver), and then the panel
         // keeps showing the model it was told about before — the picker reverting to "Let the server decide…"

@@ -276,6 +276,18 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.35` (2026-09-15)** — three features in one change set: **Remove Model** (deletes the selected
+  built-in model's weights plus its `.part`/`.verified` markers, after a host-side modal that names the file;
+  stops the runtime first if that model is in use and clears the pin), a **fifth download**
+  (`gemma-4-coder-12b-q4`, 6.9 GB, community GGUF of `google/gemma-4-12B-it` — size and SHA-256 re-read from
+  the Hub before pinning), and a **foldable ⚙ Settings dialog** (Code check folded, AI assist expanded, state
+  remembered per tab through the webview state). `removeModel.test.js` drives the first one against a
+  temporary `globalStorage` with the modal and configuration stubbed — including the case that matters most:
+  a delete that does **not** take (a directory cannot be unlinked, the same failure a runtime holding the file
+  open produces) must be reported as a failure and must keep the pin. The T3 layer gained the fold behaviour,
+  building the two `.settings-section` wrappers as `designerPanel.ts` emits them, since the jsdom fixture is
+  flat. `currentSelection` no longer falls back to `MODEL_SPECS[0]`, and the empty-picker note stopped telling
+  the user to press *Refresh list*. Suite **3841**.
 - **Release `0.9.34` (2026-09-15)** — *Unload* only ever ran `lms unload --all`, LM Studio's command, so for a
   built-in model it was a no-op that reported success: the sidecar kept the weights and the picker kept its
   `● in use` marker (reported minutes after 0.9.33 fixed pinning). It now stops the extension's own runtime as

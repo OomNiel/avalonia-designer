@@ -1266,6 +1266,18 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     color: #fff;
 }
 
+/* "Remove Model" — a destructive action, kept back from the primary (Load) colour so the two buttons
+   are never confused, and red so the danger of a click is obvious before the confirm dialog. */
+.modal-btn.warning {
+    background: #c52b3b;
+    border-color: #c52b3b;
+    color: #fff;
+}
+.modal-btn.warning:hover {
+    background: #a62330;
+    border-color: #a62330;
+}
+
 .modal-btn:disabled {
     opacity: 0.5;
     cursor: default;
@@ -1284,6 +1296,33 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+/* Foldable sections in the Settings (⚙) dialog — "Code check settings" and "AI assist".
+   Clicking the heading row (▾ open / ▸ folded, like the Properties-panel disclosures) reveals its
+   body; the open/closed state is remembered per designer tab. The Code check section starts folded and
+   AI assist expanded. Author display rule on purpose — see the [hidden] warning by `.ai-opt[hidden]`. */
+.settings-section-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0 2px;
+    cursor: pointer;
+    user-select: none;
+}
+.settings-section-head:focus-visible {
+    outline: 1px dotted var(--accent, #4ea1ff);
+    outline-offset: 1px;
+}
+.settings-section-arrow {
+    font-size: 11px;
+    opacity: 0.6;
+}
+.settings-section-head:hover .settings-section-arrow {
+    opacity: 0.9;
+}
+.settings-section-body[hidden] {
+    display: none;
 }
 
 .ai-badge {
