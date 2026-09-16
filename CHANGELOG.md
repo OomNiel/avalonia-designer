@@ -15,6 +15,32 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.46] - 2026-09-16 · *the panel says what it is waiting for*
+
+### Fixed
+
+- **The AI section of the ⚙ Settings dialog no longer sits there silently.** Opening the dialog, ticking
+  **Use a local model for Code Fix and Implement** with no model chosen, pressing **Refresh list** or coming
+  back to the window all ask the extension for the machine's model list — and the first such ask of a session
+  costs seconds, because LM Studio's own `lms` helper starts its service on the way (measured: the first call
+  blocked **4270 ms** with the LM Studio service processes appearing 3 s into it; every call after that is
+  ~220 ms). Until it answered, the picker was empty and nothing on screen said why. A line now appears before
+  the round trip — `looking for local models…` — and is cleared by the state that arrives.
+- **A message no longer outlives the action it belonged to.** The status check's `checking…` line is cleared
+  by the report that answers it, and only that line: a failure reported by a load keeps its text, and a quiet
+  background refresh never wipes something the user is reading.
+
+### Notes
+
+- Reported as *"it takes a while to load and start the server … show a loading message"*, and the description
+  was literally right: the extension's `discover()` runs `lms ls`, `lms ps` and `lms server status`, and the
+  first of those starts LM Studio's service. The line is written by the webview rather than the extension on
+  purpose — the extension is the thing being waited for, so a line that only appears with the answer would
+  arrive with the answer. Every state request now goes through one helper, and a test asserts there is exactly
+  one place left that asks for a state, so a future caller cannot quietly skip the feedback.
+- The extension also **logs how long the question took** (`LM Studio: … (asked in 4270 ms)`), so the next
+  report about a slow panel is a number rather than an impression.
+
 ## [0.9.45] - 2026-09-16 · *the built-in runtime can use the GPU, when you ask it to*
 
 ### Added

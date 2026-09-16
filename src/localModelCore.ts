@@ -141,18 +141,25 @@ export async function discover(): Promise<Discovery> {
             api: !!api
         };
     }
+    const started = Date.now();
     const [ls, ps, status, api] = await Promise.all([
         run(cli, ['ls']),
         run(cli, ['ps']),
         run(cli, ['server', 'status']),
         readApi()
     ]);
+    const took = Date.now() - started;
     const list = parseLmsList(ls.stdout || ls.stderr);
     const kindById = new Map<string, 'chat' | 'embeddings' | 'unknown'>();
     for (const m of api?.ids ?? []) kindById.set(m.id, m.kind);
     const loaded = api ? api.ids.filter((m) => isModelLoaded(m.state)).map((m) => m.id) : parseLmsPs(ps.stdout) ?? [];
+    // The duration is part of the line on purpose: the FIRST call of a session costs seconds, because the
+    // `lms` helper starts LM Studio's service on the way (measured 2026-09-16: 4270 ms for the first
+    // `discover()`, service processes appearing 3 s into it, ~220 ms for every call after it), so "the panel
+    // takes a while" is answerable from the log instead of being argued about.
     log(`LM Studio: ${list.chat.length} chat + ${list.embeddings.length} embedding model(s) on disk, `
-        + `${loaded.length} loaded, server ${parseLmsServerStatus(status.stdout || status.stderr).running ? 'running' : 'stopped'}`);
+        + `${loaded.length} loaded, server ${parseLmsServerStatus(status.stdout || status.stderr).running ? 'running' : 'stopped'}`
+        + ` (asked in ${took} ms)`);
     return { cli, list, server: parseLmsServerStatus(status.stdout || status.stderr), loaded, kindById, api: !!api };
 }
 

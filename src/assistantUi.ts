@@ -1608,7 +1608,8 @@ export async function chooseBundledBackend(): Promise<void> {
 }
 
 /** Reports what the feature would use right now — including the hardware verdict. */
-export async function showStatus(): Promise<void> {    const { cfg, lines, probe, chatModels } = await statusFacts();
+export async function showStatus(): Promise<void> {
+    const { cfg, lines, probe, chatModels } = await statusFacts();
 
     const needsPin = !!probe?.ok && chatModels.length > 1 && !cfg.model;
     const actions = needsPin ? ['Pin a model…', 'Open settings', 'Copy'] : ['OK', 'Copy'];

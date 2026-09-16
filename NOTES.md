@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4413 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4438 passed, 0 failed / 0 skipped** (2026-09-16, ~39 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2873,4 +2873,51 @@ no-double-hyphen rule an XML comment needs), the manifest/command/wiring, and th
 Two existing guards were updated with their reason rather than relaxed: `modelDownload.test.js`'s exact argv
 (`--backend cpu` is now always stated, like `--gpu-layers 0`) and the webview's GPU hint assertion (the
 "layer count, not a ratio" sentence moved to the branch where it is true).
+
+### §129 — the panel says what it is waiting for (2026-09-16, release 0.9.46)
+
+**Reported:** *"When opening the Settings dialog panel and selecting the 'Use a local model for Code Fix…'
+checkbox, the system takes a while to load and start the server etc. Show a 'Loading…' message to keep the
+user informed."* The description turned out to be **literally right**, and proving that was most of the work.
+
+**The measurement, and the two wrong guesses before it.** A probe timed the panel's state call module by
+module: `discover()` **4270 ms** the first time, ~230 ms for every call after it, with `findRunningLlamaServer`
+8 ms and `setupFacts()` 1 ms. Two explanations were tested and dropped before the right one was found:
+
+1. *"It is our own HTTP probe waiting for a server that is not running"* — `readApi()` does abort after 2500 ms,
+   and LM Studio's server is indeed stopped here (`lms server status`). But 2.5 s is not 4.3 s, and a fresh
+   `fetch` to the closed port **fails instantly** in Node rather than hanging.
+2. *"It is the `lms` CLI itself"* — timed by hand: `lms ls` 0.20 s, `lms ps` 0.19 s, `lms server status`
+   0.18 s, API 0.0001 s. Too fast. But those numbers were taken **after** the probe had already paid the cost.
+3. **The real cause, from timestamps rather than reasoning:** the probe was written at **18:18:37**, and the two
+   LM Studio service processes (`--type=utility … NetworkService` and `.lmstudio/.internal/utils/node …
+   liblmstudio_bindings.node`) have a start time of **18:18:40** — three seconds into that first `discover()`.
+   The first `lms` call of a session **starts LM Studio's service**, and that is the wait. The user had already
+   said so ("start the server") and the flow argues for it: `lms ls`/`ps`/`server status` are all answered by
+   that service, and it is not running before the first one.
+
+**What was fixed, and why it is shaped that way.** The message has to be written by the **webview**, before the
+round trip: the extension is the thing being waited for, so a line that arrives with the answer is not a
+loading message. `beginAiStateWait()`/`requestAiState()`/`endAiStateWait()` are that one place, and *every*
+state request now goes through them — opening the dialog (the extension is already fetching the state it
+answers `openCodeSettings` with), ticking the AI switch with nothing chosen, Refresh list, window focus, and
+the refresh after a confirmed load/unload. A test asserts there is exactly **one** bare `post({type:'aiState'})`
+left in the webview, so a future caller cannot quietly skip the feedback.
+
+**The other half of the same wart.** A message that outlives its action is just as dishonest as silence, and
+the status check had one: `checking…` stayed on screen forever, because nothing cleared it. `aiStatus` now
+clears **that exact line and nothing else** — a failure reported by `aiResult` keeps its text through the state
+and the status posted after it, and a `quiet` background refresh never wipes what the user is reading. Also
+fixed while measuring: the extension now logs `(asked in 4270 ms)` with the model-list line, so the next report
+about a slow panel is a number instead of an impression.
+
+**Deliberately not done:** caching the model list so the panel can open instantly from a previous answer. The
+list is what the picker claims to be true, and §113–§116 is one long lesson about a panel that showed a state
+the settings did not have. Seconds of an honest "looking for local models…" beat a stale list with no sign it
+is stale.
+
+**Suite:** 4438 passed / 0 failed (was 4413). New assertions: the wait line at dialog open and at every
+request, the state clearing it, the failure text surviving the state *and* the status that follow it, the
+`checking…` line being cleared by its answer, the single state-request call site, and the markup position of
+the line (inside the AI body, so an empty picker is never on screen without it).
 

@@ -795,6 +795,61 @@ module.exports = async (t) => {
     t.equal(posted.some((m) => m.type === 'aiState'), false, 'ai-picker', 'a failed load does not');
     t.ok(/the download stopped/.test($('aiProgress').textContent), 'ai-picker', 'a failure stays visible in the progress line');
 
+    // --- the wait for the model list is ON SCREEN (asked 2026-09-16) ---
+    // "When opening the Settings dialog and selecting the checkbox, the system takes a while to load and
+    // start the server … show a loading message." The user's description was literally right, and it was
+    // measured rather than assumed: the extension's state call goes through LM Studio's `lms`, whose first
+    // invocation of a session starts LM Studio's service — the first `discover()` blocked **4270 ms** and the
+    // service processes appeared 3 s into it (probe written 18:18:37, service start 18:18:40); every call
+    // afterwards is ~220 ms. Until it answers, the picker is empty and the panel says nothing. The line is
+    // written by the webview *before* the round trip (the extension is the thing being waited for) and
+    // cleared by the state that arrives.
+    $('btnCodeSettings').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    fillSettingsFromHost();
+    t.equal($('settingsModal').hidden, false, 'ai-wait', '⚙ opens the dialog');
+    t.equal($('aiProgress').hidden, false, 'ai-wait', 'and a line appears before the state does, not with it');
+    t.ok(/looking for local models/.test($('aiProgress').textContent), 'ai-wait',
+        'naming what is being waited for rather than saying "loading"');
+    // Its place in the markup is deliberate and pinned in T2: the line lives *inside* the AI body, next to
+    // the picker it describes, so an empty list is never on screen without it.
+    msg({ type: 'aiState', state: aiState() });
+    t.equal($('aiProgress').hidden, true, 'ai-wait', 'the state that arrives clears it');
+    // Ticking the switch with nothing chosen asks again — and now says so, which is the report's exact case.
+    msg({ type: 'aiState', state: aiState({ selected: '' }) });
+    posted.length = 0;
+    $('aiEnabled').checked = true;
+    $('aiEnabled').dispatchEvent(new s.window.Event('change', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'aiState', 'ai-wait', 'ticking the AI switch with no model chosen asks for a state');
+    t.equal($('aiBody').hidden, false, 'ai-wait', 'and the body opens on the same click');
+    t.ok(/looking for local models/.test($('aiProgress').textContent), 'ai-wait',
+        'with the line visible, because that is when the user is looking at an empty picker');
+    // "Refresh list" is the same wait, so it goes through the same helper — with the rescan flag it always had.
+    posted.length = 0;
+    $('aiRefresh').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    const refreshed = posted[posted.length - 1];
+    t.equal(refreshed.type, 'aiState', 'ai-wait', '"Refresh list" asks for a state');
+    t.equal(refreshed.rescan, true, 'ai-wait', 'with its rescan flag');
+    t.ok(/looking for local models/.test($('aiProgress').textContent), 'ai-wait', 'and the same line, because it is the same wait');
+    // The line is only ended by an answer to a request of ours: a failure reported by `aiResult` must survive
+    // the state that is posted right after it, or the one message the user needed disappears as it lands.
+    msg({ type: 'aiResult', action: 'load', ok: false, message: 'the model server stopped' });
+    msg({ type: 'aiState', state: aiState() });
+    t.ok(/the model server stopped/.test($('aiProgress').textContent), 'ai-wait',
+        'the state after a failed load does not wipe the failure it follows');
+    // The other half of the same problem: a line must not OUTLIVE its action either. "checking…" is answered
+    // by the report itself, so it goes — and only it, so the failure next to it (and a quiet refresh from
+    // another tab) cannot clear what the user is reading.
+    posted.length = 0;
+    $('aiStatus').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.ok(/checking/.test($('aiProgress').textContent), 'ai-wait', 'the status button says it is checking');
+    msg({ type: 'aiStatus', lines: ['AI assist: off'] });
+    t.equal($('aiProgress').hidden, true, 'ai-wait', 'and the report that answers it clears that line');
+    t.equal($('aiStatusText').hidden, false, 'ai-wait', 'while the report itself stays on screen');
+    msg({ type: 'aiResult', action: 'load', ok: false, message: 'the download stopped' });
+    msg({ type: 'aiStatus', lines: ['AI assist: off'], quiet: true });
+    t.ok(/the download stopped/.test($('aiProgress').textContent), 'ai-wait',
+        'and a status refresh never wipes a message it did not write');
+
     // --- Unload is a state change, not just a result (reported 2026-09-15) ---
     // "the model is unloaded ... but the picker is not updated and the status check still shows that model
     // as being loaded". The `● loaded` tag comes from discovery, so it only clears when a fresh state

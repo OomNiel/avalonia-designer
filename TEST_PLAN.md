@@ -276,6 +276,16 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.46` (2026-09-16)** — the ⚙ panel now says what it is waiting for (*"it takes a while …
+  show a loading message"*). No new file: the T3 webview section grew the wait line at dialog open and at every
+  state request, the state clearing it, a failure surviving the state *and* the status posted after it, and the
+  `checking…` line being cleared by the report that answers it — while T2 pins the parts jsdom cannot see: that
+  **exactly one** call site in `media/designer.js` still asks for a state (the helper), that opening the dialog
+  starts the wait, that a result zeroes the wait so its text cannot be wiped, that the line lives inside the AI
+  body, and that the extension logs how long the model-list call took (`asked in … ms`). The measurement the
+  whole change rests on is recorded in `NOTES.md` §129 — including the two explanations that were tested and
+  dropped before the right one (the `lms` CLI's first call starts LM Studio's service; probe 18:18:37, service
+  processes 18:18:40).
 - **Release `0.9.45` (2026-09-16)** — **Vulkan as an optional backend for the built-in runtime**
   (`assistant.bundledBackend`, *AI: Built-in Runtime Backend…*), CPU by default, plus the second round of ⚙ dialog
   height work. `tests/t2-logic/vulkanBackend.test.js` (103 assertions) covers what can be decided without a GPU:

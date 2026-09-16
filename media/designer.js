@@ -1056,6 +1056,11 @@
             els.settingsModal.hidden = false;
             settingsOpen = true;
             applySettingsFolds();
+            // The extension answers ⚙ with the code-check settings *and* the AI state, and that second answer
+            // is the slow one: it asks the machine for its model list. Say so before the wait starts, because
+            // the AI section is already on screen — an empty picker with no note beside it is exactly what
+            // "it takes a while" looked like (reported 2026-09-16). Cleared when the state lands.
+            beginAiStateWait();
             // Focus something the user can actually see: the code-check radios sit in a section that
             // starts folded, and focusing a hidden input is a silent no-op — so fall back to the AI
             // checkbox when Code check is tucked away.
@@ -1296,7 +1301,7 @@
         els.aiBody.hidden = !els.aiEnabled.checked;
         els.aiBadge.textContent = els.aiEnabled.checked ? 'on' : 'off';
         els.aiBadge.className = 'ai-badge ' + (els.aiEnabled.checked ? 'on' : 'off');
-        if (els.aiEnabled.checked && aiState && !els.aiModel.value) post({ type: 'aiState' });
+        if (els.aiEnabled.checked && aiState && !els.aiModel.value) requestAiState();
     });
     // Choosing a model reveals the settings, per the flow the user asked for: the options are the second
     // decision, not something to hunt for first.
@@ -1308,12 +1313,12 @@
         applyKindToOptions(chosen);
         if (chosen && chosen.kind === 'custom') els.aiEndpoint.focus();
     });
-    els.aiRefresh.addEventListener('click', () => post({ type: 'aiState', rescan: true }));
+    els.aiRefresh.addEventListener('click', () => requestAiState({ rescan: true }));
     // State the panel cannot see change on its own: a local server loads its model just-in-time when a
     // request arrives, so an open panel would keep showing "not in memory yet" while the model answers
     // (reported 2026-09-15). Coming back to the window is the moment to re-ask.
     window.addEventListener('focus', () => {
-        if (els.settingsModal && !els.settingsModal.hidden) post({ type: 'aiState' });
+        if (els.settingsModal && !els.settingsModal.hidden) requestAiState();
     });
     els.aiScan.addEventListener('click', () => {
         setAiProgress('scanning this machine for model files…');
@@ -1362,8 +1367,9 @@
     });
     // The status check is the same report the "AI: Status and Hardware Check" command shows — the extension
     // builds it, so the panel and the command cannot disagree.
+    const AI_STATUS_TEXT = 'checking…';
     els.aiStatus.addEventListener('click', () => {
-        setAiProgress('checking…');
+        setAiProgress(AI_STATUS_TEXT);
         post({ type: 'aiStatus' });
     });
 
@@ -1372,6 +1378,42 @@
         els.aiProgress.textContent = message || '';
     }
     let aiWatchdog = 0;
+    /** How many state requests are outstanding, so the line is only cleared by an answer to one of ours. */
+    let aiStateWait = 0;
+    const AI_WAIT_TEXT = 'looking for local models…';
+
+    /**
+     * Says what the panel is waiting for, then asks for it.
+     *
+     * WHY THIS EXISTS (measured 2026-09-16, asked: *"it takes a while to load and start the server … show a
+     * loading message"*): the panel's state comes from the extension, which asks the machine for its model
+     * list — and the **first** such call of a session costs seconds, because LM Studio's own `lms` helper
+     * starts its service on the way. Proven rather than assumed on this machine: the first `discover()`
+     * blocked for **4270 ms** and the two LM Studio service processes appeared **3 s into it** (probe written
+     * 18:18:37, service start 18:18:40); every call afterwards is ~220 ms. Opening the ⚙ dialog, ticking the
+     * AI switch with nothing selected, pressing Refresh list and coming back to the window all ask for a
+     * state, so each of them was several seconds of a half-filled panel with nothing on screen saying why.
+     *
+     * Written here rather than by the extension on purpose: the extension is the thing being waited for, and
+     * a line that only appears once the answer arrives would arrive with the answer. It is cleared by the
+     * state that follows — and only then, so a failure reported by `aiResult` stays on screen (the message
+     * that a download stopped must not be wiped by the state that is posted right after it).
+     */
+    function beginAiStateWait() {
+        aiStateWait += 1;
+        setAiProgress(AI_WAIT_TEXT);
+        armAiWatchdog();
+    }
+    function requestAiState(options) {
+        beginAiStateWait();
+        post({ type: 'aiState', rescan: !!(options && options.rescan) });
+    }
+    function endAiStateWait() {
+        if (!aiStateWait) return;
+        aiStateWait = 0;
+        clearTimeout(aiWatchdog);
+        setAiProgress('');
+    }
     function setAiBusy(busy) {
         // Cleared on both edges: a note that the extension "has not reported back yet" must never appear
         // after the action has already finished.
@@ -2915,6 +2957,9 @@
                 fillSettings(msg);
                 break;
             case 'aiState':
+                // The wait this line stood for is over (see `beginAiStateWait`); `fillAi` writes its own note
+                // below when the state needs one (no model chosen, a value the picker cannot show).
+                endAiStateWait();
                 fillAi(msg.state);
                 break;
             case 'aiProgress':
@@ -2923,6 +2968,9 @@
             case 'aiResult': {
                 setAiBusy(false);
                 clearTimeout(aiWatchdog);
+                // The result owns the line now, so a state posted after it must not clear the outcome —
+                // a failure would vanish the moment it was read (2026-09-16).
+                aiStateWait = 0;
                 const text = String(msg.message || '');
                 // A failure stays in the progress line, where the user is looking, instead of only in the
                 // designer's status bar at the bottom of the window. It also no longer vanishes.
@@ -2938,11 +2986,16 @@
                 // what the user saw after loading the built-in 3B (2026-09-15). Unload needs it just as
                 // much: the `● loaded` tag only disappears when a fresh state arrives, and until then the
                 // panel named a model the user had just unloaded (reported the same day).
-                if (msg.ok && (msg.action === 'load' || msg.action === 'unload')) post({ type: 'aiState' });
+                if (msg.ok && (msg.action === 'load' || msg.action === 'unload')) requestAiState();
                 break;
             }
             case 'aiStatus': {
                 setAiBusy(false);
+                // The report itself is the answer to "checking…", so that line goes — but only that line: a
+                // status posted after a failed load arrives next to the failure text and must not wipe it, and
+                // a *quiet* refresh (another tab changed the model) must not clear what the user is reading
+                // (both 2026-09-16 — a message that outlives its action is the other half of saying nothing).
+                if (els.aiProgress.textContent === AI_STATUS_TEXT) setAiProgress('');
                 els.aiStatusText.textContent = (Array.isArray(msg.lines) ? msg.lines : []).join('\n');
                 // A background refresh (the palette changed the model under an open panel) updates the box but
                 // must not pop it open: opening it is the user's action, and a box that appears by itself

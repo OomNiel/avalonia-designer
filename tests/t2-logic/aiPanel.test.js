@@ -347,6 +347,43 @@ module.exports = async (t) => {
         t.ok(/#settingsModal \.modal-box\s*>\s*\.modal-buttons \{[^}]*position:\s*sticky/.test(css), 'layout',
             'and its Save row is pinned, so the last thing the user must press is never off-screen');
 
+        // ---------- the wait for the model list is visible (asked 2026-09-16) ----------
+        // "When opening the Settings dialog and selecting the checkbox, the system takes a while to load and
+        // start the server … show a loading message." The cause was measured, not guessed: the extension's
+        // state call runs LM Studio's `lms`, and its first invocation of a session starts LM Studio's service
+        // — the first `discover()` blocked 4270 ms with the service processes appearing 3 s into it, while
+        // every call after that is ~220 ms. So the rule is: no state request without a line on screen, and the
+        // line is written by the webview (the extension is the thing being waited for).
+        const web = read('media/designer.js');
+        t.ok(/const AI_WAIT_TEXT = 'looking for local models/.test(web), 'wait',
+            'the panel has one wording for the wait');
+        t.ok(/function beginAiStateWait\(\)/.test(web) && /function requestAiState\(options\)/.test(web)
+            && /function endAiStateWait\(\)/.test(web), 'wait',
+            'and one place that starts it, one that asks, and one that ends it');
+        const bareAsks = web.match(/post\(\{ type: 'aiState'/g) || [];
+        t.equal(bareAsks.length, 1, 'wait',
+            `every state request goes through the helper (found ${bareAsks.length} bare post calls, want 1 — the one inside it)`);
+        t.ok(/case 'aiState':[\s\S]{0,260}?endAiStateWait\(\);/.test(web), 'wait',
+            'the state that arrives ends the wait');
+        t.ok(/case 'aiResult':[\s\S]{0,420}?aiStateWait = 0;/.test(web), 'wait',
+            'a result owns the line, so the state posted after a failure cannot wipe the failure as it lands');
+        t.ok(/if \(settingsPending\) \{[\s\S]{0,700}?beginAiStateWait\(\);/.test(web), 'wait',
+            'opening the dialog starts the wait — the extension is already fetching the state it answers with');
+        t.ok(/if \(els\.aiEnabled\.checked && aiState && !els\.aiModel\.value\) requestAiState\(\);/.test(web), 'wait',
+            'and ticking the AI switch with nothing chosen asks through the helper (the reported case)');
+        t.ok(/if \(els\.aiProgress\.textContent === AI_STATUS_TEXT\) setAiProgress\(''\);/.test(web), 'wait',
+            'the status answer clears the line it wrote — and never one it did not (a failure keeps its text)');
+        // Its position is a decision too: inside the AI body, so the line and the picker it describes are
+        // shown together — an empty model list is never presented without it.
+        const markup = read('src/designerPanel.ts');
+        t.ok(markup.indexOf('id="aiBody"') < markup.indexOf('id="aiProgress"')
+            && markup.indexOf('id="aiProgress"') < markup.indexOf('id="aiConventions"'), 'wait',
+            'the line sits inside the AI body, next to the picker and the buttons it belongs to');
+        // The duration goes to the extension's log, so "it takes a while" is a number next time.
+        const modelCoreSource = read('src/localModelCore.ts');
+        t.ok(/const took = Date\.now\(\) - started;/.test(modelCoreSource) && /asked in \$\{took\} ms/.test(modelCoreSource), 'wait',
+            'the extension logs how long the model-list call took');
+
         // ---------- and now it fits with room to spare (measured 2026-09-16, second report) ----------
         // Re-measured in Chromium at 1024x700 with the code-check section folded and the AI section expanded,
         // which is the state the user works in. The 0.9.44 numbers were box 692 / content 736 → 46px behind the
@@ -506,8 +543,8 @@ module.exports = async (t) => {
             'lifecycle', 'and a non-global write is logged, because a shadowed write looks like a load that did nothing');
         t.ok(/catch \{\s*\/\* the panel may be mid-dispose/.test(read('src/aiPanel.ts')), 'lifecycle',
             'and a failed refresh can never become a failed action');
-        t.ok(/window\.addEventListener\('focus'[\s\S]{0,200}?aiState/.test(js7b), 'lifecycle',
-            'an open panel re-asks when the user comes back to it');
+        t.ok(/window\.addEventListener\('focus'[\s\S]{0,200}?requestAiState\(\)/.test(js7b), 'lifecycle',
+            'an open panel re-asks when the user comes back to it — through `requestAiState`, so the wait is on screen (2026-09-16)');
         // Every open panel, not just the last one that spoke: a designer tab that is not active hears nothing,
         // so its AI section keeps whatever it was told when it was opened — which is how a picker shows "Let the
         // server decide" while another tab has a model loaded (reported 2026-09-15).

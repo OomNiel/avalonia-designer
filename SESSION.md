@@ -19,8 +19,18 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.45`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.46`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.46 — the ⚙ panel says what it is waiting for.** Reported as *"it takes a while to load and start the
+  server … show a loading message"*, and the user's description was literally right: the panel's state call
+  runs LM Studio's `lms`, whose **first** invocation of a session starts LM Studio's service — the first
+  `discover()` blocked **4270 ms** with the service processes appearing 3 s into it (probe 18:18:37, service
+  18:18:40), while every call after that is ~220 ms. A line now appears **before** the round trip
+  (`looking for local models…`) and is cleared by the state that arrives; every state request goes through one
+  helper, and a test asserts exactly one call site is left. The mirror-image wart went too: `checking…` used to
+  stay on screen forever, and the status answer now clears *that exact line* — never a failure text or a quiet
+  refresh. §129.
 
 - **0.9.45 — the built-in runtime can use the GPU, when you ask it to.** The queued item was *"Vulkan as an
   OPT-IN backend for the bundled llama.cpp runtime, CPU by default with fallback"*, and two probes settled the
@@ -181,7 +191,7 @@ server (LM Studio, Ollama, your own `llama-server`), tier 2 brings its own — `
 built on the user's machine with the .NET SDK, so one VSIX fits every platform, and weights are downloaded once
 with a SHA-256 check. Both are **off by default**.
 
-- **Versions 0.9.5 – 0.9.45 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
+- **Versions 0.9.5 – 0.9.46 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
   `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F (numbers-only
   version, both GitHub release flags, no BETA suffix). The repo tags only the `v1.0.0-beta.N` series — the 0.9.x
   releases are commits, not tags.
