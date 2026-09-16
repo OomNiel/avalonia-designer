@@ -67,6 +67,7 @@ import { refreshAiState } from './aiPanel';
 import { configView, updateSetting } from './settingWrite';
 import { panelFor } from './aiPanel';
 import { findRunningLlamaServer, llamaServerBinary, llamaServerStatusLines } from './llamaServer';
+import { conventionsFor } from './conventionsUi';
 import { bundledStatusLines, ensureBundledEndpoint, sidecarTail } from './modelRuntime';
 import {
     addCustomModelSpec,
@@ -1174,8 +1175,14 @@ async function createMemberInClass(
     const header = headerOf(document, language);
     const memberList = members.map((m) => m.declaration).join('\n');
     const styleRef = styleReferenceOf(document);
+    const rules = conventionsFor(language);
+    // Ordered by value, which is also the order they are given up in (see `fitPromptParts`): the house rules
+    // are a handful of sentences and they are the whole point of the feature, then the member list (cheap, and
+    // it is what stops the model inventing calls), then the style sample — the biggest and the most redundant,
+    // since the rules already say most of what it shows (2026-09-16).
     const { fit, limited } = planPrompt(cfg, [
         { name: 'header', text: header, required: true },
+        { name: 'rules', text: rules, required: false },
         { name: 'members', text: memberList, required: false },
         { name: 'style', text: styleRef ?? '', required: false }
     ]);
@@ -1223,7 +1230,8 @@ async function createMemberInClass(
         description,
         header,
         members: fit.kept.some((p) => p.name === 'members') ? memberList : '',
-        style: fit.kept.some((p) => p.name === 'style') ? styleRef : undefined
+        style: fit.kept.some((p) => p.name === 'style') ? styleRef : undefined,
+        rules: fit.kept.some((p) => p.name === 'rules') ? rules : undefined
     });
     const resolved = await effectiveConfig(cfg);
     if (!resolved) return;
@@ -1301,7 +1309,8 @@ export async function fixFindingWithAI(uri: vscode.Uri, line: number, message: s
         finding: message,
         method,
         header: headerOf(document, language),
-        sibling: siblingOf(document, span, all)
+        sibling: siblingOf(document, span, all),
+        rules: conventionsFor(language)
     });
     const resolved = await effectiveConfig(cfg);
     if (!resolved) return;

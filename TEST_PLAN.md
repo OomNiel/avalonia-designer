@@ -276,6 +276,14 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.43` (2026-09-16)** — **house rules**: the idioms the developer's own code follows, kept in
+  `assistant.conventions` and added to every request, learned with **AI: Learn the House Rules from My Code…**
+  (or the button in the ⚙ panel). `tests/t2-logic/conventions.test.js` (90 assertions) is mostly about
+  *restraint*: the two gates (`MIN_SAMPLES = 5`, `MIN_SHARE = 0.8`) as behaviour (a 3-member file gets nothing;
+  a 50/50 codebase gets no brace rule at all), the evidence that travels with each suggestion, language
+  isolation (a csharp-only project produces no VB rules), the prompt position in all three prompts, and the
+  wiring of the panel, the palette command and the manifest. The fixtures are real Avalonia code-behind in the
+  shapes this extension generates.
 - **Release `0.9.42` (2026-09-16)** — the user's own **`llama-server`** became an engine the extension can
   start: `AI: Start My llama-server…` / `AI: Stop My llama-server`, a `My own llama-server` entry in the panel
   (with the context/GPU fields mapped to `--ctx-size`/`--n-gpu-layers`), and two settings (`llamaServerPath`,

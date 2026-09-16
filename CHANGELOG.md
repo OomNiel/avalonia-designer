@@ -15,6 +15,33 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.43] - 2026-09-16 · *house rules — the model writes like you do*
+
+### Added
+
+- **House rules** (`avaloniaDesigner.assistant.conventions`) — a short list of the idioms your code follows,
+  added to **every** request to the model. They are edited in the designer's ⚙ Settings panel (one rule per
+  line) or in the Settings UI, and the prompt says plainly that they are instructions to follow rather than
+  context to consider.
+- **AI: Learn the House Rules from My Code…** — reads the C# and VB.NET files of the open project (up to 40,
+  with generated and designer files skipped) and **measures** how they are written: indentation, brace style,
+  member visibility, whether anything is `static`/`Shared`, handler naming, and — for VB — whether events are
+  wired with `Handles` or `AddHandler`. You are offered the patterns that cleared two gates, each with its own
+  evidence (`5 of 5 C# members`), and only what you tick is saved. The same flow runs from the button in the
+  ⚙ panel.
+
+### Notes
+
+- **No model is involved in learning, and nothing is inferred about intent.** A pattern needs at least **5
+  examples agreeing 80 %** of the time before it is suggested, and a codebase split 50/50 produces *no* rule —
+  a house style nobody chose is worse than none. Rules are counted per language, so a C# project with one VB
+  form is never told to use `Private Sub`.
+- The rules are an optional prompt part: on a tight context window they are given up **after** the existing
+  member list and **before** the style sample, because they are a few dozen tokens and they say most of what
+  the style sample shows.
+- The prompt-dropping order is now pinned with parts of *uneven* size. The existing test could not see the
+  direction at all — with two equal-sized parts, dropping forwards and backwards give the same answer.
+
 ## [0.9.42] - 2026-09-16 · *your own llama-server, started from the editor*
 
 ### Added

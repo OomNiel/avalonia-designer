@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.42",
+    "version": "0.9.43",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -145,6 +145,12 @@
                 "title": "AI: Start My llama-server\u2026",
                 "category": "Avalonia",
                 "icon": "$(server-process)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.learnConventions",
+                "title": "AI: Learn the House Rules from My Code\u2026",
+                "category": "Avalonia",
+                "icon": "$(mortar-board)"
             },
             {
                 "command": "avaloniaDesigner.assistant.stopLlamaServer",
@@ -375,6 +381,14 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Show the model's code as a diff to review before it is applied (the ⚙ Settings panel has the same switch). Turn it off and the code is written straight into the file — still a normal edit, so Ctrl+Z undoes it, and the rule-based checks (a name that already exists, the visibility fix) still run first."
+                },
+                "avaloniaDesigner.assistant.conventions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "markdownDescription": "**House rules** for the code the model writes — one short sentence each, e.g. `Indent with 4 spaces.` Every rule is added to each request. *AI: Learn the House Rules from My Code…* measures the patterns your own files already follow and offers the ones that hold almost everywhere; the ⚙ Settings panel edits the list."
                 },
                 "avaloniaDesigner.assistant.temperature": {
                     "type": "number",

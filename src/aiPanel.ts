@@ -44,6 +44,7 @@ import {
 } from './localModels';
 import { bundledFilesOnDisk, bundledRuntimeRunning, allModelSpecs, ensureBundledEndpoint, ensureModelFile, modelFileFor, stopModelServer } from './modelRuntime';
 import { proveItWorks } from './localModelSetup';
+import { normaliseConventions, parseConventionsText } from './conventions';
 import {
     findRunningLlamaServer,
     llamaServerBinary,
@@ -70,6 +71,8 @@ export interface PanelState {
     endpoint: string;
     /** Show the model's code as a diff before it is applied (⚙ Settings, `assistant.showDiff`). */
     showDiff: boolean;
+    /** The house rules, one per line in the panel's editor (`assistant.conventions`). */
+    conventions: string[];
     /** The value of the entry that matches the settings right now, or '' when nothing matches. */
     selected: string;
     choices: ModelChoice[];
@@ -274,6 +277,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
         enabled: backend !== 'off',
         endpoint,
         showDiff: cfg.get<boolean>('showDiff', true),
+        conventions: normaliseConventions(cfg.get<unknown>('conventions', [])),
         selected: currentSelection(
             choices,
             cfg.get<string>('model', ''),
@@ -376,6 +380,8 @@ export interface PanelAiRequest extends RequestedLoad {
     enabled: boolean;
     /** Review the model's code as a diff, or write it straight into the file. */
     showDiff: boolean;
+    /** The house rules as the panel's editor holds them — one rule per line, blank lines ignored. */
+    conventions?: string;
     /** The dropdown value (`lms:<key>`, `file:<path>`, `bundled:<id>`, `custom:<url>`). */
     value: string;
     /** Answer budget and timeout — request settings, applied by Save rather than by a load. */
@@ -716,6 +722,10 @@ export async function saveAiSettings(input: PanelAiRequest): Promise<void> {
     // Written before the switch is looked at: whether a diff is shown is a preference about *reviewing*,
     // not about whether AI is on, so it must stick even while the feature is switched off (2026-09-16).
     await cfg.update('showDiff', input.showDiff !== false, target);
+    // Same reasoning for the house rules: they describe the developer's code, not this switch.
+    if (input.conventions !== undefined) {
+        await cfg.update('conventions', parseConventionsText(input.conventions), target);
+    }
     await cfg.update('maxTokens', Math.min(16384, Math.max(64, Math.round(input.maxTokens) || 4096)), target);
     await cfg.update('timeoutSeconds', Math.min(600, Math.max(5, Math.round(input.timeoutSeconds) || 60)), target);
     await cfg.update('loadContextLength', Math.max(0, Math.round(input.contextLength) || 0), target);

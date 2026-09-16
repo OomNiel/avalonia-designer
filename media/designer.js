@@ -95,6 +95,8 @@
         aiEnabled: $('aiEnabled'),
         aiShowDiff: $('aiShowDiff'),
         aiShowDiffHint: $('aiShowDiffHint'),
+        aiConvText: $('aiConvText'),
+        aiLearnConventions: $('aiLearnConventions'),
         aiBadge: $('aiBadge'),
         aiBody: $('aiBody'),
         aiModel: $('aiModel'),
@@ -1157,6 +1159,9 @@
         return {
             enabled: els.aiEnabled.checked,
             showDiff: els.aiShowDiff.checked,
+            // The house rules as typed, one per line: the extension normalises them (trim, de-duplicate,
+            // cap) so the webview does not have to know those rules (2026-09-16).
+            conventions: els.aiConvText ? els.aiConvText.value : '',
             value: picked,
             contextLength: Number(els.aiContext.value) || 0,
             gpu: els.aiGpu.value === 'auto' ? 'auto' : els.aiGpu.value,
@@ -1176,6 +1181,12 @@
         els.aiShowDiff.checked = state.showDiff !== false;
         // The hint explains what *no diff* means, so it appears when the switch is off — not when it is on.
         if (els.aiShowDiffHint) els.aiShowDiffHint.hidden = state.showDiff !== false;
+        // The rules are shown as the extension has them (one per line). Typing is not fought with: the box
+        // is only overwritten when the state actually arrives, which is not while it has focus.
+        if (els.aiConvText && document.activeElement !== els.aiConvText) {
+            const rules = Array.isArray(state.conventions) ? state.conventions : [];
+            els.aiConvText.value = rules.join('\n');
+        }
         els.aiBadge.textContent = state.enabled ? 'on' : 'off';
         els.aiBadge.className = 'ai-badge ' + (state.enabled ? 'on' : 'off');
         els.aiBody.hidden = !state.enabled;
@@ -1301,6 +1312,13 @@
     els.aiScan.addEventListener('click', () => {
         setAiProgress('scanning this machine for model files…');
         post({ type: 'aiScan' });
+    });
+    // "Learn from my code…": the extension measures the project's own files and asks which rules to keep.
+    // The panel just asks for it — the dialog, the gates and the saving all live extension-side, exactly as
+    // they do for the palette command.
+    els.aiLearnConventions.addEventListener('click', () => {
+        setAiProgress('reading your project for the way it is written…');
+        post({ type: 'aiLearnConventions' });
     });
     els.aiLoad.addEventListener('click', () => {
         if (!els.aiModel.value) { setAiProgress('choose a model first'); return; }

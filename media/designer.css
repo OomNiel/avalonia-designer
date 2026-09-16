@@ -1406,6 +1406,35 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     color: var(--accent);
 }
 
+/* House rules: a small editor, monospace because the rules quote identifiers and punctuation they must
+   keep exactly (`<Control>_<Event>`, backticks). Sits under the load buttons, separated by a hairline so
+   it reads as "about every request", not as another load option (2026-09-16). */
+.ai-conv {
+    display: grid;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.ai-conv label {
+    font-size: 12px;
+}
+
+.ai-conv .ai-hint {
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+.ai-conv textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 .ai-status {
     margin-top: 8px;
     max-height: 160px;

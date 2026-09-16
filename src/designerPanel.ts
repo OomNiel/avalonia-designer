@@ -23,6 +23,7 @@ import { readDataSetFiles } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
 import { bundledComponentSpecs, isStaleBundledCopy } from './bundledComponents';
 import { statusLines } from './assistantUi';
+import { learnConventions } from './conventionsUi';
 import { logError } from './logger';
 import {
     aiLog,
@@ -1760,6 +1761,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await scan(panel.webview, async (state) => {
                         await panel.webview.postMessage({ type: 'aiState', state });
                     });
+                    return;
+                }
+                case 'aiLearnConventions': {
+                    attachPanel(panel);
+                    // The same flow the palette command runs — measured from the project's own files, one
+                    // quick pick, saved to the setting that the panel's textarea also edits (2026-09-16).
+                    const learned = await learnConventions();
+                    // The textarea is whatever the settings now say: a learn that saved nothing would
+                    // otherwise leave the panel showing an older list than the file it just wrote.
+                    await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
+                    await this.postStatus(panel, learned ? 'House rules learned' : 'No house rules added');
                     return;
                 }
                 case 'aiLoad': {
@@ -6339,6 +6351,17 @@ ${publishButtons}      <span class="sep"></span>
           </div>
           <div id="aiProgress" class="ai-progress" hidden></div>
           <pre id="aiStatusText" class="ai-status" hidden></pre>
+
+          <div id="aiConventions" class="ai-conv">
+            <label for="aiConvText">House rules <span class="ai-hint">— one per line; every one of them is added to each request</span></label>
+            <textarea id="aiConvText" rows="4" spellcheck="false"
+              placeholder="Indent with 4 spaces.&#10;Name event handlers &lt;Control&gt;_&lt;Event&gt;."></textarea>
+            <div class="modal-buttons modal-buttons-tight">
+              <button id="aiLearnConventions" type="button" class="modal-btn">Learn from my code…</button>
+            </div>
+            <p class="modal-hint" id="aiConvHint">Measured from your own files: a rule is only offered when at
+              least 5 examples agree at least 80% of the time. Empty means nothing is added.</p>
+          </div>
         </div>
         </div>
         </div>

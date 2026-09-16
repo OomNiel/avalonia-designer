@@ -1083,6 +1083,48 @@ runtime.
 > version problem; a failure that is *not* about our arguments (a missing file, a bad quantisation) is reported
 > with the command line, which is also what goes to the *Avalonia Designer* log.
 
+#### House rules — teach it how *your* code is written
+
+Everything else in this section is about *what* the model writes. This is about **how**: the idioms your code
+already follows. Rule them once and they go into every request, so a new method matches the file around it
+instead of arriving in its own style.
+
+The rules live in the ⚙ Settings panel, in the **House rules** box at the bottom of the AI section — one rule
+per line, e.g.
+
+```
+Indent with 4 spaces.
+Name event handlers <Control>_<Event>, e.g. SaveButton_Click.
+Members are private unless something outside the class needs them.
+```
+
+You can type them yourself, or press **Learn from my code…** (the same thing is a Command Palette command,
+**AI: Learn the House Rules from My Code…**). Learning reads up to 40 of your project's C# and VB.NET files and
+**measures** how they are written:
+
+- indentation (tabs, or 2/4 spaces);
+- where the opening brace goes (same line as the declaration, or its own line below);
+- member visibility (`private`, or wider);
+- whether anything is `static`/`Shared` at all;
+- how event handlers are named (`SaveButton_Click`);
+- for VB: whether events are wired with a `Handles` clause or with `AddHandler`.
+
+You then get a tick-list of what it found, **each with its evidence** — *“5 of 5 C# members”* — and only what
+you tick is saved. Two gates apply, and they are the point of the whole feature:
+
+- a pattern needs at least **5 examples**, and
+- at least **80 % of them have to agree**.
+
+So a project with three methods is told nothing, and a codebase split half-and-half gets no brace rule at all:
+a house style nobody chose is worse than no rule. Rules are counted **per language**, so a C# project with one
+VB form is never told to use `Private Sub`. Nothing is sent anywhere while learning — no model is involved, it
+is counting — and generated files (`.g.cs`, `.Designer.vb`, `AssemblyInfo`) are skipped because they have no
+style of their own.
+
+Keep the list short (it stops at 12, with a note when it does): every rule is added to every request, and a
+rule that is not true of your code yet is one the model will follow anyway. **Empty means nothing is added**, so
+nothing changes until you ask for it.
+
 #### What the entries in the model list mean
 
 Each entry says where it comes from, because that decides whether it can work at all:

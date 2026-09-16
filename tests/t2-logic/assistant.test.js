@@ -116,6 +116,26 @@ module.exports = async (t) => {
             'required parts that do not fit are reported — the caller refuses rather than sending a guess');
         t.equal(impossible.kept.length, 2, 'fit', 'and nothing required is silently cut');
 
+        // The order above is a *contract*, and parts of equal size cannot see it: with two 100-token
+        // optional parts, dropping forwards and dropping backwards give the same answer. These differ, so
+        // the direction is actually pinned (2026-09-16 — found while a third, smaller part was added):
+        // the caller lists the optional parts by value, the first is the last to be given up, and a part
+        // that cannot fit at all is skipped so the room goes to one that can.
+        const uneven = [
+            { name: 'header', text: 'using System;', required: true },
+            { name: 'rules', text: 'r'.repeat(80), required: false },
+            { name: 'members', text: 'm'.repeat(4000), required: false },
+            { name: 'style', text: 's'.repeat(400), required: false }
+        ];
+        const trimmed = fitPromptParts(uneven, 200);
+        t.equal(trimmed.dropped.join(','), 'members', 'fit',
+            'a part that cannot fit at all is dropped, and the room goes to the parts that can');
+        t.equal(trimmed.kept.map((p) => p.name).join(','), 'header,rules,style', 'fit',
+            'including the cheap high-value ones after it');
+        const oneGoes = fitPromptParts(uneven, 1120);
+        t.equal(oneGoes.dropped.join(','), 'style', 'fit',
+            'when only one part has to go it is the last-listed — the caller orders them by value');
+
         t.equal(descriptionAllowance(1000, 600), 400, 'allowance',
             'the sentence gets what is left of the room, capped at the maximum');
         t.equal(descriptionAllowance(5000, 100), MAX_DESCRIPTION_TOKENS, 'allowance',

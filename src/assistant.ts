@@ -610,6 +610,12 @@ export interface FixPromptInput {
     header: string;
     /** Optional second method from the same file, as a style reference. */
     sibling?: string;
+    /**
+     * The developer's own house rules, already rendered as a block (`conventionsBlock`). Put last before the
+     * task on purpose: these are instructions about *how*, and a small model follows the thing it read most
+     * recently (asked 2026-09-16 — "remember the idioms I accept and put them in the prompt").
+     */
+    rules?: string;
 }
 
 export interface ImplementPromptInput {
@@ -619,6 +625,8 @@ export interface ImplementPromptInput {
     method: string;
     header: string;
     sibling?: string;
+    /** See {@link FixPromptInput.rules}. */
+    rules?: string;
 }
 
 const CODE_FENCE = '```';
@@ -648,7 +656,7 @@ function answerContract(language: 'cs' | 'vb'): string {
     );
 }
 
-function promptBody(language: 'cs' | 'vb', header: string, method: string, sibling: string | undefined, ask: string): string {
+function promptBody(language: 'cs' | 'vb', header: string, method: string, sibling: string | undefined, ask: string, rules?: string): string {
     const lines = [
         `Language: ${languageLabel(language)}`,
         '',
@@ -667,6 +675,7 @@ function promptBody(language: 'cs' | 'vb', header: string, method: string, sibli
             ''
         );
     }
+    if (rules?.trim()) lines.push(rules.trimEnd(), '');
     lines.push(ask, CODE_FENCE + (language === 'vb' ? 'vb' : 'csharp'), method.trimEnd(), CODE_FENCE, '', answerContract(language));
     return lines.join('\n');
 }
@@ -678,7 +687,7 @@ export function buildFixPrompt(input: FixPromptInput): ChatMessage[] {
         'Fix exactly that problem by rewriting this method:';
     return [
         systemMessage(input.language),
-        { role: 'user', content: promptBody(input.language, input.header, input.method, input.sibling, ask) }
+        { role: 'user', content: promptBody(input.language, input.header, input.method, input.sibling, ask, input.rules) }
     ];
 }
 
@@ -689,7 +698,7 @@ export function buildImplementPrompt(input: ImplementPromptInput): ChatMessage[]
         'Implement it inside this method, changing nothing else:';
     return [
         systemMessage(input.language),
-        { role: 'user', content: promptBody(input.language, input.header, input.method, input.sibling, ask) }
+        { role: 'user', content: promptBody(input.language, input.header, input.method, input.sibling, ask, input.rules) }
     ];
 }
 
@@ -1064,6 +1073,8 @@ export interface GeneratePromptInput {
     members: string;
     /** One short existing member, as a style reference. */
     style?: string;
+    /** The developer's own house rules, already rendered as a block (`conventionsBlock`). */
+    rules?: string;
 }
 
 /** The visibility the answer must end up with, spelled out so a small model cannot guess wrong. */
@@ -1105,6 +1116,7 @@ export function buildGeneratePrompt(input: GeneratePromptInput): ChatMessage[] {
             ''
         );
     }
+    if (input.rules?.trim()) lines.push(input.rules.trimEnd(), '');
     lines.push(
         `The developer wants a NEW member, which does not exist yet:\n"""${input.description.trim()}"""`,
         '',

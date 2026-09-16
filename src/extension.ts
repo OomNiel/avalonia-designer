@@ -10,6 +10,7 @@ import { disposeIssues } from './codeBehindCheck';
 import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, refreshPanels, removeHubModel, showStatus } from './assistantUi';
 import { initModelRuntime, stopModelServer } from './modelRuntime';
 import { initLlamaServer, startMyLlamaServerFlow, stopOwnLlamaServer } from './llamaServer';
+import { learnConventions } from './conventionsUi';
 import { unloadOnExit } from './localModelCore';
 import { chooseLocalModel, unloadLoadedModel } from './localModelSetup';
 import * as logger from './logger';
@@ -148,6 +149,11 @@ export function activate(context: vscode.ExtensionContext): void {
             // verified download the pinned models use (asked 2026-09-16).
             vscode.commands.registerCommand('avaloniaDesigner.assistant.addHubModel', () => addHubModel()),
             vscode.commands.registerCommand('avaloniaDesigner.assistant.forgetHubModel', () => removeHubModel()),
+            // The house rules (asked 2026-09-16): measured from the user's own files, and only the patterns
+            // that hold almost everywhere — see `conventions.ts` for the two gates.
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.learnConventions', async () => {
+                if (await learnConventions()) void refreshPanels();
+            }),
             vscode.commands.registerCommand('avaloniaDesigner.assistant.status', () => showStatus()),
             // The bundled runtime: source that is built on this machine, so one VSIX fits every
             // platform (see NOTES.md §92). Its process is stopped when the window closes.

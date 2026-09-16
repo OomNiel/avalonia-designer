@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4202 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4300 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2713,4 +2713,57 @@ asserts those two can never appear in that argv, and `--n-gpu-layers 0` is alway
 lookup, the argv, the health verdicts, the already-running detection against the real fixtures above, the
 messages, and the wiring of both front doors) plus the updated webview/unload guards; `tests/t2-logic/aiPanel.test.js`
 grew the entry's label, detail, ordering and selection assertions.
+
+### §126 — house rules: the model writes like the code around it (2026-09-16, release 0.9.43)
+
+**What was asked, and what it became.** *"Is it possible to 'train' the model in the extension as it gains
+experience from the user?"* → **no fine-tuning** (§124: a LoRA on a 12B needs dedicated VRAM this machine does
+not have, and it produces a model file to version, verify and explain). The user picked the cheap version:
+remember the idioms they accept and put them in the prompt. This release is that, with the emphasis on
+**measured, not guessed**.
+
+**THE TWO GATES ARE THE FEATURE.** `src/conventions.ts` counts before it claims:
+
+- **`MIN_SAMPLES = 5`** — three handlers agreeing is a coincidence;
+- **`MIN_SHARE = 0.8`** — a codebase split 60/40 has *no* house style, and stating one would invent a style the
+  developer never chose.
+
+Every suggestion carries its evidence (`5 of 5 C# members`) into the dialog, because a rule the user cannot
+check is a rule they have to take on faith — and they will be held to it for every future answer.
+
+**What is measured** (per language, never across): indentation (tabs vs 2/4 spaces — counted so that a 4-space
+file is not read as "2-space, mostly"), brace style (K&R vs Allman, from `)`-terminated declarations only), member
+visibility (`private` vs wider), "nothing is `static`/`Shared`" (only when there were members to be static
+about), handler naming (`<Control>_<Event>`), and for VB the wiring fork (`Handles` clauses vs `AddHandler`).
+Both languages go through **one** declaration parser — `Private Shared Sub Foo()` and
+`private static void Foo()` differ in keywords, not shape, and one regex that has been reasoned about beats four
+with their own edge cases. `InitializeComponent();` is a *call*: counting calls as members would have produced
+"no static members (5 of 12)" nonsense, and there is a test for exactly that.
+
+**Where they land in the prompt.** After the context, before the request — the instruction about *how* is the
+last thing read before the task. In the new-member path they are an **optional part listed first** (cheapest and
+most valuable), so on a tight window they outlive the member list and the style sample. The Code Fix path
+carries them unconditionally, like the sibling sample: a few dozen tokens.
+
+**A test that could not see what it claimed.** While adding the third optional part I checked `fitPromptParts`'
+dropping order. A probe with a 1000-token part followed by a 100-token one looked like a bug ("the member list
+was dropped and the style sample kept") — but reading the unit test showed the order is a *contract* and the
+behaviour is right: the caller lists the optional parts **by value**, the first is the last to be given up, and a
+part that cannot fit at all is skipped so the room goes to one that can. **The test could not tell the direction
+at all**, because its two optional parts were both 400 characters — equal sizes make forward and backward
+dropping indistinguishable. It now also runs with parts of 80/4000/400 characters, which pins the direction.
+Lesson worth keeping: *a test whose inputs are symmetric cannot test an order.*
+
+**Nothing is sent anywhere, and nothing is saved unasked.** The deriver is a pure function of text;
+`conventionsUi.ts` reads up to 40 `.cs`/`.vb` files (skipping `.g.`/`.designer.`/`AssemblyInfo`/`bin`/`obj`,
+which have no style of their own), offers only the patterns that cleared the gates, and writes what the user
+ticked through `updateSetting` (the scope that already owns the setting — the §116 rule). Empty by default: no
+rules are imposed on anyone who did not ask. The cap is 12 rules × 200 characters, and hitting it is *reported*
+rather than silently dropping the remainder.
+
+**Suite:** 4300 passed / 0 failed (was 4202). New `tests/t2-logic/conventions.test.js` (90 assertions: the
+storage round trip, the block, every measured rule, both gates as behaviour — a 3-member file and a 50/50
+file — language isolation, the prompt position in all three prompts, and the wiring of the panel, the palette
+command and the manifest), plus the uneven-parts fit assertions in `assistant.test.js` and the house-rules
+editor in the t3 webview suite.
 

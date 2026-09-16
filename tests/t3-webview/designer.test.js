@@ -28,6 +28,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'aiEnabled', 'aiShowDiff', 'aiShowDiffHint', 'aiBadge', 'aiBody', 'aiModel', 'aiModelHint', 'aiRefresh', 'aiScan',
     'aiOptions', 'aiContext', 'aiGpu', 'aiTtl', 'aiMaxTokens', 'aiTimeout', 'aiEndpoint',
     'aiOptContext', 'aiOptGpu', 'aiOptTtl', 'aiOptAddress',
+    'aiConvText', 'aiLearnConventions',
     'aiLoad', 'aiUnload', 'aiRemove', 'aiStatus', 'aiProgress', 'aiStatusText',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
@@ -78,7 +79,7 @@ function setup(omit = []) {
         if (id === 'aiModel' || id === 'aiGpu' || id === 'aiTtl') return 'select';
         if (id === 'aiContext' || id === 'aiMaxTokens' || id === 'aiTimeout' || id === 'aiEndpoint') return 'input';
         if (id === 'aiStatusText' || id === 'aiProgress' || id === 'aiBadge' || id === 'aiModelHint') return 'div';
-        if (id === 'aiLoad' || id === 'aiUnload' || id === 'aiRemove' || id === 'aiStatus' || id === 'aiRefresh' || id === 'aiScan') return 'button';
+        if (id === 'aiLoad' || id === 'aiUnload' || id === 'aiRemove' || id === 'aiStatus' || id === 'aiRefresh' || id === 'aiScan' || id === 'aiLearnConventions') return 'button';
         if (id.startsWith('dotGridSpacing') || id === 'dotGridColor' || id === 'dotGridDotSize') return 'input';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
             || id === 'dotGridSave' || id === 'dotGridCancel'
@@ -664,7 +665,8 @@ module.exports = async (t) => {
             recommended: { contextLength: 8192, ttlSeconds: 900 }
         },
         hint: '',
-        pinned: 'Pinned: the built-in runtime loads this file at start'
+        pinned: 'Pinned: the built-in runtime loads this file at start',
+        conventions: []
     }, over);
     msg({ type: 'aiState', state: aiState() });
     t.equal($('aiModel').value, 'bundled:qwen2.5-coder-3b-q4', 'ai-picker',
@@ -744,6 +746,28 @@ module.exports = async (t) => {
     const savedAi = posted.find((m) => m.type === 'saveCodeSettings');
     t.equal(savedAi && savedAi.ai && savedAi.ai.showDiff, true, 'showdiff',
         'the checkbox travels with the AI settings on Save');
+
+    // House rules in the panel (2026-09-16). The editor is a second view of one setting: the state fills it,
+    // Save sends it back, and "Learn from my code…" only ever *asks* — the measuring and the gating happen
+    // extension-side, in the same flow the palette command runs.
+    msg({ type: 'aiState', state: aiState({ conventions: ['Indent with 4 spaces.', 'Members are `private`.'] }) });
+    t.equal($('aiConvText').value, 'Indent with 4 spaces.\nMembers are `private`.', 'house-rules',
+        'the editor shows the rules the settings hold, one per line');
+    msg({ type: 'aiState', state: aiState({ conventions: [] }) });
+    t.equal($('aiConvText').value, '', 'house-rules', 'and an empty list empties the editor');
+    posted.length = 0;
+    $('aiConvText').value = 'Indent with tabs.\nName event handlers <Control>_<Event>.';
+    $('settingsSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    const savedRules = posted.find((m) => m.type === 'saveCodeSettings');
+    t.equal(savedRules && savedRules.ai && savedRules.ai.conventions,
+        'Indent with tabs.\nName event handlers <Control>_<Event>.', 'house-rules',
+        'the typed rules travel with the AI settings on Save, as one rule per line');
+    posted.length = 0;
+    $('aiLearnConventions').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1].type, 'aiLearnConventions', 'house-rules',
+        'and "Learn from my code…" asks the extension — nothing is measured in the webview');
+    t.ok(/reading your project/.test($('aiProgress').textContent), 'house-rules',
+        'with a line that says what is happening while it reads the project');
 
     msg({ type: 'aiState', state: aiState({ selected: 'bundled:not-in-the-list', pinned: '', hint: '' }) });
     t.equal($('aiProgress').hidden, false, 'ai-picker',

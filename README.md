@@ -241,6 +241,15 @@ extension: the status report says *“already running on port 8080 … Started o
 is whose process it is. The extra flags you want are a setting (`--device none -nr`, say), added last so they
 win.
 
+**And it can be taught how your code reads.** *AI: Learn the House Rules from My Code…* (or the button in the ⚙
+panel) reads your project's C# and VB files and **measures** the idioms — indentation, brace style, member
+visibility, `static`/`Shared`, handler naming, and for VB whether events are wired with `Handles` or
+`AddHandler` — then offers the patterns that cleared two gates: at least **5 examples agreeing 80 %** of the
+time, each shown with its own evidence (`5 of 5 C# members`). You tick what to keep, the rules go into every
+request, and a codebase split 50/50 deliberately produces **no** rule — a house style nobody chose is worse than
+none. Rules are counted per language, learning calls no model at all, and the list is empty until you ask for it
+(12 max, editable by hand in the same box).
+
 **The ⚙ Settings panel shows where every entry comes from**, because that is what decides whether it can work:
 *LM Studio · in My Models, ready to load* (the extension is a remote control there — LM Studio is the runtime and
 can only load a name it has), *This extension's own runtime · weights on disk, ready to load* (or *not downloaded

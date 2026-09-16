@@ -19,8 +19,18 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.42`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.43`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.43 — house rules: the model writes like the code around it.** The honest replacement for "train it on my
+  code" (§124 said no to fine-tuning): the idioms your code already follows, **measured** from up to 40 of the
+  project's C#/VB files and put in every prompt. *AI: Learn the House Rules from My Code…* (and the button in
+  the ⚙ panel) counts indentation, brace style, member visibility, `static`/`Shared`, handler naming and — for
+  VB — `Handles` vs `AddHandler`, then offers only what cleared two gates: **5 examples agreeing 80 %**, with
+  the evidence on every suggestion (`5 of 5 C# members`). A 50/50 codebase gets no rule at all, and rules are
+  counted per language so a C# project is never told to use `Private Sub`. The rules are an optional prompt
+  part (given up after the member list, before the style sample), edited in the ⚙ panel one per line, empty by
+  default. §126.
 
 - **0.9.42 — your own `llama-server`, started from the editor.** The engine the user actually prefers
   (*"models served by the Llama.cpp server respond faster and better than the LM Studio models"*) is now one the
@@ -143,7 +153,7 @@ server (LM Studio, Ollama, your own `llama-server`), tier 2 brings its own — `
 built on the user's machine with the .NET SDK, so one VSIX fits every platform, and weights are downloaded once
 with a SHA-256 check. Both are **off by default**.
 
-- **Versions 0.9.5 – 0.9.42 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
+- **Versions 0.9.5 – 0.9.43 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
   `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F (numbers-only
   version, both GitHub release flags, no BETA suffix). The repo tags only the `v1.0.0-beta.N` series — the 0.9.x
   releases are commits, not tags.
