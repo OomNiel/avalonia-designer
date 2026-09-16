@@ -67,6 +67,15 @@ import { refreshAiState } from './aiPanel';
 import { configView, updateSetting } from './settingWrite';
 import { panelFor } from './aiPanel';
 import { bundledStatusLines, ensureBundledEndpoint, sidecarTail } from './modelRuntime';
+import {
+    addCustomModelSpec,
+    customModelSpecs,
+    ensureModelFile,
+    extensionContext,
+    fetchHubFiles,
+    removeCustomModelSpec
+} from './modelRuntime';
+import { canRunSpec, formatBytes, hubFileSpec, parseHubUrl, shortHash } from './modelSpecs';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -1302,6 +1311,131 @@ export async function fixFindingWithAI(uri: vscode.Uri, line: number, message: s
         `Asking ${cfg.model || 'the local model'} to fix the finding…`,
         resolved
     );
+}
+
+/**
+ * "AI: Add a Model from Hugging Face…" (asked 2026-09-16).
+ *
+ * *"Should we remove the LM Studio dependency from the extension and load everything from Hugging Face?"* The
+ * bundled runtime always did load from the Hub — but only the five files pinned in `MODEL_SPECS`. This is the
+ * missing half: paste a repo or file URL, choose the `.gguf` if the repo has several, and the extension reads
+ * the size and the hash **from the Hub's own answer** and downloads it through the same verified pipeline as
+ * the built-in models (`.part` while partial, `.verified` once the hash matched).
+ *
+ * The added model is stored like a built-in one, so the picker, the load path, the hardware gate and Remove
+ * Model treat it identically — that is the point: the user's own choice is not a second-class citizen.
+ */
+export async function addHubModel(): Promise<void> {
+    const context = extensionContext();
+    if (!context) {
+        void vscode.window.showWarningMessage('The extension is not active yet — try again in a moment.');
+        return;
+    }
+    const pasted = await vscode.window.showInputBox({
+        title: 'Add a model from Hugging Face',
+        prompt: 'Paste the model page or the file URL. The size and the SHA-256 are read from Hugging Face.',
+        placeHolder: 'https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF',
+        ignoreFocusOut: true,
+        validateInput: (v) => (parseHubUrl(v) ? undefined : 'That does not look like a huggingface.co address (or owner/repo).')
+    });
+    if (!pasted) return;
+    const ref = parseHubUrl(pasted);
+    if (!ref) return;
+
+    let files: Awaited<ReturnType<typeof fetchHubFiles>>;
+    try {
+        files = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Reading ${ref.repo} from Hugging Face…` },
+            () => fetchHubFiles(ref.repo, ref.revision)
+        );
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log(`Add from Hub failed for ${ref.repo}: ${message}`);
+        void vscode.window.showErrorMessage(`Could not read ${ref.repo}: ${message}`);
+        return;
+    }
+
+    // A URL that names a file wins (that is the user being specific); otherwise the repo's own list, which is
+    // sorted readably so a 20-file quant zoo is navigable by name.
+    let chosen = ref.file ? files.find((f) => f.file === ref.file) : undefined;
+    if (ref.file && !chosen) {
+        void vscode.window.showWarningMessage(`${ref.file} is not a .gguf in ${ref.repo} (or has no published hash) — pick one from the list instead.`);
+    }
+    if (!chosen) {
+        if (files.length === 1) {
+            chosen = files[0];
+        } else {
+            const sorted = [...files].sort((a, b) => a.file.localeCompare(b.file));
+            const pick = await vscode.window.showQuickPick(
+                sorted.map((f) => ({ label: f.file, description: formatBytes(f.bytes), file: f })),
+                { title: `${ref.repo} — choose the file (${files.length} of them)`, ignoreFocusOut: true, matchOnDescription: true }
+            );
+            if (!pick) return;
+            chosen = pick.file;
+        }
+    }
+
+    const spec = hubFileSpec({
+        repo: ref.repo,
+        file: chosen.file,
+        revision: ref.revision,
+        bytes: chosen.bytes,
+        sha256: chosen.sha256
+    });
+    addCustomModelSpec(spec);
+    log(`Added a model from the Hub: ${spec.id} (${formatBytes(spec.bytes)}, sha ${shortHash(spec.sha256 ?? '')}).`);
+
+    // The same gate the setup flow applies to the pinned models: a model this machine cannot run well is still
+    // offered, but the user is told before a 7 GB download rather than after a failed load.
+    const facts = readHardwareFacts();
+    const verdict = canRunSpec(spec, { level: assessHardware(facts).level, totalRamGb: facts.totalRamGb });
+    if (!verdict.ok) {
+        void vscode.window.showWarningMessage(
+            `${chosen.file} is on the list, but this machine may not run it well: ${verdict.reason}. ` +
+            'It will still download and load if you ask it to.'
+        );
+    }
+
+    const go = await vscode.window.showInformationMessage(
+        `${chosen.file} — ${formatBytes(chosen.bytes)}. Download it now? (the same verification the built-in models get)`,
+        'Download',
+        'Later'
+    );
+    if (go !== 'Download') {
+        void vscode.window.showInformationMessage('Added — pick it in the ⚙ Settings panel and press Load Model when you want it.');
+        return;
+    }
+    try {
+        await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Downloading ${chosen.file}…`, cancellable: true },
+            async (progress, token) => {
+                await ensureModelFile(context, spec, progress, token);
+            }
+        );
+        void vscode.window.showInformationMessage(`${chosen.file} is ready — pick it in the ⚙ Settings panel and press Load Model.`);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log(`Download of ${spec.id} failed: ${message}`);
+        void vscode.window.showErrorMessage(`Download failed: ${message}`);
+    }
+}
+
+/** "Forget an added model" — the list entry only; deleting the weights stays with Remove Model. */
+export async function removeHubModel(): Promise<void> {
+    const added = customModelSpecs();
+    if (!added.length) {
+        void vscode.window.showInformationMessage('No models have been added from Hugging Face yet.');
+        return;
+    }
+    const pick = await vscode.window.showQuickPick(
+        added.map((s) => ({ label: s.label, description: formatBytes(s.bytes), id: s.id })),
+        { title: 'Forget which added model?', ignoreFocusOut: true }
+    );
+    if (!pick) return;
+    if (removeCustomModelSpec(pick.id)) {
+        log(`Forgot the added model ${pick.id}.`);
+        void vscode.window.showInformationMessage('Forgotten. Its weights stay on disk — Remove Model deletes those.');
+    }
 }
 
 /** Backend off: explain what to switch on rather than failing silently. */

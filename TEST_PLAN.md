@@ -276,6 +276,16 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.41` (2026-09-16)** — **AI: Add a Model from Hugging Face…** (paste a page or file URL, pick the
+  `.gguf`, size + SHA-256 read from the Hub's own `?blobs=true` answer, then the existing verified download) and
+  **AI: Forget a Model Added from Hugging Face…**; added models live in `user-models.json` next to the weights as
+  ordinary `ModelSpec`s, so picker/load/gate/Remove Model treat them identically. The picker is also regrouped —
+  bundled llama.cpp, then a server you run, then LM Studio, then loose files — after the user found a llama.cpp
+  server answered faster and better than the LM Studio models. `tests/t2-logic/hubModels.test.js` (36
+  assertions) pins the URL shapes, the Hub answer shape (the one read by hand earlier the same day), the derived
+  RAM gate, the fact that an added spec has exactly a built-in spec's keys, and the new order. Two existing
+  guards were updated rather than deleted: the old "custom is last" assertion, and the URL guard now requires
+  the Hub URLs to live in `modelSpecs` (`hubApiUrl`/`hubResolveUrl`). Suite **4081**.
 - **Release `0.9.40` (2026-09-16)** — the Code Fix checker was extended to the code the model writes, and now
   runs right after every write (both diff modes). New deterministic rules: a handler nothing calls (with a Fix
   that wires it, sharing the AI side's attribute edit), a name that is not a control of the form but starts like

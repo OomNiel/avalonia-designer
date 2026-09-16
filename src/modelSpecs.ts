@@ -101,6 +101,129 @@ export function specById(id: string): ModelSpec | undefined {
     return MODEL_SPECS.find((s) => s.id === id);
 }
 
+// ---------------- models the user brings from Hugging Face (asked 2026-09-16) ----------------
+//
+// *"Should we remove the LM Studio dependency from the extension and load everything from Hugging Face?"*
+// The bundled runtime has always fetched its weights from Hugging Face — but only the five files pinned in
+// this table. Anyone who found a model they liked (a llama.cpp server answered faster and better than the LM
+// Studio models, in the report that started this) had to download it by hand and point the extension at the
+// *file*. These three functions turn a pasted Hub URL into a spec, and the Hub's own file listing into the
+// numbers the download needs. All pure: the network call and the download live in `modelRuntime`.
+
+/** A Hugging Face reference: the repo, and optionally one file in it. */
+export interface HubRef {
+    repo: string;
+    revision: string;
+    file?: string;
+}
+
+/**
+ * Reads what a browser gives you when you copy a Hugging Face link.
+ *
+ * Accepted, because all of them end up on the clipboard depending on where you click:
+ *   `https://huggingface.co/owner/repo`
+ *   `https://huggingface.co/owner/repo/tree/main`
+ *   `https://huggingface.co/owner/repo/blob/main/file.gguf`
+ *   `https://huggingface.co/owner/repo/resolve/main/file.gguf`
+ *   `owner/repo` — no scheme, which people also paste.
+ */
+export function parseHubUrl(input: string): HubRef | undefined {
+    let text = String(input ?? '').trim();
+    if (!text) return undefined;
+    // Whether the user pasted a full URL matters: with a host, it has to be Hugging Face's — otherwise
+    // `https://example.com/owner/repo` would be read as the repo `example.com/owner` and the flow would offer
+    // a download from the wrong place (found by the test, 2026-09-16). Without one, `owner/repo` is meant.
+    const hadHost = /^(?:https?:\/\/|www\.)/i.test(text);
+    text = text.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+    const parts = text.split(/[?#]/)[0].split('/').filter((p) => p.length > 0);
+    if (parts[0]?.toLowerCase() === 'huggingface.co') parts.shift();
+    else if (hadHost) return undefined;
+    const [owner, repo, verb, ...rest] = parts;
+    if (!owner || !repo) return undefined;
+    if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return undefined;
+    const isFile = verb === 'blob' || verb === 'resolve' || verb === 'raw';
+    if (!isFile) {
+        // `/tree/<rev>` names a revision; anything else is ignored, and `main` is the default.
+        return { repo: `${owner}/${repo}`, revision: verb === 'tree' && rest[0] ? rest[0] : 'main' };
+    }
+    const revision = rest[0] ?? 'main';
+    const file = rest.slice(1).join('/');
+    return { repo: `${owner}/${repo}`, revision, file: file || undefined };
+}
+
+/**
+ * The Hub URLs, in the registry module — the one place a `huggingface.co` address may appear (a guard in the
+ * suite enforces that, so the API the download reads and the file it fetches can never drift apart).
+ */
+export function hubApiUrl(repo: string, revision = 'main'): string {
+    return `https://huggingface.co/api/models/${repo}?blobs=true&revision=${encodeURIComponent(revision)}`;
+}
+
+export function hubResolveUrl(repo: string, revision: string, file: string): string {
+    return `https://huggingface.co/${repo}/resolve/${revision || 'main'}/${file}`;
+}
+
+/** One `.gguf` file as the Hub's `?blobs=true` answer describes it. */
+export interface HubFile {
+    file: string;
+    bytes: number;
+    /** The LFS hash the Hub reports — what the download is verified against. */
+    sha256?: string;
+}
+
+/**
+ * The `.gguf` files in a repo, from `https://huggingface.co/api/models/<repo>?blobs=true`.
+ *
+ * The answer's shape is the one this session read by hand to verify the pinned specs, so it is pinned here
+ * too: `siblings[].rfilename` for the name, `size` for the bytes and `lfs.sha256` for the hash. Files without
+ * a hash are dropped rather than offered: the download verifies what it fetches, and a model that cannot be
+ * verified is not one to hand a user as if it were the one they asked for.
+ */
+export function hubGgufFiles(apiAnswer: unknown): HubFile[] {
+    const siblings = (apiAnswer as { siblings?: unknown })?.siblings;
+    if (!Array.isArray(siblings)) return [];
+    const out: HubFile[] = [];
+    for (const entry of siblings) {
+        const e = entry as { rfilename?: unknown; size?: unknown; lfs?: { sha256?: unknown } };
+        const file = typeof e?.rfilename === 'string' ? e.rfilename : '';
+        if (!file.toLowerCase().endsWith('.gguf')) continue;
+        const bytes = typeof e?.size === 'number' ? e.size : 0;
+        const sha = typeof e?.lfs?.sha256 === 'string' ? e.lfs.sha256 : undefined;
+        out.push({ file, bytes, sha256: sha });
+    }
+    return out;
+}
+
+/**
+ * The spec for a file the user chose, from the Hub's own numbers.
+ *
+ * `minRamGb` is derived, not asked for: a local model needs roughly its own size again in RAM while it runs
+ * (weights plus context), and the pinned table follows the same rule of thumb (`max(8, size × 2)`), so an
+ * added model is gated the same way the built-in ones are.
+ */
+export function hubFileSpec(input: {
+    repo: string;
+    file: string;
+    revision?: string;
+    bytes?: number;
+    sha256?: string;
+}): ModelSpec {
+    const revision = input.revision || 'main';
+    const bytes = Math.max(0, Math.round(input.bytes ?? 0));
+    const sizeText = bytes > 0 ? formatBytes(bytes) : 'size unknown until the download starts';
+    const file = input.file;
+    return {
+        id: `hub/${input.repo}/${file}`,
+        label: `${file}  ·  Hugging Face`,
+        detail: `${sizeText} — from ${input.repo} on Hugging Face; downloaded once, verified against the hash the Hub reports`,
+        fileName: file.split('/').pop() ?? file,
+        url: hubResolveUrl(input.repo, revision, file),
+        bytes,
+        sha256: input.sha256 ?? '',
+        minRamGb: bytes > 0 ? Math.max(8, Math.round((bytes / (1024 * 1024 * 1024)) * 2)) : 16
+    };
+}
+
 /** Recognises one of our files by name, so a file already in storage needs no re-download. */
 export function specByFileName(file: string, specs: ModelSpec[] = MODEL_SPECS): ModelSpec | undefined {
     const name = String(file).replace(/\\/g, '/').split('/').pop() ?? '';

@@ -41,7 +41,7 @@ import {
     type LocalModel,
     type RequestedLoad
 } from './localModels';
-import { bundledFilesOnDisk, bundledRuntimeRunning, ensureBundledEndpoint, ensureModelFile, modelFileFor, stopModelServer } from './modelRuntime';
+import { bundledFilesOnDisk, bundledRuntimeRunning, allModelSpecs, ensureBundledEndpoint, ensureModelFile, modelFileFor, stopModelServer } from './modelRuntime';
 import { proveItWorks } from './localModelSetup';
 
 export const SETTINGS = 'avaloniaDesigner.assistant';
@@ -95,7 +95,7 @@ export function parseChoiceValue(value: string): { kind: string; key: string } {
 }
 
 /** Builds the dropdown: everything that could be loaded, in the order a developer would look. */
-export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string, backend = 'off', modelPath = '', bundled: Record<string, { onDisk: boolean; bytes: number }> = {}): ModelChoice[] {
+export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string, backend = 'off', modelPath = '', bundled: Record<string, { onDisk: boolean; bytes: number }> = {}, specs: ModelSpec[] = MODEL_SPECS): ModelChoice[] {
     const choices: ModelChoice[] = [];
     // "Whatever is loaded" is a real answer, and it is the one the settings most often hold (`model` empty).
     // Without an entry for it the dropdown showed the *first* LM Studio model as if it had been chosen — and
@@ -121,7 +121,7 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
             live: loaded
         });
     }
-    for (const spec of MODEL_SPECS) {
+    for (const spec of specs) {
         // A bundled model pins through `modelPath`, and the runtime shows it is up — so this is the marker
         // that tells the user their load took. Without it, loading the extension's own model looked like
         // nothing had happened (reported 2026-09-15).
@@ -167,7 +167,20 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
         detail: 'Ollama, llama.cpp or anything else already running — set the address below',
         kind: 'custom'
     });
-    return choices;
+
+    // Presentation (asked 2026-09-16: *"load everything from Hugging Face"*, after finding that a llama.cpp
+    // server answered faster and better than the LM Studio models). The dropdown used to open on LM Studio's
+    // library, which made a program the extension merely *drives* look like the way to use the feature. The
+    // three paths a model can come from are now grouped in the order the extension can actually guarantee
+    // them: **its own runtime** (llama.cpp, weights from Hugging Face, no other program needed) first, then
+    // **a server the user runs** (their own `llama-server`, Ollama), then LM Studio's library, then loose
+    // `.gguf` files found on disk. Nothing was removed — every entry still works, and one with no LM Studio
+    // installed simply has no LM Studio entries.
+    const group: Record<string, number> = { any: 0, bundled: 1, custom: 2, lmstudio: 3, file: 4 };
+    return choices
+        .map((c, i) => ({ c, i }))
+        .sort((a, b) => ((group[a.c.kind] ?? 9) - (group[b.c.kind] ?? 9)) || (a.i - b.i))
+        .map((x) => x.c);
 }
 
 /** The model the settings point at right now, as a dropdown value. */
@@ -190,7 +203,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
     const endpoint = cfg.get<string>('endpoint', '') || 'http://127.0.0.1:1234/v1';
     if (fresh) scanned = [];
     const found = await discover();
-    const choices = buildChoices(found, scanned, endpoint, backend, cfg.get<string>('modelPath', ''), bundledFilesOnDisk());
+    const choices = buildChoices(found, scanned, endpoint, backend, cfg.get<string>('modelPath', ''), bundledFilesOnDisk(), allModelSpecs());
     if (choices.length === 0 && !found.cli) {
         choices.push({
             value: choiceValue('custom', endpoint),
@@ -228,7 +241,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
         hint: found.cli
             ? `${chatModels(found).length} LM Studio model(s) on disk · ${found.loaded.length} loaded`
             + (scanned.length ? ` · ${scanned.length} file(s) found by the scan` : ' · nothing scanned yet')
-            : `LM Studio is not installed — ${MODEL_SPECS.length} downloadable model(s) and files found on disk still work`,
+            : `LM Studio is not installed — ${allModelSpecs().length} downloadable model(s) and files found on disk still work`,
         pinned: describePin(backend, cfg.get<string>('model', ''), cfg.get<string>('modelPath', ''), endpoint, found)
     };
 }

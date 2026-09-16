@@ -15,6 +15,35 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.41] - 2026-09-16 · *a model of your own, and no default program*
+
+### Added
+
+- **AI: Add a Model from Hugging Face…** — paste a model page or a file URL, pick the `.gguf` (a repo with
+  several quants shows them all with their sizes), and the extension reads the size and the **SHA-256 from
+  Hugging Face's own answer** and downloads it through the same verified pipeline as the built-in models
+  (`.part` while partial, `.verified` once the hash matched). The added model is stored as an ordinary spec, so
+  the picker, the load path, the hardware gate and **Remove Model** treat it identically — and
+  **AI: Forget a Model Added from Hugging Face…** removes the list entry while leaving the weights to Remove
+  Model.
+- **llama.cpp is now presented as what it is: the first-class path.** Asked after finding that a llama.cpp
+  server answered faster and better than the LM Studio models — *"Should we remove the LM Studio dependency from
+  the extension and load everything from Hugging Face?"* There was never a dependency to remove (the extension
+  runs without LM Studio, and says so), but the dropdown *opened* on LM Studio's library, making a program the
+  extension merely drives look like the way to use it. The entries are now grouped in the order the extension
+  can guarantee them: **its own runtime** (llama.cpp via LLamaSharp, weights from the Hub, no other program),
+  then **a server you run** (your own `llama-server`, Ollama), then LM Studio's library, then loose `.gguf` files
+  on disk. Nothing was removed — every entry still works.
+
+### Note
+
+Removing LM Studio was considered and rejected: it would delete a working path (its model library, one-command
+loads) and with it the only GPU offload this machine has, since the bundled sidecar is CPU-only. A GPU backend
+for the bundled runtime is planned as an opt-in, with the caveat that the earlier `device lost` abort came from
+llama.cpp on exactly that iGPU.
+
+Suite **4081** passed / 0 failed.
+
 ## [0.9.40] - 2026-09-16 · *the check looks at what the model wrote*
 
 ### Added

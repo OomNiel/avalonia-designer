@@ -7,7 +7,7 @@ import { createNewProject, openLastProject, maybeRunFirstBuild } from './project
 import { ProjectViewProvider, setActiveContext } from './projectView';
 import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor';
 import { disposeIssues } from './codeBehindCheck';
-import { AssistantCodeActionProvider, PROPOSAL_SCHEME, applyProposal, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, showStatus } from './assistantUi';
+import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, removeHubModel, showStatus } from './assistantUi';
 import { initModelRuntime, stopModelServer } from './modelRuntime';
 import { unloadOnExit } from './localModelCore';
 import { chooseLocalModel, unloadLoadedModel } from './localModelSetup';
@@ -141,6 +141,10 @@ export function activate(context: vscode.ExtensionContext): void {
         // Local AI assist — opt-in, one explicit command per flow, no background traffic.
         context.subscriptions.push(
             vscode.commands.registerCommand('avaloniaDesigner.assistant.implement', () => implementInFunction()),
+            // Models the user brings themselves: the Hub's own numbers (size, SHA-256) through the same
+            // verified download the pinned models use (asked 2026-09-16).
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.addHubModel', () => addHubModel()),
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.forgetHubModel', () => removeHubModel()),
             vscode.commands.registerCommand('avaloniaDesigner.assistant.status', () => showStatus()),
             // The bundled runtime: source that is built on this machine, so one VSIX fits every
             // platform (see NOTES.md §92). Its process is stopped when the window closes.

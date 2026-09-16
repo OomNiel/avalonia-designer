@@ -141,8 +141,17 @@ module.exports = async (t) => {
             'with LM Studio absent the file is served by the built-in runtime, and the detail says so');
         t.ok(/Llama-3-8B/.test(found.label) && /4\.9 GB/.test(found.label), 'list', 'and its size');
 
-        t.equal(choices[choices.length - 1].kind, 'custom', 'list',
-            '"a server I run myself" is last: it is the least common answer, and it needs the address field');
+        // The order is the three paths a model can come from, in the order the extension can guarantee them
+        // (asked 2026-09-16: a llama.cpp server answered faster and better than the LM Studio models, and the
+        // dropdown opened on LM Studio's library as if it were the default). "A server I run myself" therefore
+        // comes *before* LM Studio's entries now — it is the path that needs no other program to be guessed at.
+        const kindsInOrder = choices.map((c) => c.kind);
+        t.ok(kindsInOrder.lastIndexOf('custom') < kindsInOrder.indexOf('lmstudio') || kindsInOrder.indexOf('lmstudio') < 0,
+            'list', '"a server I run myself" is offered before LM Studio\'s library');
+        t.ok(kindsInOrder.indexOf('bundled') < kindsInOrder.indexOf('lmstudio') || kindsInOrder.indexOf('lmstudio') < 0,
+            'list', 'and so is the extension\'s own runtime');
+        t.ok(kindsInOrder.indexOf('file') > kindsInOrder.indexOf('lmstudio') || kindsInOrder.indexOf('lmstudio') < 0,
+            'list', 'loose .gguf files on disk stay last — they are the afterthought');
         t.equal(choices.length, 3 + MODEL_SPECS.length + 1 + 1 + 1, 'list', '"decide" + LM Studio + downloads + found + address');
     }
 

@@ -35,9 +35,12 @@ import {
     canRunSpec,
     defaultThreads,
     formatBytes,
+    hubApiUrl,
+    hubGgufFiles,
     isGgufPath,
     parseHealth,
     shortHash,
+    type HubFile,
     sidecarArgs,
     sidecarBaseUrl,
     sidecarHealthUrl,
@@ -301,6 +304,88 @@ export function sidecarTail(): string[] {
     return sidecarLines.slice();
 }
 
+/** The extension context the model helpers work against, for callers that need it (the Hub flow does). */
+export function extensionContext(): vscode.ExtensionContext | undefined {
+    return activeContext;
+}
+
+/**
+ * Models the user brought from Hugging Face (asked 2026-09-16).
+ *
+ * Kept next to the weights in the extension's storage, not in `settings`: a settings array is painful to edit
+ * by hand, and a synced profile would carry the *list* onto a machine that does not have the files. The file
+ * holds `ModelSpec` objects — the same shape the pinned table uses — so the picker, the download, the hardware
+ * gate and Remove Model treat an added model exactly like a built-in one.
+ */
+function customModelsFile(): string | undefined {
+    return activeContext ? path.join(modelFolder(activeContext), 'user-models.json') : undefined;
+}
+
+export function customModelSpecs(): ModelSpec[] {
+    const file = customModelsFile();
+    if (!file) return [];
+    try {
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((s): s is ModelSpec => {
+            const c = s as ModelSpec;
+            return !!c && typeof c.id === 'string' && typeof c.fileName === 'string'
+                && typeof c.url === 'string' && c.url.startsWith('http') && typeof c.bytes === 'number';
+        });
+    } catch {
+        // Missing or unreadable: the built-in table is still there, so an empty list is the honest answer.
+        return [];
+    }
+}
+
+function writeCustomModelSpecs(specs: ModelSpec[]): void {
+    const file = customModelsFile();
+    if (!file) return;
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify(specs, null, 2), 'utf8');
+    } catch (err) {
+        logError(`Could not save the added models: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
+
+/** Adds (or replaces, by file name) a model the user chose from the Hub. */
+export function addCustomModelSpec(spec: ModelSpec): void {
+    const kept = customModelSpecs().filter((s) => s.fileName !== spec.fileName && s.id !== spec.id);
+    writeCustomModelSpecs([...kept, spec]);
+}
+
+/** Forgets an added model. The weights are a separate decision — Remove Model deletes those. */
+export function removeCustomModelSpec(id: string): boolean {
+    const all = customModelSpecs();
+    const kept = all.filter((s) => s.id !== id);
+    if (kept.length === all.length) return false;
+    writeCustomModelSpecs(kept);
+    return true;
+}
+
+/** Everything the extension can run itself: the pinned table first, the user's own models after it. */
+export function allModelSpecs(): ModelSpec[] {
+    return [...MODEL_SPECS, ...customModelSpecs()];
+}
+
+/**
+ * The `.gguf` files in a Hugging Face repo, for the "add a model from the Hub" flow.
+ *
+ * The Hub's public API needs no token for public repos, and a private one reports nothing — in which case the
+ * user is told to use a local file instead, rather than being handed a model the download cannot verify.
+ */
+export async function fetchHubFiles(repo: string, revision = 'main'): Promise<HubFile[]> {
+    const answer = await fetch(hubApiUrl(repo, revision), { headers: { accept: 'application/json' } });
+    if (!answer.ok) {
+        throw new Error(`Hugging Face answered ${answer.status} for ${repo}`
+            + (answer.status === 401 || answer.status === 404 ? ' — a private repo needs a token, which this flow does not use.' : ''));
+    }
+    const files = hubGgufFiles(await answer.json());
+    if (!files.length) throw new Error(`${repo} has no .gguf files in it (only GGUF models can be run locally).`);
+    return files.filter((f) => !!f.sha256);
+}
+
 export function bundledRuntimeRunning(): { running: boolean; endpoint?: string } {
     const running = server?.current();
     return running ? { running: true, endpoint: running.endpoint } : { running: false };
@@ -343,7 +428,7 @@ export function modelFileFor(context: vscode.ExtensionContext, spec: ModelSpec):
 export function bundledFilesOnDisk(): Record<string, { onDisk: boolean; bytes: number }> {
     const out: Record<string, { onDisk: boolean; bytes: number }> = {};
     if (!activeContext) return out;
-    for (const spec of MODEL_SPECS) {
+    for (const spec of allModelSpecs()) {
         const file = modelFileFor(activeContext, spec);
         let bytes = 0;
         let partial = 0;
