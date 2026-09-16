@@ -1251,8 +1251,11 @@
      */
     function applyKindToOptions(chosen) {
         const kind = chosen ? chosen.kind : '';
-        const bundled = kind === 'bundled' || kind === 'file';
-        els.aiOptTtl.hidden = bundled;
+        // Three runtimes take a **layer count** and start when the panel says so: the extension's own
+        // runtime, a .gguf served by it, and the user's own `llama-server` (2026-09-16). Only LM Studio is
+        // told a GPU *ratio* and an idle-unload timer, so only it shows that row.
+        const layerCount = kind === 'bundled' || kind === 'file' || kind === 'llama';
+        els.aiOptTtl.hidden = layerCount;
         els.aiOptAddress.hidden = kind !== 'custom';
         // Written through a guard: a hint span that is missing must not abort the state application, which
         // is how a markup change would silently stop the whole ⚙ panel from filling in.
@@ -1260,12 +1263,16 @@
             const el = row && row.querySelector('.ai-hint');
             if (el) el.textContent = text;
         };
-        say(els.aiOptGpu, bundled
-            ? 'max = all layers on the GPU; anything else runs on the CPU (the built-in runtime takes a layer count, not a ratio).'
-            : 'A shared-memory GPU is usually slower than the CPU for big models.');
-        say(els.aiOptContext, bundled
-            ? 'tokens the model can hold — handed to the built-in runtime when it starts.'
-            : 'tokens the model can hold. Bigger costs memory.');
+        say(els.aiOptGpu, kind === 'llama'
+            ? 'max = all layers on the GPU (--n-gpu-layers); anything else runs on the CPU, which is usually faster for a big model on a shared-memory GPU.'
+            : layerCount
+                ? 'max = all layers on the GPU; anything else runs on the CPU (the built-in runtime takes a layer count, not a ratio).'
+                : 'A shared-memory GPU is usually slower than the CPU for big models.');
+        say(els.aiOptContext, kind === 'llama'
+            ? 'tokens the model can hold — passed to llama-server as --ctx-size when it starts.'
+            : layerCount
+                ? 'tokens the model can hold — handed to the built-in runtime when it starts.'
+                : 'tokens the model can hold. Bigger costs memory.');
     }
 
     els.aiEnabled.addEventListener('change', () => {
@@ -1304,9 +1311,11 @@
         // bytes) — this is only what shows for the moment before its first line arrives.
         setAiProgress(kind === 'bundled'
             ? 'starting the built-in runtime…'
-            : kind === 'file'
-                ? 'importing the file and loading it — this can take a few minutes…'
-                : 'loading — this can take a few minutes for a big model');
+            : kind === 'llama'
+                ? 'starting your llama-server…'
+                : kind === 'file'
+                    ? 'importing the file and loading it — this can take a few minutes…'
+                    : 'loading — this can take a few minutes for a big model');
         // If the extension says nothing at all, say that too: a line that never changes cannot be told
         // apart from a dead one, which is what "downloading is not starting" was.
         armAiWatchdog();

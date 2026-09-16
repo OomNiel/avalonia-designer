@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.41",
+    "version": "0.9.42",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -139,6 +139,18 @@
                 "title": "AI: Unload the Loaded Model",
                 "category": "Avalonia",
                 "icon": "$(debug-disconnect)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.startLlamaServer",
+                "title": "AI: Start My llama-server\u2026",
+                "category": "Avalonia",
+                "icon": "$(server-process)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.stopLlamaServer",
+                "title": "AI: Stop My llama-server",
+                "category": "Avalonia",
+                "icon": "$(debug-stop)"
             },
             {
                 "command": "avaloniaDesigner.assistant.stopModel",
@@ -333,7 +345,7 @@
                     "default": 0,
                     "minimum": 0,
                     "maximum": 32,
-                    "description": "CPU threads for the bundled runtime. 0 picks automatically (one less than the machine has, capped at 8) — more than the physical cores makes generation slower, not faster."
+                    "description": "CPU threads for the local runtime — the extension's own or your own llama-server. 0 picks automatically (one less than the machine has, capped at 8) — more than the physical cores makes generation slower, not faster."
                 },
                 "avaloniaDesigner.assistant.endpoint": {
                     "type": "string",
@@ -516,6 +528,16 @@
                     "minimum": -1,
                     "maximum": 86400,
                     "description": "Unload the model after this many idle seconds (-1 = recommend 15 minutes, 0 = keep it loaded). Only used at load time."
+                },
+                "avaloniaDesigner.assistant.llamaServerPath": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "The `llama-server` binary to run for **My own llama-server** (⤓ Settings → AI, or *AI: Start My llama-server…*). Empty looks in the usual build folders and on `PATH`."
+                },
+                "avaloniaDesigner.assistant.llamaServerArgs": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "Extra command-line flags for that `llama-server`, e.g. `--flash-attn on --no-warmup`. Added **after** the flags the extension computes, so yours win."
                 }
             }
         }

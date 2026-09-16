@@ -48,7 +48,7 @@ function modelsOf(found: Discovery): LocalModel[] {
 export async function chooseLocalModel(context: vscode.ExtensionContext): Promise<void> {
     const facts = setupFacts();
     const found = await discover();
-    const items: (vscode.QuickPickItem & { model?: LocalModel; action?: 'bundled' | 'custom' })[] = [];
+    const items: (vscode.QuickPickItem & { model?: LocalModel; action?: 'bundled' | 'custom' | 'llama' })[] = [];
 
     for (const model of modelsOf(found)) {
         const loaded = found.loaded.some((id) => id === model.key || id.endsWith(model.key));
@@ -65,6 +65,15 @@ export async function chooseLocalModel(context: vscode.ExtensionContext): Promis
         description: 'no LM Studio needed',
         detail: 'Downloads a code-specialised 3B/7B model once and runs it locally',
         action: 'bundled'
+    });
+    // The user's own llama.cpp server (asked 2026-09-16). Offered here as well as in its own command because
+    // this is the picker a developer opens when they want "a local model", and their own binary is often the
+    // fastest of the three engines — it is just not something this extension can install for them.
+    items.push({
+        label: '$(server-process) My own llama-server',
+        description: 'llama.cpp you have installed',
+        detail: 'Starts your own llama-server with a .gguf of your choice — nothing is downloaded',
+        action: 'llama'
     });
     items.push({
         label: '$(globe) A server I run myself',
@@ -94,6 +103,12 @@ export async function chooseLocalModel(context: vscode.ExtensionContext): Promis
     if (pick.action === 'custom') {
         await askForEndpoint();
         void refreshPanels();
+        return;
+    }
+    if (pick.action === 'llama') {
+        // Runs the shared command instead of importing the flow: the process and its own file picker live in
+        // `llamaServer.ts`, and the command is registered by then (this picker only runs after activation).
+        await vscode.commands.executeCommand('avaloniaDesigner.assistant.startLlamaServer');
         return;
     }
 

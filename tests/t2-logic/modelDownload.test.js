@@ -232,10 +232,16 @@ module.exports = async (t) => {
         t.ok(/sidecarContextSize\(request\.contextLength/.test(panel) && /sidecarGpuLayers\(request\.gpu\)/.test(panel),
             'sidecar', 'and so does the panel\'s own Load button');
 
-        // The row that cannot be honoured for the built-in runtime is hidden rather than shown and ignored.
+        // The row that cannot be honoured for the runtimes that start when the panel says so is hidden rather
+        // than shown and ignored. Three of them qualify now (2026-09-16): the extension's own runtime, a
+        // .gguf served by it, and the user's own `llama-server` — all three take a layer count and none of
+        // them has LM Studio's idle-unload timer. Only LM Studio is told a *ratio* and a TTL, so only it
+        // shows that row.
         const js = read('media/designer.js');
-        t.ok(/els\.aiOptTtl\.hidden = bundled/.test(js), 'sidecar',
+        t.ok(/const layerCount = kind === 'bundled' \|\| kind === 'file' \|\| kind === 'llama'/.test(js), 'sidecar',
             'the idle-unload row is hidden for the runtimes that have no such concept');
+        t.ok(/els\.aiOptTtl\.hidden = layerCount/.test(js), 'sidecar',
+            'and that group is what the row is hidden by');
         // …and hiding it has to WORK. An author `display` on `.ai-opt` overrides the UA stylesheet's
         // `[hidden] { display: none }`, so without this rule the row stayed on screen while the code
         // believed it was hidden (found by rendering the panel, 2026-09-15).

@@ -17,7 +17,9 @@
 
 // `formatBytes` is pure and has no dependencies of its own, so importing it keeps this module testable
 // without VS Code while giving the download progress line the same "4.7 GB" wording everywhere.
-import { formatBytes } from './modelSpecs';
+// `defaultThreads` is the same rule the sidecar uses ("one less than the cores, capped at 8"), applied to
+// the user's own llama-server so the two runtimes cannot disagree about how many threads a machine wants.
+import { defaultThreads, formatBytes } from './modelSpecs';
 
 /** Which local runtime a model comes from. */
 export type ModelProvider = 'lmstudio' | 'bundled' | 'custom';
@@ -509,4 +511,312 @@ export function resumeFromBytes(partialBytes: number, expectedBytes: number): nu
     if (have === 0) return 0;
     if (expectedBytes > 0 && have >= expectedBytes) return 0;
     return have;
+}
+
+// ---------------- the user's own `llama-server` (asked 2026-09-16) ----------------
+//
+// *"Models served by the Llama.cpp server respond faster and better than the LM Studio models."* The
+// extension already speaks to any OpenAI-compatible address, so a `llama-server` the user started
+// themselves has always worked — what it could not do was start one. That is what this section decides:
+// **where the binary is**, **what it is started with**, and **whether it is ready**. All of it is a
+// function of text and of a filesystem the caller describes, so the suite pins it without a llama.cpp
+// build on the machine (which is the case here: there is none).
+//
+// The flags are llama.cpp's own, read from the server's `--help` reference (`tools/server/README.md`,
+// checked 2026-09-16): `-m/--model`, `--host`, `--port`, `-t/--threads`, `-c/--ctx-size`,
+// `-ngl/--n-gpu-layers` and `-a/--alias`. The sidecar's flags (`--ctx`, `--gpu-layers`) are OUR wrapper's
+// spelling and must never be sent to the user's binary — it would refuse to start on the first one.
+
+/** Where a `llama-server` binary may live, most likely first. Pure (the caller checks existence). */
+export function llamaServerCandidates(homeDir: string, platform: NodeJS.Platform = process.platform): string[] {
+    const home = homeDir || '';
+    // The last entry is a bare name: it means "look on PATH", which is how most people install it.
+    if (platform === 'win32') {
+        return [
+            `${home}\\llama.cpp\\build\\bin\\Release\\llama-server.exe`,
+            `${home}\\llama.cpp\\build\\bin\\llama-server.exe`,
+            'llama-server.exe'
+        ];
+    }
+    return [
+        `${home}/llama.cpp/build/bin/llama-server`,
+        `${home}/.local/bin/llama-server`,
+        '/usr/local/bin/llama-server',
+        '/usr/bin/llama-server',
+        'llama-server'
+    ];
+}
+
+/** The first directory on PATH that holds `name` — the lookup `which`/`where` would do. Pure. */
+export function findOnPath(
+    name: string,
+    pathValue: string,
+    exists: (path: string) => boolean,
+    platform: NodeJS.Platform = process.platform
+): string | undefined {
+    const separator = platform === 'win32' ? ';' : ':';
+    const names = platform === 'win32' && !/\.exe$/i.test(name) ? [`${name}.exe`, name] : [name];
+    for (const dir of String(pathValue ?? '').split(separator)) {
+        if (!dir) continue;
+        for (const candidate of names) {
+            const full = dir.replace(/[\\/]+$/, '') + (platform === 'win32' ? '\\' : '/') + candidate;
+            if (exists(full)) return full;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * The `llama-server` this machine has, if any.
+ *
+ * A path the user set wins — and a path they set that is *not there* returns undefined rather than
+ * falling back, so the caller can say which line of their settings is wrong instead of quietly starting
+ * a different binary than the one they named.
+ */
+export function findLlamaServer(opts: {
+    homeDir: string;
+    pathValue: string;
+    exists: (path: string) => boolean;
+    /** The `llamaServerPath` setting; empty means "find it yourself". */
+    preferred?: string;
+    platform?: NodeJS.Platform;
+}): string | undefined {
+    const platform = opts.platform ?? process.platform;
+    const preferred = String(opts.preferred ?? '').trim();
+    if (preferred) return opts.exists(preferred) ? preferred : undefined;
+    for (const candidate of llamaServerCandidates(opts.homeDir, platform)) {
+        if (!/[\\/]/.test(candidate)) {
+            const onPath = findOnPath(candidate, opts.pathValue, opts.exists, platform);
+            if (onPath) return onPath;
+            continue;
+        }
+        if (opts.exists(candidate)) return candidate;
+    }
+    return undefined;
+}
+
+/** `llama-server --version` → `1 (62a7f7c)`. Pure; undefined when the output is not that. */
+export function parseLlamaVersion(stdout: string, stderr = ''): string | undefined {
+    const match = /version:\s*(\S+)\s*(?:\(([^)]+)\))?/i.exec(`${stdout}\n${stderr}`);
+    if (!match) return undefined;
+    return match[2] ? `${match[1]} (${match[2]})` : match[1];
+}
+
+/**
+ * A tidy id for the server to answer to.
+ *
+ * Without `--alias` llama.cpp reports the model as the **full path of the file**, so the pinned model
+ * would read `/home/…/models/…gguf` everywhere the extension names it. The base name is what the user
+ * calls the model; the quantisation suffix is kept, because two quants of the same model are two models.
+ */
+export function llamaServerAlias(modelPath: string): string {
+    const base = String(modelPath ?? '').replace(/\\/g, '/').split('/').pop() ?? '';
+    const name = base.replace(/\.gguf$/i, '').replace(/[^\w.+-]+/g, '-').replace(/^-+|-+$/g, '');
+    return name.slice(0, 60) || 'local-model';
+}
+
+/** The extra flags a user typed into the `llamaServerArgs` setting, split like a shell would. Pure. */
+export function splitArgs(text: string): string[] {
+    const out: string[] = [];
+    const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(String(text ?? ''))) !== null) out.push(match[1] ?? match[2] ?? match[3]);
+    return out;
+}
+
+export interface LlamaLaunch {
+    modelPath: string;
+    port: number;
+    threads?: number;
+    contextSize?: number;
+    gpuLayers?: number;
+    host?: string;
+    /** What the model answers to on the API; empty leaves llama.cpp reporting the file path. */
+    alias?: string;
+    /** The user's own flags, appended last so they win over the ones computed here. */
+    extraArgs?: string;
+}
+
+/**
+ * Exact argv for the user's `llama-server`. Pure, because this is the command line a developer will read
+ * back in the log and reproduce by hand — one wrong spelling and the server refuses to start at all.
+ *
+ * `--ctx-size 0` (llama.cpp's "take it from the model") is not sent when the caller passes 0/undefined,
+ * but `--n-gpu-layers 0` **is**: on llama.cpp that flag is a count, and 0 is the meaningful "GPU offload
+ * off" that a shared-memory iGPU wants. Omitting it would leave the default (`auto`) in charge.
+ */
+export function llamaServerArgs(options: LlamaLaunch): string[] {
+    const args = [
+        '--model', options.modelPath,
+        '--host', options.host ?? '127.0.0.1',
+        '--port', String(options.port)
+    ];
+    if (options.contextSize) args.push('--ctx-size', String(options.contextSize));
+    if (options.threads) args.push('--threads', String(options.threads));
+    if (options.gpuLayers !== undefined) args.push('--n-gpu-layers', String(options.gpuLayers));
+    const alias = String(options.alias ?? '').trim();
+    if (alias) args.push('--alias', alias);
+    args.push(...splitArgs(options.extraArgs ?? ''));
+    return args;
+}
+
+/**
+ * Did the server refuse a flag we passed?
+ *
+ * `--alias` and the `--n-gpu-layers` spelling have both moved around in llama.cpp's history, and an
+ * unknown flag makes `llama-server` print `invalid argument: …` and exit **immediately** — before any
+ * weights are read, which is what makes this recoverable: the caller starts once more without the
+ * cosmetic flags, and the user gets a working server instead of a version lecture. A failure that is
+ * *not* about our arguments (a missing model file, a bad quantisation) must never be retried this way.
+ */
+export function isUnknownArgumentFailure(text: string): boolean {
+    return /unknown argument|unrecognized (argument|option)|invalid argument|invalid option|error: invalid argument/i
+        .test(String(text ?? ''));
+}
+
+/** What the server's `/health` says. */
+export type HealthVerdict = 'ok' | 'loading' | 'absent' | 'unreachable';
+
+/**
+ * `/health` is the only endpoint that distinguishes "listening" from "the weights are in RAM":
+ * llama.cpp answers `503 {"error":{"message":"Loading model"}}` while loading and `200 {"status":"ok"}`
+ * when ready. `/v1/models` answers immediately with a `null` meta block, so reading *it* as readiness
+ * would report a server that cannot answer a request yet.
+ *
+ * The four verdicts are the four things the caller must do about them: `ok` = go, `loading` = wait,
+ * `absent` = an older build with no `/health` (fall back to what the API offers), `unreachable` = nothing
+ * is listening on that port yet (keep waiting). `status` 0 is "no answer at all", which `fetch` reports as
+ * a throw rather than a response. Pure, so each status is asserted instead of being discovered live.
+ */
+export function classifyHealth(status: number): HealthVerdict {
+    if (status === 200) return 'ok';
+    if (status === 503) return 'loading';
+    if (status === 0) return 'unreachable';
+    // Anything else that *answered* is some other endpoint: a 404 from a build that predates `/health`,
+    // or a 401 from one started with an API key.
+    return 'absent';
+}
+
+/** The recommended settings for the user's own server, with a reason for each. Pure. */
+export function recommendedLlamaOptions(
+    sizeGb: number,
+    facts: Pick<SetupFacts, 'freeRamGb' | 'cpuCount'>
+): { contextSize: number; threads: number; gpuLayers: number; reasons: string[] } {
+    const reasons: string[] = [];
+    const contextSize = facts.freeRamGb >= 20 ? 16384 : facts.freeRamGb >= 12 ? 8192 : 4096;
+    reasons.push(`Context ${contextSize.toLocaleString('en-US')} tokens — sized to the ${Math.max(0, Math.round(facts.freeRamGb))} GB free`);
+    // Same rule as the LM Studio path: only a model that fits in *dedicated* VRAM benefits, and on a
+    // shared-memory iGPU offloading a large model is slower, not faster.
+    const gpuLayers = sidecarGpuLayers(sizeGb > 8 ? 'off' : 'max');
+    reasons.push(gpuLayers > 0
+        ? `GPU offload on (all layers) — ${sizeGb.toFixed(1)} GB fits in GPU memory, where it is faster`
+        : `GPU offload off — a ${sizeGb.toFixed(1)} GB model is larger than dedicated VRAM on most machines, and on a shared-memory GPU that is slower, not faster`);
+    const threads = defaultThreads(facts.cpuCount);
+    reasons.push(`${threads} CPU thread(s) — one less than this machine's ${facts.cpuCount} logical cores, which is where llama.cpp is fastest`);
+    return { contextSize, threads, gpuLayers, reasons };
+}
+
+// ---------------- recognising a llama-server that is already running ----------------
+//
+// Asked 2026-09-16, and it matters because of what this machine actually runs: the developer's own
+// `llama-server` is a **systemd user service** (`~/.config/systemd/user/llama-server.service`) serving a
+// 30 B Qwen3-Coder on port 8080 with `--alias qwen3-coder-local`. Starting a second one from the extension
+// would put another ~17 GB of weights in RAM to answer the same requests. So before any start, the first
+// question is "is one already answering?" — and it is answered from the server's own words, not from a
+// process list (this extension cannot see a process it did not spawn).
+
+/** The port an endpoint URL means. Pure; undefined when there is no port to read. */
+export function endpointPort(endpoint: string): number | undefined {
+    const match = /^\s*https?:\/\/[^\s/:]+:(\d{2,5})(?:\/|$)/i.exec(String(endpoint ?? ''));
+    if (!match) return undefined;
+    const port = Number(match[1]);
+    return port > 0 && port < 65536 ? port : undefined;
+}
+
+/**
+ * The ports worth asking about, in order: the one the settings point at (when it is this machine), then
+ * llama.cpp's own defaults.
+ *
+ * 8080 is what `llama-server` has always bound by default, and 9931 is the port its own start-up notice
+ * says the default is moving to (seen in this machine's journal, 2026-09-16). Both are checked because the
+ * settings are most often still on LM Studio's 1234 while the developer's llama-server runs on 8080.
+ */
+export function llamaServerPortCandidates(endpoint: string, extra: number[] = []): number[] {
+    const ports: number[] = [];
+    // A remote address is not probed here: this lookup asks **127.0.0.1**, so reusing a port taken from
+    // `https://build-box:8080/v1` would test a different machine's port on this one and could report a
+    // local server as if it were the endpoint the user configured.
+    const local = isLocalEndpoint(endpoint) ? endpointPort(endpoint) : undefined;
+    for (const port of [local, ...extra, 8080, 9931]) {
+        if (port !== undefined && !ports.includes(port)) ports.push(port);
+    }
+    return ports;
+}
+
+/** True when an endpoint names this machine (or no host at all). Pure — a remote endpoint is not ours to probe. */
+export function isLocalEndpoint(endpoint: string): boolean {
+    const host = /^\s*https?:\/\/([^/:?#\s]+)/i.exec(String(endpoint ?? ''))?.[1];
+    if (!host) return true;
+    return /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/i.test(host);
+}
+
+/** One model as a llama-server reports it in `/v1/models` (real answer, 2026-09-16). */
+export interface ServedModel {
+    id: string;
+    /** llama.cpp fills this in as `llamacpp` — LM Studio and Ollama do not. */
+    ownedBy: string;
+    /** `meta.n_ctx` — the context the running server was started with. */
+    contextSize?: number;
+}
+
+/**
+ * Reads `/v1/models`. Real answer from this machine's service (2026-09-16):
+ *
+ *   {"object":"list","data":[{"id":"qwen3-coder-local","object":"model","created":1789569219,
+ *     "owned_by":"llamacpp","meta":{"n_ctx":16384,"n_params":30532122624,"ftype":"Q4_K - Small"}}]}
+ *
+ * `owned_by` is the identifier that makes this safe to act on: it is llama.cpp's own marker, so a server
+ * answering here is *known* to be a llama-server rather than guessed from the port being 8080.
+ */
+export function parseServedModels(apiAnswer: unknown): ServedModel[] {
+    const data = (apiAnswer as { data?: unknown })?.data;
+    if (!Array.isArray(data)) return [];
+    const out: ServedModel[] = [];
+    for (const entry of data) {
+        const e = entry as { id?: unknown; owned_by?: unknown; meta?: { n_ctx?: unknown } };
+        if (typeof e?.id !== 'string' || !e.id) continue;
+        out.push({
+            id: e.id,
+            ownedBy: typeof e.owned_by === 'string' ? e.owned_by : '',
+            contextSize: typeof e.meta?.n_ctx === 'number' ? e.meta.n_ctx : undefined
+        });
+    }
+    return out;
+}
+
+/** True when this `/v1/models` answer came from llama.cpp. Pure. */
+export function isLlamaServerModels(apiAnswer: unknown): boolean {
+    return parseServedModels(apiAnswer).some((m) => /^llamacpp$/i.test(m.ownedBy));
+}
+
+/** The parts of `GET /props` that identify a running llama-server and what it has loaded. */
+export interface LlamaProps {
+    modelPath?: string;
+    buildInfo?: string;
+    totalSlots?: number;
+}
+
+/**
+ * Reads `/props`, which is llama.cpp's own endpoint (no OpenAI equivalent): real answer from this machine
+ * (2026-09-16) carries `model_path`, `build_info: "b10365-9afff1b74"` and `total_slots: 1`. A second
+ * identity check on purpose — `/v1/models` is what the client uses, and a server that answers *both* the
+ * OpenAI shape and this one is a llama-server beyond argument.
+ */
+export function parseLlamaProps(body: unknown): LlamaProps {
+    const o = (body ?? {}) as { model_path?: unknown; build_info?: unknown; total_slots?: unknown };
+    return {
+        modelPath: typeof o.model_path === 'string' && o.model_path ? o.model_path : undefined,
+        buildInfo: typeof o.build_info === 'string' && o.build_info ? o.build_info : undefined,
+        totalSlots: typeof o.total_slots === 'number' ? o.total_slots : undefined
+    };
 }

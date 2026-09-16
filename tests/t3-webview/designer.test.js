@@ -701,6 +701,29 @@ module.exports = async (t) => {
     t.equal($('aiOptTtl').hidden, false, 'ai-picker', 'and the idle-unload row comes back for it');
     t.ok(/shared-memory GPU/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
         'with the hint reworded for LM Studio');
+    // The user's own `llama-server` (2026-09-16): a third runtime, and the one that is easiest to get wrong in
+    // this table — it takes llama.cpp's own `--n-gpu-layers` (a count, like the built-in runtime) and has no
+    // idle-unload timer at all, so its two rows must read like the built-in runtime's while still naming its
+    // own flags (a hint that says "the built-in runtime" about the user's own binary is worse than no hint).
+    const llamaState = aiState({
+        selected: 'llama:',
+        choices: aiState().choices.concat([
+            { value: 'llama:', label: 'My own llama-server  ·  llama.cpp', detail: 'llama.cpp · serving x.gguf right now', kind: 'llama' }
+        ])
+    });
+    msg({ type: 'aiState', state: llamaState });
+    t.equal($('aiModel').value, 'llama:', 'ai-picker', 'the user\'s own llama-server is selectable');
+    t.equal($('aiOptTtl').hidden, true, 'ai-picker', 'and no idle-unload row is offered for it — it has no such setting');
+    t.ok(/--n-gpu-layers/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
+        'the GPU hint names ITS flag, not the built-in runtime\'s');
+    t.ok(/--ctx-size/.test($('aiOptContext').querySelector('.ai-hint').textContent), 'ai-picker',
+        'and so does the context hint');
+    t.ok(!/built-in runtime/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
+        'because calling the user\'s own binary "the built-in runtime" is worse than saying nothing');
+    posted.length = 0;
+    $('aiLoad').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.ok(/starting your llama-server/.test($('aiProgress').textContent), 'ai-picker',
+        'and Load says which engine it is starting before the extension answers');
     // --- "show the proposal as a diff" — the switch that turns the review step off ---
     // Asked 2026-09-16: the ⚙ panel should let the user choose between reviewing a diff and having the code
     // written straight in. The webview only shows the state and posts it on Save; the extension owns the

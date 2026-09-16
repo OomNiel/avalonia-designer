@@ -219,19 +219,35 @@ a file URL, lists the files in the repo with their sizes, reads the size and the
 itself**, and downloads it through the same verification — after which it behaves exactly like a built-in one,
 including **Remove Model**, which gives the disk space back. Nothing is fetched until you press **Load Model**.
 
-**Or point it at a model you already run.** The picker lists the three ways a model can arrive, in the order
+**Or point it at a model you already run.** The picker lists the ways a model can arrive, in the order
 the extension can guarantee them: **its own runtime** (llama.cpp via LLamaSharp, weights from Hugging Face, no
-other program needed), then **a server you run** (your own `llama-server`, Ollama — the address is a setting),
+other program needed), then **your own `llama-server`** — which this extension will *start for you* — then **a
+server that is already listening** (Ollama, or a `llama-server` you run yourself; the address is a setting),
 then **LM Studio's library**, then loose `.gguf` files found on disk. For the LM Studio case, *AI: Choose a
 Local Model…* still does the work: it starts its server if it is not running, warns you *before* loading if the
 model does not fit in the free memory, loads it with recommended start values, points the extension at it and
 proves it answers. Either way nothing leaves the machine, the feature ships **off**, and a hardware check (RAM,
 CPU threads, AVX2) refuses the models this machine cannot run well instead of letting you find out the hard way.
 
+**A `llama-server` you already have is a first-class engine, not just an address.** *AI: Start My
+llama-server…* finds the binary (the usual build folders and your `PATH`, or a path you set), asks which `.gguf`
+to serve, shows the flags it would use (context size, threads, GPU **layers** — from your machine, each with its
+reason) and starts it; *AI: Stop My llama-server* stops it again. Nothing is copied and nothing is downloaded:
+llama.cpp reads the file where it is. It passes **llama.cpp's own flags** (`--model`, `--host`, `--port`,
+`--ctx-size`, `--threads`, `--n-gpu-layers`, `--alias`) and waits for `/health` to say the weights are in RAM
+before calling it ready. If a llama-server **is already running**, you are asked instead of a second copy of the
+same weights being loaded — and one you started yourself (a service, a terminal) is never killed by this
+extension: the status report says *“already running on port 8080 … Started outside this window”*, because that
+is whose process it is. The extra flags you want are a setting (`--device none -nr`, say), added last so they
+win.
+
 **The ⚙ Settings panel shows where every entry comes from**, because that is what decides whether it can work:
-*LM Studio · in My Models, ready to load* (the extension is a remote control there — LM Studio is the runtime andcan only load a name it has), *This extension's own runtime · weights on disk, ready to load* (or *not downloaded
-yet — 4.4 GB to fetch on the first load*), *Found on this machine · … added to LM Studio first by a symbolic link*
-for a file the scan found, and *a server I run myself* for anything else already listening. Its two checkboxes
+*LM Studio · in My Models, ready to load* (the extension is a remote control there — LM Studio is the runtime and
+can only load a name it has), *This extension's own runtime · weights on disk, ready to load* (or *not downloaded
+yet — 4.4 GB to fetch on the first load*), *My own llama-server · llama.cpp* (your own binary, started from the
+panel — and if one of yours is already answering, the entry says so rather than offering a second copy),
+*Found on this machine · … added to LM Studio first by a symbolic link* for a file the scan found, and *a server I
+run myself* for anything else already listening. Its two checkboxes
 are the decisions that are not about one model: **Use a local model for Code Fix and Implement** (the switch
 that loads, and unloads when cleared) and **Show the proposed code as a diff before it is applied**.
 
@@ -242,9 +258,10 @@ enough memory for command submission"*), for which a CPU-only runtime is named a
 pass LM Studio's jargon through, and the full `lms …` command line goes to the extension's log either way.
 
 **And the memory comes back.** *Unload* frees whichever runtime is actually holding the model — the extension's
-own sidecar **and** LM Studio — and every model is freed when the IDE closes, so a 6 GB model does not sit in RAM
-after a session. The status report says what is in memory *right now* (*Loaded now: …*), not just what the
-settings point at, so "did my load take?" is answerable from the panel.
+own sidecar, the `llama-server` this window started **and** LM Studio — and every model is freed when the IDE
+closes, so a 6 GB model does not sit in RAM after a session. A llama-server you started yourself is left alone on
+purpose, and *said* to be left alone. The status report says what is in memory *right now* (*Loaded now: …*), not
+just what the settings point at, so "did my load take?" is answerable from the panel.
 
 ## 11. Engineering discipline
 

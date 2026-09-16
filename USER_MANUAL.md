@@ -886,8 +886,9 @@ Model* gives the memory back when you are finished.
 > can see that for yourself, and **Copy details** puts the server log on the clipboard if the cause is
 > something else.
 
-The same list also offers **This extension's own model** (no LM Studio needed — see below) and **A
-server I run myself** (Ollama, `llama-server`, or anything else already running).
+The same list also offers **This extension's own model** (no LM Studio needed — see below), **My own
+llama-server** (the `llama-server` you installed yourself — see below) and **A server I run myself**
+(Ollama, or a `llama-server` that is already running).
 
 **Turning it on — in the designer's own Settings panel.** Click **⚙ Settings** in the designer toolbar. The
 panel holds the code-check choices and, below them, an **AI assist** section:
@@ -895,9 +896,9 @@ panel holds the code-check choices and, below them, an **AI assist** section:
 1. **Switch it on.** While it is off, the AI commands are not offered anywhere (the menu entries are hidden,
    not just refused) and the model is unloaded — turning this off really does free the memory.
 2. **Choose a model** from the dropdown. It lists every chat model **LM Studio** has on disk (the loaded one
-   is marked ●), both models the extension can download, **every `.gguf` file found on your machine** after
-   you press *Scan machine for models…*, and *a server I run myself* for anything else (Ollama, your own
-   `llama-server`).
+   is marked ●), the models the extension can download, **My own `llama-server`** (your own llama.cpp
+   binary), **every `.gguf` file found on your machine** after you press *Scan machine for models…*, and *a
+   server I run myself* for anything else (Ollama, or a `llama-server` you started in a terminal).
 3. **Adjust the settings if you want.** They appear once a model is chosen: context length, GPU offload and
    an idle-unload timer — the values handed to LM Studio when it loads — plus the answer budget and the
    timeout. The recommended values are shown as the defaults; leave them alone and they are what this
@@ -1036,6 +1037,52 @@ leaves the machine.
 `~/.config/Code/User/globalStorage/grumpy.avalonia-designer/models/`. Delete the file to reclaim the
 disk space, or press **Remove Model** in the panel (see below); set-up will offer it again.
 
+#### Your own `llama-server` — the engine you already have
+
+If you built (or installed) **llama.cpp**, the fastest option is usually your own `llama-server`: it is
+compiled for your machine, it is already yours, and on the machine this feature was written on it answered
+faster and better than anything else. Run **AI: Start My llama-server…** from the Command Palette:
+
+1. **The binary is looked for** in the usual build folders (`~/llama.cpp/build/bin/llama-server`,
+   `~/.local/bin`, `/usr/local/bin`, `/usr/bin`) and on your `PATH`. If none is found, the message offers to
+   *Set the path…* — do that once and it is remembered (`avaloniaDesigner.assistant.llamaServerPath`). A path
+   you set that no longer exists is reported as such rather than quietly ignored.
+2. **A model is asked for**: the `.gguf` the settings already name, anything the extension has downloaded,
+   every `.gguf` the scan finds on your machine, or **Another .gguf file…** with a file browser. Nothing is
+   copied and nothing is downloaded — `llama-server` reads the file where it is.
+3. **The flags are shown**, each with the reason for it: context size, CPU threads and GPU layers, taken from
+   your machine (a 12-core box with 18 GB free gets 8 K of context, 8 threads and CPU-only for a big model,
+   because a GPU that shares its memory with the CPU is slower for those). Accept them, or *Change them…*;
+   your own extra flags can be typed there too and are remembered in
+   `avaloniaDesigner.assistant.llamaServerArgs` (for example `--device none -nr`).
+4. **It starts, waits for the weights, and proves itself** with a one-line test request before it says
+   *Ready* — the same round trip every other path uses, so "ready" never means "the process did not exit".
+
+**If a `llama-server` is already running, you are asked first.** On a machine that runs one as a service that
+is the usual case, and starting a second copy would put the same weights in memory twice. The question offers
+*Use the one already running* (default — nothing new is loaded) or *Start another one with a different model*
+(both are then resident, and the message says so). The extension recognises a llama-server by its own answers
+(`owned_by: llamacpp`, or a `/props` with a `model_path`), so an LM Studio or Ollama server on a similar port is
+never mistaken for one.
+
+**Start / stop, and whose process it is.** *AI: Stop My llama-server* stops **the server this extension
+started**. One you started yourself — a terminal, or a systemd user service — is deliberately left alone: the
+status dialog says *"already running on port N … Started outside this window"*, because killing a service you
+wrote is not this extension's business. *Unload* in the panel frees the built-in runtime and the `llama-server`
+this window started, and names any server of yours that is still holding memory.
+
+**In the ⚙ panel**, *My own llama-server* is a normal entry: the context-length and GPU-offload fields are the
+ones passed to it when it starts (`--ctx-size`, `--n-gpu-layers` — a **layer count** here, where LM Studio takes
+a ratio), the idle-unload row disappears because llama-server has no such timer, and **Load Model** starts it or
+restarts it if you changed a setting. The GPU hint names its real flags rather than talking about the built-in
+runtime.
+
+> The extension passes llama.cpp's own flag spellings (`--model`, `--host`, `--port`, `--ctx-size`,
+> `--threads`, `--n-gpu-layers`, `--alias`) and nothing else. If your build refuses one of them it exits
+> immediately, and the extension starts it once more without the cosmetic `--alias` rather than reporting a
+> version problem; a failure that is *not* about our arguments (a missing file, a bad quantisation) is reported
+> with the command line, which is also what goes to the *Avalonia Designer* log.
+
 #### What the entries in the model list mean
 
 Each entry says where it comes from, because that decides whether it can work at all:
@@ -1044,15 +1091,16 @@ Each entry says where it comes from, because that decides whether it can work at
 |---|---|
 | *This extension's own runtime · weights on disk, ready to load* | This is the built-in model, already downloaded. If it says *not downloaded yet — 4.4 GB to fetch*, press **Load Model** and it downloads it (once, resumable, verified). |
 | *… a partial download is on disk — Load Model resumes it* | An earlier download was interrupted. Loading continues it rather than starting over. |
-| *A server I run myself* | Anything else already listening (Ollama, your own `llama-server`). Set its address below. |
+| *A server I run myself* | Anything else already listening (Ollama, or a `llama-server` you started yourself). Set its address below. |
+| *My own llama-server · llama.cpp* | Your own `llama-server` (llama.cpp), started by this extension with a `.gguf` of your choice — see *Your own llama-server* below. |
 | *LM Studio · in My Models, ready to load* | LM Studio is the runtime here. The extension only *asks* it to load a model — so the model has to be one LM Studio knows (anything in its **My Models**, i.e. what its own model list shows). |
 | *Found on this machine · … added to LM Studio first (a symbolic link…)* | A `.gguf` the scan found somewhere else. Loading it **adds it to LM Studio** as a link — your file stays where it is — and then loads it. |
 | *… · Hugging Face* | A model you added yourself with *AI: Add a Model from Hugging Face…*. It behaves exactly like a built-in one, including **Remove Model**. |
 
-The entries are grouped in this order on purpose: **the extension's own runtime first** (it needs no other
-program), then **a server you run**, then LM Studio's library, then loose files found on disk. The extension
-is not built around any one of them — LM Studio is a program it can *drive*, not a requirement, and everything
-above works with it uninstalled.
+The entries are grouped in this order on purpose: **the two engines this extension can start itself first**
+(the built-in runtime, then your own `llama-server`), then **a server that is already listening**, then
+LM Studio's library, then loose files found on disk. The extension is not built around any one of them — LM
+Studio is a program it can *drive*, not a requirement, and everything above works with it uninstalled.
 
 **After loading, look under the list.** A marker on the entry (`● in use`, `● loaded`, `● pinned, runtime
 stopped`) and a sentence underneath say what is actually true, and **Status & hardware check** adds a *Loaded

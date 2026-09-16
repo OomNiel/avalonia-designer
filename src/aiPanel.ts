@@ -12,6 +12,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { normalizeAssistantConfig, looksLikeEmbeddingModel, probeServer } from './assistant';
@@ -43,6 +44,13 @@ import {
 } from './localModels';
 import { bundledFilesOnDisk, bundledRuntimeRunning, allModelSpecs, ensureBundledEndpoint, ensureModelFile, modelFileFor, stopModelServer } from './modelRuntime';
 import { proveItWorks } from './localModelSetup';
+import {
+    findRunningLlamaServer,
+    llamaServerBinary,
+    ownLlamaServerStatus,
+    startOwnLlamaServer,
+    stopOwnLlamaServer
+} from './llamaServer';
 
 export const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -52,7 +60,7 @@ export interface ModelChoice {
     label: string;
     detail: string;
     /** What kind of thing it is, so the panel can explain why a load will take a while. */
-    kind: 'lmstudio' | 'file' | 'bundled' | 'custom' | 'any';
+    kind: 'lmstudio' | 'file' | 'bundled' | 'custom' | 'llama' | 'any';
     /** True for the entry that is serving requests right now — what "● loaded" means. */
     live?: boolean;
 }
@@ -95,7 +103,7 @@ export function parseChoiceValue(value: string): { kind: string; key: string } {
 }
 
 /** Builds the dropdown: everything that could be loaded, in the order a developer would look. */
-export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string, backend = 'off', modelPath = '', bundled: Record<string, { onDisk: boolean; bytes: number }> = {}, specs: ModelSpec[] = MODEL_SPECS): ModelChoice[] {
+export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string, backend = 'off', modelPath = '', bundled: Record<string, { onDisk: boolean; bytes: number }> = {}, specs: ModelSpec[] = MODEL_SPECS, llamaBin = '', llamaRunning = ''): ModelChoice[] {
     const choices: ModelChoice[] = [];
     // "Whatever is loaded" is a real answer, and it is the one the settings most often hold (`model` empty).
     // Without an entry for it the dropdown showed the *first* LM Studio model as if it had been chosen — and
@@ -161,6 +169,29 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
             kind: 'file'
         });
     }
+    // The user's **own** `llama-server` (asked 2026-09-16: *"models served by the Llama.cpp server respond
+    // faster and better than the LM Studio models"*). It sits right next to the extension's own runtime
+    // because it is the same kind of answer — a local engine this window can start, stop and pin — while the
+    // "a server I run myself" entry below stays the one for an address that is *already* serving something.
+    const own = ownLlamaServerStatus();
+    const chosenFile = modelPath ? path.basename(modelPath) : '';
+    choices.push({
+        value: choiceValue('llama', ''),
+        label: `My own llama-server  ·  llama.cpp${own.running && own.info ? `   ● running on port ${own.info.port}` : ''}`,
+        detail: !llamaBin
+            ? 'llama.cpp · no llama-server on this machine — install llama.cpp, or point "llamaServerPath" at the binary'
+            : own.running && own.info
+                ? `llama.cpp · serving ${path.basename(own.info.modelPath)} right now`
+                : llamaRunning
+                    // One the user started themselves is answering. Saying so is the difference between a
+                    // useful entry and one that looks like it would start a *second* model (2026-09-16).
+                    ? `llama.cpp · ${llamaRunning} — Load Model uses that one, it is already in memory`
+                    : chosenFile
+                        ? `llama.cpp · runs ${chosenFile} with the flags below, using ${llamaBin.replace(os.homedir(), '~')}`
+                        : 'llama.cpp · found — run "AI: Start My llama-server…" once to choose the model file',
+        kind: 'llama',
+        live: own.running
+    });
     choices.push({
         value: choiceValue('custom', endpoint),
         label: 'A server I run myself  ·  any OpenAI-compatible address',
@@ -175,8 +206,10 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
     // them: **its own runtime** (llama.cpp, weights from Hugging Face, no other program needed) first, then
     // **a server the user runs** (their own `llama-server`, Ollama), then LM Studio's library, then loose
     // `.gguf` files found on disk. Nothing was removed — every entry still works, and one with no LM Studio
-    // installed simply has no LM Studio entries.
-    const group: Record<string, number> = { any: 0, bundled: 1, custom: 2, lmstudio: 3, file: 4 };
+    // installed simply has no LM Studio entries. The user's own `llama-server` is grouped with the extension's
+    // own runtime (both are engines this window is responsible for) and ahead of a bare address, which is the
+    // one entry that assumes the user has already started something.
+    const group: Record<string, number> = { any: 0, bundled: 1, llama: 2, custom: 3, lmstudio: 4, file: 5 };
     return choices
         .map((c, i) => ({ c, i }))
         .sort((a, b) => ((group[a.c.kind] ?? 9) - (group[b.c.kind] ?? 9)) || (a.i - b.i))
@@ -184,7 +217,7 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
 }
 
 /** The model the settings point at right now, as a dropdown value. */
-export function currentSelection(choices: ModelChoice[], model: string, backend: string, modelPath: string): string {
+export function currentSelection(choices: ModelChoice[], model: string, backend: string, modelPath: string, ownServerRunning = false): string {
     if (backend === 'bundled') {
         const byName = modelPath ? specByFileName(modelPath) : undefined;
         // No weights pinned to the setting: the placeholder (`""`), never the first spec. Falling back to the
@@ -192,6 +225,10 @@ export function currentSelection(choices: ModelChoice[], model: string, backend:
         // (2026-09-15), and the host now agrees with it. Only a real, on-disk pin selects a bundled model.
         return byName ? choiceValue('bundled', byName.id) : '';
     }
+    // Our own `llama-server` is the one entry whose pin the panel cannot recognise from `model` alone (the
+    // id is whichever alias the running process reports, and the address is a port that changes every time).
+    // The process itself is the authority: while it is up, this is what requests are going to.
+    if (ownServerRunning && choices.some((c) => c.kind === 'llama')) return choiceValue('llama', '');
     const match = choices.find((c) => c.kind === 'lmstudio' && c.value === choiceValue('lms', model));
     return match ? match.value : choiceValue('any', '');
 }
@@ -203,7 +240,16 @@ export async function panelState(fresh = false): Promise<PanelState> {
     const endpoint = cfg.get<string>('endpoint', '') || 'http://127.0.0.1:1234/v1';
     if (fresh) scanned = [];
     const found = await discover();
-    const choices = buildChoices(found, scanned, endpoint, backend, cfg.get<string>('modelPath', ''), bundledFilesOnDisk(), allModelSpecs());
+    const lookup = llamaServerBinary(cfg.get<string>('llamaServerPath', ''));
+    const ownServer = ownLlamaServerStatus();
+    // Cached for 15 s inside the probe: a state refresh happens on every panel open, save and focus, and
+    // three local ports that are not listening answer instantly — but a *hung* one would not, and this
+    // question is only worth asking once in a while either way.
+    const elsewhere = await findRunningLlamaServer(endpoint);
+    const llamaRunning = elsewhere
+        ? `already running on port ${elsewhere.port}${elsewhere.modelId ? ` (${elsewhere.modelId})` : ''}`
+        : '';
+    const choices = buildChoices(found, scanned, endpoint, backend, cfg.get<string>('modelPath', ''), bundledFilesOnDisk(), allModelSpecs(), lookup.path ?? '', llamaRunning);
     if (choices.length === 0 && !found.cli) {
         choices.push({
             value: choiceValue('custom', endpoint),
@@ -219,12 +265,22 @@ export async function panelState(fresh = false): Promise<PanelState> {
     const sample: LocalModel = chatModels(found)[0]
         ?? { provider: 'bundled', key: 'sample', label: 'sample', params: '', arch: '', sizeGb: 2, kind: 'chat' };
     const recommended = recommendedLoadOptions(sample, facts);
+    const hint = found.cli
+        ? `${chatModels(found).length} LM Studio model(s) on disk · ${found.loaded.length} loaded`
+        + (scanned.length ? ` · ${scanned.length} file(s) found by the scan` : ' · nothing scanned yet')
+        : `LM Studio is not installed — ${allModelSpecs().length} downloadable model(s) and files found on disk still work`;
 
     return {
         enabled: backend !== 'off',
         endpoint,
         showDiff: cfg.get<boolean>('showDiff', true),
-        selected: currentSelection(choices, cfg.get<string>('model', ''), backend, cfg.get<string>('modelPath', '')),
+        selected: currentSelection(
+            choices,
+            cfg.get<string>('model', ''),
+            backend,
+            cfg.get<string>('modelPath', ''),
+            ownServer.running
+        ),
         choices,
         options: {
             contextLength: cfg.get<number>('loadContextLength', 0) || recommended.contextLength,
@@ -238,10 +294,9 @@ export async function panelState(fresh = false): Promise<PanelState> {
                 ttlSeconds: recommended.ttlSeconds
             }
         },
-        hint: found.cli
-            ? `${chatModels(found).length} LM Studio model(s) on disk · ${found.loaded.length} loaded`
-            + (scanned.length ? ` · ${scanned.length} file(s) found by the scan` : ' · nothing scanned yet')
-            : `LM Studio is not installed — ${allModelSpecs().length} downloadable model(s) and files found on disk still work`,
+        hint: ownServer.running && ownServer.info
+            ? `${hint} · your own llama-server is running on port ${ownServer.info.port}`
+            : hint,
         pinned: describePin(backend, cfg.get<string>('model', ''), cfg.get<string>('modelPath', ''), endpoint, found)
     };
 }
@@ -261,6 +316,13 @@ function describePin(
     found: Discovery
 ): string {
     if (backend === 'off') return 'AI assist is off — nothing is pinned.';
+    // A `llama-server` this window started: named by the file it was started with and the port it got, since
+    // both come from the process rather than from a setting the user typed (2026-09-16).
+    const own = ownLlamaServerStatus();
+    if (backend === 'external' && own.running && own.info && own.info.endpoint === endpoint) {
+        return `Pinned: ${path.basename(own.info.modelPath)} — your own llama-server, running on ${own.info.endpoint}`
+            + ` (it answers to "${own.info.modelId}")`;
+    }
     const runtime = bundledRuntimeRunning();
     if (backend === 'bundled') {
         const spec = modelPath ? specByFileName(modelPath) : undefined;
@@ -348,6 +410,34 @@ async function startLoad(
 ): Promise<LoadOutcome> {
     const facts = setupFacts();
     const report = (message: string) => progress(message);
+
+    if (kind === 'llama') {
+        // The user's own `llama-server` (asked 2026-09-16). No download and no other program is involved: the
+        // binary is theirs, the `.gguf` is theirs, and this window owns the process. `key` carries a file when
+        // a caller has one; otherwise the model file is the one the settings already name.
+        const file = key || cfg.get<string>('modelPath', '');
+        progress('starting your own llama-server…');
+        const outcome = await startOwnLlamaServer({
+            modelPath: file,
+            contextLength: request.contextLength,
+            gpu: request.gpu,
+            threads: cfg.get<number>('threads', 0),
+            onProgress: report
+        });
+        aiLog(context, `llama-server start: ${outcome.ok ? `ok on ${outcome.endpoint}` : `failed — ${outcome.message}`}`);
+        if (!outcome.ok) return { ok: false, message: outcome.message };
+        // "The process is up" is not "a request works" — the same one-line proof every other load path runs.
+        progress('checking that it answers…');
+        const proof = await proveItWorks();
+        if (!proof.ok) {
+            return {
+                ok: false,
+                endpoint: outcome.endpoint,
+                message: `llama-server is running on ${outcome.endpoint}, but a test request failed: ${proof.why ?? 'no answer'}`
+            };
+        }
+        return { ok: true, endpoint: outcome.endpoint, message: outcome.message };
+    }
 
     if (kind === 'custom') {
         if (!/^https?:\/\/\S+$/i.test(key)) return { ok: false, message: 'That address does not look like an http:// URL.' };
@@ -518,6 +608,23 @@ export async function unloadEverything(): Promise<LoadOutcome> {
         stopModelServer();
         done.push('the built-in runtime is stopped');
     }
+    // The user's own llama-server is the third runtime and, like the sidecar, only this window can stop it —
+    // it is a child process of the extension host. "Unload" that left it holding several gigabytes would be
+    // the same bug "unload everything" had for the sidecar (2026-09-15).
+    if (ownLlamaServerStatus().running) {
+        stopOwnLlamaServer();
+        done.push('your own llama-server is stopped');
+    }
+    // One the user started themselves (this machine's is a systemd service) is deliberately left running: it
+    // is not ours to kill, but staying silent about it would be worse — it is still holding the memory.
+    let note = '';
+    if (ownLlamaServerStatus().running === false) {
+        const elsewhere = await findRunningLlamaServer(configView(SETTINGS).get<string>('endpoint', ''));
+        if (elsewhere) {
+            note = `a llama-server on port ${elsewhere.port} is still running — this window did not start it, `
+                + 'so stop the service yourself to free that memory';
+        }
+    }
     if (foundLms()) {
         const result = await unloadAll();
         if (!result.ok) return { ok: false, message: result.message };
@@ -525,7 +632,9 @@ export async function unloadEverything(): Promise<LoadOutcome> {
     }
     return {
         ok: true,
-        message: done.length ? `Done — ${done.join(', and ')}.` : 'Nothing was loaded, so there was nothing to free.'
+        message: done.length || note
+            ? `Done — ${[...done, note].filter(Boolean).join(', and ')}.`
+            : 'Nothing was loaded, so there was nothing to free.'
     };
 }
 
@@ -617,6 +726,11 @@ export async function saveAiSettings(input: PanelAiRequest): Promise<void> {
         // The kind decides which setting owns the answer: `model` for a server, `modelPath` for a file.
         if (kind === 'bundled' || kind === 'file') {
             await cfg.update('backend', 'bundled', target);
+        } else if (kind === 'llama') {
+            // The address *and* the model id belong to the process that was started, so Save only states the
+            // backend. Blanking `model` here is exactly what the "any" entry used to do to a model nobody had
+            // chosen (2026-09-15) — and doing it to a running llama-server would unpin the model it reports.
+            await cfg.update('backend', 'external', target);
         } else if (kind === 'any') {
             // "Let the server decide" must stay that way — writing a model key here is what pinned a model the
             // user never chose.

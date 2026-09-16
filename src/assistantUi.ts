@@ -66,6 +66,7 @@ import { loadedNow } from './localModelCore';
 import { refreshAiState } from './aiPanel';
 import { configView, updateSetting } from './settingWrite';
 import { panelFor } from './aiPanel';
+import { findRunningLlamaServer, llamaServerBinary, llamaServerStatusLines } from './llamaServer';
 import { bundledStatusLines, ensureBundledEndpoint, sidecarTail } from './modelRuntime';
 import {
     addCustomModelSpec,
@@ -1539,6 +1540,11 @@ async function statusFacts(): Promise<StatusFacts> {
             }
         }
     }
+    // The third runtime, reported only when it is relevant (a server of ours is running, one the user started
+    // themselves is answering, a binary was found, or a path was set): a "not installed" line for a feature
+    // the user never asked about is noise.
+    const ownLlama = llamaServerStatusLines(llamaServerBinary(), await findRunningLlamaServer(cfg.endpoint));
+    if (ownLlama.length) lines.push('', ...ownLlama);
     return { cfg, lines, probe, chatModels };
 }
 

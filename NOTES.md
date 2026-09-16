@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4081 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4202 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2647,3 +2647,70 @@ prompt — which is the cheap, deterministic version of the same wish. Still que
 CPU fallback, noting that the earlier `device lost` abort came from llama.cpp on exactly that iGPU.
 
 **Suite:** 4081 passed / 0 failed (was 4043).
+
+### §125 — the user's own `llama-server`, started from the editor (2026-09-16, release 0.9.42)
+
+**What was asked:** *"Models served by the Llama.cpp server respond faster and better than the LM Studio
+models"* (2026-09-16) — so the third engine should be something the extension can **manage**, not just an
+address. Queued then as "detect on PATH, start/stop with their GGUF and their flags (threads, GPU layers,
+context) and treat it like the bundled runtime".
+
+**What the machine turned out to be running** — and this decided the design: `which llama-server` finds
+nothing, but the developer's own server is a **systemd user service**
+(`~/.config/systemd/user/llama-server.service`), up 20 h, holding a 30 B Qwen3-Coder on **port 8080** with
+`--alias qwen3-coder-local --device none -c 16384 -np 1 -ngl 0 -nr`, next to LM Studio on 1234. The binary is
+at `~/llama.cpp/build/bin/llama-server` (build 10365). **Consequence:** "start my llama-server" must first ask
+*is one already answering?* — otherwise the feature's first action for its own author is to load a second copy
+of a 17 GB model.
+
+**Pinned against real answers, not invented shapes** (all captured 2026-09-16, used verbatim as test fixtures):
+
+| What | Real answer | What it is used for |
+|---|---|---|
+| `llama-server --version` | `version: 10365 (9afff1b74)` | the log line; the parser was written from this |
+| `GET /health` | `200 {"status":"ok"}` (503 + `Loading model` while loading) | the readiness signal |
+| `GET /v1/models` | `data[0].id = "qwen3-coder-local"`, `owned_by: "llamacpp"`, `meta.n_ctx = 16384` | identity **and** the model id to pin |
+| `GET /props` | `model_path`, `build_info: "b10365-9afff1b74"`, `total_slots: 1` | llama.cpp's own endpoint: a second identity check *and* the file it serves |
+| LM Studio's `/v1/models` | `owned_by: "organization_owner"` | the negative fixture: never mistaken for a llama-server |
+| LM Studio's `/props` | **200** with `{"error":"Unexpected endpoint or method…"}` | why a 200 alone proves nothing — `model_path` is what identifies llama.cpp |
+
+**Flags are llama.cpp's, verified against its server reference** (`tools/server/README.md`): `-m/--model`,
+`--host`, `--port`, `-t/--threads`, `-c/--ctx-size`, `-ngl/--n-gpu-layers`, `-a/--alias`. The sidecar's
+`--ctx`/`--gpu-layers` are **our wrapper's** spelling — a real `llama-server` exits on the first one — so a test
+asserts those two can never appear in that argv, and `--n-gpu-layers 0` is always stated (0 is the meaningful
+"CPU only", while omitting it leaves llama.cpp's `auto` in charge).
+
+**Decisions worth keeping:**
+
+- **Readiness is `/health`, not the model list.** `/v1/models` answers immediately with a `null` meta block
+  while loading, so reading *it* as ready reports a server that cannot answer yet. `classifyHealth()` has four
+  verdicts (ok / loading / absent / unreachable) because the caller has four different things to do; a build
+  with no `/health` falls back to the model list **and requires the meta block**, which llama.cpp only fills in
+  once the weights are loaded.
+- **An unknown-flag refusal is recoverable; any other early exit is not.** `--alias` is the only flag added for
+  looks, and llama.cpp exits *before reading any weights* when it refuses an argument — so the start is retried
+  once without it. `isUnknownArgumentFailure()` is deliberately narrow: a missing model file must never be
+  retried that way.
+- **Reuse needs the same file *and* the same flags.** `ensureStarted` compares both, so "Load Model" after
+  changing the context length is a restart, not a shrug — and two clicks (panel + palette) cannot start two
+  servers.
+- **A server we did not start is never stopped.** Stopping, unloading and `deactivate` only touch this window's
+  child; the service is reported as *"already running on port 8080 … Started outside this window"*. The user's
+  memory is the user's to free, but silence about it would be a lie of omission: *Unload* names it.
+- **The panel's table is per-runtime, and the third runtime broke the binary split it used to have.** The
+  idle-unload row was hidden by `bundled = kind === 'bundled' || kind === 'file'`; llama-server also has no such
+  timer *and* takes a layer count, so that group is now `layerCount` and its hints name **its** flags
+  (`--ctx-size`, `--n-gpu-layers`) rather than saying "the built-in runtime" about the user's own binary. Two
+  existing guards failed on this change and were **updated with their reason**, not deleted: the webview's
+  `.aiOptTtl.hidden = bundled` assertion, and `unloadEverything`'s *"Nothing was loaded"* case — which now finds
+  this machine's real llama-server, so the test patches that probe like it already patches the process-spawning
+  functions (a test that depends on what this machine happens to run is not a test of the code).
+- **`stop`/`unload` semantics, third time:** the sidecar needed it in 0.9.15, LM Studio in 0.9.35, and now
+  llama-server. Every runtime this extension can *start* is one it must also *stop*, and `AI: Stop the Local
+  Model` now stops both of the ones it owns.
+
+**Suite:** 4202 passed / 0 failed (was 4081). New `tests/t2-logic/llamaServer.test.js` (102 assertions: the
+lookup, the argv, the health verdicts, the already-running detection against the real fixtures above, the
+messages, and the wiring of both front doors) plus the updated webview/unload guards; `tests/t2-logic/aiPanel.test.js`
+grew the entry's label, detail, ordering and selection assertions.
+

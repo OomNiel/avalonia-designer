@@ -19,8 +19,23 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.41`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.42`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.42 — your own `llama-server`, started from the editor.** The engine the user actually prefers
+  (*"models served by the Llama.cpp server respond faster and better than the LM Studio models"*) is now one the
+  extension can run: **AI: Start My llama-server…** finds the binary (the usual build folders, PATH, or a path you
+  set), asks which `.gguf` to serve, shows the context/threads/GPU-layers it would use with the reason for each,
+  waits for llama.cpp's own `/health` to say the weights are in RAM, and proves it answers before saying *Ready*.
+  **AI: Stop My llama-server** stops the one it started; the panel has a *My own llama-server* entry with the
+  same Load/Unload behaviour as the built-in runtime; `llamaServerPath` and `llamaServerArgs` are the two
+  settings. The design is shaped by what this machine turned out to run: the developer's own server is a
+  **systemd user service on port 8080** (a 30 B Qwen3-Coder, `--alias qwen3-coder-local`), so **an already-running
+  llama-server is detected and offered instead of duplicated** — loading a second 17 GB copy is the one thing this
+  feature could do that its own author would never forgive. A server this window did not start is never stopped,
+  and the status report says so out loud. Fixtures are the real answers captured from that service
+  (`version: 10365 (9afff1b74)`, `200 {"status":"ok"}`, `owned_by: "llamacpp"`, `/props → model_path`), with LM
+  Studio's answers as the negative pair. §125.
 
 - **0.9.41 — a model of your own, and no default program.** *AI: Add a Model from Hugging Face…* takes a model
   page or file URL, lists the repo's `.gguf` files with their sizes, and reads the size and SHA-256 from the
@@ -99,9 +114,11 @@ The whole day was one arc: the AI section of the ⚙ panel, driven by the user's
   with it; the built-in entries say whether their weights are on disk; a model that is loaded is marked
   (`● in use`, `● pinned, runtime stopped`) and the status carries a **`Loaded now:`** line, so "did my load
   take?" is answerable from the panel (§109, §112).
-- **The model's life is owned.** `deactivate` frees both runtimes (LM Studio via a detached `lms unload --all`,
-  the sidecar via `stopModelServer`), and **Unload** in the panel frees both too — for a *built-in* model the old
-  Unload was a no-op that reported success (§110, §117).
+- **The model's life is owned.** `deactivate` frees **every** runtime this window can hold — LM Studio via a
+  detached `lms unload --all`, the sidecar via `stopModelServer`, and (since 0.9.42) the user's own
+  `llama-server` via `stopOwnLlamaServer` — and **Unload** in the panel frees all of them too, naming any
+  server it did *not* start. For a *built-in* model the old
+  Unload was a no-op that reported success (§110, §117, §125).
 - **Failures are translated, never passed through.** `--yes` so a guardrail prompt cannot hang a load with no
   terminal to answer it (§111); the mlock abort names LM Studio as the owner of *Keep Model in Memory* (§111);
   the Vulkan `device lost` abort names a CPU-only runtime as the way out (§111).
@@ -126,7 +143,7 @@ server (LM Studio, Ollama, your own `llama-server`), tier 2 brings its own — `
 built on the user's machine with the .NET SDK, so one VSIX fits every platform, and weights are downloaded once
 with a SHA-256 check. Both are **off by default**.
 
-- **Versions 0.9.5 – 0.9.41 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
+- **Versions 0.9.5 – 0.9.42 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
   `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F (numbers-only
   version, both GitHub release flags, no BETA suffix). The repo tags only the `v1.0.0-beta.N` series — the 0.9.x
   releases are commits, not tags.

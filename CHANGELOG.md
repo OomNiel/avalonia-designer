@@ -15,6 +15,44 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.42] - 2026-09-16 · *your own llama-server, started from the editor*
+
+### Added
+
+- **AI: Start My llama-server…** and **AI: Stop My llama-server** — the `llama-server` you built yourself is now
+  an engine this extension can *run*, not just an address you have to start by hand. It finds the binary (the
+  usual build folders and your `PATH`, or a path you set once), asks which `.gguf` to serve, shows the flags it
+  would use with the reason for each (context size, CPU threads, GPU **layers**), starts it, waits for
+  llama.cpp's own `/health` to say the weights are in RAM, and proves it answers with a one-line request before
+  saying *Ready*. Nothing is downloaded and nothing is copied: llama.cpp reads the file where it is. The exact
+  command line goes to the extension's log, so it can be reproduced or tuned by hand.
+- **`My own llama-server` in the model list** — the panel can start it too, with the context-length and
+  GPU-offload fields it already has (a **layer count** here, where LM Studio takes a ratio; no idle-unload row,
+  because llama-server has no such timer). *Unload* stops it along with the built-in runtime.
+- **An already-running llama-server is detected, never duplicated.** Asked after finding that a llama.cpp
+  server answered faster and better than the LM Studio models: if one is already answering, *Start My
+  llama-server…* offers **Use the one already running** (the default — nothing new goes into memory) or
+  **Start another one with a different model**, and the panel's Load reuses a server that is serving the same
+  file. It is identified by llama.cpp's own answers (`owned_by: llamacpp`, or a `/props` with a `model_path`),
+  so an LM Studio or Ollama server is never mistaken for one.
+- **Two settings:** `avaloniaDesigner.assistant.llamaServerPath` (the binary, empty = find it) and
+  `avaloniaDesigner.assistant.llamaServerArgs` (your own extra flags, added **last** so they win — e.g.
+  `--device none -nr`).
+
+### Notes
+
+- **A server this extension did not start is left alone, out loud.** Stopping, unloading and closing the window
+  only touch the process this window spawned; a `llama-server` you run as a service is reported as *"already
+  running on port 8080 … Started outside this window"*, because killing it is not this extension's business —
+  but staying silent about the memory it holds would be worse.
+- **llama.cpp's flag spellings, verified against its own server reference:** `--model`, `--host`, `--port`,
+  `--ctx-size`, `--threads`, `--n-gpu-layers`, `--alias`. The sidecar's `--ctx`/`--gpu-layers` are *our*
+  wrapper's names and would make a real llama-server exit immediately, so a test asserts they can never appear
+  on that command line. If a build refuses one of the flags we add, it is started once more without the
+  cosmetic `--alias` rather than reporting a version problem.
+- The status report gained the third runtime: the command line of a server this window started, or the port and
+  model of one that was already running.
+
 ## [0.9.41] - 2026-09-16 · *a model of your own, and no default program*
 
 ### Added

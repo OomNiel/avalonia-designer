@@ -152,7 +152,27 @@ module.exports = async (t) => {
             'list', 'and so is the extension\'s own runtime');
         t.ok(kindsInOrder.indexOf('file') > kindsInOrder.indexOf('lmstudio') || kindsInOrder.indexOf('lmstudio') < 0,
             'list', 'loose .gguf files on disk stay last — they are the afterthought');
-        t.equal(choices.length, 3 + MODEL_SPECS.length + 1 + 1 + 1, 'list', '"decide" + LM Studio + downloads + found + address');
+        // The user's own `llama-server` (asked 2026-09-16). It is an engine this window starts and stops, like
+        // the bundled runtime, so it is grouped with it and ahead of a bare address — that entry is the only one
+        // that assumes the user has already started something.
+        const llama = choices.find((c) => c.kind === 'llama');
+        t.ok(llama, 'list', 'the user\'s own llama-server is offered as an entry of its own');
+        t.ok(/My own llama-server/.test(llama.label), 'list', 'labelled as theirs, not as the extension\'s runtime');
+        t.ok(/install llama\.cpp|llamaServerPath/.test(llama.detail), 'list',
+            'with no binary on the machine the detail says what to do about it');
+        t.ok(kindsInOrder.indexOf('llama') > kindsInOrder.indexOf('bundled'), 'list',
+            'the two engines this window can start are offered together, the extension\'s own first');
+        t.ok(kindsInOrder.indexOf('llama') < kindsInOrder.indexOf('custom'), 'list',
+            'and both before "a server I run myself", which assumes something is already running');
+        // With a binary found and a model file chosen, the entry says exactly what pressing Load will run — the
+        // difference between an entry that looks broken and one the user can act on.
+        const withBin = buildChoices(discovery(), [], 'http://127.0.0.1:1234/v1', 'external',
+            '/home/niel/models/Llama-3-8B-Q4_K_M.gguf', {}, MODEL_SPECS, '/usr/local/bin/llama-server');
+        const ready = withBin.find((c) => c.kind === 'llama');
+        t.ok(/Llama-3-8B-Q4_K_M\.gguf/.test(ready.detail) && /llama-server/.test(ready.detail), 'list',
+            'a found binary plus a chosen file name both the file and the binary in the detail');
+        t.equal(choices.length, 3 + MODEL_SPECS.length + 1 + 1 + 2, 'list',
+            '"decide" + LM Studio + downloads + found + address + the user\'s own llama-server');
     }
 
     // ---------- 3) which entry the settings point at ----------
@@ -170,6 +190,13 @@ module.exports = async (t) => {
             'the bundled backend selects the spec it was set up for, from the file path alone');
         t.equal(currentSelection(choices, '', 'off', ''), 'any:', 'selection',
             'an off switch still shows a sensible starting point for when it is switched on');
+        // A running `llama-server` of ours is the one pin the picker cannot recognise from the settings: the
+        // model id is whatever alias the process reports and the address is a port that changes every start, so
+        // the *process* is the authority (2026-09-16).
+        t.equal(currentSelection(choices, 'whatever-it-reports', 'external', '', true), 'llama:', 'selection',
+            'a running llama-server of ours selects its own entry');
+        t.equal(currentSelection(choices, 'whatever-it-reports', 'external', '', false), 'any:', 'selection',
+            'and with nothing of ours running the selection is exactly what it was');
     }
 
     // ---------- 4) what files are even candidates ----------

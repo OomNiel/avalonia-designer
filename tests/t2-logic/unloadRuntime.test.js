@@ -12,7 +12,16 @@
 'use strict';
 const core = require('../../out/localModelCore.js');
 const runtime = require('../../out/modelRuntime.js');
+const llama = require('../../out/llamaServer.js');
 const { unloadEverything } = require('../../out/aiPanel.js');
+
+/**
+ * "Is a llama-server already running?" is asked over the local ports and answered by a real HTTP probe, so it
+ * is patched here exactly like the process-spawning functions: the machine that runs this suite HAS one
+ * (a systemd user service on port 8080), and a test whose result depends on that would be a test of the
+ * machine rather than of the code. The branch that *does* find one is asserted separately below.
+ */
+const NO_FOREIGN_SERVER = [llama, 'findRunningLlamaServer', async () => undefined];
 
 /** Runs `body` with `patches` applied to the given modules, restoring them whatever happens. */
 async function withPatches(patches, body) {
@@ -35,7 +44,8 @@ module.exports = async (t) => {
             [runtime, 'bundledRuntimeRunning', () => ({ running: true, endpoint: 'http://127.0.0.1:1/v1' })],
             [runtime, 'stopModelServer', () => { stopped += 1; }],
             [core, 'findLmsCli', () => undefined],
-            [core, 'unloadAll', async () => { unloaded += 1; return { ok: true }; }]
+            [core, 'unloadAll', async () => { unloaded += 1; return { ok: true }; }],
+            NO_FOREIGN_SERVER
         ], () => unloadEverything());
 
         t.equal(stopped, 1, 'unload', 'a running built-in runtime is stopped');
@@ -52,7 +62,8 @@ module.exports = async (t) => {
             [runtime, 'bundledRuntimeRunning', () => ({ running: false })],
             [runtime, 'stopModelServer', () => { stopped += 1; }],
             [core, 'findLmsCli', () => '/usr/bin/lms'],
-            [core, 'unloadAll', async () => { unloaded += 1; return { ok: true }; }]
+            [core, 'unloadAll', async () => { unloaded += 1; return { ok: true }; }],
+            NO_FOREIGN_SERVER
         ], () => unloadEverything());
 
         t.equal(unloaded, 1, 'unload', 'LM Studio is unloaded when it is installed');
@@ -66,7 +77,8 @@ module.exports = async (t) => {
             [runtime, 'bundledRuntimeRunning', () => ({ running: false })],
             [runtime, 'stopModelServer', () => { }],
             [core, 'findLmsCli', () => undefined],
-            [core, 'unloadAll', async () => { throw new Error('must not be called'); }]
+            [core, 'unloadAll', async () => { throw new Error('must not be called'); }],
+            NO_FOREIGN_SERVER
         ], () => unloadEverything());
 
         t.equal(outcome.ok, true, 'unload', 'nothing loaded anywhere is not a failure');
@@ -74,11 +86,33 @@ module.exports = async (t) => {
     }
 
     {
+        // The third runtime, and the one this window must NOT touch: a `llama-server` the developer started
+        // themselves (this machine's is a systemd user service). Unload cannot free its memory, and staying
+        // silent about that would be the same lie as reporting a runtime as stopped when it is not.
+        const outcome = await withPatches([
+            [runtime, 'bundledRuntimeRunning', () => ({ running: false })],
+            [runtime, 'stopModelServer', () => { }],
+            [core, 'findLmsCli', () => undefined],
+            [core, 'unloadAll', async () => { throw new Error('must not be called'); }],
+            [llama, 'findRunningLlamaServer', async () => ({
+                endpoint: 'http://127.0.0.1:8080/v1', port: 8080, modelId: 'qwen3-coder-local'
+            })]
+        ], () => unloadEverything());
+
+        t.equal(outcome.ok, true, 'unload', 'a server we did not start is not a failure');
+        t.ok(/llama-server on port 8080 is still running/.test(outcome.message), 'unload',
+            'but it IS named: it is still holding several gigabytes that Unload did not free');
+        t.ok(/did not start it/.test(outcome.message), 'unload',
+            'and why nothing here can stop it');
+    }
+
+    {
         const outcome = await withPatches([
             [runtime, 'bundledRuntimeRunning', () => ({ running: true })],
             [runtime, 'stopModelServer', () => { }],
             [core, 'findLmsCli', () => '/usr/bin/lms'],
-            [core, 'unloadAll', async () => ({ ok: false, message: 'lms unload exited 1' })]
+            [core, 'unloadAll', async () => ({ ok: false, message: 'lms unload exited 1' })],
+            NO_FOREIGN_SERVER
         ], () => unloadEverything());
 
         t.equal(outcome.ok, false, 'unload', 'a failing CLI is reported as a failure');
@@ -94,5 +128,7 @@ module.exports = async (t) => {
             'unloadEverything stops the extension\'s own runtime');
         t.ok(/export async function unloadEverything[\s\S]*?foundLms\(\)/.test(panel), 'unload',
             'and only reaches for LM Studio when it is installed');
+        t.ok(/export async function unloadEverything[\s\S]*?stopOwnLlamaServer\(\)/.test(panel), 'unload',
+            'the user\'s own llama-server is stopped too — it is this window\'s child process');
     }
 };

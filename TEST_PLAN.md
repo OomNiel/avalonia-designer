@@ -276,6 +276,24 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.42` (2026-09-16)** — the user's own **`llama-server`** became an engine the extension can
+  start: `AI: Start My llama-server…` / `AI: Stop My llama-server`, a `My own llama-server` entry in the panel
+  (with the context/GPU fields mapped to `--ctx-size`/`--n-gpu-layers`), and two settings (`llamaServerPath`,
+  `llamaServerArgs`). `tests/t2-logic/llamaServer.test.js` (102 assertions) pins the pure decisions — where the
+  binary is found (a path the user set, then PATH, then the usual build folders), the exact argv in llama.cpp's
+  own spellings (and that the sidecar's `--ctx`/`--gpu-layers` can never appear in it), which early exit is
+  worth retrying, the four `/health` verdicts, and the identity check for a server that is **already running**.
+  The fixtures are real answers captured from this machine on 2026-09-16: the developer's own llama-server runs
+  as a systemd user service on port 8080, so `--version` (`version: 10365 (9afff1b74)`), `/health`, `/v1/models`
+  (`owned_by: "llamacpp"`, `meta.n_ctx`) and `/props` (`model_path`, `build_info`) are quoted verbatim — with
+  LM Studio's answers (`owned_by: "organization_owner"`; a **200** `/props` carrying an error body) as the
+  negative pair that proves nothing is detected just for answering. Three existing guards were updated with
+  their reason rather than relaxed: `aiPanel.test.js`'s choice count and the webview's
+  `aiOptTtl.hidden = bundled` assertion (the row is now hidden for the whole `layerCount` group), and
+  `unloadRuntime.test.js`, where the new *"a llama-server you started is still running"* branch made a machine-
+  dependent test possible — that probe is now patched like the process-spawning functions. Suite **4202**.
+- **Docs (2026-09-16)** — README, USER_MANUAL and CHANGELOG brought up to 0.9.41: the
+  Code Fix rules aimed at generated code, the model-list order and the Hub row, the `Hugging Face` kind.
 - **Release `0.9.41` (2026-09-16)** — **AI: Add a Model from Hugging Face…** (paste a page or file URL, pick the
   `.gguf`, size + SHA-256 read from the Hub's own `?blobs=true` answer, then the existing verified download) and
   **AI: Forget a Model Added from Hugging Face…**; added models live in `user-models.json` next to the weights as
@@ -392,8 +410,9 @@ Each step ends with the log green before the next begins.
   the Qwen load *did* work — LM Studio loaded it and answered our own request in 11.6 s — so the failure was
   in the telling: every built-in entry was described as "downloaded once when you press Load Model", which
   is equally true of a 4.4 GB file that has never been fetched. The entries now state whether the weights are
-  on disk (or partially, or not at all); `deactivate` frees both runtimes (LM Studio via a detached
-  `lms unload --all`, the sidecar via `stopModelServer`); the panel is refreshed after every request and when
+  on disk (or partially, or not at all); `deactivate` frees every runtime (LM Studio via a detached
+  `lms unload --all`, the sidecar via `stopModelServer`, and since 0.9.42 the user's own `llama-server` via
+  `stopOwnLlamaServer`); the panel is refreshed after every request and when
   it regains focus (a server loads a model just-in-time, so a snapshot goes stale); and the whole `lms …`
   command line is logged. Suite **3713**.
 - **Release `0.9.24` (2026-09-15)** — unloading left the panel and the status naming the model as loaded.

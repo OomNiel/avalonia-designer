@@ -7,8 +7,9 @@ import { createNewProject, openLastProject, maybeRunFirstBuild } from './project
 import { ProjectViewProvider, setActiveContext } from './projectView';
 import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor';
 import { disposeIssues } from './codeBehindCheck';
-import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, removeHubModel, showStatus } from './assistantUi';
+import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, refreshPanels, removeHubModel, showStatus } from './assistantUi';
 import { initModelRuntime, stopModelServer } from './modelRuntime';
+import { initLlamaServer, startMyLlamaServerFlow, stopOwnLlamaServer } from './llamaServer';
 import { unloadOnExit } from './localModelCore';
 import { chooseLocalModel, unloadLoadedModel } from './localModelSetup';
 import * as logger from './logger';
@@ -131,8 +132,10 @@ export function activate(context: vscode.ExtensionContext): void {
         );
 
         // The bundled model runtime is created once per window and disposed with it: it can hold
-        // gigabytes of weights, so it must never be started twice.
+        // gigabytes of weights, so it must never be started twice. The user's own `llama-server` gets the
+        // same treatment for the same reason — one child per window, whichever engine is in use.
         initModelRuntime(context);
+        initLlamaServer(context);
 
         // A proposal only lives in memory, so a proposal tab restored from a previous window is a dead
         // pane with no buttons (reported twice, 2026-09-14). Close whatever the last session left behind.
@@ -150,9 +153,28 @@ export function activate(context: vscode.ExtensionContext): void {
             // platform (see NOTES.md §92). Its process is stopped when the window closes.
             vscode.commands.registerCommand('avaloniaDesigner.assistant.setupModel', () => chooseLocalModel(context)),
             vscode.commands.registerCommand('avaloniaDesigner.assistant.unloadModel', () => unloadLoadedModel()),
+            // The user's own llama.cpp server (asked 2026-09-16). It is the one runtime whose binary the
+            // extension does not ship, so the flow starts by finding it and says so plainly when it is absent.
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.startLlamaServer', async () => {
+                // An open panel has to hear about the result: it is the panel, not the notification, that
+                // the user looks at next (2026-09-15).
+                if (await startMyLlamaServerFlow(context)) void refreshPanels();
+            }),
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.stopLlamaServer', () => {
+                const stopped = stopOwnLlamaServer();
+                void vscode.window.showInformationMessage(stopped
+                    ? 'Your llama-server has been stopped — its memory is free again.'
+                    : 'Your llama-server was not running.');
+                void refreshPanels();
+            }),
             vscode.commands.registerCommand('avaloniaDesigner.assistant.stopModel', () => {
+                // Both engines this window can own, because the command says "the local model" without saying
+                // which one is in use — and leaving a 7 GB process behind is not a "stopped" anyone asked for.
+                const stoppedOwn = stopOwnLlamaServer();
                 stopModelServer();
-                void vscode.window.showInformationMessage('The local model server has been stopped.');
+                void vscode.window.showInformationMessage(stoppedOwn
+                    ? 'Your llama-server and the built-in runtime have both been stopped.'
+                    : 'The built-in model server has been stopped.');
             }),
             // Reviewing a proposal can take minutes, so the decision lives where it cannot expire: the
             // status bar and the diff editor's title bar, both driven by `avaloniaDesigner.proposalPending`.
@@ -197,6 +219,8 @@ export async function deactivate(): Promise<void> {
         /* never fail a shutdown over this */
     }
     try { stopModelServer(); } catch { /* already gone */ }
+    // …and the user's own llama-server, which is a child of this process: nothing else will stop it.
+    try { stopOwnLlamaServer(); } catch { /* already gone */ }
     // VS Code disposes `context.subscriptions`, but a window reload / crashed extension host can
     // skip that — so kill the C# host here too. The host ALSO exits by itself as soon as its
     // WebSocket client disconnects (host/Program.cs), which covers even a SIGKILLed host.
