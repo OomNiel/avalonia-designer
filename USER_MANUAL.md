@@ -123,8 +123,9 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The latest published version is **`0.9.4`**, so the command above installs it; add `--force` to
-reinstall or to update a copy that is already on the machine.
+The current version is **`0.10.0`**, so the command above installs it; add `--force` to
+reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
+*Extensions* view → the **⟳ Check for Extension Updates** button.)
 
 **Or from GitHub** — take the `.vsix` from the
 [latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) and install it with:
@@ -133,9 +134,10 @@ reinstall or to update a copy that is already on the machine.
 code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
-> The two places number releases differently. GitHub tags are `v1.0.0-beta.N`; the Marketplace accepts
-> plain numbers only, so the same release appears there as `0.9.x` (`0.9.4` = `v1.0.0-beta.11`).
-> Nothing else differs — the packages are the same.
+> **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
+> `major.minor.patch` (`0.10.0` right now), so there is only ever one version to look at. It only ever goes up,
+> which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
+> each release.
 
 After installing (or after any update), **reload the window** so the changes take effect:
 `Ctrl+Shift+P` → **Developer: Reload Window**.

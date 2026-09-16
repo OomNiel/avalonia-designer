@@ -5,11 +5,12 @@ All notable changes to the **Avalonia Designer for VS Code** extension.
 Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
-> **Two version numbers per release, on purpose.** GitHub tags and releases carry the descriptive
-> name (`v1.0.0-beta.9`), but the Visual Studio Marketplace accepts only one to four plain numbers —
-> a suffix like `-beta.9` is rejected. `package.json` therefore holds the Marketplace number — `0.9.2`
-> for `v1.0.0-beta.9` — and each entry below names both. `1.0.0` is reserved for the first stable
-> release, because a published version number can never be reused.
+> **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
+> `major.minor.patch` — `0.10.0` now — and that is the number the Visual Studio Marketplace shows and compares
+> (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
+> sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
+> published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
+> GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
 ## [Unreleased]
 
@@ -29,6 +30,78 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
   checked and needed nothing (they describe Avalonia `12.1.1` and its controls, none of which changed here).
 - These copies ship **inside** the VSIX, so the installed `0.9.46` still carries the previous text; the next
   package takes them with it.
+
+## [0.10.0] - 2026-09-16 · *the local AI assist reaches the Marketplace*
+
+The first release published since **`0.9.4`**, and the first with **one version number** (see the note above).
+Everything from `0.9.5` to `0.9.46` is in it, and the short version of those forty-two releases is: **the
+extension grew a local AI assistant** — plus the fixes that came out of using it every day.
+
+### Added
+
+- **A local AI assist — opt-in, and nothing leaves the machine** (`avaloniaDesigner.assistant.backend`).
+  - **AI: Implement in Function…** writes or rewrites a method from one sentence — and *outside* a method it
+    writes a **new** member at the caret. The model chooses the name, signature and body; the rules are ours:
+    a name that already exists is **refused** (not quietly replaced), new members are always `private`,
+    `static`/`Shared` only when the body needs no instance state or control, a `namespace`/`class` wrapper in
+    the answer is stripped, and usings are added after the last existing one.
+  - **✨ Fix with AI…** on the Code Fix findings that sit inside a method.
+  - **Nothing is written without you** unless you ask it to be: the answer opens as a **diff** with *Apply* and
+    *Discard* offered directly above the member, in the status bar and in the diff's own title bar (a choice
+    that must not expire while you read), and **Build to verify** runs your project's own build. Clear *Show the
+    proposed code as a diff before it is applied* and the code is written straight in — still one undoable
+    edit, with **Undo** offered by name.
+- **Three ways to have a model, all local.**
+  - **The extension's own runtime** — a small C# server built with the .NET SDK your machine already needs
+    (one VSIX for every platform, because NuGet resolves the native code on your machine), with five pinned
+    code-specialised models downloaded **once**, verified against the SHA-256 the Hub publishes, and **any
+    other `.gguf`** added with *AI: Add a Model from Hugging Face…*.
+  - **Your own `llama-server`** — *AI: Start My llama-server…* / *AI: Stop My llama-server*: it finds the
+    binary, asks which `.gguf` to serve, shows the flags it would use with the reason for each, waits for
+    llama.cpp's own `/health` to say the weights are in RAM, and proves it answers. If one of yours is already
+    running you are **asked** rather than given a second copy of the same weights — and a server this window
+    did not start is never killed.
+  - **Any server already listening** — LM Studio (still a first-class target, with its own GPU engines),
+    Ollama, or anything else that speaks the OpenAI-compatible API.
+- **House rules — the model writes like you do.** *AI: Learn the House Rules from My Code…* measures your own
+  C#/VB files (indentation, brace style, member visibility, whether anything is `static`/`Shared`, handler
+  naming, and for VB whether events are wired with `Handles` or `AddHandler`) and offers only the patterns that
+  clear two gates: **5 examples, agreeing 80 %**, each shown with its evidence. A codebase split 50/50
+deliberately produces **no** rule, and rules are counted per language. The list goes into every request.
+- **The built-in runtime can run on the GPU** — `avaloniaDesigner.assistant.bundledBackend` (CPU by default,
+  Vulkan when asked for, also *AI: Built-in Runtime Backend…*). llama.cpp falls back to the CPU libraries by
+  itself when the machine has no usable Vulkan device, the status names the build that is **actually** running,
+  and a driver that dies while the weights load is retried once on the CPU.
+- **The Code Fix checker now reads the code the model writes** — a handler nothing calls, a name that looks
+  like a control the form does not have, a duplicate member, a class *or* namespace inside a class, unbalanced
+  braces — each with a mechanical Fix where one exists, running the moment the model writes.
+
+### Changed
+
+- **The prompt is planned against the model, not guessed**: the description dialog shows how much room your
+  sentence has (*“~315 tokens (~1260 characters) left”*) and refuses to accept more, the optional context (the
+  style sample, then the member list) is dropped in a stated order when the window is tight, and what was
+  dropped is named in **View → Output → “Avalonia Designer”**. If the required parts cannot fit, nothing is
+  sent and the message carries the numbers.
+- **The ⚙ Settings panel is where the AI lives**, and it tells the truth about state: every entry says where
+  it comes from and what *Load* will do with it, a loaded model is marked, *Loaded now:* answers “did my load
+  take?”, the settings are written to the scope that actually owns them (a project-level pin can no longer
+  shadow the panel), and the dialog now fits a 1024×700 editor area — measured in Chromium, twice.
+- **The AI section says what it is waiting for** (*looking for local models…*) instead of leaving an empty
+  picker unexplained, and a message no longer outlives its action.
+- **Unload frees every runtime this window can hold** — the built-in runtime, the `llama-server` it started, and
+  LM Studio — and a server *you* started is left alone, and said to be left alone.
+- **One version number now**: the GitHub tag, the release title and `package.json` all carry `0.10.0` (the
+  `v1.0.0-beta.N` tag beside a `0.9.x` listing version, used by the releases before this one, is gone).
+
+### Notes
+
+- **The AI assist is off until you switch it on, and downloads nothing until you press *Load Model*.** If you
+  never turn it on, the designer works exactly as the published `0.9.4` did; the rest of the range is the fixes
+  listed in the entries below this one.
+- **Suite: 4,438 assertions, 0 failed** across five layers — the logic layer, the webview in jsdom, the real
+  headless renderer over WebSocket, and a matrix that `dotnet build`s generated C# and VB projects for every
+  control.
 
 ## [0.9.46] - 2026-09-16 · *the panel says what it is waiting for*
 

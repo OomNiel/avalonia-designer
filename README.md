@@ -30,33 +30,29 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The latest published version is **`0.9.4`**, so the command above installs it (add `--force` to
-reinstall, or to update a copy that is already on the machine).
+The current version is **`0.10.0`**, so the command above installs it (add `--force` to reinstall, or to
+update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
+no-terminal way to see it).
 
 **Or from GitHub** — take the `.vsix` attached to the
 [latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) (the file name carries
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.9.4.vsix --force
+code --install-extension avalonia-designer-0.10.0.vsix --force
 ```
 
-> **This repository runs ahead of the listing.** Development continues in `main` — where the current
-> development release is **`0.9.46`** ([CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md)
-> says what changed) — while publishing to the Marketplace is a deliberate, manual step, so the listing stays on
-> the last release that was published there (`0.9.4`). Everything in `main` is compiled and tested before it is
-> committed; to run the newest state, build the package yourself (`npm install`, then `npm run package`) and
-> install the `.vsix` it writes — [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md)
-> is the guide, and it records every version that has gone live.
+> **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
+> number — `0.10.0` now — and the marketplace updates you automatically when a newer one is published.
+> [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
+> each release, and
+> [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
+> that has gone live, with the hash the gallery serves.
 
 Either way, **reload the window** afterwards (`Ctrl+Shift+P` → *Developer: Reload Window*). The
 previewer host is compiled with the **.NET SDK** the first time you open a form — see
 [USER_MANUAL.md §3](https://github.com/OomNiel/avalonia-designer/blob/main/USER_MANUAL.md#3-installation--first-run)
 for the prerequisites.
-
-> **GitHub and the Marketplace number releases differently.** The Marketplace only accepts plain
-> numbers, so the tag `v1.0.0-beta.11` is published there as **`0.9.4`** — `1.0.0` is reserved for the
-> first stable release and `0.9.x` is the current development line. The packages are identical.
 
 ## 1. The preview is real
 
@@ -312,13 +308,11 @@ just what the settings point at, so "did my load take?" is answerable from the p
 - **Published on the
   [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer)**
   — still changing, but every release ships with a green suite.
-- **The repository is ahead of the listing.** `main` is the development line (**`0.9.46`** right now) and the
-  Marketplace carries the last release published there (**`0.9.4`**): publishing is manual and deliberate, and
-  [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
-  that went live, with the hash the gallery serves.
-- **Two version numbers per release, on purpose**: the GitHub tag is `v1.0.0-beta.N` while the
-  Marketplace (plain numbers only) shows the same build as `0.9.x`. `1.0.0` is reserved for the first
-  stable release.
+- **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
+  `major.minor.patch`, and that is the number the Marketplace shows; it only ever goes up, so updates arrive by
+  themselves. `1.0.0` stays reserved for the first stable release, because a published version can never be
+  reused. [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records what is
+  live and how it got there.
 - VS Code **1.85+**; the **.NET SDK** (the preview host is built with it — the designer names the
   missing SDK with a download link rather than failing silently). Generated projects target `net10.0`.
 - Both the preview host and generated projects use **Avalonia 12.1.1** — one version, so what you

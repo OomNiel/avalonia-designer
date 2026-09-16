@@ -19,8 +19,17 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.46`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
-`NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+**Released and installed: `0.10.0`** — the release that carries the whole `0.9.5` → `0.9.46` line (the AI
+assist and everything it forced) to the Marketplace as **one version number**, *plus* everything from the
+2026-09-15 marathon (§100–§118 in `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`). The `.vsix` is built and
+verified; **the upload is the developer's** (publisher portal, `PUBLISHING.md` part E).
+
+- **0.10.0 — the version scheme collapsed to one number.** `package.json`, the git tag and the release title
+  all carry `v0.10.0`/`0.10.0`; the dual `v1.0.0-beta.N` tag beside a `0.9.x` listing version is gone from every
+  current-facing document (README, USER_MANUAL, the CHANGELOG's scheme note, PUBLISHING's rules and part F), and
+  the shipped-as-beta history is kept exactly as it shipped. The listing's `description` and keywords now say
+  what the extension became: an optional **local** AI assist. `PUBLISHING.md` holds the local `sha256` and the
+  paragraph to replace once the gallery serves `0.10.0`.
 
 - **0.9.46 — the ⚙ panel says what it is waiting for.** Reported as *"it takes a while to load and start the
   server … show a loading message"*, and the user's description was literally right: the panel's state call
@@ -191,10 +200,13 @@ server (LM Studio, Ollama, your own `llama-server`), tier 2 brings its own — `
 built on the user's machine with the .NET SDK, so one VSIX fits every platform, and weights are downloaded once
 with a SHA-256 check. Both are **off by default**.
 
-- **Versions 0.9.5 – 0.9.46 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
-  `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F (numbers-only
-  version, both GitHub release flags, no BETA suffix). The repo tags only the `v1.0.0-beta.N` series — the 0.9.x
-  releases are commits, not tags.
+- **`0.10.0` is the release of everything since 0.9.4.** `0.9.5` – `0.9.46` were local builds only (the AI
+  assist's whole arc, plus the fixes it forced); `0.10.0` carries the lot to the Marketplace as **one number**
+  — the tag, the release title and `package.json` all say `v0.10.0`/`0.10.0`, and the dual `v1.0.0-beta.N` tag
+  beside a `0.9.x` listing version is gone (the CHANGELOG keeps that history as it shipped). The developer
+  uploads it through the publisher portal (`PUBLISHING.md` part E — the CLI needs a PAT, and the global-PAT kind
+  retires on 1 December 2026, so the portal is the durable path); `PUBLISHING.md` carries the local `sha256` and
+  the block to replace with the verified line once the gallery serves it.
 - **Gotcha that cost the most time:** `files.autoSave = onFocusChange` + `editor.formatOnSave` in the user's
   settings save *every* dirty buffer when focus moves (any terminal command does), which silently reverts edits
   made to files that are open in the editor. Verify edits on disk and run `tsc`/the suite before believing a

@@ -206,20 +206,36 @@ listing when that release is uploaded — a repo-only README edit does not.
 > portal without ever being tagged, so the releases run `v1.0.0-beta.9` → `v1.0.0-beta.11` — the
 > `0.9.3` package can be backfilled from the gallery's stored copy if that ever matters.
 
-> **`0.9.5` – `0.9.46` (2026-09-15 → 2026-09-16) — LOCAL BUILDS ONLY, deliberately not published.** Forty-two
-> versions of work (the AI assist's own runtime set-up, models from Hugging Face, your own `llama-server`, house
-> rules, the optional Vulkan build for the built-in runtime, two rounds of settings-panel measurement) are in
-> `main` and installed locally, and **none of it is on the Marketplace yet**. That is the developer's call, not a
-> failure: the feature set should settle before the listing moves. What it means for the next publish:
+> **`0.9.5` – `0.9.46` (2026-09-15 → 2026-09-16) — LOCAL BUILDS ONLY, never published; all of it is in
+> `0.10.0`.** Forty-two versions of work (the AI assist's own runtime set-up, models from Hugging Face, your
+> own `llama-server`, house rules, the optional Vulkan build for the built-in runtime, two rounds of
+> settings-panel measurement) were built, installed and committed, and **none of them ever went to the
+> Marketplace** — the feature set was still settling. `0.10.0` is the release that carries the lot, which is
+> why its changelog entry is a summary of the range rather than a list of one day's changes.
+
+> **`0.10.0` (2026-09-16) — prepared here, handed over for upload; record the result below.** Sixth listing
+> version and the first under the **single-number scheme**: the GitHub tag is `v0.10.0`, the release title
+> carries `v0.10.0`, and `package.json` holds `0.10.0` — tag and listing finally agree, so there is no mapping
+> to explain to anyone. What went with it: the **local AI assist** became part of the listing's description
+> (`package.json` → `description`, plus the keywords `ai` and `llm`), and the repository's About text says the
+> same thing.
 >
-> - nothing in the portal ritual changes (part F below), and the next version only has to be **higher than
->   `0.9.4`** — the numbering is a plain sequence, not a promise about content;
-> - the jump is **large**, so read the `CHANGELOG.md` entries from `0.9.5` onwards before writing the listing
->   text. `README.md` and `USER_MANUAL.md` ship *inside* the VSIX, so what they say is what a new user reads
->   first; both were brought up to `0.9.46` on 2026-09-16;
-> - two releases in that range add something a user has to *find*: the Vulkan opt-in is a new setting plus a
->   command (**AI: Built-in Runtime Backend…**), and the ⚙ panel's waiting line is a behaviour change rather
->   than a feature — worth a line in the listing's release notes either way.
+> Plain VSIX — `avalonia-designer-0.10.0.vsix`, sha256
+> `bf7e1519f9ef0ac8cb2fc28a9ad7fa7659e3cea91d3dc2debf76f5f259df5c74` — built by `npm run package` after a green
+> suite (**4,438 assertions, 0 failed**). **The upload is done by the developer through the publisher portal**
+> (part E): the CLI route needs a PAT, and the global-PAT kind is retired on 1 December 2026, so the portal is
+> the durable path this project uses. After the upload, check it the usual way —
+> `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
+> and then replace this paragraph with the verified line, exactly like the entries before it.
+
+> **The Marketplace version must be numbers only** — a suffix is rejected outright (uploading `1.0.0-beta.7`
+> failed on 2026-09-12 with *"The version string '1.0.0-beta.7' doesn't conform to the requirements for a
+> version. It must be one to four numbers in the range 0 to 2147483647, with each number separated by a
+> period."*). Since `0.10.0` that is the whole rule: **one number everywhere** — the GitHub tag, the release
+> title and `package.json` all carry it, and the listing compares it, so each release is simply the next number
+> up (`0.10.1`, `0.11.0`, …; the releases before `0.10.0` used a separate `v1.0.0-beta.N` tag, which is what the
+> history above records). `1.0.0` is still reserved for the first stable release, because a published version
+> number can never be reused — and the latest version cannot be deleted.
 
 ### What “Verifying \<version\>” means — and how to confirm the result
 
@@ -264,25 +280,27 @@ The response also proves *what* was published, which is worth checking every tim
 
 ## F. Releasing after that
 
-1. Bump `version` in `package.json` — **numbers only** (`0.9.1`, `0.9.2`, …). Commit, then tag the
-   GitHub release with the descriptive semver name (`git tag v1.0.0-beta.8`, see `NOTES.md` §1). The
-   tag and `package.json` deliberately differ: the tag is documentation, `package.json` is the number
-   the Marketplace shows and compares. Never reuse a number — the Marketplace rejects the upload.
-2. Create the GitHub release with the descriptive tag —
-   `git tag -a v1.0.0-beta.11 -m "<one-line summary>"`, push the tag, then
-   `gh release create v1.0.0-beta.11 --title "Avalonia Designer for VS Code v1.0.0-beta.11"
-   --notes-file <file> --latest avalonia-designer-<version>.vsix` — **no `(BETA)` in the title** from
-   `beta.11` on (the `-beta.N` tag already says what the build is; the suffix only made a *Latest*
-   release look like a draft). Notes house style: an intro block
+1. Bump `version` in `package.json` — **numbers only**, and the next number up (`0.10.1`, `0.11.0`, …).
+   Commit, then tag the GitHub release with **the same number**: `git tag -a v0.10.1 -m "<one-line summary>"`.
+   Tag and `package.json` are the same string since `0.10.0` (before that the tag was `v1.0.0-beta.N` and the
+   listing carried `0.9.x`; that mapping is history, not a convention to continue). Never reuse a number — the
+   Marketplace rejects the upload, and the latest version cannot be deleted.
+2. Create the GitHub release with that tag —
+   `git tag -a v0.10.1 -m "<one-line summary>"`, push the tag, then
+   `gh release create v0.10.1 --title "Avalonia Designer for VS Code v0.10.1"
+   --notes-file <file> --latest avalonia-designer-0.10.1.vsix`. Notes house style: an intro block
    ("Install:" + the `sha256` + a one-paragraph summary + `Test suite: N passed / 0 failed /
-   0 skipped.`), then `### Added / ### Changed / ### Fixed / ### Notes`. **From `v1.0.0-beta.11` on,
-   set both flags explicitly:** `prerelease` and `make_latest` are *separate* fields, so clearing
-   `--prerelease` alone leaves the repository with no latest release at all — `--latest` is what makes
-   `gh release list` say **Latest** and `/releases/latest` resolve. Every release before `beta.11`
-   stays pre-release.
-3. Publish — through the publisher portal (part E). For the CLI route the normal release is
-   `npm run publish:stable`; `npm run publish:pre` is the variant that puts the build on the other
-   channel, and it is not used for a normal `0.9.x` release.
+   0 skipped.`), then `### Added / ### Changed / ### Fixed / ### Notes`. **Set both flags explicitly:**
+   `prerelease` and `make_latest` are *separate* fields, so clearing `--prerelease` alone leaves the repository
+   with no latest release at all — `--latest` is what makes `gh release list` say **Latest** and
+   `/releases/latest` resolve. Since `0.10.0` a release is **not** a pre-release: the listing has no
+   pre-release channel entry and VS Code would not offer it to anyone on the stable channel. (Every release up
+   to `v1.0.0-beta.11` is pre-release, and that is what it stays.)
+3. Publish — through the publisher portal (part E), which is the route used since `0.9.0` and the one that
+   survives the PAT retirement: `vsce package` locally, then upload the `.vsix` on the manage page. **Leave the
+   listing's “Pre-release” box unchecked** so the release lands on the stable channel. For the CLI route the
+   normal release is `npm run publish:stable`; `npm run publish:pre` puts the build on the other channel and is
+   not used for a normal release.
 4. Rotate the PAT before it expires (part B → **Regenerate**, then update the GitHub secret). An
 expired token — or one retired on **1 December 2026** — appears as a 401 / *“verification failed”* in
 the release run.
