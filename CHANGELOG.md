@@ -35,6 +35,15 @@ _Nothing yet._
   numbers came from a Chromium render that was thrown away afterwards. It is a tape measure, not a test: it is
   not part of `npm test` and it renders nothing of the user's project.
 
+### Notes
+
+- **If more height is still wanted**, two changes are one line each and were measured: the **House rules**
+  textarea at 3 rows instead of 4 (−18 px), which together with slightly tighter option rows clears the
+  remaining **46 px** hidden at 1024×700; or that box behind its own fold like the other sections (−92 px of
+  content, at the cost of one click). A `min-height` **floor is deliberately not used**: the pinned Save row
+  lives at the end of the flow, so a floor would leave dead space *below* the buttons rather than taller
+  content (measured: box 658 px, Save row 281 px).
+
 ## [0.9.43] - 2026-09-16 · *house rules — the model writes like you do*
 
 ### Added
