@@ -60,6 +60,8 @@ export interface ModelChoice {
 export interface PanelState {
     enabled: boolean;
     endpoint: string;
+    /** Show the model's code as a diff before it is applied (⚙ Settings, `assistant.showDiff`). */
+    showDiff: boolean;
     /** The value of the entry that matches the settings right now, or '' when nothing matches. */
     selected: string;
     choices: ModelChoice[];
@@ -208,6 +210,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
     return {
         enabled: backend !== 'off',
         endpoint,
+        showDiff: cfg.get<boolean>('showDiff', true),
         selected: currentSelection(choices, cfg.get<string>('model', ''), backend, cfg.get<string>('modelPath', '')),
         choices,
         options: {
@@ -296,6 +299,8 @@ function firstBuildNote(context: vscode.ExtensionContext): boolean {
 export interface PanelAiRequest extends RequestedLoad {
     /** The AI switch. A load implies "on", so the load path does not read it; Save does. */
     enabled: boolean;
+    /** Review the model's code as a diff, or write it straight into the file. */
+    showDiff: boolean;
     /** The dropdown value (`lms:<key>`, `file:<path>`, `bundled:<id>`, `custom:<url>`). */
     value: string;
     /** Answer budget and timeout — request settings, applied by Save rather than by a load. */
@@ -586,6 +591,9 @@ export type AiSettingsInput = PanelAiRequest;
 export async function saveAiSettings(input: PanelAiRequest): Promise<void> {
     const cfg = configView(SETTINGS);
     const target = vscode.ConfigurationTarget.Global;
+    // Written before the switch is looked at: whether a diff is shown is a preference about *reviewing*,
+    // not about whether AI is on, so it must stick even while the feature is switched off (2026-09-16).
+    await cfg.update('showDiff', input.showDiff !== false, target);
     await cfg.update('maxTokens', Math.min(16384, Math.max(64, Math.round(input.maxTokens) || 4096)), target);
     await cfg.update('timeoutSeconds', Math.min(600, Math.max(5, Math.round(input.timeoutSeconds) || 60)), target);
     await cfg.update('loadContextLength', Math.max(0, Math.round(input.contextLength) || 0), target);

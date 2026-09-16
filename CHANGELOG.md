@@ -15,6 +15,35 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.37] - 2026-09-16 · *review it, or write it straight in — and a window that can hold both*
+
+### Added
+
+- **"Show the proposed code as a diff before it is applied"** — a checkbox in the ⚙ Settings panel, and the
+  same switch as `avaloniaDesigner.assistant.showDiff` (on by default). Cleared, the model's code is written
+  straight into the file: no diff tab and no Apply/Discard decision — but still one normal undoable edit
+  (**Ctrl+Z**), still the same rules first (a name that already exists is refused, the visibility is
+  corrected), and the toast then offers **Undo** by name. One implementation writes both ways, so the two
+  modes cannot produce different code.
+
+### Fixed
+
+- **The window can now hold the prompt *and* the answer.** A bundled 12B model answered with **0
+  characters**: the context the runtime is started with (4096) and the answer budget the extension asks for
+  (4096 by default since 0.9.15) were chosen independently, so they could not both fit — and the sidecar's
+  own clamp reserved a flat 512 tokens for the prompt, a number that was right when the request cap *was* 900
+  tokens. The prompt is now measured (`estimateTokens`), the answer gets what is really left
+  (`answerBudget`), the window grows to fit the budget when the user has not pinned one (`contextForBudget`),
+  and a request that had to be reduced says so in the log.
+- **Every request and every outcome is now in `logs/ai.log`.** The request line carries the model, endpoint,
+  prompt size (~tokens), the answer budget (and whether it was reduced) and the window; the outcome line
+  carries the answer length, the thinking length and the finish reason — including the boring
+  `answer=0, reasoning=0` case that used to leave no trace at all. The runtime's own last output lines are
+  kept and quoted when an answer is empty, because "chat template not usable" is the line that explains a
+  model answering with nothing, and it used to live only in the Output channel.
+
+Suite **3962** passed / 0 failed.
+
 ## [0.9.36] - 2026-09-16 · *"create a function named SortArray" — said to the caret*
 
 ### Added

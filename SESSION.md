@@ -19,8 +19,18 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.36`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.37`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.37 — a switch for the diff, and a window that fits the prompt.** The ⚙ Settings panel gained
+  **"Show the proposed code as a diff before it is applied"** (`assistant.showDiff`, on by default): cleared,
+  the code is written straight in through the very function Apply uses, with the same rules first and **Undo**
+  offered by name. The other half came from a bug report — a bundled 12B model answered with *0 characters*
+  because the bundled window (4096) and the answer budget (4096) could not both hold a prompt; the prompt is
+  now measured and the answer gets the remainder, and every request **and** every outcome is logged with sizes
+  and the finish reason, plus the runtime's own last lines when an answer is empty. §120 has the write-up,
+  including the first question that mattered: *is the string even ours?* (it was LM Studio's, not ours).
+  Suite **3962** passed / 0 failed.
 
 - **0.9.36 — "Create a function named 'SortArray'".** *AI: Implement in Function…* now branches on the
   caret: **inside a method** it rewrites that method (unchanged), **outside every method** it writes a new

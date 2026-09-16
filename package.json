@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.36",
+    "version": "0.9.37",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -347,6 +347,11 @@
                     "minimum": 64,
                     "maximum": 8192,
                     "description": "Upper bound on the generated code. 4096 leaves room for a model that thinks before it answers (a reasoning model can spend 800+ tokens on a one-line question); 900 is fine for a coder model that answers directly."
+                },
+                "avaloniaDesigner.assistant.showDiff": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the model's code as a diff to review before it is applied (the ⚙ Settings panel has the same switch). Turn it off and the code is written straight into the file — still a normal edit, so Ctrl+Z undoes it, and the rule-based checks (a name that already exists, the visibility fix) still run first."
                 },
                 "avaloniaDesigner.assistant.temperature": {
                     "type": "number",

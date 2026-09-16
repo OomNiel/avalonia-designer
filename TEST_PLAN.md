@@ -276,6 +276,15 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.37` (2026-09-16)** — the ⚙ panel gained **"show the proposed code as a diff"** (off = the
+  code is written straight in, one undoable edit, the same rules first), and the token budget was fixed: the
+  bundled window (4096) and the answer budget (4096) could not both hold a prompt, which is how a 12B model
+  answered with *0 characters*. The prompt is measured and the answer gets the remainder; every request and
+  outcome is logged with its sizes, and the runtime's own last lines are quoted when an answer is empty. T3
+  covers the switch (default on for a state that forgot the field, the hint that explains "no diff", and the
+  Save payload); T2 covers `estimateTokens`/`answerBudget`/`contextForBudget`, the empty-answer wording with
+  the prompt and window in it, and the guards that keep the diff and non-diff paths on one implementation.
+  Suite **3962**.
 - **Release `0.9.36` (2026-09-16)** — *AI: Implement in Function…* branches on the caret: inside a method
   the model rewrites it (unchanged), outside every method it writes a **new** member at the caret —
   `private`, `static`/`Shared` only where the body provably needs no instance state or form control,

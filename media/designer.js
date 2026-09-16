@@ -93,6 +93,8 @@
         settingsSave: $('settingsSave'),
         settingsCancel: $('settingsCancel'),
         aiEnabled: $('aiEnabled'),
+        aiShowDiff: $('aiShowDiff'),
+        aiShowDiffHint: $('aiShowDiffHint'),
         aiBadge: $('aiBadge'),
         aiBody: $('aiBody'),
         aiModel: $('aiModel'),
@@ -1154,6 +1156,7 @@
         const picked = els.aiModel.value;
         return {
             enabled: els.aiEnabled.checked,
+            showDiff: els.aiShowDiff.checked,
             value: picked,
             contextLength: Number(els.aiContext.value) || 0,
             gpu: els.aiGpu.value === 'auto' ? 'auto' : els.aiGpu.value,
@@ -1168,6 +1171,11 @@
         if (!state) return;
         aiState = state;
         els.aiEnabled.checked = !!state.enabled;
+        // Anything but an explicit `false` keeps the diff: the safe default belongs on the side that shows
+        // the code before it is written, so a state that forgot the field must not silently skip review.
+        els.aiShowDiff.checked = state.showDiff !== false;
+        // The hint explains what *no diff* means, so it appears when the switch is off — not when it is on.
+        if (els.aiShowDiffHint) els.aiShowDiffHint.hidden = state.showDiff !== false;
         els.aiBadge.textContent = state.enabled ? 'on' : 'off';
         els.aiBadge.className = 'ai-badge ' + (state.enabled ? 'on' : 'off');
         els.aiBody.hidden = !state.enabled;

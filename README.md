@@ -171,7 +171,8 @@ complete method, and *✨ Fix with AI…* appears on findings that sit inside a 
 every method and the same command writes a **new** one there instead — "create a function named
 `SortArray` that sorts a passed array" — `private`, with `static`/`Shared` only when the body needs no
 instance state, its `using`s added for it, and its event wired into the form when the name matches a
-control. The proposal always
+control. The diff review can be switched off (⚙ Settings → *Show the proposed code as a diff*) for those who
+would rather have the code written straight in — it stays one undoable edit. The proposal always
 opens as a **diff**, applying it is a normal undoable edit, and **Build to verify** runs your project's
 build so generated code is not taken on trust.
 

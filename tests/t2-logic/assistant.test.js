@@ -67,6 +67,13 @@ module.exports = async (t) => {
         t.equal(dflt.backend, 'off', 'config', 'the feature is off until it is switched on');
         t.equal(dflt.endpoint, DEFAULT_ENDPOINT, 'config', 'an empty endpoint means the LM Studio default');
         t.equal(assistantEnabled(dflt), false, 'config', 'and "off" means disabled');
+        // The diff is the review step, so its default is what protects a file from a bad answer: only an
+        // explicit `false` skips it (⚙ Settings → "Show the proposed code as a diff", 2026-09-16).
+        t.equal(dflt.showDiff, true, 'config', 'the diff is shown unless the user turns it off');
+        t.equal(normalizeAssistantConfig({ showDiff: false }).showDiff, false, 'config',
+            'an explicit false is honoured — that is the "apply it directly" choice');
+        t.equal(normalizeAssistantConfig({ showDiff: 'nonsense' }).showDiff, true, 'config',
+            'anything unreadable keeps the safe default rather than silently skipping the review');
 
         const external = normalizeAssistantConfig({ backend: 'external', endpoint: 'http://127.0.0.1:1234' });
         t.equal(external.endpoint, 'http://127.0.0.1:1234/v1', 'config', '/v1 is appended when missing');

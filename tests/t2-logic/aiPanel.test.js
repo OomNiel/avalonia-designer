@@ -268,11 +268,20 @@ module.exports = async (t) => {
         t.ok(/if \(!msg\.quiet\) els\.aiStatusText\.hidden = false/.test(read('media/designer.js')), 'panel',
             'a refresh updates the status box without popping it open — opening it is the user\'s action');
         const html = read('src/designerPanel.ts');
-        for (const id of ['aiEnabled', 'aiModel', 'aiLoad', 'aiUnload', 'aiRemove', 'aiScan', 'aiStatusText', 'aiOptions']) {
+        for (const id of ['aiEnabled', 'aiShowDiff', 'aiModel', 'aiLoad', 'aiUnload', 'aiRemove', 'aiScan', 'aiStatusText', 'aiOptions']) {
             t.ok(new RegExp(`id="${id}"`).test(html), 'panel', `the panel markup has #${id}`);
         }
         const js = read('media/designer.js');
         t.ok(/function fillAi\(/.test(js), 'panel', 'the webview fills the section from the extension state');
+        t.ok(/showDiff: els\.aiShowDiff\.checked/.test(js), 'panel',
+            'the "show the proposed code as a diff" switch travels with the AI settings on Save');
+        t.ok(/els\.aiShowDiff\.checked = state\.showDiff !== false/.test(js), 'panel',
+            'and a state that forgot the field still means "show the diff" — the safe default');
+        const panelSrc = read('src/aiPanel.ts');
+        t.ok(/showDiff: cfg\.get<boolean>\('showDiff', true\)/.test(panelSrc), 'panel',
+            'the panel state reports the setting, so the ⚙ switch shows what is really in force');
+        t.ok(/await cfg\.update\('showDiff', input\.showDiff !== false, target\)/.test(panelSrc), 'panel',
+            'and saving it writes it — before the AI switch is looked at, so it sticks while AI is off');
         t.ok(/els\.aiOptions\.hidden = !chosen/.test(js), 'panel',
             'the change-them options appear only once a model is chosen (the flow the user asked for)');
         t.ok(/post\(\{ type: 'aiLoad'/.test(js) && /post\(\{ type: 'aiUnload'/.test(js), 'panel',

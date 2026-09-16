@@ -17,6 +17,7 @@ import * as fs from 'fs';
 import {
     addMemberToFile,
     addXamlEventAttribute,
+    answerBudget,
     assistantEnabled,
     assessHardware,
     buildFixPrompt,
@@ -24,10 +25,12 @@ import {
     buildImplementPrompt,
     chat,
     chatDetailed,
+    contextForBudget,
     describeEmptyAnswer,
     describeModel,
     describeLoadedNow,
     enclosingTypeSpan,
+    estimateTokens,
     extractCode,
     handlerFromMemberName,
     knownControlNames,
@@ -56,7 +59,7 @@ import { loadedNow } from './localModelCore';
 import { refreshAiState } from './aiPanel';
 import { configView, updateSetting } from './settingWrite';
 import { panelFor } from './aiPanel';
-import { bundledStatusLines, ensureBundledEndpoint } from './modelRuntime';
+import { bundledStatusLines, ensureBundledEndpoint, sidecarTail } from './modelRuntime';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -71,11 +74,19 @@ export function assistantConfig(): AssistantConfig {
         threads: cfg.get<number>('threads', 0),
         // The built-in runtime reads these when it starts. They are the panel's load options, because a
         // model started later by a request has to start with the same values the panel showed.
-        contextSize: sidecarContextSize(cfg.get<number>('loadContextLength', 0), DEFAULT_CONTEXT_SIZE),
+        contextSize: sidecarContextSize(
+            // The window grows to hold the answer budget *and* the prompt — the two used to be chosen
+            // independently and could not both fit in 4096 (fixed 2026-09-16, see `contextForBudget`).
+            cfg.get<number>('loadContextLength', 0),
+            contextForBudget(cfg.get<number>('loadContextLength', 0), cfg.get<number>('maxTokens', 4096))
+        ),
         gpuLayers: sidecarGpuLayers(cfg.get<string>('loadGpu', 'auto')),
         timeoutSeconds: cfg.get<number>('timeoutSeconds', 60),
         maxTokens: cfg.get<number>('maxTokens', 4096),
-        temperature: cfg.get<number>('temperature', 0.2)
+        temperature: cfg.get<number>('temperature', 0.2),
+        // Review the proposal as a diff, or write it straight in. Read here rather than at the apply
+        // step so the command, the palette entry and the Code Action all obey the same switch.
+        showDiff: cfg.get<boolean>('showDiff', true)
     });
 }
 
@@ -208,22 +219,30 @@ class ProposalContentProvider implements vscode.TextDocumentContentProvider {
 /** Registered once in `activate`. */
 export const proposalContent = new ProposalContentProvider();
 
-interface PendingProposal {
-    documentUri: vscode.Uri;
-    /** `replace` = the method the caret was in was rewritten; `insert` = a new member was written. */
+/**
+ * The part of a proposal that decides **where** the text goes — all `buildProposalText` needs.
+ *
+ * Kept apart from `PendingProposal` because it is also built *before* a proposal exists: with the diff
+ * switched off there is no proposal at all, and the two paths must still place the code identically.
+ */
+interface ProposalAnchor {
     kind: 'replace' | 'insert';
-    /** the member this proposal is about — looked up again when Apply is pressed */
+    /** the member this change is about */
     name: string;
+    documentUri: vscode.Uri;
     startLine: number;
     endLine: number;
+    /** `insert` only: where it goes, and the `using`/`Imports` lines it asked for. */
+    insert?: { caretLine: number; type: TypeSpan; language: 'cs' | 'vb'; usings: string[] };
+}
+
+interface PendingProposal extends ProposalAnchor {
     /** the model's own answer, re-spliced at apply time so edits made while reviewing are respected */
     code: string;
     /** the file as it was when the proposal was computed */
     original: string;
     proposalUri: vscode.Uri;
     summary: string;
-    /** `insert` only: where it goes, and the `using`/`Imports` lines it asked for. */
-    insert?: { caretLine: number; type: TypeSpan; language: 'cs' | 'vb'; usings: string[] };
     /** `insert` only: the form event to offer to wire once the member exists. */
     wiring?: { axamlUri: vscode.Uri; control: string; event: string; handler: string };
 }
@@ -374,94 +393,40 @@ export async function applyProposal(): Promise<void> {
     }
 
     const current = document.getText();
-    let proposed: string;
-    let addedUsings: string[] = [];
-
-    if (p.kind === 'insert') {
-        const plan = p.insert;
-        // The class may have moved while the diff was on screen, so it is found again by its declaration
-        // line. If it is gone, nothing is written — a member placed into the wrong class (or outside every
-        // class, which does not compile) is worse than no member.
-        const type = plan ? enclosingTypeSpan(current, plan.type.declLine, plan.language) : undefined;
-        if (!plan || !type) {
+    // One implementation for both modes: the diff is a *review*, never a different edit.
+    if (current !== p.original) {
+        const built = buildProposalText(current, p, p.code);
+        if (!built.ok) {
             clearPending();
-            void vscode.window.showWarningMessage(
-                `${p.name}() was not added — the class it was meant for is no longer in the file.`
-            );
+            void vscode.window.showWarningMessage(built.message);
             return;
         }
-        if (current !== p.original) {
-            const pick = await vscode.window.showWarningMessage(
-                `The file changed while you were reviewing the proposal. Applying adds ${p.name}() to it as it is now.`,
-                { modal: true },
-                'Apply',
-                'Discard'
-            );
-            if (pick === 'Discard') {
-                await discardProposal();
-                return;
-            }
-            if (pick !== 'Apply') return;
-        }
-        const merged = addMemberToFile({
-            text: current,
-            caretLine: plan.caretLine,
-            member: p.code,
-            usings: plan.usings,
-            type,
-            language: plan.language
-        });
-        proposed = merged.text;
-        addedUsings = merged.added;
-    } else {
-        const spans = methodsIn(document.fileName, current);
-        // The method may have moved while the diff was on screen, so match on the name first and fall back
-        // to "the method that now occupies the span we proposed".
-        const span =
-            spans.find((m) => m.name === p.name) ??
-            spans.find((m) => p.startLine <= m.endLine && m.line <= p.endLine);
-        if (!span) {
-            clearPending();
-            void vscode.window.showWarningMessage(`"${p.name}" is no longer in the file — nothing was applied.`);
+        const pick = await vscode.window.showWarningMessage(
+            p.kind === 'insert'
+                ? `The file changed while you were reviewing the proposal. Applying adds ${p.name}() to it as it is now.`
+                : `The file changed while you were reviewing the proposal. Applying replaces ${p.name}() as it is now.`,
+            { modal: true },
+            'Apply',
+            'Discard'
+        );
+        if (pick === 'Discard') {
+            await discardProposal();
             return;
         }
-
-        // The diff may have been on screen for minutes: if the method moved or was edited meanwhile, the
-        // model's answer is spliced into the CURRENT text, and that is worth confirming.
-        if (current !== p.original) {
-            const pick = await vscode.window.showWarningMessage(
-                `The file changed while you were reviewing the proposal. Applying replaces ${p.name}() as it is now.`,
-                { modal: true },
-                'Apply',
-                'Discard'
-            );
-            if (pick === 'Discard') {
-                await discardProposal();
-                return;
-            }
-            if (pick !== 'Apply') return;
-        }
-
-        const eol = current.includes('\r\n') ? '\r\n' : '\n';
-        proposed = spliceMethod(current, span, p.code, eol);
+        if (pick !== 'Apply') return;
     }
-
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(current.length)), proposed);
-    if (!(await vscode.workspace.applyEdit(edit))) {
-        void vscode.window.showErrorMessage('Could not apply the proposal — the file may be read-only.');
+    const written = await writeProposal(document, p, p.code);
+    if (!written.ok) {
+        void vscode.window.showErrorMessage(written.message);
         return; // keep it pending: the file can be made writable and the same button pressed again
     }
+    const addedUsings = written.addedUsings;
 
     const summary = p.summary;
     const name = p.name;
     await closeProposalTab(p);
     proposalContent.forget(p.proposalUri);
     clearPending();
-    // Saved on purpose, without asking: the change is applied, and "Build to verify" builds what is on
-    // disk — leaving it dirty would verify the code as it was before.
-    await document.save();
-
     const next = await vscode.window.showInformationMessage(
         p.kind === 'insert'
             ? `${name}() added${addedUsings.length ? ` (with ${addedUsings.join(', ')})` : ''} — Ctrl+Z undoes it.`
@@ -481,7 +446,7 @@ export async function applyProposal(): Promise<void> {
  * asks first and reports what it changed. A normal undoable edit (`WorkspaceEdit`), not a write behind
  * the designer's back: the designer owns the file whenever its own tab is open.
  */
-async function offerWiring(p: PendingProposal): Promise<void> {
+async function offerWiring(p: { wiring?: PendingProposal['wiring'] }): Promise<void> {
     const w = p.wiring;
     if (!w) return;
     const pick = await vscode.window.showInformationMessage(
@@ -581,6 +546,77 @@ function wiringFor(
 }
 
 /**
+ * The whole-file text a target produces, from the file's **current** text.
+ *
+ * One implementation for the review path and the immediate path, so "show the diff" is a decision about
+ * *when the developer looks*, never about *what the code does*. Both callers therefore re-derive the
+ * anchor here instead of trusting line numbers from before the model was asked: the answer takes seconds,
+ * and a file may be edited meanwhile.
+ */
+function buildProposalText(
+    currentText: string,
+    target: ProposalAnchor,
+    code: string
+): { ok: true; text: string; addedUsings: string[] } | { ok: false; message: string } {
+    if (target.kind === 'insert') {
+        const plan = target.insert;
+        const type = plan ? enclosingTypeSpan(currentText, plan.type.declLine, plan.language) : undefined;
+        if (!plan || !type) {
+            return {
+                ok: false,
+                message: `${target.name}() was not added — the class it was meant for is no longer in the file.`
+            };
+        }
+        const merged = addMemberToFile({
+            text: currentText,
+            caretLine: plan.caretLine,
+            member: code,
+            usings: plan.usings,
+            type,
+            language: plan.language
+        });
+        return { ok: true, text: merged.text, addedUsings: merged.added };
+    }
+
+    const spans = methodsIn(target.documentUri.fsPath, currentText);
+    // The method may have moved since it was found, so match on the name first and fall back to "the
+    // method that now occupies the span we proposed".
+    const span =
+        spans.find((m) => m.name === target.name) ??
+        spans.find((m) => target.startLine <= m.endLine && m.line <= target.endLine);
+    if (!span) {
+        return { ok: false, message: `"${target.name}" is no longer in the file — nothing was applied.` };
+    }
+    return { ok: true, text: spliceMethod(currentText, span, code, currentText.includes('\r\n') ? '\r\n' : '\n'), addedUsings: [] };
+}
+
+/**
+ * Writes an approved (or deliberately unreviewed) change into the file.
+ *
+ * A normal `WorkspaceEdit` and a save, in both modes: the edit is undoable, and saving is what makes
+ * "Build to verify" verify the change rather than the file as it was before.
+ */
+async function writeProposal(
+    document: vscode.TextDocument,
+    target: ProposalAnchor,
+    code: string
+): Promise<{ ok: true; addedUsings: string[] } | { ok: false; message: string }> {
+    const built = buildProposalText(document.getText(), target, code);
+    if (!built.ok) return built;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(
+        document.uri,
+        new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)),
+        built.text
+    );
+    if (!(await vscode.workspace.applyEdit(edit))) {
+        return { ok: false, message: 'Could not write the change — the file may be read-only.' };
+    }
+    await document.save();
+    return { ok: true, addedUsings: built.addedUsings };
+}
+
+/**
  * Asks the model for a replacement method, shows it as a diff, and applies it only when the developer
  * says so. Returns a short summary, or undefined when the attempt was cancelled or failed.
  */
@@ -596,13 +632,25 @@ async function proposeMethod(
     let thinking = '';
     let finishReason: string | undefined;
     let reasoningTokens: number | undefined;
+    // The request in one line, *before* it is sent: a prompt that does not fit the window is invisible in
+    // every later message, and the 2026-09-16 "0 characters" report had nothing to go on at all.
+    const promptChars = messages.reduce((n, m) => n + String(m.content ?? '').length, 0);
+    const promptTokens = estimateTokens(messages.map((m) => m.content ?? '').join('\n'));
+    const budget = cfg.backend === 'bundled'
+        ? answerBudget(cfg.maxTokens, cfg.contextSize, promptTokens)
+        : { maxTokens: cfg.maxTokens, reduced: false, room: 0 };
+    const request: AssistantConfig = budget.reduced ? { ...cfg, maxTokens: budget.maxTokens } : cfg;
+    log(`AI request: ${cfg.backend} · model=${cfg.model || '(server default)'} · ${cfg.endpoint} · prompt ` +
+        `${promptChars} characters (~${promptTokens} tokens) · answer ≤ ${request.maxTokens} tokens` +
+        (budget.reduced ? ` (reduced from ${cfg.maxTokens}: the ${cfg.contextSize}-token window has room for ${budget.room})` : '') +
+        ` · context ${cfg.contextSize}`);
     try {
         const outcome = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: what, cancellable: true },
             async (progress, token) => {
                 const controller = new AbortController();
                 token.onCancellationRequested(() => controller.abort());
-                return chatDetailed(cfg, messages, {
+                return chatDetailed(request, messages, {
                     signal: controller.signal,
                     onToken: () => {
                         chunks += 1;
@@ -619,6 +667,12 @@ async function proposeMethod(
         thinking = outcome.reasoning;
         finishReason = outcome.finishReason;
         reasoningTokens = outcome.reasoningTokens;
+        // Every outcome, not only the interesting one: "answer=0, reasoning=0, finish=length" and
+        // "answer=0, reasoning=0, finish=stop" are completely different problems (one is a budget, the
+        // other is a model that said nothing), and until 2026-09-16 only the reasoning case was logged.
+        log(`AI answer: ${answer.length} characters, ${thinking.length} of thinking, finish reason ` +
+            `"${finishReason ?? 'unknown'}"${finishReason === 'length' ? ' — the budget ran out' : ''}` +
+            `${sidecarTail().length ? `; runtime last said: ${sidecarTail().slice(-1)[0]}` : ''}`);
         if (thinking) {
             log(`The model wrote ${thinking.length} characters of reasoning before its answer`
                 + `${reasoningTokens ? ` (${reasoningTokens} thinking tokens)` : ''}`
@@ -683,10 +737,13 @@ async function proposeMethod(
         const why = describeEmptyAnswer(answer, {
             reasoningChars: thinking.length,
             reasoningTokens,
-            finishReason
+            finishReason,
+            promptTokens,
+            contextSize: cfg.contextSize
         });
         log(`The AI answer could not be used. ${why}\n--- raw answer (${answer.length} characters) ---\n${answer}\n`
             + (thinking ? `--- thinking (${thinking.length} characters, not used as code) ---\n${thinking}\n` : '')
+            + (sidecarTail().length ? `--- the runtime's own last lines ---\n${sidecarTail().join('\n')}\n` : '')
             + `--- end ---`);
         const choice = await vscode.window.showWarningMessage(
             `The model returned nothing usable — nothing was changed. ${why}`,
@@ -700,6 +757,45 @@ async function proposeMethod(
 
     const original = document.getText();
     const eol = original.includes('\r\n') ? '\r\n' : '\n';
+    const name = target.kind === 'replace' ? target.span.name : memberNameOf(code, target.language) ?? target.type.name;
+    const anchor: ProposalAnchor = {
+        kind: target.kind,
+        name,
+        documentUri: document.uri,
+        startLine: target.kind === 'replace' ? target.span.line : target.caretLine,
+        endLine: target.kind === 'replace' ? target.span.endLine : target.caretLine,
+        insert: target.kind === 'insert'
+            ? { caretLine: target.caretLine, type: target.type, language: target.language, usings }
+            : undefined
+    };
+
+    // No diff wanted (⚙ Settings → "Show the proposal as a diff", `assistant.showDiff`): write it now.
+    // Every rule that protects the file still ran above — a name that already exists was refused, the
+    // visibility was corrected — and the write is the same `WorkspaceEdit` the Apply button uses, so
+    // Ctrl+Z undoes it. What is skipped is the *review*, and that is the user's own choice (2026-09-16).
+    if (!cfg.showDiff) {
+        const written = await writeProposal(document, anchor, code);
+        if (!written.ok) {
+            void vscode.window.showWarningMessage(`${written.message} Nothing was changed.`);
+            return undefined;
+        }
+        log(`Applied ${name}() without showing a diff (assistant.showDiff is off).`);
+        const next = await vscode.window.showInformationMessage(
+            target.kind === 'insert'
+                ? `${name}() added${written.addedUsings.length ? ` (with ${written.addedUsings.join(', ')})` : ''} — Ctrl+Z undoes it.`
+                : `${name}() rewritten — Ctrl+Z undoes it.`,
+            'Build to verify',
+            'Undo',
+            'Dismiss'
+        );
+        if (next === 'Build to verify') await runBuildTask();
+        // "Undo" is offered by name because in this mode the change is already in the file: it is the one
+        // decision the missing diff would otherwise have been the place for.
+        if (next === 'Undo') await vscode.commands.executeCommand('undo');
+        if (target.kind === 'insert') await offerWiring({ wiring: wiringFor(name, target) });
+        return summarise(code);
+    }
+
     const proposed = target.kind === 'replace'
         ? spliceMethod(original, target.span, code, eol)
         : addMemberToFile({
@@ -710,7 +806,6 @@ async function proposeMethod(
               type: target.type,
               language: target.language
           }).text;
-    const name = target.kind === 'replace' ? target.span.name : memberNameOf(code, target.language) ?? target.type.name;
 
     // A new proposal replaces an older one: its diff is stale, so its tab and content go.
     const previous = pending;
@@ -867,8 +962,7 @@ export async function implementInFunction(): Promise<void> {
         method,
         header: headerOf(editor.document, language),
         sibling: siblingOf(editor.document, span, all)
-    });
-    // The dialog comes first: starting the bundled server takes a few seconds (a cold build can take
+    });    // The dialog comes first: starting the bundled server takes a few seconds (a cold build can take
     // much longer), so nothing is started until there is a request to send.
     const resolved = await effectiveConfig(cfg);
     if (!resolved) return;

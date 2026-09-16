@@ -380,6 +380,18 @@ module.exports = async (t) => {
         t.ok(/addXamlEventAttribute\(text, w\.control, w\.event, w\.handler\)/.test(ui), 'command',
             'through the tested text edit, on an undoable WorkspaceEdit');
         t.ok(/if \(pick !== 'Wire it'\) return;/.test(ui), 'command', 'offered, never assumed — the form is a different file');
+
+        // --- the diff switch (asked 2026-09-16): review first, or write it straight in ---
+        t.ok(/if \(!cfg\.showDiff\) \{/.test(ui), 'command',
+            'the command honours "no diff" — the same code path, without the review step');
+        t.ok(/const written = await writeProposal\(document, anchor, code\);/.test(ui), 'command',
+            'and writes it through the very function the Apply button uses, so the two cannot diverge');
+        t.ok(/Applied \$\{name\}\(\) without showing a diff/.test(ui), 'command',
+            'saying in the log that the review step was skipped, and why');
+        t.ok(/'Undo'/.test(ui) && /executeCommand\('undo'\)/.test(ui), 'command',
+            'offering Undo by name — in that mode the change is already in the file');
+        t.ok(/showDiff: cfg\.get<boolean>\('showDiff', true\)/.test(read('src/assistantUi.ts')), 'command',
+            'read at the one place every entry point shares');
     }
 
     // ---------------- the small conveniences ----------------

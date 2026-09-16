@@ -166,11 +166,15 @@ class ModelServer {
         let stdout = '';
         child.stdout?.on('data', (d: Buffer) => {
             stdout += d.toString();
+            rememberSidecar(d);
             // Straight into View → Output → "Avalonia Designer": the first thing to look at when the
             // runtime will not start, and the only place the model's own load messages appear.
             log(`ModelHost: ${d.toString().trim()}`);
         });
-        child.stderr?.on('data', (d: Buffer) => logError(`ModelHost: ${d.toString().trim()}`));
+        child.stderr?.on('data', (d: Buffer) => {
+            rememberSidecar(d);
+            logError(`ModelHost: ${d.toString().trim()}`);
+        });
 
         await new Promise<void>((resolve, reject) => {
             const timer = setTimeout(() => reject(new Error('The model runtime did not start within 60 s.')), 60000);
@@ -273,6 +277,30 @@ export function stopModelServer(): void {
  * through `modelPath` rather than `model`, so without it the picker showed no sign that a load had worked
  * (reported 2026-09-15).
  */
+/**
+ * The runtime's own last words, kept so a *failed request* can quote them.
+ *
+ * They already go to View → Output → "Avalonia Designer", which is the right place to read them and the
+ * wrong place to find them when a report arrives: the 2026-09-16 "0 characters" report could not say
+ * whether the chat template had been rejected, because that line lived only in the output channel.
+ * Bounded (the last 40 lines), because a load can be chatty and this is a breadcrumb, not a log file.
+ */
+const sidecarLines: string[] = [];
+
+function rememberSidecar(chunk: Buffer): void {
+    for (const raw of chunk.toString().split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        sidecarLines.push(line);
+        if (sidecarLines.length > 40) sidecarLines.shift();
+    }
+}
+
+/** The runtime's last output lines, oldest first — empty when it has said nothing. */
+export function sidecarTail(): string[] {
+    return sidecarLines.slice();
+}
+
 export function bundledRuntimeRunning(): { running: boolean; endpoint?: string } {
     const running = server?.current();
     return running ? { running: true, endpoint: running.endpoint } : { running: false };

@@ -930,14 +930,22 @@ and says why instead of pretending.
   light-bulb menu) when the line sits inside a method. Structural findings — a missing accessor, a lost
   Data-Image block — keep their exact rule-based fix and do not offer the model at all.
 
-**Nothing is written without you.** The proposal opens as a **diff** beside your file, and the decision
-does not expire: **✓ Apply AI change** and **✕ Discard** appear **directly above the method** in the file,
+**Nothing is written without you — unless you ask it to be.** By default the proposal opens as a **diff**
+beside your file, and the decision does not expire: **✓ Apply AI change** and **✕ Discard** appear
+**directly above the method** in the file,
 in the **status bar** (bottom right, highlighted) and in the diff's own title bar — reading a diff takes as
 long as it takes, and a notification that vanishes after a few seconds is the wrong place for that choice.
 **Apply** writes it as a normal edit (so **Ctrl+Z** undoes it), **Discard** throws it away. The right-hand
 pane of the diff is a read-only preview, so nothing ever asks you to save it. The extension then offers
 **Build to verify**, which saves your unsaved files first (that is what a build compiles) and runs your
 project's `build` task, reporting the exit code — the check that actually matters for generated code.
+
+**Prefer no review step?** Clear **Show the proposed code as a diff before it is applied** in the ⚙ Settings
+panel — the same switch as `avaloniaDesigner.assistant.showDiff` (on by default). The model's code is then
+written straight into the file: the same rules still run first (a name that already exists is refused, the
+visibility is still corrected), it is still one normal undoable edit, and the confirmation that appears
+afterwards offers **Undo** by name — which is the only place in that mode where the diff would have given you
+a second chance.
 
 **Models that think before they answer.** Some models (Qwen3.5, DeepSeek-R1 and friends) first write a long
 chain of thought and only then write the code. That is fine — the extension understands both parts: while it

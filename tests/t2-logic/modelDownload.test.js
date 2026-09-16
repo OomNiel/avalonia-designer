@@ -218,8 +218,15 @@ module.exports = async (t) => {
         t.ok(/contextSize: cfg\.contextSize/.test(runtime) && /gpuLayers: cfg\.gpuLayers/.test(runtime), 'sidecar',
             'the server start passes them through');
         const ui = read('src/assistantUi.ts');
-        t.ok(/sidecarContextSize\(cfg\.get<number>\('loadContextLength'/.test(ui), 'sidecar',
+        t.ok(/sidecarContextSize\([\s\S]{0,220}?cfg\.get<number>\('loadContextLength'/.test(ui), 'sidecar',
             'the request-time config reads the panel\'s context setting');
+        // The window has to hold the prompt *and* the answer: with a 4096 window and a 4096 answer budget
+        // (both defaults in 0.9.36) a request could not fit, which is how a bundled 12B model came back
+        // with nothing at all (reported 2026-09-16).
+        t.ok(/contextForBudget\(/.test(ui), 'sidecar',
+            'and grows it to fit the answer budget when the user did not set one');
+        t.ok(/answerBudget\(cfg\.maxTokens, cfg\.contextSize, promptTokens\)/.test(ui), 'sidecar',
+            'the answer budget is measured against the prompt that is actually being sent');
         t.ok(/sidecarGpuLayers\(cfg\.get<string>\('loadGpu'/.test(ui), 'sidecar', 'and its GPU setting');
         const panel = read('src/aiPanel.ts');
         t.ok(/sidecarContextSize\(request\.contextLength/.test(panel) && /sidecarGpuLayers\(request\.gpu\)/.test(panel),

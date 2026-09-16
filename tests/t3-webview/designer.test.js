@@ -25,7 +25,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'handlerModal', 'handlerTitle', 'handlerHint', 'handlerList', 'handlerAdd', 'handlerClose',
     'btnCodeSettings', 'settingsModal', 'settingsHint', 'settingsModes', 'settingsBadges', 'settingsSave', 'settingsCancel',
     // the AI assist section of that panel (2026-09-15): switch, model list, load options, actions
-    'aiEnabled', 'aiBadge', 'aiBody', 'aiModel', 'aiModelHint', 'aiRefresh', 'aiScan',
+    'aiEnabled', 'aiShowDiff', 'aiShowDiffHint', 'aiBadge', 'aiBody', 'aiModel', 'aiModelHint', 'aiRefresh', 'aiScan',
     'aiOptions', 'aiContext', 'aiGpu', 'aiTtl', 'aiMaxTokens', 'aiTimeout', 'aiEndpoint',
     'aiOptContext', 'aiOptGpu', 'aiOptTtl', 'aiOptAddress',
     'aiLoad', 'aiUnload', 'aiRemove', 'aiStatus', 'aiProgress', 'aiStatusText',
@@ -72,6 +72,7 @@ function setup(omit = []) {
         if (id === 'settingsBadges') return 'input';
         if (id === 'settingsSave' || id === 'settingsCancel') return 'button';
         if (id === 'aiEnabled') return 'input';
+        if (id === 'aiShowDiff') return 'input';
         if (id === 'aiBody' || id === 'aiOptions') return 'div';
         if (id.startsWith('aiOpt')) return 'div'; // the option rows the panel hides per runtime
         if (id === 'aiModel' || id === 'aiGpu' || id === 'aiTtl') return 'select';
@@ -700,6 +701,27 @@ module.exports = async (t) => {
     t.equal($('aiOptTtl').hidden, false, 'ai-picker', 'and the idle-unload row comes back for it');
     t.ok(/shared-memory GPU/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
         'with the hint reworded for LM Studio');
+    // --- "show the proposal as a diff" — the switch that turns the review step off ---
+    // Asked 2026-09-16: the ⚙ panel should let the user choose between reviewing a diff and having the code
+    // written straight in. The webview only shows the state and posts it on Save; the extension owns the
+    // behaviour, and the safe side is the default — a state that *forgot* the field must still show a diff.
+    msg({ type: 'aiState', state: aiState() });
+    t.equal($('aiShowDiff').checked, true, 'showdiff',
+        'a state with no `showDiff` field still means "show the diff" — the default is the safe one');
+    t.equal($('aiShowDiffHint').hidden, true, 'showdiff', 'and the hint stays out of the way while it is on');
+    msg({ type: 'aiState', state: aiState({ showDiff: false }) });
+    t.equal($('aiShowDiff').checked, false, 'showdiff', 'the state turns the switch off');
+    t.equal($('aiShowDiffHint').hidden, false, 'showdiff',
+        'and says what that means — the code goes straight in, and Ctrl+Z is the way back');
+    $('btnCodeSettings').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    fillSettingsFromHost();
+    posted.length = 0;
+    $('aiShowDiff').checked = true;
+    $('settingsSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    const savedAi = posted.find((m) => m.type === 'saveCodeSettings');
+    t.equal(savedAi && savedAi.ai && savedAi.ai.showDiff, true, 'showdiff',
+        'the checkbox travels with the AI settings on Save');
+
     msg({ type: 'aiState', state: aiState({ selected: 'bundled:not-in-the-list', pinned: '', hint: '' }) });
     t.equal($('aiProgress').hidden, false, 'ai-picker',
         'a selection with no matching entry is reported rather than silently swapped for another model');

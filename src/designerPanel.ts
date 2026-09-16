@@ -6286,6 +6286,9 @@ ${publishButtons}      <span class="sep"></span>
             <p class="modal-hint">A local model on this machine can write a handler from a sentence, or repair a
               finding a rule cannot express. Nothing is sent anywhere — the address is always <code>127.0.0.1</code>.</p>
             <label class="modal-check"><input type="checkbox" id="aiEnabled"/> Use a local model for Code Fix and Implement</label>
+            <label class="modal-check"><input type="checkbox" id="aiShowDiff"/> Show the proposed code as a diff before it is applied</label>
+            <p class="modal-hint" id="aiShowDiffHint">Unchecked, the model's code is written straight into the file — still one undoable edit
+              (Ctrl+Z), and the same checks run first: a name that already exists is refused, and the visibility is fixed.</p>
 
             <div id="aiBody" hidden>
           <label class="modal-field"><span>Model</span>

@@ -30,6 +30,9 @@ import * as os from 'os';
 // The event catalogue only (a pure table): a new member whose name looks like `<Control>_<Event>` is a
 // form handler, and a form handler can never be `static`/`Shared`.
 import { isKnownEventName } from './controlEvents';
+// The window the bundled runtime is started with by default — the number `contextForBudget` grows when the
+// answer budget needs more room (2026-09-16).
+import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
 
 /** How the assistant gets its model. `bundled` = the extension builds and runs its own local server. */
 export type AssistantBackend = 'off' | 'external' | 'bundled';
@@ -56,6 +59,15 @@ export interface AssistantConfig {
     timeoutSeconds: number;
     maxTokens: number;
     temperature: number;
+    /**
+     * Show the model's code as a diff before it is applied.
+     *
+     * On by default, because a small model's answer is a *proposal* and a diff is how it is reviewed
+     * (2026-09-14). Switched off, the same code is written straight into the file: the deterministic
+     * rules still run first — a name that already exists is refused, the visibility is corrected — and
+     * the write is a normal edit, so Ctrl+Z undoes it (asked 2026-09-16).
+     */
+    showDiff: boolean;
 }
 
 /** Raw settings as they come out of the manifest (every field possibly undefined/wrong-typed). */
@@ -70,6 +82,7 @@ export interface RawAssistantSettings {
     timeoutSeconds?: unknown;
     maxTokens?: unknown;
     temperature?: unknown;
+    showDiff?: unknown;
 }
 
 /** LM Studio's default port — the most likely local server, and what the docs point at. */
@@ -116,7 +129,10 @@ export function normalizeAssistantConfig(raw: RawAssistantSettings): AssistantCo
         gpuLayers: num(raw.gpuLayers, 0, 0, 999),
         timeoutSeconds: num(raw.timeoutSeconds, 60, 5, 600),
         maxTokens: num(raw.maxTokens, 4096, 64, 8192),
-        temperature: num(raw.temperature, 0.2, 0, 1)
+        temperature: num(raw.temperature, 0.2, 0, 1),
+        // Only an explicit `false` turns the diff off: a missing setting, or anything unreadable, keeps
+        // the safe default (review before writing).
+        showDiff: raw.showDiff !== false
     };
 }
 
@@ -764,10 +780,21 @@ export interface EmptyAnswerDiagnostics {
     reasoningTokens?: number;
     /** `length` means the budget ran out; that is the difference between "too small" and "rambled". */
     finishReason?: string;
+    /** Rough size of the prompt that was sent (~characters/4), when it is known. */
+    promptTokens?: number;
+    /** The window the request had to fit in, when it is known. */
+    contextSize?: number;
 }
 
 export function describeEmptyAnswer(answer: string, diag: EmptyAnswerDiagnostics = {}): string {
     const text = String(answer ?? '');
+    // The prompt and the window, when they are known: "the budget ran out" is only actionable if it says
+    // how much of the window the *prompt* had already taken (added 2026-09-16, after a bundled 12B model
+    // answered with nothing at all).
+    const squeeze = diag.promptTokens && diag.contextSize
+        ? ` The prompt was about ${diag.promptTokens} tokens of a ${diag.contextSize}-token window, so the `
+        + 'answer had little room left.'
+        : '';
     if (!text.trim()) {
         const thinking = diag.reasoningChars ?? 0;
         if (thinking > 0) {
@@ -776,13 +803,15 @@ export function describeEmptyAnswer(answer: string, diag: EmptyAnswerDiagnostics
             return `This model thinks before it answers: it wrote ${thinking} characters of reasoning${tokens} `
                 + `${spentAll ? 'and then ran out of budget before writing any code' : 'but no code'}. `
                 + `Raise "avaloniaDesigner.assistant.maxTokens" (4096 is enough for a thinking model), `
-                + `or choose a coder model that answers directly.`;
+                + `or choose a coder model that answers directly.${spentAll ? squeeze : ''}`;
         }
         if (diag.finishReason === 'length') {
             return 'The answer budget ran out before the model wrote anything — raise '
-                + '"avaloniaDesigner.assistant.maxTokens".';
+                + `"avaloniaDesigner.assistant.maxTokens".${squeeze}`;
         }
-        return 'The model returned an empty answer.';
+        return `The model returned an empty answer${diag.finishReason ? ` (finish reason "${diag.finishReason}")` : ''}.`
+            + `${squeeze} A model that says nothing at all usually cannot use the prompt it was given — `
+            + 'try the same request with another model, and check the window above.';
     }
     if (text.includes(CODE_FENCE)) {
         return 'The code block in the answer was never closed — it was cut off before it was complete.';
@@ -854,6 +883,54 @@ export function spliceMethod(text: string, span: MethodSpan, code: string, eol =
 /** Line count guard: a method too long for a small model is refused before we send anything. */
 export function methodTooLong(method: string): boolean {
     return method.split('\n').length > MAX_METHOD_LINES;
+}
+
+/**
+ * Rough token count for a prompt or an answer (`characters / 4`).
+ *
+ * A rule of thumb, deliberately: it is used to keep a request inside the window the model was started
+ * with, and for that it only has to be in the right ballpark — being 20% wrong still leaves headroom.
+ */
+export function estimateTokens(text: string): number {
+    return Math.ceil(String(text ?? '').length / 4);
+}
+
+/**
+ * The answer budget a request may ask for, given the window it has to share with its prompt.
+ *
+ * Found on 2026-09-16, after a bundled 12B model answered with **0 characters**: the window the sidecar
+ * was started with (4096 by default) and the answer budget the extension asked for (4096 by default,
+ * raised for thinking models in 0.9.15) were chosen independently, so prompt + answer could not both fit.
+ * The sidecar's own clamp reserves a flat 512 tokens for the prompt — a number that was right when the
+ * request cap *was* 900 tokens and has been wrong since. A thinking model then spends what is left on
+ * thinking and returns `finish_reason: length` with nothing to show for it.
+ *
+ * The prompt is therefore measured and the answer gets what is actually left. Only meaningful for the
+ * bundled runtime: an external server (LM Studio, Ollama) decides its own context, and guessing it would
+ * cut requests that are perfectly fine there.
+ */
+export function answerBudget(
+    maxTokens: number,
+    contextSize: number,
+    promptTokens: number
+): { maxTokens: number; reduced: boolean; room: number } {
+    // 64 tokens of slack for the template and the stop marker, and a floor so a huge prompt still gets a
+    // usable (if short) answer instead of a refusal: the model can always say "that does not fit".
+    const room = Math.max(64, Math.floor(contextSize - promptTokens - 64));
+    return { maxTokens: Math.max(64, Math.min(maxTokens, room)), reduced: maxTokens > room, room };
+}
+
+/**
+ * The context the bundled runtime should be started with, given the answer budget the user asked for.
+ *
+ * The other half of the same bug: a 4096-token window with a 4096-token answer budget leaves nothing for
+ * the prompt, so the window grows to hold both — unless the user set an explicit context length, which is
+ * honoured as-is (the per-request clamp above keeps that safe).
+ */
+export function contextForBudget(requestedContext: number, maxTokens: number): number {
+    const asked = Math.round(Number(requestedContext) || 0);
+    if (asked > 0) return asked;
+    return Math.max(DEFAULT_CONTEXT_SIZE, Math.round(maxTokens) + 2048);
 }
 
 // ---------------- a brand-new member (asked 2026-09-16) ----------------

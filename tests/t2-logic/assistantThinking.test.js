@@ -175,8 +175,12 @@ module.exports = async (t) => {
         t.ok(/coder model/.test(why), 'empty', 'and the alternative of choosing a model that does not think');
 
         // The old behaviour, which must not come back: a bare, worthless message.
-        t.equal(describeEmptyAnswer(''), 'The model returned an empty answer.', 'empty',
+        t.ok(/^The model returned an empty answer/.test(describeEmptyAnswer('')), 'empty',
             'with no evidence at all, the message still has to say something');
+        t.ok(/finish reason/.test(describeEmptyAnswer('', { finishReason: 'stop' })), 'empty',
+            'and it reports the finish reason it was given — "stop" and "length" are different problems');
+        t.ok(/cannot use the prompt it was given/.test(describeEmptyAnswer('')), 'empty',
+            'saying what an empty answer usually means rather than leaving the user with nothing');
         t.ok(/budget ran out/.test(describeEmptyAnswer('', { finishReason: 'length' })), 'empty',
             'a bare length stop names the budget');
         t.ok(/prose instead of code/.test(describeEmptyAnswer('Here is the method you wanted:')), 'empty',

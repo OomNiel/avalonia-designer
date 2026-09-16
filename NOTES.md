@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3940 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3962 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2451,3 +2451,41 @@ it). The cheap check is not a substitute for the authoritative one, and the auth
 reason to skip the cheap one.
 
 **Suite:** 3940 passed / 0 failed (was 3841).
+
+### §120 — "0 characters" from a 12B model, and a switch that skips the diff (2026-09-16, release 0.9.37)
+
+Reported while testing §119: *"when I use the gemma-4-coder-12b-q4 model the code comes back with
+Received 0 characters and nothing else"*. The first thing that saved the investigation was a plain question:
+**is that string even ours?** `grep -rn "Received" src/ media/ host/` → nothing. It is LM Studio's own
+wording, i.e. the answer was produced by LM Studio's server, not by the bundled runtime — and `logs/ai.log`
+showed **no request at all** for that model (the last entries were DeepSeek), which is the second finding:
+a failed request could leave no trace of itself.
+
+**The bug this did uncover is ours, and it is arithmetic.** The bundled runtime is started with a window of
+4096 (`DEFAULT_CONTEXT_SIZE`) while the answer budget defaults to 4096 as well (raised in 0.9.15 for
+thinking models) — so prompt + answer cannot both fit. The sidecar even clamps the answer itself, to
+`ContextSize - 512`, and its comment says why: *"the extension caps its request at 900 tokens"* — true when
+it was written, and wrong since 0.9.15. The §119 generate prompt is the largest of the three, so it is the
+one that hits the wall first, and a thinking model (Gemma-4 code builds have a reasoning channel) spends
+its share on thinking and returns `finish_reason: length` with **nothing**. Fixed in three parts:
+`estimateTokens()` measures the prompt, `answerBudget()` gives the answer what is actually left (floor 64,
+and only for the bundled backend — LM Studio owns its own context and guessing it would cut requests that are
+fine), and `contextForBudget()` grows the window to hold the budget when the user has not pinned one.
+
+**Process fix, the same lesson as §111 and §117:** log your own inputs on the boring path too. Every request
+now logs model/endpoint/prompt size/budget/window *before* it is sent, every outcome logs answer length,
+thinking length and finish reason (including `answer=0, reasoning=0`, which used to leave nothing), and the
+sidecar's last output lines are kept in a 40-line ring so an empty answer can quote them — "chat template not
+usable, falling back to the default" is the line that explains a model answering with nothing, and it lived
+only in View → Output → *Avalonia Designer*.
+
+**The switch** (asked in the same message): *"Put a tickbox in the Settings panel where the user can select to
+either display the diff (current method), or have the system Apply the new code directly"*. Done as
+`assistant.showDiff` (default **on**) + a checkbox under the AI switch. The non-diff path is not a second
+implementation: `proposeMethod` skips the proposal and calls the same `writeProposal()` the Apply button uses,
+so the two modes cannot place code differently. Everything protective still runs first — the duplicate-name
+refusal, the visibility correction — and the toast offers **Undo** by name, because in that mode the change is
+already in the file. The webview's "a state that forgot the field" case defaults to showing the diff, since
+that is the side that protects a file from a bad answer.
+
+**Suite:** 3962 passed / 0 failed (was 3940).
