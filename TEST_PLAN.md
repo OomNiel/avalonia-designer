@@ -276,6 +276,24 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.45` (2026-09-16)** — **Vulkan as an optional backend for the built-in runtime**
+  (`assistant.bundledBackend`, *AI: Built-in Runtime Backend…*), CPU by default, plus the second round of ⚙ dialog
+  height work. `tests/t2-logic/vulkanBackend.test.js` (103 assertions) covers what can be decided without a GPU:
+  what the setting means (only the word `vulkan` — `gpu`, `vulkans` and a wrong type are all the CPU build), the
+  argv (the build is *always* stated, like `--gpu-layers 0`), the two-attempt plan and the fact that the
+  fallback message is not awaited, what `/health` is allowed to claim (including "Vulkan was asked for but
+  llama.cpp used the CPU build"), the **C#** source where the C# is the decision (CUDA `false`, Vulkan `false`
+  by default, `WithAutoFallback(true)`, the two facts recorded as the log lines arrive rather than read back from
+  a buffer, and the no-double-hyphen rule an XML comment needs — that one failed the build), and the two hint
+  sentences by *length* with the Chromium measurement in the message. The layout guards in `aiPanel.test.js`
+  gained the four declarations the second measurement paid for and a guard against a `min-height` floor (the
+  trap §127 named: the Save row is sticky and last in flow, so a floor leaves dead space *below* the buttons).
+  Two guards were updated with their reason, not relaxed: the exact sidecar argv and the webview's GPU hint.
+- **Release `0.9.44` (2026-09-16)** — the ⚙ Settings dialog capped to the window (`calc(100vh - 8px)`, tighter
+  rhythm inside it only) and **`tools/measure-settings-panel.py`**, a tape measure that renders the dialog's real
+  markup and stylesheet in Chromium and exposes `window.__measure()`. No new assertions beyond the layout guards
+  in `aiPanel.test.js` (the viewport cap, `overflow-y: auto`, the pinned Save row, the panel's own width) — and
+  deliberately so: jsdom has no layout engine, so a *test* could not have answered the question that was asked.
 - **Release `0.9.43` (2026-09-16)** — **house rules**: the idioms the developer's own code follows, kept in
   `assistant.conventions` and added to every request, learned with **AI: Learn the House Rules from My Code…**
   (or the button in the ⚙ panel). `tests/t2-logic/conventions.test.js` (90 assertions) is mostly about

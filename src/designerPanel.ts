@@ -6354,7 +6354,7 @@ ${publishButtons}      <span class="sep"></span>
 
           <div id="aiConventions" class="ai-conv">
             <label for="aiConvText">House rules <span class="ai-hint">— one per line; every one of them is added to each request</span></label>
-            <textarea id="aiConvText" rows="4" spellcheck="false"
+            <textarea id="aiConvText" rows="3" spellcheck="false"
               placeholder="Indent with 4 spaces.&#10;Name event handlers &lt;Control&gt;_&lt;Event&gt;."></textarea>
             <div class="modal-buttons modal-buttons-tight">
               <button id="aiLearnConventions" type="button" class="modal-btn">Learn from my code…</button>

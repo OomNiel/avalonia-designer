@@ -265,6 +265,23 @@ export interface SidecarOptions {
     threads?: number;
     contextSize?: number;
     gpuLayers?: number;
+    backend?: SidecarBackend;
+}
+
+/**
+ * The native build the built-in runtime should use (2026-09-16).
+ *
+ * `cpu` is the default and is what the extension has always shipped: llama.cpp's CPU libraries need nothing
+ * from the GPU. `vulkan` asks for the GPU build, which is the same binary with a different set of native
+ * libraries (`runtimes/<rid>/native/vulkan/`) — and asking is a *request*: LLamaSharp falls back to the CPU
+ * libraries when this machine has no usable Vulkan device, so the answer is read back from the runtime (see
+ * `Native backend:` in the status) rather than assumed from the setting.
+ */
+export type SidecarBackend = 'cpu' | 'vulkan';
+
+/** A setting (or anything else) as a backend: only the exact word `vulkan` asks for the GPU build. */
+export function sidecarBackend(value: unknown): SidecarBackend {
+    return String(value ?? '').trim().toLowerCase() === 'vulkan' ? 'vulkan' : 'cpu';
 }
 
 /** Exact argv for the sidecar. Pure so the process it starts is testable without starting one. */
@@ -273,7 +290,22 @@ export function sidecarArgs(options: SidecarOptions): string[] {
     if (options.threads) args.push('--threads', String(options.threads));
     args.push('--ctx', String(options.contextSize ?? DEFAULT_CONTEXT_SIZE));
     args.push('--gpu-layers', String(options.gpuLayers ?? 0));
+    // Always stated, like `--gpu-layers 0`: the log line is the evidence of what was asked for, and a request
+    // that only sometimes appears on the command line is the sort of thing nobody can check later.
+    args.push('--backend', options.backend ?? 'cpu');
     return args;
+}
+
+/**
+ * The native builds to try, in order.
+ *
+ * Asking for Vulkan is a request, not a guarantee, and the failure this exists for is not a *file* problem:
+ * a Vulkan driver can die while the weights are loading (the driver aborts the process, which no library can
+ * catch). One retry on the CPU turns "the model stopped loading" into "the model loaded", and a second
+ * attempt is never made: if the CPU build cannot load it either, the reason is the model, not the GPU.
+ */
+export function sidecarAttempts(backend: SidecarBackend): SidecarBackend[] {
+    return backend === 'vulkan' ? ['vulkan', 'cpu'] : ['cpu'];
 }
 
 /** The base URL the extension's existing client is pointed at — `/chat/completions` hangs off it. */
@@ -290,19 +322,48 @@ export interface SidecarHealth {
     ok: boolean;
     loading: boolean;
     model?: string;
+    /** The native build the runtime actually loaded (`cpu` until it says otherwise). */
+    backend?: SidecarBackend;
+    /** The Vulkan device it used, when it used one. */
+    device?: string;
     error?: string;
 }
 
 /** Reads the sidecar's `/health`. Pure: every branch is covered by the tests, not by a live server. */
 export function parseHealth(body: unknown): SidecarHealth {
-    const obj = (body ?? {}) as { ok?: unknown; loaded?: unknown; loading?: unknown; model?: unknown; error?: unknown };
+    const obj = (body ?? {}) as { ok?: unknown; loaded?: unknown; loading?: unknown; model?: unknown; backend?: unknown; device?: unknown; error?: unknown };
     const loaded = obj.loaded === true || obj.ok === true;
     return {
         ok: loaded,
         loading: obj.loading === true,
         model: typeof obj.model === 'string' ? obj.model : undefined,
+        backend: obj.backend === undefined ? undefined : sidecarBackend(obj.backend),
+        device: typeof obj.device === 'string' && obj.device ? obj.device : undefined,
         error: typeof obj.error === 'string' && obj.error ? obj.error : undefined
     };
+}
+
+/**
+ * The status line for the built-in runtime's native build — one implementation for the status dialog and the
+ * ⚙ panel, so the two cannot disagree about whether the GPU is in play.
+ *
+ * `loaded` is what the *runtime* reported. Null means it is not running, and then the only honest thing to
+ * say is what was chosen, not what will happen: the fallback is llama.cpp's decision, made when the weights
+ * load, and a build that says "Vulkan" for a runtime that quietly ended up on the CPU is exactly the kind of
+ * claim this project does not make.
+ */
+export function nativeBackendLine(selected: SidecarBackend, loaded?: { backend?: SidecarBackend; device?: string }): string {
+    if (!loaded) {
+        return selected === 'vulkan'
+            ? 'Native backend: Vulkan build (chosen — it starts with the next request)'
+            : 'Native backend: CPU build';
+    }
+    if (loaded.backend === 'vulkan') {
+        return `Native backend: Vulkan build${loaded.device ? ` — ${loaded.device}` : ''}`;
+    }
+    return selected === 'vulkan'
+        ? 'Native backend: CPU build — Vulkan was asked for, but llama.cpp could not use it on this machine'
+        : 'Native backend: CPU build';
 }
 
 /**

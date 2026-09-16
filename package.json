@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox.",
-    "version": "0.9.44",
+    "version": "0.9.45",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -139,6 +139,12 @@
                 "title": "AI: Unload the Loaded Model",
                 "category": "Avalonia",
                 "icon": "$(debug-disconnect)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.chooseBackend",
+                "title": "AI: Built-in Runtime Backend…",
+                "category": "Avalonia",
+                "icon": "$(chip)"
             },
             {
                 "command": "avaloniaDesigner.assistant.startLlamaServer",
@@ -282,6 +288,9 @@
                 },
                 {
                     "command": "avaloniaDesigner.assistant.unloadModel"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.chooseBackend"
                 },
                 {
                     "command": "avaloniaDesigner.assistant.stopModel"
@@ -517,6 +526,19 @@
                     },
                     "default": [],
                     "description": "Extra Debian packages the app needs, added to the .deb's \"Depends\" (e.g. libcanberra0). The .NET runtime and the Avalonia native libraries are declared automatically."
+                },
+                "avaloniaDesigner.assistant.bundledBackend": {
+                    "type": "string",
+                    "enum": [
+                        "cpu",
+                        "vulkan"
+                    ],
+                    "enumDescriptions": [
+                        "CPU build — the default: works everywhere, needs nothing from the GPU.",
+                        "Vulkan build — puts model layers on the GPU. Downloaded the first time the runtime is built (~130 MB). llama.cpp falls back to the CPU by itself when Vulkan cannot be used."
+                    ],
+                    "default": "cpu",
+                    "markdownDescription": "Which llama.cpp build the **built-in runtime** runs (the extension's own local model server). Only the GPU-offload field matters after this: the CPU build has no GPU backend, so `max` there offloads nothing — the ⚙ Settings panel says so. This does not affect LM Studio or your own `llama-server`. The command **AI: Built-in Runtime Backend…** sets it too."
                 },
                 "avaloniaDesigner.assistant.loadContextLength": {
                     "type": "number",

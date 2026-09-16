@@ -19,8 +19,25 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.44`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.45`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.45 — the built-in runtime can use the GPU, when you ask it to.** The queued item was *"Vulkan as an
+  OPT-IN backend for the bundled llama.cpp runtime, CPU by default with fallback"*, and two probes settled the
+  shape before any code was written: LLamaSharp's Vulkan package really does run on this machine (a 3B Q4 model
+  loaded in **602 ms vs 1409 ms**, `offloaded 37/37 layers` to the Radeon 760M), and the `device lost` abort that
+  made this opt-in was *LM Studio's* build with the 17.7 GB model — it did not reproduce. So: **one binary**, two
+  native backends, chosen by `--backend cpu|vulkan`, always referenced (no second build to go stale); the
+  setting `assistant.bundledBackend` plus **AI: Built-in Runtime Backend…**; the extension reports the build
+  llama.cpp **actually loaded** (`/health` carries it, read from llama.cpp's own log lines as they arrive — the
+  first version read them from a trailing buffer and reported CPU for a Vulkan run); a failed Vulkan attempt is
+  retried **once** on the CPU, logged, and offered as a permanent switch. §128.
+
+- **The ⚙ Settings dialog now fits at 1024×700** (the second queued item, and the 0.9.44 follow-up): re-measured
+  in Chromium with the *real* per-model hint rather than the static markup, which corrected 0.9.44's own number —
+  the worst case was **54 px** behind the scroll, not 46. House rules at **3 rows** (−18 px) and a tighter
+  rhythm inside this dialog only (−36 px) put the content at **689 px → 0 px hidden**, House rules visible.
+  Only this dialog changed.
 
 - **0.9.44 — the ⚙ Settings dialog uses the window it is in.** Asked as *"it needs a few lines of height to be
   added"*, and this panel's height has now been reported twice — so it was **measured** instead of guessed:
@@ -164,7 +181,7 @@ server (LM Studio, Ollama, your own `llama-server`), tier 2 brings its own — `
 built on the user's machine with the .NET SDK, so one VSIX fits every platform, and weights are downloaded once
 with a SHA-256 check. Both are **off by default**.
 
-- **Versions 0.9.5 – 0.9.44 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
+- **Versions 0.9.5 – 0.9.45 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
   `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F (numbers-only
   version, both GitHub release flags, no BETA suffix). The repo tags only the `v1.0.0-beta.N` series — the 0.9.x
   releases are commits, not tags.

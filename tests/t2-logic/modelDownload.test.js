@@ -205,8 +205,13 @@ module.exports = async (t) => {
             'half of an unknown number of layers is not a layer count, so it is not guessed');
 
         const args = sidecarArgs({ modelPath: '/m/x.gguf', port: 49000, threads: 8, contextSize: 16384, gpuLayers: 999 });
-        t.equal(args.join(' '), '--model /m/x.gguf --port 49000 --threads 8 --ctx 16384 --gpu-layers 999', 'sidecar',
+        // `--backend cpu` was added in 2026-09-16: the native build is now a choice (CPU by default, Vulkan on
+        // request), and it is stated on the command line like `--gpu-layers 0` so the log line is the evidence
+        // of what was asked for. The flag is the *build*; `--gpu-layers` is still how many layers may use it.
+        t.equal(args.join(' '), '--model /m/x.gguf --port 49000 --threads 8 --ctx 16384 --gpu-layers 999 --backend cpu', 'sidecar',
             'and both reach the argv');
+        t.equal(sidecarArgs({ modelPath: '/m/x.gguf', port: 1 }).includes('--backend'), true, 'sidecar',
+            'the build is named even when nobody chose one — read as "CPU", never as a missing flag');
         t.equal(sidecarArgs({ modelPath: '/m/x.gguf', port: 1 }).includes('--ctx'), true, 'sidecar',
             'with the default kept when nothing is passed');
         t.equal(sidecarArgs({ modelPath: '/m/x.gguf', port: 1 }).join(' ').includes(`--ctx ${DEFAULT_CONTEXT_SIZE}`), true,

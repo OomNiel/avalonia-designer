@@ -15,6 +15,47 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.45] - 2026-09-16 · *the built-in runtime can use the GPU, when you ask it to*
+
+### Added
+
+- **The built-in runtime can run on the GPU** — `avaloniaDesigner.assistant.bundledBackend` (`cpu` by default,
+  `vulkan` on request) and the command **AI: Built-in Runtime Backend…**. Nothing changes for a default setup:
+  the CPU build is what runs, and the toggle is explicit. What it fixes is a promise the panel has been making
+  since the GPU-offload field existed: for the built-in runtime, *max* could not offload anything, because the
+  runtime only ever shipped llama.cpp's CPU libraries. Measured on the machine this was written on
+  (2026-09-16): the same 3B Q4 model loaded in **602 ms with Vulkan (`offloaded 37/37 layers` to an AMD Radeon
+  760M) against 1409 ms for the CPU build**.
+- **A GPU that cannot be used says so, twice over.** llama.cpp falls back to the CPU libraries by itself when
+  there is no usable Vulkan device, and the runtime reports which build it *actually* loaded — so the status
+  names the build and the device it is running on, never the one that was asked for. If the driver itself dies
+  while the weights load (the `device lost` crash that made this opt-in in the first place), the attempt is
+  retried **once** on the CPU build, the log records the reason, the status carries a note, and the warning
+  offers to make that permanent in one click.
+
+### Changed
+
+- **The ⚙ Settings dialog fits at 1024×700.** Re-measured in Chromium against the real stylesheet and markup,
+  with the two one-line changes the 0.9.44 notes had named: the **House rules** editor is 3 rows instead of 4
+  (−18 px) and this dialog's own rhythm is a little tighter (4 px between its hints, 1 px between its six
+  option rows, 4 px above its tight button rows, 8 px above the House rules rule — 36 px more). Content
+  736 → **689 px**: nothing is behind the scroll at 1024×700 any more (was 46 px), and at 1000×520 it is
+  179 px instead of 226 px. The measurement also corrected the 0.9.44 figure: the tape measure renders the
+  static markup, whose hint is one line where the webview writes two for a bundled model, so the real worst
+  case was **54 px**, not 46. Only this dialog changed; the eight small ones keep the shared values.
+- The GPU-offload row tells the truth about which build is running: with the CPU build it says *"max" needs the
+  Vulkan build* and names the command, and with the Vulkan build it keeps the *"a layer count, not a ratio"*
+  explanation it had.
+
+### Notes
+
+- **One binary, two native backends.** `host/ModelHost` always references `LLamaSharp.Backend.Vulkan` and picks
+  its libraries at runtime from a `--backend cpu|vulkan` flag, so there is no second build that could go stale
+  and no way for the binary to be wrong about how it was built. The price for anyone who enables the *built-in*
+  runtime: ~40 MB more NuGet download and a `bin/` of ~227 MB — both already excluded from the VSIX and git.
+- The other two engines are untouched: LM Studio's GPU engines and your own `llama-server` are their own builds
+  with their own settings, and this setting does not reach them.
+
 ## [0.9.44] - 2026-09-16 · *the ⚙ Settings dialog gets its last rows back*
 
 ### Fixed

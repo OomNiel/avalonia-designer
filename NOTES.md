@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4300 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4413 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2802,4 +2802,75 @@ it leaves dead space **below** the buttons (measured: box 658 px, Save row 281 p
 the box is also switched to a flex column with `margin-top: auto` on that row, which is a bigger change than the
 question asked for. Two reversible ways to gain the remaining 46 px at 1024×700 are named in the CHANGELOG's
 follow-up: the House rules textarea at 3 rows instead of 4 (−18 px), or that box behind its own fold (−92 px).
+
+### §128 — the built-in runtime gets the GPU it was already being asked for (2026-09-16, release 0.9.45)
+
+**What was queued, and what two facts changed about it.** *"Vulkan as an OPT-IN backend for the bundled
+llama.cpp runtime, CPU by default with fallback."* Two things measured before writing any code decided the
+shape of it:
+
+1. **LLamaSharp 0.27.0's Vulkan build is real and it works on this machine.** A probe (`/tmp/vkprobe`) with
+   `LLamaSharp.Backend.Vulkan` loaded a 3B Q4 model through `ggml_vulkan` — `Found 1 Vulkan devices: AMD Radeon
+   760M Graphics (RADV PHOENIX)`, `offloaded 37/37 layers to GPU`, **602 ms against 1409 ms** for the CPU
+   libraries, and it answered. The `device lost` abort that made this an opt-in in §111 was **LM Studio's own
+   Vulkan build** with the 17.7 GB model, and it did not reproduce here.
+2. **Which build is loaded is decided by a directory, and the answer is readable.** The packages copy their
+   natives to `runtimes/<rid>/native/vulkan/` (Vulkan) and `…/native/<avx>/` (CPU), and `NativeLibraryWithVulkan`
+   only yields a path when `SystemInfo.VulkanVersion` is non-null — which is also why a machine with no Vulkan
+   **cannot** get the wrong answer: the policy falls through to the AVX libraries. The `libggml-cpu.so` that
+   `ldd` reports as missing from the Vulkan set is by design: LLamaSharp loads it from the *avx* folder
+   (`NativeLibraryUtils.TryLoadLibrary`).
+
+**The decisions, and what they cost.**
+
+- **One binary, two backends, chosen by `--backend cpu|vulkan`.** The alternative — adding the package only when
+  the setting asks for it — was rejected because it needs a second build and a way to know which one is on disk,
+  and a stale build that lies about itself is precisely the failure this feature must not have. The price is
+  ~40 MB of NuGet download and a 227 MB `bin/` for anyone who enables the built-in runtime at all; both are
+  already outside the VSIX and outside git (`host/**/bin/` — the pattern that bit twice in §92).
+- **The extension reports what the runtime *loaded*, never what it asked for.** `ModelHost` installs
+  `NativeLibraryConfig`'s log callback and reads the two facts out of llama.cpp's own lines: the path it
+  successfully loaded (→ `cpu`/`vulkan`) and the `ggml_vulkan: 0 = <name>` device. `/health` carries both, the
+  status prints `Native backend: …`, and a Vulkan request served by the CPU build says exactly that.
+  **The first version of this was wrong**, and the way it was wrong is the lesson: it read the answer out of a
+  200-line ring buffer *after* the load, but a load emits ~900 lines and the library is chosen at the very top of
+  them — so it reported `cpu` for a run that had just offloaded every layer. It now records the two facts *as the
+  lines arrive*. Caught by running the thing and comparing `/health` with the log, not by reading the code.
+- **A failed Vulkan attempt is retried once on the CPU.** A driver that dies during the load aborts the process,
+  which no library can catch, so the retry lives where it can work: the extension's `start()` walks
+  `sidecarAttempts('vulkan') = ['vulkan', 'cpu']`, stops the corpse, logs why, and shows a warning **without
+  awaiting it** (a load must not wait for someone to dismiss a notification) that offers to write
+  `bundledBackend: cpu` — where the value already lives (§116). A missing model file is *not* retried: the same
+  failure twice is not a fallback.
+- **The switch is a setting and a command, not a panel row** — the ⚙ panel's rows are the decisions taken *per
+  load*, while this changes which program runs. What the panel did get is one honest sentence in the GPU-offload
+  hint, because that row had been offering a choice the shipped runtime could not honour.
+
+**The dialog, measured again — and the 0.9.44 number was wrong.** The same session finished the height work
+§127 had queued. Re-measuring first corrected a claim: `tools/measure-settings-panel.py` renders the **static
+markup**, whose GPU hint is one line, but the webview writes a two-line sentence for a bundled model — so the
+real worst case at 1024×700 was **54 px** behind the scroll, not the 46 px written into 0.9.44. With both
+measured reductions applied — House rules **4 → 3 rows** (−18 px) and a tighter rhythm inside this dialog only
+(4 px hint gaps, 1 px between its six option rows, 4 px above its tight button rows, 8 px above the House rules
+rule: −36 px) — the content is **689 px**:
+
+| editor area | 0.9.44 | now |
+|---|---|---|
+| 1440×900 | 738 box / 736 content — fits | 691 / 689 — fits |
+| **1024×700** | 692 / 736 → **46 px hidden** (54 in the real worst case) | 691 / 689 → **0 px hidden** |
+| 1000×520 | 512 / 736 → 226 px hidden | 512 / 689 → 179 px hidden |
+| AI section folded | 240 box | 145 box |
+
+The browser is still the only place this can be measured (jsdom has no layout engine), the `min-height` trap
+from §127 is now a *guard* rather than a comment, and the two hint sentences are pinned by length with the
+measurement in the message — a third line is 12 px this dialog has not got.
+
+**Suite:** 4413 passed / 0 failed (was 4300). New `tests/t2-logic/vulkanBackend.test.js` (103 assertions: what
+the setting means — including that `gpu` and `vulkans` are **not** the GPU — the argv, the two-attempt plan and
+the fact that the message is not awaited, what `/health` is allowed to claim including the `device lost`
+sentence, the C# source (CUDA off, Vulkan off by default, `WithAutoFallback`, the arrival-time capture, the
+no-double-hyphen rule an XML comment needs), the manifest/command/wiring, and the two measured hint sentences).
+Two existing guards were updated with their reason rather than relaxed: `modelDownload.test.js`'s exact argv
+(`--backend cpu` is now always stated, like `--gpu-layers 0`) and the webview's GPU hint assertion (the
+"layer count, not a ratio" sentence moved to the branch where it is true).
 

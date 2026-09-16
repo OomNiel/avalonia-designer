@@ -1277,7 +1277,13 @@
         say(els.aiOptGpu, kind === 'llama'
             ? 'max = all layers on the GPU (--n-gpu-layers); anything else runs on the CPU, which is usually faster for a big model on a shared-memory GPU.'
             : layerCount
-                ? 'max = all layers on the GPU; anything else runs on the CPU (the built-in runtime takes a layer count, not a ratio).'
+                // Whether "max" can do anything at all for the built-in runtime depends on which native build
+                // it is running: the CPU build has no GPU backend, so there the row would be a promise the
+                // runtime cannot keep. Both sentences are kept to two lines in the 235px hint column, measured
+                // in Chromium — a third line is 12px this dialog does not have to spare (2026-09-16).
+                ? (aiState && aiState.bundledBackend === 'vulkan'
+                    ? 'max = all layers on the GPU (a layer count, not a ratio) — the built-in runtime is the Vulkan build.'
+                    : '"max" needs the Vulkan build — this is the CPU build (AI: Built-in Runtime Backend…).')
                 : 'A shared-memory GPU is usually slower than the CPU for big models.');
         say(els.aiOptContext, kind === 'llama'
             ? 'tokens the model can hold — passed to llama-server as --ctx-size when it starts.'

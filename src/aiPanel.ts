@@ -30,7 +30,7 @@ import {
     type Discovery,
     type FoundModelFile
 } from './localModelCore';
-import { MODEL_SPECS, DEFAULT_CONTEXT_SIZE, specById, specByFileName, type ModelSpec } from './modelSpecs';
+import { MODEL_SPECS, DEFAULT_CONTEXT_SIZE, sidecarBackend, specById, specByFileName, type ModelSpec, type SidecarBackend } from './modelSpecs';
 import { configView } from './settingWrite';
 import {
     modelLabel,
@@ -71,6 +71,13 @@ export interface PanelState {
     endpoint: string;
     /** Show the model's code as a diff before it is applied (⚙ Settings, `assistant.showDiff`). */
     showDiff: boolean;
+    /**
+     * The native build of the built-in runtime (`assistant.bundledBackend`): `cpu` or `vulkan`.
+     *
+     * The panel needs it for one sentence — whether "max" on the GPU-offload row can do anything at all for
+     * a model the built-in runtime serves (2026-09-16).
+     */
+    bundledBackend: SidecarBackend;
     /** The house rules, one per line in the panel's editor (`assistant.conventions`). */
     conventions: string[];
     /** The value of the entry that matches the settings right now, or '' when nothing matches. */
@@ -277,6 +284,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
         enabled: backend !== 'off',
         endpoint,
         showDiff: cfg.get<boolean>('showDiff', true),
+        bundledBackend: sidecarBackend(cfg.get<string>('bundledBackend', 'cpu')),
         conventions: normaliseConventions(cfg.get<unknown>('conventions', [])),
         selected: currentSelection(
             choices,

@@ -32,7 +32,7 @@ import * as os from 'os';
 import { isKnownEventName } from './controlEvents';
 // The window the bundled runtime is started with by default — the number `contextForBudget` grows when the
 // answer budget needs more room (2026-09-16).
-import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
+import { DEFAULT_CONTEXT_SIZE, sidecarBackend, type SidecarBackend } from './modelSpecs';
 
 /** How the assistant gets its model. `bundled` = the extension builds and runs its own local server. */
 export type AssistantBackend = 'off' | 'external' | 'bundled';
@@ -56,6 +56,13 @@ export interface AssistantConfig {
     contextSize: number;
     /** Layers offloaded to the GPU by the bundled runtime (`--gpu-layers`). 0 = CPU only. */
     gpuLayers: number;
+    /**
+     * Which native build of the bundled runtime to run — `cpu` (the default) or `vulkan` (2026-09-16).
+     *
+     * The choice is a request, not a guarantee: the runtime reports back what llama.cpp actually loaded,
+     * which is how "Vulkan" cannot end up on screen for a model that is running on the CPU.
+     */
+    bundledBackend: SidecarBackend;
     timeoutSeconds: number;
     maxTokens: number;
     temperature: number;
@@ -79,6 +86,7 @@ export interface RawAssistantSettings {
     threads?: unknown;
     contextSize?: unknown;
     gpuLayers?: unknown;
+    bundledBackend?: unknown;
     timeoutSeconds?: unknown;
     maxTokens?: unknown;
     temperature?: unknown;
@@ -127,6 +135,9 @@ export function normalizeAssistantConfig(raw: RawAssistantSettings): AssistantCo
         threads: num(raw.threads, 0, 0, 32),
         contextSize: num(raw.contextSize, 4096, 512, 262144),
         gpuLayers: num(raw.gpuLayers, 0, 0, 999),
+        // Only the exact word `vulkan` asks for the GPU build; a missing or misspelt setting is the CPU build
+        // everyone already has, never a GPU request nobody made.
+        bundledBackend: sidecarBackend(raw.bundledBackend),
         timeoutSeconds: num(raw.timeoutSeconds, 60, 5, 600),
         maxTokens: num(raw.maxTokens, 4096, 64, 8192),
         temperature: num(raw.temperature, 0.2, 0, 1),

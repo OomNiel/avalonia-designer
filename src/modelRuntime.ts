@@ -42,13 +42,16 @@ import {
     shortHash,
     type HubFile,
     sidecarArgs,
+    sidecarAttempts,
     sidecarBaseUrl,
     sidecarHealthUrl,
     specByFileName,
-    type ModelSpec
+    type ModelSpec,
+    type SidecarBackend
 } from './modelSpecs';
 import { downloadProgressText, resumeFromBytes } from './localModels';
-import { configView } from './settingWrite';
+import { nativeBackendLine } from './modelSpecs';
+import { configView, updateSetting } from './settingWrite';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -122,12 +125,26 @@ class ModelServer {
     private proc?: cp.ChildProcess;
     private endpoint?: string;
     private starting?: Promise<string>;
+    /** What the running runtime said about its own native build (`/health`). */
+    private native?: { backend?: SidecarBackend; device?: string };
+    /** Set when a Vulkan attempt was replaced by the CPU one, so the status can say so later. */
+    private fallback?: string;
 
     constructor(private readonly context: vscode.ExtensionContext) { }
 
     current(): RunningServer | undefined {
         if (!this.endpoint || !this.proc || this.proc.exitCode !== null) return undefined;
         return { endpoint: this.endpoint, port: Number(new URL(this.endpoint).port) };
+    }
+
+    /** The native build the *running* runtime reported, or undefined when nothing is running. */
+    nativeInfo(): { backend?: SidecarBackend; device?: string } | undefined {
+        return this.current() ? this.native : undefined;
+    }
+
+    /** The GPU→CPU fallback that happened in this window, in words (undefined when there was none). */
+    fallbackNote(): string | undefined {
+        return this.current() ? this.fallback : undefined;
     }
 
     async ensureStarted(
@@ -157,14 +174,77 @@ class ModelServer {
         const bin = await buildSidecar(this.context);
         const port = await freePort();
         const threads = cfg.threads > 0 ? cfg.threads : defaultThreads(os.cpus().length);
-        const child = cp.spawn(bin, sidecarArgs({
+
+        // Asking for Vulkan is a request, not a guarantee, and the failure this handles cannot be caught:
+        // a Vulkan driver that dies during the load aborts the process. So the attempt is made once more on
+        // the CPU build — same file, same flags, a runtime that does not touch the GPU — and the reason is
+        // reported rather than swallowed. Only this is retried: a missing file or a failed build is the same
+        // failure twice (2026-09-16).
+        const attempts = sidecarAttempts(cfg.bundledBackend);
+        let lastError: unknown;
+        for (const backend of attempts) {
+            try {
+                this.fallback = undefined;
+                return await this.startOnce(bin, modelPath, port, threads, backend, cfg, progress);
+            } catch (e) {
+                lastError = e;
+                this.stop();
+                if (backend !== 'vulkan') continue;
+                const why = e instanceof Error ? e.message : String(e);
+                this.fallback = `the Vulkan build stopped while loading (${why}), so the CPU build was used instead`;
+                log(`ModelHost: ${this.fallback}`);
+                // Deliberately not awaited: the retry must not wait for someone to dismiss a message.
+                void this.reportVulkanFallback(why);
+            }
+        }
+        throw lastError;
+    }
+
+    /**
+     * Says the fallback out loud, and offers to make it permanent.
+     *
+     * A GPU attempt that silently becomes a CPU one is the thing this project keeps refusing to do: the user
+     * asked for the GPU, and finding out only from a status line they never open is not finding out. The
+     * offer writes the setting where it already lives (the §116 rule), so the next start is CPU on purpose.
+     */
+    private async reportVulkanFallback(why: string): Promise<void> {
+        const message = `The built-in runtime's Vulkan build stopped while loading the model (${why}). It was started `
+            + 'again on the CPU build, so the model still works — this machine\'s Vulkan driver and llama.cpp do '
+            + 'not get on.';
+        try {
+            const pick = await vscode.window.showWarningMessage(message, 'Use the CPU build from now on', 'Dismiss');
+            if (pick !== 'Use the CPU build from now on') return;
+            await updateSetting(configView(SETTINGS), 'bundledBackend', 'cpu');
+            void vscode.window.showInformationMessage('The built-in runtime will use the CPU build from now on.');
+        } catch {
+            /* a settings window that cannot be shown is never worth failing a load over */
+        }
+    }
+
+    /** One attempt: spawn the runtime with one native build and wait until the weights are in. */
+    private async startOnce(
+        bin: string,
+        modelPath: string,
+        port: number,
+        threads: number,
+        backend: SidecarBackend,
+        cfg: AssistantConfig,
+        progress?: vscode.Progress<{ message?: string }>
+    ): Promise<string> {
+        const argv = sidecarArgs({
             modelPath,
             port,
             threads,
             contextSize: cfg.contextSize,
-            gpuLayers: cfg.gpuLayers
-        }), { cwd: path.dirname(bin) });
+            gpuLayers: cfg.gpuLayers,
+            backend
+        });
+        // The exact command line, in the log, on success *and* failure: it is how the backend choice is
+        // checked, and how the same run is reproduced by hand.
+        log(`ModelHost: starting the ${backend} build: ${bin} ${argv.join(' ')}`);
+        const child = cp.spawn(bin, argv, { cwd: path.dirname(bin) });
         this.proc = child;
+        this.native = undefined;
 
         let stdout = '';
         child.stdout?.on('data', (d: Buffer) => {
@@ -214,7 +294,12 @@ class ModelServer {
             }
             const health = await readHealth(port).catch(() => undefined);
             if (health) {
-                if (health.ok) return;
+                if (health.ok) {
+                    // What the runtime says it loaded, not what it was asked for: llama.cpp falls back to the
+                    // CPU libraries on its own, and the status line must not claim the GPU in that case.
+                    this.native = { backend: health.backend, device: health.device };
+                    return;
+                }
                 if (health.error) throw new Error(`The model could not be loaded: ${health.error}`);
                 progress?.report({ message: health.loading ? 'loading the weights into RAM…' : 'starting the runtime…' });
             }
@@ -228,6 +313,7 @@ class ModelServer {
         const wasRunning = !!this.endpoint;
         this.proc = undefined;
         this.endpoint = undefined;
+        this.native = undefined;
         if (proc && proc.exitCode === null && !proc.killed) {
             try {
                 proc.kill();
@@ -389,6 +475,18 @@ export async function fetchHubFiles(repo: string, revision = 'main'): Promise<Hu
 export function bundledRuntimeRunning(): { running: boolean; endpoint?: string } {
     const running = server?.current();
     return running ? { running: true, endpoint: running.endpoint } : { running: false };
+}
+
+/**
+ * The two facts the status needs about the runtime's native build: what it reported loading, and whether a
+ * GPU attempt was replaced by the CPU one this session.
+ *
+ * Both come from the running process, so a stopped runtime reports nothing — and `nativeBackendLine` then says
+ * which build was *chosen* rather than inventing what it would do (the fallback is llama.cpp's decision, made
+ * when the weights load).
+ */
+export function bundledRuntimeFacts(): { native?: { backend?: SidecarBackend; device?: string }; fallback?: string } {
+    return { native: server?.nativeInfo(), fallback: server?.fallbackNote() };
 }
 
 function delay(ms: number): Promise<void> {
@@ -765,6 +863,11 @@ export function bundledStatusLines(cfg: AssistantConfig): string[] {
     const context = activeContext;
     const { bin } = sidecarPaths(context);
     const lines = [`Model runtime: ${fs.existsSync(bin) ? 'built' : 'not built yet (built on first use)'}`];
+    // Which llama.cpp build is running, said once and truthfully: the setting is a request, the runtime's own
+    // answer is the fact (2026-09-16).
+    const facts = bundledRuntimeFacts();
+    lines.push(nativeBackendLine(cfg.bundledBackend, facts.native));
+    if (facts.fallback) lines.push(`Note: ${facts.fallback}.`);
     const file = resolveModelPath(context, cfg);
     if (file) {
         const size = sizeOf(file);

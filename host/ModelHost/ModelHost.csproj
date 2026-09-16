@@ -21,13 +21,27 @@
     <AssemblyName>ModelHost</AssemblyName>
     <RootNamespace>ModelHost</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <!-- The CPU backend is enough for the 3B/7B models this ships with; a GPU backend is a later step. -->
     <ServerGarbageCollection>false</ServerGarbageCollection>
   </PropertyGroup>
 
+  <!--
+    Two native backends, one binary (2026-09-16).
+
+    The CPU package is what runs by default: LLamaSharp is explicitly told `WithVulkan(false)` unless the user
+    asks for the GPU build (the `backend` switch in the extension, which arrives here as the `backend` argument),
+    so nothing about the default changes because a second package is referenced. It is always referenced
+    (rather than added on demand) because that keeps ONE build and ONE binary: the choice is a flag on the
+    command line, so it shows up in the extension's log like every other decision, and switching back and
+    forth cannot leave a stale build behind that lies about itself.
+
+    The Vulkan natives land in `runtimes/<rid>/native/vulkan/` next to the CPU ones and are chosen by
+    LLamaSharp by directory, so the two sets cannot collide. They are ~65 MB per RID and are copied into
+    bin/, which is excluded from both the VSIX and git (see .vscodeignore / .gitignore).
+  -->
   <ItemGroup>
     <PackageReference Include="LLamaSharp" Version="0.27.0" />
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
+    <PackageReference Include="LLamaSharp.Backend.Vulkan" Version="0.27.0" />
   </ItemGroup>
 
 </Project>

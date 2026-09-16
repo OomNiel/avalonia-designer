@@ -68,7 +68,7 @@ import { configView, updateSetting } from './settingWrite';
 import { panelFor } from './aiPanel';
 import { findRunningLlamaServer, llamaServerBinary, llamaServerStatusLines } from './llamaServer';
 import { conventionsFor } from './conventionsUi';
-import { bundledStatusLines, ensureBundledEndpoint, sidecarTail } from './modelRuntime';
+import { bundledRuntimeRunning, bundledStatusLines, ensureBundledEndpoint, sidecarTail, stopModelServer } from './modelRuntime';
 import {
     addCustomModelSpec,
     customModelSpecs,
@@ -77,7 +77,7 @@ import {
     fetchHubFiles,
     removeCustomModelSpec
 } from './modelRuntime';
-import { canRunSpec, formatBytes, hubFileSpec, parseHubUrl, shortHash } from './modelSpecs';
+import { canRunSpec, formatBytes, hubFileSpec, parseHubUrl, sidecarBackend, shortHash, type SidecarBackend } from './modelSpecs';
 
 const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -99,6 +99,9 @@ export function assistantConfig(): AssistantConfig {
             contextForBudget(cfg.get<number>('loadContextLength', 0), cfg.get<number>('maxTokens', 4096))
         ),
         gpuLayers: sidecarGpuLayers(cfg.get<string>('loadGpu', 'auto')),
+        // Which native build the built-in runtime runs: `cpu` (default) or `vulkan`. Read here like every
+        // other setting, so the palette command, the panel and a request that starts the runtime agree.
+        bundledBackend: sidecarBackend(cfg.get<string>('bundledBackend', 'cpu')),
         timeoutSeconds: cfg.get<number>('timeoutSeconds', 60),
         maxTokens: cfg.get<number>('maxTokens', 4096),
         temperature: cfg.get<number>('temperature', 0.2),
@@ -1557,9 +1560,55 @@ async function statusFacts(): Promise<StatusFacts> {
     return { cfg, lines, probe, chatModels };
 }
 
+/**
+ * Chooses which native build of the built-in runtime runs: the CPU build (the default) or the Vulkan build.
+ *
+ * A command and a setting rather than a row in the ⚙ panel, because of what the choice *is*: the panel's rows
+ * are the decisions taken per load, while this changes which program runs at all — once, and then never again.
+ * It is also the honest place for the caveat, which is written into both options: the Ubuntu-style "ask for the
+ * GPU" is a request, and llama.cpp falls back to the CPU by itself when this machine has no usable Vulkan
+ * device (asked 2026-09-16).
+ */
+export async function chooseBundledBackend(): Promise<void> {
+    const cfg = configView(SETTINGS);
+    const current = sidecarBackend(cfg.get<string>('bundledBackend', 'cpu'));
+    const options = [
+        {
+            label: `${current === 'cpu' ? '$(check) ' : ''}CPU build`,
+            detail: 'The default. Works everywhere, needs nothing from the GPU, and is the smaller download.',
+            value: 'cpu' as SidecarBackend
+        },
+        {
+            label: `${current === 'vulkan' ? '$(check) ' : ''}Vulkan build — put layers on the GPU`,
+            detail: 'Adds llama.cpp\'s Vulkan build (~130 MB, downloaded the first time the runtime is built). '
+                + 'Whether it helps is your GPU\'s business: it loaded a 3B Q4 model twice as fast on the '
+                + 'machine this was written on. If Vulkan cannot be used, llama.cpp falls back to the CPU by '
+                + 'itself, and a driver that dies while loading is retried once on the CPU.',
+            value: 'vulkan' as SidecarBackend
+        }
+    ];
+    const pick = await vscode.window.showQuickPick(options, {
+        title: 'Which build should the built-in runtime use?',
+        placeHolder: 'The built-in runtime (the extension\'s own local model server)',
+        ignoreFocusOut: true
+    });
+    if (!pick || pick.value === current) return;
+
+    await updateSetting(cfg, 'bundledBackend', pick.value);
+    // A running runtime was started with the old flag, so it has to go: saying "it will use the GPU from now
+    // on" while the old process keeps answering would be the sort of quiet lie this feature exists to avoid.
+    const wasRunning = bundledRuntimeRunning().running;
+    if (wasRunning) stopModelServer();
+    void vscode.window.showInformationMessage(
+        `The built-in runtime will use the ${pick.value === 'vulkan' ? 'Vulkan' : 'CPU'} build`
+        + `${wasRunning ? ' — the runtime was stopped and restarts with it on the next request' : ''}.`
+        + ' "AI: Status & hardware check" names the build that is actually running.'
+    );
+    await refreshPanels();
+}
+
 /** Reports what the feature would use right now — including the hardware verdict. */
-export async function showStatus(): Promise<void> {
-    const { cfg, lines, probe, chatModels } = await statusFacts();
+export async function showStatus(): Promise<void> {    const { cfg, lines, probe, chatModels } = await statusFacts();
 
     const needsPin = !!probe?.ok && chatModels.length > 1 && !cfg.model;
     const actions = needsPin ? ['Pin a model…', 'Open settings', 'Copy'] : ['OK', 'Copy'];

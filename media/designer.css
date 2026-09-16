@@ -2013,7 +2013,24 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 
 /* Tighter only where those pixels are repeated: the hints under the switches and the option rows. */
 #settingsModal .modal-hint {
-    margin-bottom: 6px;
+    margin-bottom: 4px;
+}
+
+/* Six option rows at 4px of margin each is ~15px of air between them (siblings collapse, so the pairs are
+   4px, not 8px), and this dialog is the only one that has six of anything. Measured in Chromium
+   2026-09-16: with the two-line GPU hint a bundled model produces, the box hid 54px at a 1024x700 editor
+   area; the House rules box went from 4 rows to 3 (-18px), these three rules pay the rest. */
+#settingsModal .ai-opt {
+    margin: 1px 0;
+}
+
+#settingsModal .modal-buttons-tight {
+    margin-top: 4px;
+}
+
+#settingsModal .ai-conv {
+    margin-top: 8px;
+    padding-top: 8px;
 }
 
 #settingsModal .settings-section-head {

@@ -694,8 +694,19 @@ module.exports = async (t) => {
     // The per-runtime hints are written by the same call, so they are asserted here too: the fixture used to
     // lack the hint spans, and the throw they caused skipped everything after them in the state application.
     t.equal($('aiOptTtl').hidden, true, 'ai-picker', 'the idle-unload row is hidden for the built-in runtime');
+    // The GPU hint now depends on which native build the built-in runtime runs (2026-09-16): the CPU build has
+    // no GPU backend at all, so telling the user that "max" offloads every layer would be a promise the runtime
+    // cannot keep. The old "layer count, not a ratio" sentence moved to the case where it is true — the Vulkan
+    // build — and the guard was rewritten (not deleted) for that reason.
+    t.ok(/"max" needs the Vulkan build/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
+        'with the CPU build the GPU hint says "max" cannot offload anything');
+    t.ok(/AI: Built-in Runtime Backend/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
+        'and names the command that changes the build — the panel is where the question is asked');
+    msg({ type: 'aiState', state: aiState({ bundledBackend: 'vulkan' }) });
     t.ok(/layer count, not a ratio/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
-        'the GPU hint is worded for the built-in runtime');
+        'with the Vulkan build it explains that "max" is a layer count, not LM Studio\'s ratio');
+    t.ok(!/needs the Vulkan build/.test($('aiOptGpu').querySelector('.ai-hint').textContent), 'ai-picker',
+        'and it stops telling the user to switch to the build that is already running');
     t.ok(/handed to the built-in runtime/.test($('aiOptContext').querySelector('.ai-hint').textContent), 'ai-picker',
         'and so is the context hint');
     msg({ type: 'aiState', state: aiState({ selected: 'lms:google/gemma-4-e4b' }) });

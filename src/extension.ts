@@ -7,7 +7,7 @@ import { createNewProject, openLastProject, maybeRunFirstBuild } from './project
 import { ProjectViewProvider, setActiveContext } from './projectView';
 import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor';
 import { disposeIssues } from './codeBehindCheck';
-import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, refreshPanels, removeHubModel, showStatus } from './assistantUi';
+import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, chooseBundledBackend, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, refreshPanels, removeHubModel, showStatus } from './assistantUi';
 import { initModelRuntime, stopModelServer } from './modelRuntime';
 import { initLlamaServer, startMyLlamaServerFlow, stopOwnLlamaServer } from './llamaServer';
 import { learnConventions } from './conventionsUi';
@@ -159,6 +159,10 @@ export function activate(context: vscode.ExtensionContext): void {
             // platform (see NOTES.md §92). Its process is stopped when the window closes.
             vscode.commands.registerCommand('avaloniaDesigner.assistant.setupModel', () => chooseLocalModel(context)),
             vscode.commands.registerCommand('avaloniaDesigner.assistant.unloadModel', () => unloadLoadedModel()),
+            // Which llama.cpp build the bundled runtime runs: the CPU one by default, the Vulkan one when asked
+            // for. A setting and a command rather than a panel row, because it is a one-time choice about which
+            // program runs — and because it is the only place the caveat fits (asked 2026-09-16).
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.chooseBackend', () => chooseBundledBackend()),
             // The user's own llama.cpp server (asked 2026-09-16). It is the one runtime whose binary the
             // extension does not ship, so the flow starts by finding it and says so plainly when it is absent.
             vscode.commands.registerCommand('avaloniaDesigner.assistant.startLlamaServer', async () => {

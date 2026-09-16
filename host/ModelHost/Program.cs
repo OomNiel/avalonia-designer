@@ -27,19 +27,32 @@ using System.Text;
 using System.Text.Json;
 using LLama;
 using LLama.Common;
+using LLama.Native;
 using LLama.Sampling;
 using LLama.Transformers;
 
 namespace ModelHost;
 
-internal sealed record Options(string ModelPath, int Port, int Threads, int ContextSize, int GpuLayers)
+/// <summary>Which llama.cpp build to run. The CPU one is the default and needs nothing from the GPU.</summary>
+internal static class NativeBackend
+{
+    public const string Cpu = "cpu";
+    public const string Vulkan = "vulkan";
+
+    /// <summary>`backend vulkan` (or `Vulkan`) → the Vulkan build; anything else, including nothing,
+    /// is the CPU build. Unknown values are not silently accepted as a GPU request.</summary>
+    public static string Normalise(string? value) =>
+        string.Equals(value?.Trim(), Vulkan, StringComparison.OrdinalIgnoreCase) ? Vulkan : Cpu;
+}
+
+internal sealed record Options(string ModelPath, int Port, int Threads, int ContextSize, int GpuLayers, string Backend)
 {
     public string Name => Path.GetFileNameWithoutExtension(ModelPath);
 
     /// <summary>Parses argv; null when the call is unusable (the caller prints usage).</summary>
     public static Options? Parse(string[] args)
     {
-        string model = "";
+        string model = "", backend = NativeBackend.Cpu;
         int port = 0, threads = Math.Max(1, Math.Min(8, Environment.ProcessorCount - 1)), context = 4096, gpu = 0;
         for (var i = 0; i < args.Length; i++)
         {
@@ -51,21 +64,128 @@ internal sealed record Options(string ModelPath, int Port, int Threads, int Cont
                 case "--threads" when next is not null && int.TryParse(next, out var t): threads = Math.Max(1, t); i++; break;
                 case "--ctx" when next is not null && int.TryParse(next, out var c): context = Math.Max(512, c); i++; break;
                 case "--gpu-layers" when next is not null && int.TryParse(next, out var g): gpu = Math.Max(0, g); i++; break;
+                case "--backend" when next is not null: backend = NativeBackend.Normalise(next); i++; break;
             }
         }
         if (model.Length == 0 || port <= 0 || !File.Exists(model)) return null;
-        return new Options(model, port, threads, context, gpu);
+        return new Options(model, port, threads, context, gpu, backend);
     }
 
     public static void Usage() => Console.Error.WriteLine(
-        "usage: ModelHost --port <n> --model <path.gguf> [--threads n] [--ctx n] [--gpu-layers n]");
+        "usage: ModelHost --port <n> --model <path.gguf> [--threads n] [--ctx n] [--gpu-layers n] [--backend cpu|vulkan]");
+}
+
+/// <summary>
+/// What llama.cpp itself said while it was loading — the only honest source for "which build did we end up
+/// running, and did it find a GPU?". LLamaSharp chooses the native library by directory
+/// (`runtimes/&lt;rid&gt;/native/vulkan/` for the Vulkan build, `…/native/&lt;avx&gt;/` for the CPU one), so the
+/// path it reports loading *is* the answer; and when the Vulkan build cannot be used it falls back to the CPU
+/// library without failing, which is exactly the case that must not be reported as "Vulkan".
+///
+/// The two facts are recorded **as the lines arrive**, not read back from a buffer: the library is chosen at
+/// startup and the load then emits hundreds of lines, so a trailing window would have dropped the one line
+/// that matters (measured 2026-09-16: with a 200-line buffer the Vulkan run reported "CPU" while llama.cpp
+/// had offloaded 37/37 layers to `Vulkan0`).
+///
+/// Installing the callback also takes llama.cpp's log away from its own stderr default: the useful lines
+/// (Info and above — "using device Vulkan0", "offloaded 37/37 layers") are forwarded to stderr where they
+/// were, and the Debug flood is dropped.
+/// </summary>
+internal sealed class NativeLog
+{
+    private string? _library;
+    private string? _device;
+
+    public void Install()
+    {
+        NativeLibraryConfig.All
+            .WithLogCallback((level, message) =>
+            {
+                var text = message.TrimEnd();
+                if (text.Length == 0) return;
+                Observe(text);
+                if (level >= LLamaLogLevel.Info) Console.Error.WriteLine(text);
+            })
+            // CUDA is deliberately off: this project ships a CPU and a Vulkan build, and a machine with an
+            // NVIDIA GPU must not silently take a third path nobody tested. Fallback stays on, which is what
+            // makes Vulkan safe to ask for: with no Vulkan device (or no loader) LLamaSharp loads the CPU
+            // libraries instead of failing.
+            .WithCuda(false)
+            .WithVulkan(false)
+            .WithAutoFallback(true);
+    }
+
+    /// <summary>Asks for the Vulkan build. Must be called before any other llama.cpp call.</summary>
+    public void PreferVulkan()
+    {
+        NativeLibraryConfig.All.WithVulkan(true);
+    }
+
+    /// <summary>Reads the two facts out of one llama.cpp log line.</summary>
+    private void Observe(string line)
+    {
+        // "Successfully loaded '/…/runtimes/linux-x64/native/vulkan/libllama.so'" — the dependencies and the
+        // Mtmd library are loaded through the same message, so the name has to be the discriminator.
+        if (line.Contains("Successfully loaded")
+            && (line.Contains("libllama") || line.Contains("llama.dll")))
+        {
+            var quote = line.IndexOf('\'');
+            var end = quote < 0 ? -1 : line.IndexOf('\'', quote + 1);
+            _library = end > quote ? line[(quote + 1)..end] : line;
+        }
+        // "ggml_vulkan: 0 = AMD Radeon 760M Graphics (RADV PHOENIX) (radv) | uma: 1 | …" — the announcement
+        // line ("Found 1 Vulkan devices:") has no '=' and is skipped.
+        if (_device is null)
+        {
+            var at = line.IndexOf("ggml_vulkan:", StringComparison.Ordinal);
+            if (at >= 0)
+            {
+                var eq = line.IndexOf('=', at);
+                var name = eq < 0 ? "" : line[(eq + 1)..].Split('|')[0].Trim();
+                if (name.Length > 0) _device = Tidy(name);
+            }
+        }
+    }
+
+    /// <summary>
+    /// "AMD Radeon 760M Graphics (RADV PHOENIX) (radv)" → "AMD Radeon 760M Graphics (RADV PHOENIX)": the
+    /// driver suffix is repeated in the device name, and this string is shown to a developer.
+    /// </summary>
+    private static string Tidy(string name)
+    {
+        var at = name.LastIndexOf(" (", StringComparison.Ordinal);
+        if (at <= 0 || !name.EndsWith(')')) return name;
+        var inner = name[(at + 2)..^1];
+        return inner.Length > 0 && name[..at].Contains(inner, StringComparison.OrdinalIgnoreCase)
+            ? name[..at]
+            : name;
+    }
+
+    /// <summary>The build llama.cpp actually loaded, from the path it reported.</summary>
+    public string LoadedBackend() =>
+        _library is not null && _library.Replace('\\', '/').Contains("/native/vulkan/")
+            ? NativeBackend.Vulkan
+            : NativeBackend.Cpu;
+
+    /// <summary>The Vulkan device llama.cpp picked up, e.g. `AMD Radeon 760M Graphics (RADV PHOENIX)`.</summary>
+    public string? Device() => _device;
+
+    /// <summary>One line for the log: what was asked for, what actually loaded, and on which device.</summary>
+    public string Summary(string requested)
+    {
+        if (LoadedBackend() == NativeBackend.Vulkan)
+            return $"backend: vulkan{(_device is null ? " (no Vulkan device was reported)" : $" on {_device}")}";
+        return requested == NativeBackend.Vulkan
+            ? "backend: CPU — Vulkan was requested but llama.cpp fell back to the CPU build (no usable Vulkan device here)"
+            : "backend: CPU";
+    }
 }
 
 /// <summary>
 /// The loaded model, shared by every request. Loading happens on a background task so `/health` can
 /// answer (and explain a failure) while the weights are still coming in — the extension polls it.
 /// </summary>
-internal sealed class ModelState(Options options)
+internal sealed class ModelState(Options options, NativeLog nativeLog)
 {
     private LLamaWeights? _weights;
     private ModelParams? _parameters;
@@ -74,6 +194,10 @@ internal sealed class ModelState(Options options)
     public bool Loaded => _weights is not null;
     public string? Error { get; private set; }
     public string Name => options.Name;
+
+    /// <summary>The build llama.cpp actually loaded, and the Vulkan device it used (null on the CPU).</summary>
+    public string LoadedBackend => nativeLog.LoadedBackend();
+    public string? Device => nativeLog.Device();
 
     /// <summary>The loaded weights, needed to read the model's own chat template.</summary>
     public LLamaWeights? Weights => _weights;
@@ -98,8 +222,11 @@ internal sealed class ModelState(Options options)
             // LoadFromFile is synchronous CPU work — keep the listener's thread free.
             _weights = await Task.Run(() => LLamaWeights.LoadFromFile(parameters));
             _parameters = parameters;
+            var backend = nativeLog.Summary(options.Backend);
             Console.WriteLine($"model loaded: {Name} in {(int)(DateTime.UtcNow - started).TotalMilliseconds} ms " +
-                              $"(threads={options.Threads}, ctx={options.ContextSize})");
+                              $"(threads={options.Threads}, ctx={options.ContextSize}, gpu_layers={options.GpuLayers}, {backend})");
+            if (options.Backend == NativeBackend.Vulkan && nativeLog.LoadedBackend() != NativeBackend.Vulkan)
+                Console.Error.WriteLine("note: " + backend);
             Console.Out.Flush();
         }
         catch (Exception ex)
@@ -147,6 +274,14 @@ internal static class Program
             return 2;
         }
 
+        // BEFORE anything else touches llama.cpp: the native library is chosen on first use and the choice
+        // cannot be changed afterwards. The CPU build is the default; `--backend vulkan` asks for the Vulkan
+        // one and still falls back to the CPU when this machine has no Vulkan device (2026-09-16).
+        var nativeLog = new NativeLog();
+        nativeLog.Install();
+        if (options.Backend == NativeBackend.Vulkan) nativeLog.PreferVulkan();
+        Console.WriteLine($"MODEL_HOST_BACKEND requested={options.Backend} gpu_layers={options.GpuLayers}");
+
         using var listener = new HttpListener();
         // 127.0.0.1 only: nothing about this feature is meant to be reachable from another machine.
         listener.Prefixes.Add($"http://127.0.0.1:{options.Port}/");
@@ -160,7 +295,7 @@ internal static class Program
             return 3;
         }
 
-        var state = new ModelState(options);
+        var state = new ModelState(options, nativeLog);
         _ = Task.Run(state.LoadAsync);
 
         // The extension waits for this line (mirrors PreviewerHost's PREVIEWER_HOST_READY handshake).
@@ -201,6 +336,10 @@ internal static class Program
                         loaded = state.Loaded,
                         loading = state.Loading,
                         model = state.Name,
+                        // What actually happened, not what was asked for: the extension shows this line, and
+                        // "Vulkan" for a runtime that fell back to the CPU would be a lie (2026-09-16).
+                        backend = state.LoadedBackend,
+                        device = state.Device,
                         error = state.Error
                     });
                     return;

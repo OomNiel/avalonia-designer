@@ -347,6 +347,30 @@ module.exports = async (t) => {
         t.ok(/#settingsModal \.modal-box\s*>\s*\.modal-buttons \{[^}]*position:\s*sticky/.test(css), 'layout',
             'and its Save row is pinned, so the last thing the user must press is never off-screen');
 
+        // ---------- and now it fits with room to spare (measured 2026-09-16, second report) ----------
+        // Re-measured in Chromium at 1024x700 with the code-check section folded and the AI section expanded,
+        // which is the state the user works in. The 0.9.44 numbers were box 692 / content 736 → 46px behind the
+        // scroll, and the *real* worst case was worse than that: the tool renders the static markup, so it had
+        // a one-line hint where the webview writes a two-line one for a bundled model (the GPU row's sentence
+        // is 100 characters in a ~235px column). Now: content 689, hidden 0, House rules visible. The three
+        // rules below are what paid for it, and they are asserted for the same reason as the three above —
+        // measured numbers do not survive a careless stylesheet edit.
+        t.ok(/#settingsModal \.modal-hint \{[^}]*margin-bottom:\s*4px/.test(css), 'layout',
+            'the hints in THIS dialog are 4px apart (four of them, one per switch/box)');
+        t.ok(/#settingsModal \.ai-opt \{[^}]*margin:\s*1px 0/.test(css), 'layout',
+            'and its six option rows are 1px apart instead of 4px — the only dialog with six of anything');
+        t.ok(/#settingsModal \.modal-buttons-tight \{[^}]*margin-top:\s*4px/.test(css), 'layout',
+            'its three tight button rows lose 2px each');
+        t.ok(/#settingsModal \.ai-conv \{[^}]*margin-top:\s*8px[^}]*padding-top:\s*8px/.test(css), 'layout',
+            'and the House rules block above its hairline loses 4px');
+        // The trap §127 named, kept out on purpose: a `min-height` FLOOR does not make this dialog taller —
+        // the Save row is `position: sticky` and last in flow, so a floor leaves dead space below the buttons
+        // (measured: box 658px, Save row 281px). A guard rather than a comment, because it is a tempting edit.
+        t.ok(!/#settingsModal[^{]*\{[^}]*min-height/.test(css), 'layout',
+            'no minimum-height floor was added to this dialog (it would leave dead space under the Save row)');
+        t.ok(/id="aiConvText" rows="3"/.test(read('src/designerPanel.ts')) && !/id="aiConvText" rows="2"/.test(read('src/designerPanel.ts')), 'layout',
+            'the House rules editor is 3 rows: 4 was 18px the dialog did not have, and 2 cannot show two rules');
+
         // A <select> spends ~18px on its arrow, so a long label silently truncates. Measured: with a 120px
         // column, "recommended for this machine (off)" lost 100px of text and read as a broken control.
         const grid = /\.ai-opt \{[^}]*grid-template-columns:\s*\d+px\s+(\d+)px/.exec(css);
