@@ -15,6 +15,33 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.40] - 2026-09-16 · *the check looks at what the model wrote*
+
+### Added
+
+- **The designer's Code Fix now checks generated code, and runs the moment the model writes.** Asked with the
+  new feature in hand — *"The 'Code Fix' in the designer does not pick up errors made by our new code generation
+  feature. Can it be extended to cover this as well as handler functions?"* — the check runs after every write,
+  in both diff modes, and its findings land in the PROBLEMS pane and the output channel like any other.
+- **Rules for the mistakes a generative model actually makes** (all deterministic — no compiler, no guessing):
+  - a handler **nothing calls** (the reverse of the existing *form wires an event, method missing* rule) — Fix
+    writes `Click="…"` onto the control, through the same edit the AI side's wiring offer uses;
+  - a **name that is not a control of the form**, reported only when a control *starts with* it — the
+    `Status` / `StatusDate1` slip — worded as *"did you mean …?"* and never rewritten (the candidate is a
+    guess); a framework name like `Console` cannot produce noise;
+  - a **second member with the same name** (`CS0111`) — VB had this rule, C# did not — with Fix removing the
+    duplicate;
+  - a **class inside a class**, and a **`namespace` inside a class** — the shape a pasted answer leaves
+    behind, and the `CS1513: } expected` the user actually hit. Fix keeps the members and drops the wrapper;
+  - **braces that do not balance** (a truncated answer): Fix closes them at the end of the file, one per line.
+
+### Note
+
+The check is rule-based, not a compiler: type errors, wrong API use and a missing `using` are still only
+found by building — which is what **Build to verify** is for.
+
+Suite **4043** passed / 0 failed.
+
 ## [0.9.39] - 2026-09-16 · *the model that answered with a whole class*
 
 ### Fixed

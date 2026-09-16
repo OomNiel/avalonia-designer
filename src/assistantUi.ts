@@ -58,7 +58,7 @@ import {
     type ServerModelInfo,
     type TypeSpan
 } from './assistant';
-import { methodsIn, type MethodSpan } from './codeBehindCheck';
+import { analyzeCodeBehind, methodsIn, publishIssues, type MethodSpan } from './codeBehindCheck';
 import { log } from './logger';
 import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
 import { sidecarContextSize, sidecarGpuLayers } from './localModels';
@@ -429,6 +429,10 @@ export async function applyProposal(): Promise<void> {
     }
     const addedUsings = written.addedUsings;
 
+    // The moment the code lands, the designer's own check looks at it — in both diff modes, because a finding
+    // is cheapest to act on right here (asked 2026-09-16).
+    await checkGeneratedCode(document);
+
     const summary = p.summary;
     const name = p.name;
     await closeProposalTab(p);
@@ -533,14 +537,14 @@ async function showRawAnswer(
 type ProposalTarget =
     | { kind: 'replace'; span: MethodSpan }
     | {
-          kind: 'insert';
-          caretLine: number;
-          type: TypeSpan;
-          language: 'cs' | 'vb';
-          members: MemberInfo[];
-          controls: string[];
-          form?: { uri: vscode.Uri };
-      };
+        kind: 'insert';
+        caretLine: number;
+        type: TypeSpan;
+        language: 'cs' | 'vb';
+        members: MemberInfo[];
+        controls: string[];
+        form?: { uri: vscode.Uri };
+    };
 
 /** The event to offer to wire, when the new member looks like a handler of a control in the form. */
 function wiringFor(
@@ -621,6 +625,44 @@ async function writeProposal(
     }
     await document.save();
     return { ok: true, addedUsings: built.addedUsings };
+}
+
+/**
+ * Runs the designer's own check over the file the model just changed (asked 2026-09-16).
+ *
+ * The check has rules for exactly the mistakes generated code makes — a handler nothing wires, a name that is
+ * not a control of this form, a second member with the same name, a class inside a class, braces the answer
+ * never closed — and nothing ran them at the moment they mattered: the user had to wait for the next save or
+ * focus, or for the ⚙ mode they had chosen. It runs here instead, in *both* modes, because a diff that has
+ * just been applied is when a finding is cheapest to act on.
+ *
+ * The findings go to the PROBLEMS pane and the output channel. An open designer panel picks them up in its own
+ * list the next time it checks (its mode decides when); nothing here reaches into another extension surface.
+ */
+async function checkGeneratedCode(document: vscode.TextDocument): Promise<void> {
+    const form = siblingFormOf(document);
+    if (!form) return;
+    try {
+        const result = analyzeCodeBehind(form.uri, {});
+        publishIssues(form.uri, result, result.issues);
+        if (!result.issues.length) {
+            log('Code check after the model\'s change: nothing to report.');
+            return;
+        }
+        const errors = result.issues.filter((i) => i.severity === 'error').length;
+        log(`Code check after the model's change: ${result.issues.length} finding(s), ${errors} error(s) — `
+            + result.issues.map((i) => `${i.severity}: ${i.title}`).join(' | '));
+        const first = result.issues[0];
+        await vscode.window.showWarningMessage(
+            `The designer's check found ${result.issues.length} problem`
+            + `${result.issues.length === 1 ? '' : 's'} in the new code — ${first.title}. `
+            + 'See the PROBLEMS pane, or Fix in the designer’s Code Fix list.',
+            'Dismiss'
+        );
+    } catch (err) {
+        // A check that throws must never make a successful write look failed.
+        log(`Code check after the model's change errored: ${err instanceof Error ? err.message : String(err)}`);
+    }
 }
 
 /**
@@ -804,6 +846,7 @@ async function proposeMethod(
             return undefined;
         }
         log(`Applied ${name}() without showing a diff (assistant.showDiff is off).`);
+        await checkGeneratedCode(document);
         const next = await vscode.window.showInformationMessage(
             target.kind === 'insert'
                 ? `${name}() added${written.addedUsings.length ? ` (with ${written.addedUsings.join(', ')})` : ''} — Ctrl+Z undoes it.`
@@ -823,13 +866,13 @@ async function proposeMethod(
     const proposed = target.kind === 'replace'
         ? spliceMethod(original, target.span, code, eol)
         : addMemberToFile({
-              text: original,
-              caretLine: target.caretLine,
-              member: code,
-              usings,
-              type: target.type,
-              language: target.language
-          }).text;
+            text: original,
+            caretLine: target.caretLine,
+            member: code,
+            usings,
+            type: target.type,
+            language: target.language
+        }).text;
 
     // A new proposal replaces an older one: its diff is stale, so its tab and content go.
     const previous = pending;
@@ -873,7 +916,7 @@ async function proposeMethod(
         target.kind === 'replace'
             ? `AI proposal for ${name}(): ${summarise(code)}. Review the diff, then apply.${note ? ` (${note})` : ''}`
             : `AI proposal: a new member ${name}() in ${target.type.name}, ${summarise(code)}. Review the diff, ` +
-              `then apply.${note ? ` (${note})` : ''}`,
+            `then apply.${note ? ` (${note})` : ''}`,
         'Apply',
         'Discard'
     );
@@ -969,8 +1012,8 @@ async function askDescription(input: {
 }): Promise<string | undefined> {
     const note = input.limited
         ? `About ${allowanceText(input.allowance)} left for your sentence`
-            + (input.dropped.length ? ` — the prompt is full, so ${input.dropped.join(' and ')} was left out` : '')
-            + '.'
+        + (input.dropped.length ? ` — the prompt is full, so ${input.dropped.join(' and ')} was left out` : '')
+        + '.'
         : 'This server decides its own context, so there is no length limit here.';
     const description = await vscode.window.showInputBox({
         title: input.title,

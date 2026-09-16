@@ -43,16 +43,21 @@ import {
     vbMatchingEnd
 } from './codeBehind';
 import { eventArgsFor, isKnownEventName, knownEventArgsFor } from './controlEvents';
+// Shared with the AI side, on purpose: one implementation of "the member a model sent", "a class wrapper" and
+// "wire this event into the form", so the checker and the generator can never disagree about them (2026-09-16).
+import { addXamlEventAttribute, enclosingTypeSpan, memberSignatures, unwrapMemberBlock } from './assistant';
 
 // ---------------- model ----------------
 
 /** Fixes this module can apply on its own (pure file edits). */
 export type LocalFixKind =
     | 'rebuild-accessors'        // missing / stale VB accessor properties
-    | 'remove-duplicate-method'  // BC30269
+    | 'remove-duplicate-method'  // BC30269 / CS0111
     | 'remove-orphaned-handler'  // handler of a control that no longer exists
     | 'insert-handler'           // XAML wires an event, no such method
     | 'fix-handler-signature'    // handler exists, wrong EventArgs
+    | 'wire-unwired-handler'     // handler exists, nothing wires it (the reverse of insert-handler)
+    | 'repair-structure'         // a nested namespace/class, or braces the model never closed
     | 'insert-initialize'        // InitializeComponent() missing
     | 'add-binding-call'         // Data-Image block present, ctor call missing
     | 'restamp-marker'           // Data-Image block present, `' DataImage:` marker lost
@@ -1191,6 +1196,168 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
         });
     }
 
+    // ---- 15) what a *generated* member gets wrong (asked 2026-09-16) ----
+    //
+    // The AI writes into this file, and the check has to look at the result as hard as it looks at the XAML
+    // it was designed for. Everything below is deterministic — no compiler, no guessing — and it applies to
+    // any code in the file, hand-written or generated: the checker cannot tell who wrote a line, and the
+    // user asked for exactly that (2026-09-16).
+
+    // 15a) A handler that nothing calls. `insert-handler` covers the opposite direction (the form wires an
+    // event and the method is missing); this is the newer failure, because the model happily writes
+    // `Save_Click` without any XAML pointing at it.
+    for (const m of code.methods) {
+        const at = m.name.lastIndexOf('_');
+        if (at <= 0) continue;
+        const control = m.name.slice(0, at);
+        const event = m.name.slice(at + 1);
+        if (!controls.some((c) => c.name === control)) continue;
+        if (!isKnownEventName(event)) continue;
+        if (ax.events.some((e) => e.control === control && e.event === event)) continue;
+        add({
+            severity: 'warning',
+            kind: 'wire-unwired-handler',
+            line: m.line,
+            member: m.name,
+            data: { handler: m.name, control, event },
+            title: `"${m.name}" is not wired to anything`,
+            detail: `The handler for ${control} looks complete, but no element in the form asks for it — a `
+                + `method nothing calls is dead code. Fix: write ${event}="${m.name}" onto ${control} in the `
+                + `.axaml (the same edit the designer makes when it wires an event).`
+        });
+    }
+
+    // 15b) A name that is not a control of this form, but starts like one — the model reaching for `Status`
+    // when the form has `StatusDate1`. Deliberately narrow: it only fires when the form has a name that
+    // *starts with* the one used, so `Console`/`Math`/a local variable and a typo with no candidate cannot
+    // produce noise. Reported, never rewritten: the candidate is a guess.
+    const declared = new Set<string>();
+    for (const [, name] of code.body.matchAll(/\b(?:var|Dim|string|String|int|bool|double|decimal|object)\s+([A-Za-z_]\w*)\s*[=;)]/g)) declared.add(name);
+    for (const line of code.lines) {
+        const decl = /^[ \t]*(?:(?:public|private|protected|internal|static|readonly|Dim|Private|Public|Friend)\s+)*[\w<>\[\],.?]+\s+([A-Za-z_]\w*)\s*(?:=|;|\()/.exec(line);
+        if (decl) declared.add(decl[1]);
+    }
+    const reported = new Set<string>();
+    for (const hit of code.body.matchAll(/\b([A-Z][A-Za-z]\w{3,})\s*\./g)) {
+        const used = hit[1];
+        if (reported.has(used) || declared.has(used)) continue;
+        if (controls.some((c) => c.name === used)) continue;
+        const candidate = controls.find((c) => c.name.startsWith(used));
+        if (!candidate) continue;
+        reported.add(used);
+        add({
+            severity: 'warning',
+            kind: 'report-only',
+            line: lineAt(code.body, hit.index),
+            member: used,
+            title: `"${used}" is not a control in this form — did you mean "${candidate.name}"?`,
+            detail: `The form has no control called ${used}; it does have ${candidate.name}. If ${used} is `
+                + 'not a variable you declared yourself, this will not compile. Check the name, or ask the ' +
+                'model again with the right control named in the sentence.'
+        });
+    }
+
+    // 15c) Two members with the same name (`CS0111`). VB already reports this as BC30269; the C# side had no
+    // rule at all, which is how a generated member can collide with an existing one unnoticed.
+    if (language === 'cs') {
+        const byName = new Map<string, number>();
+        for (const s of memberSignatures(code.body, 'cs')) {
+            const key = s.name.toLowerCase();
+            const seen = (byName.get(key) ?? 0) + 1;
+            byName.set(key, seen);
+            if (seen < 2) continue;
+            add({
+                severity: 'error',
+                kind: 'remove-duplicate-method',
+                line: s.line,
+                member: s.name,
+                data: { name: s.name, occurrence: String(seen) },
+                title: `"${s.name}" is declared more than once`,
+                detail: 'C# allows overloading by parameters, but not two members with the same name and the ' +
+                    'same parameters — the build stops with CS0111. Fix: remove this second copy (Fix), or rename '
+                    + 'one of them by hand.'
+            });
+        }
+    }
+
+    // 15d) Structure the model cannot have meant: a type declared inside a type, or braces it never closed.
+    // Both leave a file that does not compile — the first is the 0.9.39 `CS1513` report, the second is a
+    // truncated answer. The fix is mechanical and the wording says which one it is.
+    {
+        const types: { name: string; line: number }[] = [];
+        code.lines.forEach((line, i) => {
+            const decl = language === 'vb'
+                ? /^[ \t]*(?:(?:Public|Private|Protected|Friend|Partial|NotInheritable|MustInherit)\s+)*(?:Class|Module|Structure)\s+([A-Za-z_]\w*)/i.exec(line)
+                : /^[ \t]*(?:(?:public|private|protected|internal|sealed|abstract|partial|static)\s+)*(?:class|struct|record)\s+([A-Za-z_]\w*)/.exec(line);
+            if (decl) types.push({ name: decl[1], line: i + 1 });
+        });
+        // The form's own declaration is the *first* one that names its class — anything after that is a second
+        // type inside it. Matching on the name instead was wrong in the very case that prompted this rule: the
+        // model copied `public partial class MainWindow` verbatim, so the nested declaration had the same name
+        // as the form (2026-09-16).
+        const ownAt = types.findIndex((x) => x.name === code.className);
+        const inner = types.find((_, i) => i !== ownAt);
+        // A `namespace` written *after* the class has begun is the other half of the same damage: the model
+        // pasted `namespace X { class Y { … } }` whole, and the namespace is then inside a class — which does
+        // not compile either. Reported as its own finding, because the repair removes a different block.
+        const ownLine = ownAt >= 0 ? types[ownAt].line : 0;
+        const strayNs = code.lines.findIndex((line, i) => i + 1 > ownLine && /^[ \t]*namespace\s+[\w.]+\s*;?\s*$/.test(line));
+        if (strayNs >= 0 && language === 'cs') {
+            add({
+                severity: 'error',
+                kind: 'repair-structure',
+                line: strayNs + 1,
+                member: 'namespace',
+                data: { nestedNamespace: String(strayNs + 1) },
+                title: `A namespace is declared inside ${code.className || 'the class'}`,
+                detail: 'A namespace cannot be declared inside a class, and it is the shape a pasted answer '
+                    + 'leaves behind (`namespace X { class Y { … } }` inside Y) — the same `CS1513: } expected` '
+                    + 'the user saw, because the pasted braces close the class early. Fix: keep the members and '
+                    + 'drop the wrapper.'
+            });
+        }
+        if (inner && language === 'cs') {
+            add({
+                severity: 'error',
+                kind: 'repair-structure',
+                line: inner.line,
+                member: inner.name,
+                data: { nestedType: inner.name, line: String(inner.line) },
+                title: `"${inner.name}" is declared inside ${code.className || 'the class'}`,
+                detail: 'A class inside a class does not compile, and it usually means an answer was pasted ' +
+                    'with its own wrapper (the `CS1513: } expected` case). Fix: keep the members that belong to '
+                    + 'the form and drop the wrapper.'
+            });
+        }
+        if (language === 'cs') {
+            let depth = 0;
+            code.lines.forEach((line) => {
+                const bare = line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '')
+                    .replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/'(?:\\.|[^'\\])*'/g, "''");
+                for (const ch of bare) {
+                    if (ch === '{') depth += 1;
+                    else if (ch === '}') depth -= 1;
+                }
+            });
+            if (depth !== 0) {
+                add({
+                    severity: 'error',
+                    kind: 'repair-structure',
+                    line: code.lines.length,
+                    member: 'braces',
+                    data: { braces: String(depth) },
+                    title: depth > 0
+                        ? `${depth} closing brace${depth === 1 ? '' : 's'} missing`
+                        : `${-depth} closing brace${depth === -1 ? '' : 's'} too many`,
+                    detail: 'The file\'s braces do not balance, so everything after the mistake is read as '
+                        + 'part of the wrong block — a build error, and the shape a truncated answer leaves '
+                        + 'behind. Fix: add the missing brace(s) at the end of the file, or remove the surplus '
+                        + 'one and check the indentation tells the truth.'
+                });
+            }
+        }
+    }
+
     return { codeFile, language, issues };
 }
 
@@ -1297,6 +1464,69 @@ export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts
         case 'insert-handler': {
             const r = await insertHandlerIntoCodeBehind(axamlUri, data.handler, data.event, data.tag);
             return r ? `Added the missing handler "${data.handler}".` : 'Could not insert the handler.';
+        }
+        case 'wire-unwired-handler': {
+            // The other half of `insert-handler`: the method exists (usually because the model just wrote it)
+            // and nothing in the form calls it. The attribute goes on with the shared edit, so this and the
+            // AI side's "wire it" offer cannot produce different XAML.
+            const text = opts.axamlText ?? readText(axamlUri.fsPath);
+            const updated = addXamlEventAttribute(text, data.control, data.event, data.handler);
+            if (!updated) return `"${data.control}" already has ${data.event}, or is no longer in the form.`;
+            fs.writeFileSync(axamlUri.fsPath, updated, 'utf8');
+            return `Wired ${data.event}="${data.handler}" onto ${data.control}.`;
+        }
+        case 'repair-structure': {
+            const body = read();
+            if (data.nestedNamespace) {
+                // `namespace X { class Y { … } }` pasted into Y: the whole namespace block goes, and what it
+                // held is unwrapped down to the member. One shared unwrapper with the AI side.
+                const facts = parseCode(codeFile, body);
+                const lines = facts.body.split('\n');
+                const at = Number(data.nestedNamespace) - 1;
+                const span = enclosingTypeSpan(facts.body, at + 2, language);
+                const end = span ? span.endLine : -1;
+                // The namespace has no closing marker of its own, so its block ends where the last brace it
+                // opened is closed — found by counting, from its own line onwards.
+                let depth = 0;
+                let last = end;
+                for (let i = at; i < lines.length; i++) {
+                    for (const ch of lines[i].replace(/\/\/.*$/, '')) {
+                        if (ch === '{') { depth += 1; last = i; }
+                        else if (ch === '}') { depth -= 1; if (depth === 0) { last = i; i = lines.length; break; } }
+                    }
+                }
+                const block = lines.slice(at, last + 1).join('\n');
+                const inner = unwrapMemberBlock(block, language).member;
+                if (!inner.trim()) return 'That namespace holds no members — remove it by hand.';
+                write([...lines.slice(0, at), ...inner.split('\n'), ...lines.slice(last + 1)].join('\n'));
+                return 'Removed the namespace the answer was wrapped in.';
+            }
+            if (data.nestedType) {
+                // A class inside a class (the pasted-wrapper damage): keep what belongs to the form, drop the
+                // wrapper. `unwrapMemberBlock` is the same unwrapper the AI side uses, so a nested type is
+                // understood identically in both places.
+                const facts = parseCode(codeFile, body);
+                const lines = facts.body.split('\n');
+                const at = lines.findIndex((l) => new RegExp(`\\b(?:class|struct|record|Class|Module|Structure)\\s+${data.nestedType}\\b`).test(l));
+                if (at < 0) return `"${data.nestedType}" is gone.`;
+                const span = enclosingTypeSpan(facts.body, at + 2, language);
+                if (!span) return 'Could not find the end of that declaration.';
+                const block = lines.slice(at, span.endLine).join('\n');
+                const inner = unwrapMemberBlock(block, language).member;
+                if (!inner.trim()) return 'That declaration holds no members — remove it by hand.';
+                write([...lines.slice(0, at), ...inner.split('\n'), ...lines.slice(span.endLine)].join('\n'));
+                return `Removed the wrapper around "${data.nestedType}".`;
+            }
+            const want = Number(data.braces ?? '0');
+            if (!want) return 'Nothing to repair.';
+            if (want > 0) {
+                // A truncated answer: the file ends with more `{` than `}`. Closing them at the end — one per
+                // line, at column zero — is what the missing text would have done, and it is visible in the diff
+                // like any other edit.
+                write(body.replace(/\s*$/, '') + '\n' + new Array(want).fill('}').join('\n') + '\n');
+                return `Added ${want} closing brace${want === 1 ? '' : 's'} at the end of the file.`;
+            }
+            return 'There are more closing braces than opening ones — remove the surplus by hand.';
         }
         case 'fix-handler-signature': {
             const facts = parseCode(codeFile, read());

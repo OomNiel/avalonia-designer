@@ -19,8 +19,14 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.39`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.40`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.40 — the Code Fix checks generated code.** Five deterministic rules for what a model gets wrong
+  (a handler nothing calls, a name that is not a control of the form but starts like one, a duplicate member in
+  C#, a class *or* namespace inside a class, unbalanced braces), each with a Fix where the answer is mechanical,
+  and the check now runs the moment the model writes — in both diff modes. Stated limit: it is a rule checker,
+  not a compiler; type errors and missing usings are still the build's job. §123.
 
 - **0.9.39 — the model that answered with a whole class.** A "create a function" request came back as
   `namespace … { class MainWindow … { … } }` and was inserted *inside* the existing class — `CS1513` in the

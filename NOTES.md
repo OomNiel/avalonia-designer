@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4003 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4043 passed, 0 failed / 0 skipped** (2026-09-16, ~42 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2566,3 +2566,41 @@ landed in 0.9.37 — so that attempt ran on 0.9.36 (or in a window still holding
 when a report has no log line, check *which build* produced it before reading anything into the silence.
 
 **Suite:** 4003 passed / 0 failed (was 3985).
+
+### §123 — the checker looks at what the model wrote (2026-09-16, release 0.9.40)
+
+Asked the moment the wrapper fix landed: *"The 'Code Fix' in the designer does not pick up errors made by our new
+code generation feature. Can it be extended to cover this as well as handler functions?"* — plus, on the fixes:
+*"Fix everything within reason, report the rest. It must also fix syntax errors, like missing braces etc."*
+
+**The honest limit, stated first:** the checker is rule-based, not a compiler. Type errors, wrong API use and a
+missing `using` are still only found by building (that is what *Build to verify* is for). What it *can* do is
+every **consistency** problem, because it already knows the form's controls, the wired events and the per-event
+argument types.
+
+**Five rules, all deterministic** — and the reverse direction of ones that already existed, which is why they
+cost so little:
+- **a handler nothing calls** — `insert-handler` covers "the form wires an event and the method is missing"; the
+  newer failure is the opposite, because the model writes `Save_Click` without any XAML pointing at it. Fix wires
+  it through `addXamlEventAttribute`, the same edit the AI side's wiring offer uses (one implementation).
+- **a name that is not a control, but starts like one** — the `Status` / `StatusDate1` slip. Deliberately narrow:
+  it only fires when the form has a control *starting with* the name used, so `Console.WriteLine`, `Math.*` and a
+  local variable cannot produce noise. Report-only: the candidate is a guess.
+- **a duplicate member in C#** (`CS0111`) — VB had this rule (BC30269) and C# had none, which is how a generated
+  member can collide unnoticed. It reuses the existing `remove-duplicate-method` fix.
+- **a class *or* a namespace declared inside a class** — the pasted-answer shape, and the `CS1513` the user hit.
+  Two findings, because the repairs differ: for the class case the nested block goes, for the namespace case the
+  whole namespace block goes and `unwrapMemberBlock` unwraps what it held.
+- **braces that do not balance** — a truncated answer. Fix closes them at the end of the file, one per line.
+
+**Where it runs** (the user's choice: immediately): after every write, in *both* diff modes, from the one
+`writeProposal()` both paths share — so a finding appears while the change is still the thing you are looking at,
+and even in `manual` mode, where nothing else would have run. Findings go to the PROBLEMS pane and the output
+channel; a throwing check is logged and never allowed to make a good write look failed.
+
+**Two things the tests caught in the rules themselves:** the nested-type rule first compared *names*, so it
+missed the very case that prompted it (the model repeated `public partial class MainWindow` verbatim); and the
+brace repair appended `}}` on one line, which is correct C# and a lie about the file's shape. Both were found by
+asserting on the repaired file, not by reading the rule.
+
+**Suite:** 4043 passed / 0 failed (was 4003).

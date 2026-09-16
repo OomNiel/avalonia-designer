@@ -276,6 +276,14 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.40` (2026-09-16)** — the Code Fix checker was extended to the code the model writes, and now
+  runs right after every write (both diff modes). New deterministic rules: a handler nothing calls (with a Fix
+  that wires it, sharing the AI side's attribute edit), a name that is not a control of the form but starts like
+  one (`Status` / `StatusDate1`, report-only), a duplicate member in C# (`CS0111`, reusing the VB rule's
+  `remove-duplicate-method` fix), a class *or* namespace declared inside a class (`CS1513` shape, Fix unwraps and
+  keeps the members) and unbalanced braces (Fix closes them at the end). `tests/t2-logic/codeCheckGenerated.test.js`
+  (40 assertions) drives real files in a temporary project, including the verbatim pasted-wrapper damage from the
+  user's app, and asserts the report is empty again after each repair. Suite **4043**.
 - **Release `0.9.39` (2026-09-16)** — a model answered a "create a function" request with a whole
   `namespace`/`class`, and it was inserted inside the existing class (`CS1513` in the user's app). Three layers
   now prevent it: the prompt forbids the wrapper in words, `unwrapMemberBlock()` removes one before the diff

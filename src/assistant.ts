@@ -1070,9 +1070,9 @@ export interface GeneratePromptInput {
 function visibilityContract(language: 'cs' | 'vb'): string {
     return language === 'vb'
         ? 'Always `Private`. Add `Shared` only when the body uses no instance member, no form control and ' +
-          'no `Me` — never `Static` (in VB that keyword is for local variables, not members).'
+        'no `Me` — never `Static` (in VB that keyword is for local variables, not members).'
         : 'Always `private`. Add `static` only when the body uses no instance member, no form control and ' +
-          'no `this` — the event handler of a form can never be static.';
+        'no `this` — the event handler of a form can never be static.';
 }
 
 export function buildGeneratePrompt(input: GeneratePromptInput): ChatMessage[] {
@@ -1109,11 +1109,11 @@ export function buildGeneratePrompt(input: GeneratePromptInput): ChatMessage[] {
         `The developer wants a NEW member, which does not exist yet:\n"""${input.description.trim()}"""`,
         '',
         'Write that member — its declaration and its complete body, nothing else. Start on the declaration ' +
-            'itself, indented one level (four spaces):',
+        'itself, indented one level (four spaces):',
         CODE_FENCE + fence,
         `(${visibilityContract(input.language)})`,
         `(if the body needs a namespace this file does not import yet, put those using/Imports lines ` +
-            `FIRST, then a line containing exactly ${NEW_MEMBER_MARKER}, then the member)`,
+        `FIRST, then a line containing exactly ${NEW_MEMBER_MARKER}, then the member)`,
         CODE_FENCE,
         '',
         `Reply with ONE ${CODE_FENCE}${fence} code block and nothing outside it. The block must contain the ` +
