@@ -206,6 +206,21 @@ listing when that release is uploaded — a repo-only README edit does not.
 > portal without ever being tagged, so the releases run `v1.0.0-beta.9` → `v1.0.0-beta.11` — the
 > `0.9.3` package can be backfilled from the gallery's stored copy if that ever matters.
 
+> **`0.9.5` – `0.9.46` (2026-09-15 → 2026-09-16) — LOCAL BUILDS ONLY, deliberately not published.** Forty-two
+> versions of work (the AI assist's own runtime set-up, models from Hugging Face, your own `llama-server`, house
+> rules, the optional Vulkan build for the built-in runtime, two rounds of settings-panel measurement) are in
+> `main` and installed locally, and **none of it is on the Marketplace yet**. That is the developer's call, not a
+> failure: the feature set should settle before the listing moves. What it means for the next publish:
+>
+> - nothing in the portal ritual changes (part F below), and the next version only has to be **higher than
+>   `0.9.4`** — the numbering is a plain sequence, not a promise about content;
+> - the jump is **large**, so read the `CHANGELOG.md` entries from `0.9.5` onwards before writing the listing
+>   text. `README.md` and `USER_MANUAL.md` ship *inside* the VSIX, so what they say is what a new user reads
+>   first; both were brought up to `0.9.46` on 2026-09-16;
+> - two releases in that range add something a user has to *find*: the Vulkan opt-in is a new setting plus a
+>   command (**AI: Built-in Runtime Backend…**), and the ⚙ panel's waiting line is a behaviour change rather
+>   than a feature — worth a line in the listing's release notes either way.
+
 ### What “Verifying \<version\>” means — and how to confirm the result
 
 **“Verifying” is normal, not an error.** The version is stored and indexed but not yet *validated*;

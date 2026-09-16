@@ -13,7 +13,22 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 ## [Unreleased]
 
-_Nothing yet._
+### Documentation
+
+- **Every document brought up to `0.9.46`** (asked 2026-09-16: *"update all docs including the manual"*).
+  `USER_MANUAL.md` gained the GPU/Vulkan option for the built-in runtime (what it is, what it costs, what
+  happens when it cannot be used, and that it touches no other runtime), the panel's *looking for local
+  models…* line, a corrected figure for the first runtime build (~140 MB, not ~100 MB — the GPU build is
+  downloaded with it), the CPU-build caveat on the GPU-offload row, a tip in *Known issues*, and a table of
+  contents that now lists the AI subsections it was missing. `README.md` gained the same GPU paragraph, the
+  waiting line, the current assertion count (**~4,400**), and an honest statement about the repository running
+  ahead of the Marketplace listing — the old note there claimed the reverse ("a GitHub release can lag the
+  Marketplace"), which stopped being true when publishing was deferred. `PUBLISHING.md` records that
+  **`0.9.5` – `0.9.46` are local builds only** and what that means for the next upload, so the next person to
+  publish does not have to reconstruct it from the git log. `CONTROLS.md` and `Events per Control.md` were
+  checked and needed nothing (they describe Avalonia `12.1.1` and its controls, none of which changed here).
+- These copies ship **inside** the VSIX, so the installed `0.9.46` still carries the previous text; the next
+  package takes them with it.
 
 ## [0.9.46] - 2026-09-16 · *the panel says what it is waiting for*
 

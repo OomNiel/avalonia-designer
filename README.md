@@ -33,13 +33,21 @@ code --install-extension grumpy.avalonia-designer
 The latest published version is **`0.9.4`**, so the command above installs it (add `--force` to
 reinstall, or to update a copy that is already on the machine).
 
-**Or from GitHub** — take the `.vsix` from the
+**Or from GitHub** — take the `.vsix` attached to the
 [latest release](https://github.com/OomNiel/avalonia-designer/releases/latest) (the file name carries
-its version, and a GitHub release can lag the Marketplace, so check it):
+its version, so it is obvious which build you downloaded):
 
 ```bash
 code --install-extension avalonia-designer-0.9.4.vsix --force
 ```
+
+> **This repository runs ahead of the listing.** Development continues in `main` — where the current
+> development release is **`0.9.46`** ([CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md)
+> says what changed) — while publishing to the Marketplace is a deliberate, manual step, so the listing stays on
+> the last release that was published there (`0.9.4`). Everything in `main` is compiled and tested before it is
+> committed; to run the newest state, build the package yourself (`npm install`, then `npm run package`) and
+> install the `.vsix` it writes — [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md)
+> is the guide, and it records every version that has gone live.
 
 Either way, **reload the window** afterwards (`Ctrl+Shift+P` → *Developer: Reload Window*). The
 previewer host is compiled with the **.NET SDK** the first time you open a form — see
@@ -219,6 +227,16 @@ a file URL, lists the files in the repo with their sizes, reads the size and the
 itself**, and downloads it through the same verification — after which it behaves exactly like a built-in one,
 including **Remove Model**, which gives the disk space back. Nothing is fetched until you press **Load Model**.
 
+**The built-in runtime can use your GPU — when you ask it to.** It runs llama.cpp's **CPU** build by
+default: that works everywhere and needs nothing from the GPU. *AI: Built-in Runtime Backend…* switches it to
+the **Vulkan** build — the same runtime and the same settings, but now `max` on the GPU-offload field really
+does offload. On the machine this was written on it loaded a 3B Q4 model in **602 ms against 1409 ms** on the
+CPU, with all 37 layers on an integrated Radeon. Asking is not getting, and the extension never says otherwise:
+with no usable Vulkan device llama.cpp falls back to the CPU by itself, the status report names the build that
+is **actually running** (`Native backend: …`), and a driver that dies while the weights load is retried once on
+the CPU — reason in the log, and a one-click offer to keep it that way. The option costs one bigger first build
+(~40 MB more to download, ~130 MB more on disk in the extension's own build folder).
+
 **Or point it at a model you already run.** The picker lists the ways a model can arrive, in the order
 the extension can guarantee them: **its own runtime** (llama.cpp via LLamaSharp, weights from Hugging Face, no
 other program needed), then **your own `llama-server`** — which this extension will *start for you* — then **a
@@ -258,12 +276,16 @@ panel — and if one of yours is already answering, the entry says so rather tha
 *Found on this machine · … added to LM Studio first by a symbolic link* for a file the scan found, and *a server I
 run myself* for anything else already listening. Its two checkboxes
 are the decisions that are not about one model: **Use a local model for Code Fix and Implement** (the switch
-that loads, and unloads when cleared) and **Show the proposed code as a diff before it is applied**.
+that loads, and unloads when cleared) and **Show the proposed code as a diff before it is applied**. While it
+is asking your machine for its model list it says so — *looking for local models…* — because the first such
+look of a session also starts LM Studio's own service, and an empty dropdown should never look like a broken
+one.
 
 **When a load fails, LM Studio's own log is translated rather than shown** — the two aborts that actually happen
 are a model bigger than the kernel's locked-memory limit (with **Keep Model in Memory** named as LM Studio's own
 setting, so it is clear whose to change) and the Vulkan build of llama.cpp losing the integrated GPU (*"not
-enough memory for command submission"*), for which a CPU-only runtime is named as the way out. Failures never
+enough memory for command submission"*), for which a CPU-only runtime is named as the way out — for the
+extension's own runtime that is *AI: Built-in Runtime Backend…* → **CPU build**. Failures never
 pass LM Studio's jargon through, and the full `lms …` command line goes to the extension's log either way.
 
 **And the memory comes back.** *Unload* frees whichever runtime is actually holding the model — the extension's
@@ -274,12 +296,12 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~4,100 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~4,400 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release
   workflow.
-- **~10,000 lines of documentation**: a 1,000-line beginner `USER_MANUAL.md`, a per-control
+- **~9,200 lines of documentation**: a 1,600-line beginner `USER_MANUAL.md`, a per-control
   `CONTROLS.md`, the generated `Events per Control.md`, a real `CHANGELOG.md`, a maintainer
   `PUBLISHING.md` and a developer `NOTES.md` with the gotchas written down.
 - A **generated** catalog rather than hand-maintained lists, so the code, the signatures and the
@@ -290,6 +312,10 @@ just what the settings point at, so "did my load take?" is answerable from the p
 - **Published on the
   [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=grumpy.avalonia-designer)**
   — still changing, but every release ships with a green suite.
+- **The repository is ahead of the listing.** `main` is the development line (**`0.9.46`** right now) and the
+  Marketplace carries the last release published there (**`0.9.4`**): publishing is manual and deliberate, and
+  [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
+  that went live, with the hash the gallery serves.
 - **Two version numbers per release, on purpose**: the GitHub tag is `v1.0.0-beta.N` while the
   Marketplace (plain numbers only) shows the same build as `0.9.x`. `1.0.0` is reserved for the first
   stable release.

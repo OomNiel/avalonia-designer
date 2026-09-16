@@ -8,7 +8,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-13)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-16)
 
 ---
 
@@ -35,6 +35,12 @@
     - [Code Fix… — check and repair the code-behind](#code-fix--check-and-repair-the-code-behind)
     - [When the check runs by itself](#when-the-check-runs-by-itself)
     - [Keeping your manual edit instead of a fix](#keeping-your-manual-edit-instead-of-a-fix)
+    - [AI assist — a local model for the fixes a rule cannot express](#ai-assist--a-local-model-for-the-fixes-a-rule-cannot-express)
+      - [No model server? Let the extension bring its own](#no-model-server-let-the-extension-bring-its-own)
+      - [Using the GPU for the built-in runtime (optional)](#using-the-gpu-for-the-built-in-runtime-optional)
+      - [Your own `llama-server` — the engine you already have](#your-own-llama-server--the-engine-you-already-have)
+      - [House rules — teach it how *your* code is written](#house-rules--teach-it-how-your-code-is-written)
+      - [What the entries in the model list mean](#what-the-entries-in-the-model-list-mean)
     - [Wiring more events later](#wiring-more-events-later)
 13. [Clearing the canvas](#13-clearing-the-canvas)
 14. [Keyboard shortcuts](#14-keyboard-shortcuts)
@@ -1024,18 +1030,54 @@ Hugging Face, and it is downloaded through the same verification as the five bel
 
 While a model from that list is selected, the panel shows only the settings it will honour: context
 length (handed to the built-in runtime when it starts) and GPU offload — where `max` means "all layers on
-the GPU" and anything else runs on the CPU. *Unload when idle* belongs to LM Studio and disappears here,
+the GPU" and anything else runs on the CPU. **With the default CPU build of the runtime, `max` cannot
+actually offload anything**, and the row says exactly that rather than leaving you to wonder why nothing got
+faster; the subsection below is what changes it. *Unload when idle* belongs to LM Studio and disappears here,
 as does the address field, which is only for a server you run yourself.
+
+**While the panel is looking for models, it says so.** The list comes from your machine — LM Studio's own
+`lms` helper, the local ports that might be answering, and the model files the extension can see — and the
+first such look of a session also starts LM Studio's service, which takes a few seconds. The panel shows
+`looking for local models…` for exactly that long, so an empty dropdown never looks like a broken one.
 
 **How is there an AI in my editor with no server?** The extension builds a small C# program (the same
 way it already builds its design previewer) with the .NET SDK on your machine, and *that* program loads
 the model. Building it the first time also downloads the inference library from nuget.org — about
-100 MB, once. From then on everything is local: no account, no key, no subscription, and nothing that
+140 MB, once (llama.cpp's CPU build and its GPU build, so the switch below needs no second download).
+From then on everything is local: no account, no key, no subscription, and nothing that
 leaves the machine.
 
 **Where the model lives:** in this extension's global storage — on Linux
 `~/.config/Code/User/globalStorage/grumpy.avalonia-designer/models/`. Delete the file to reclaim the
 disk space, or press **Remove Model** in the panel (see below); set-up will offer it again.
+
+#### Using the GPU for the built-in runtime (optional)
+
+The extension's own runtime runs llama.cpp's **CPU** build by default: it works everywhere, needs nothing
+from the GPU, and is the smaller download. On a machine whose GPU llama.cpp can use, you can switch it to the
+**Vulkan** build — the same runtime, the same settings, the same model file, but *GPU offload: max* then really
+does put the layers on the GPU.
+
+Run **AI: Built-in Runtime Backend…** from the Command Palette (or set
+`avaloniaDesigner.assistant.bundledBackend` to `vulkan`) and choose it; the next request starts the runtime on
+the GPU build. On the machine this feature was written on the difference was not subtle: the same 3B Q4 model
+loaded in **602 ms with all 37 layers on an integrated Radeon, against 1409 ms on the CPU**.
+
+Two things are worth knowing before you switch:
+
+- **Asking is not the same as getting, and the panel tells you which one happened.** If the machine has no
+  usable Vulkan device, llama.cpp falls back to the CPU libraries by itself — nothing breaks — and the status
+  report names the build that is **actually running** (*Native backend: CPU build*, or *Vulkan build — AMD
+  Radeon 760M*). It never reports the build you asked for as the one you got.
+- **A driver crash is survivable.** If the graphics driver dies while the weights are loading (on some
+  machines that is exactly why this is an option rather than a default), the extension starts the runtime once
+  more on the CPU build, says why in the log and on screen, and offers to keep it that way with one click — so
+  a model that was loading still loads.
+
+The setting is about **this extension's own runtime only**: LM Studio's engines and your own `llama-server` are
+separate programs with their own settings, and nothing here touches them. Switching does stop a running
+built-in runtime, because a process that is already up was started with the old build — the next request starts
+it again with the new one.
 
 #### Your own `llama-server` — the engine you already have
 
@@ -1385,6 +1427,9 @@ as at runtime). Code-behind is discovered correctly even when the class lives in
   in a text tab) — press **Refresh** in the designer toolbar to pull the file in again.
 - **Previewer host builds on first open** — the first designer open builds the C# host; give it a
   few seconds.
+- **The first look at the model list can take a few seconds** — the AI section asks your machine for its
+  models, and the first such call of a session also starts LM Studio's own service. The ⚙ Settings panel
+  shows `looking for local models…` while it happens, and every look after that is fast.
 - **`StatusBar` doesn't exist in Avalonia** — the Status Bar tool inserts the standard
   `Border`+`TextBlock` pattern instead.
 - **VB event handlers use the right signature automatically.** Generated `DoubleTapped`,
