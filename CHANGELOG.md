@@ -15,6 +15,23 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.39] - 2026-09-16 · *the model that answered with a whole class*
+
+### Fixed
+
+- **A new member is never inserted with a `namespace`/`class` wrapper.** Reported from a real file: asked for
+  a sorting function, the model replied with a complete `namespace … { public partial class MainWindow … { … }
+  }`, and that got pasted **inside** the existing class — `CS1513: } expected`, a file that no longer built. The
+  model copied the context it had been shown, exactly the failure the prompt tried to prevent. Three layers now
+  stand in the way: the prompt says in so many words *"Do not wrap it in a namespace or a class"*, the answer
+  is unwrapped before the diff is shown (and an answer that declared **several** members is refused, because the
+  model chose those names, not you), and `insertMember` strips a wrapper as a last line of defence rather than
+  writing a nested type declaration into a class.
+- **A model that *is* only a member is left alone.** The unwrapper acts only on a type declared **before** the
+  first member, so a local `class` written inside a method — legal C# — is not mistaken for a wrapper.
+
+Suite **4003** passed / 0 failed.
+
 ## [0.9.38] - 2026-09-16 · *a prompt that fits the model, and a sentence that fits the prompt*
 
 ### Added

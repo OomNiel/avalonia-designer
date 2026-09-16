@@ -1108,7 +1108,8 @@ export function buildGeneratePrompt(input: GeneratePromptInput): ChatMessage[] {
     lines.push(
         `The developer wants a NEW member, which does not exist yet:\n"""${input.description.trim()}"""`,
         '',
-        'Write that member — its declaration and its complete body, nothing else:',
+        'Write that member — its declaration and its complete body, nothing else. Start on the declaration ' +
+            'itself, indented one level (four spaces):',
         CODE_FENCE + fence,
         `(${visibilityContract(input.language)})`,
         `(if the body needs a namespace this file does not import yet, put those using/Imports lines ` +
@@ -1117,8 +1118,10 @@ export function buildGeneratePrompt(input: GeneratePromptInput): ChatMessage[] {
         '',
         `Reply with ONE ${CODE_FENCE}${fence} code block and nothing outside it. The block must contain the ` +
         `complete new member — indented one level inside the class, with a real body rather than a ` +
-        `comment like "TODO". Do not write a second member, do not repeat the class or the existing ` +
-        `members, and do not explain anything.`
+        `comment like "TODO". **Do not wrap it in a namespace or a class**: the file already has both, ` +
+        `your member goes INSIDE the existing class, so no \`namespace\`, no \`class\` line, no ` +
+        `\`${input.language === 'vb' ? 'End Class' : '}'}\` of your own, and none of the members that ` +
+        `already exist. Do not explain anything.`
     );
     return [
         {
@@ -1335,7 +1338,12 @@ export function insertMember(input: InsertMemberInput): string {
     const body = input.text.replace(/\uFEFF/g, '');
     const lines = body.split(/\r\n|\n/);
     const indent = memberIndent(body, input.type, input.language);
-    const memberLines = reindent(input.member, indent, '\n').split('\n');
+    // Backstop for the wrapper bug (2026-09-16): a `namespace`/`class` declaration must never be written
+    // into a class body — that is what produced `CS1513: } expected` in a user's file, and a silent refusal
+    // here would report "added" while writing nothing. `unwrapMemberBlock` only strips a type declared
+    // *before* the first member, so a local class inside a method is left alone.
+    const safe = unwrapMemberBlock(input.member, input.language);
+    const memberLines = reindent(safe.member || input.member, indent, '\n').split('\n');
 
     // Where the member may go: after the type's first body line (never between `class F` and its `{`),
     // and no further than its closing line — a caret parked on the final `}` still means "inside".
@@ -1393,7 +1401,65 @@ export function addMemberToFile(input: InsertMemberInput & { usings: string[] })
     return { text: (hadBom ? '\uFEFF' : '') + merged, added: missing };
 }
 
-/** A member's declared name, from the answer. Used for the duplicate check, so it must not guess. */export function memberNameOf(member: string, language: 'cs' | 'vb'): string | undefined {
+/**
+ * The member a model returned, with a `namespace`/`class` wrapper removed when it added one.
+ *
+ * Reported by the user on 2026-09-16: asked for a sorting function, the model answered with a complete
+ * `namespace … { public partial class MainWindow … { … } }`, and it was inserted **inside** the existing
+ * class — `CS1513: } expected`, because the nested declaration closes the class early. The prompt says not
+ * to repeat the class; a small model copies the context it was shown anyway, so the answer is unwrapped
+ * here instead of trusted.
+ *
+ * Only a type declared **before** the first member counts as a wrapper, which is what keeps a local `class`
+ * written *inside* a method from being mistaken for one.
+ */
+export interface UnwrappedMember {
+    /** The member text to insert (empty when the answer held nothing usable). */
+    member: string;
+    /** True when a wrapper had to be removed — worth a log line, since it means the prompt was ignored. */
+    unwrapped: boolean;
+    /** How many members the answer declared inside that wrapper. */
+    count: number;
+    /** Their names, in declaration order. */
+    names: string[];
+}
+
+export function unwrapMemberBlock(member: string, language: 'cs' | 'vb'): UnwrappedMember {
+    const text = tidyCode(String(member ?? '').replace(/\r\n/g, '\n'));
+    if (!text.trim()) return { member: '', unwrapped: false, count: 0, names: [] };
+    const declared = memberSignatures(text, language);
+    const names = declared.map((m) => m.name);
+    const lines = text.split('\n');
+    const declIndex = lines.findIndex((l) => (language === 'vb' ? VB_TYPE_RE : CS_TYPE_RE).test(l));
+    // No type declaration, or one that comes *after* a member (a local class): the answer is already the
+    // member, so it is handed back untouched.
+    if (declIndex < 0 || (declared.length > 0 && declIndex > declared[0].line - 1)) {
+        return { member: text, unwrapped: false, count: names.length, names };
+    }
+
+    // The body of the declared type — the same span maths the insertion uses, so a VB `Module` and a C#
+    // `record` are understood identically.
+    const span = enclosingTypeSpan(text, declIndex + 2, language);
+    if (!span) return { member: text, unwrapped: false, count: names.length, names };
+    const body = lines.slice(span.declLine, span.endLine - 1).join('\n');
+    const members = memberSignatures(body, language);
+    if (!members.length) return { member: '', unwrapped: true, count: 0, names: [] };
+
+    // The first member of the wrapper, up to the next declaration: the blank lines and comments between
+    // them belong to it.
+    const bodyLines = body.split('\n');
+    const first = members[0];
+    const end = members.length > 1 ? members[1].line - 1 : bodyLines.length;
+    return {
+        member: tidyCode(bodyLines.slice(first.line - 1, end).join('\n')),
+        unwrapped: true,
+        count: members.length,
+        names: members.map((m) => m.name)
+    };
+}
+
+/** A member's declared name, from the answer. Used for the duplicate check, so it must not guess. */
+export function memberNameOf(member: string, language: 'cs' | 'vb'): string | undefined {
     for (const raw of String(member ?? '').split(/\r?\n/)) {
         if (!raw.trim() || /^[ \t]*(?:\/\/|'|#|\/\*)/.test(raw)) continue;
         const vb = /^[ \t]*(?:(?:Public|Private|Protected|Friend|Shared|Overrides|Overridable|NotOverridable|MustOverride|Async|Iterator|Partial|Static)\s+)*(?:Sub|Function)\s+([A-Za-z_]\w*)/i.exec(raw);

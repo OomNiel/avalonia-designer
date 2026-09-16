@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3985 passed, 0 failed / 0 skipped** (2026-09-16, ~42 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4003 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2522,3 +2522,47 @@ that server would have served happily — and the dialog says that instead of sh
 request's answer budget is reduced to make it fit instead of the request failing.
 
 **Suite:** 3985 passed / 0 failed (was 3962).
+
+### §122 — the answer that was a whole class (2026-09-16, release 0.9.39)
+
+Reported from the user's test app: *"I have tried to create a sorting function and the model replied … There are
+some errors."* The evidence was in their `MainWindow.axaml.cs` — the model had answered with
+
+```csharp
+    namespace OptimisedCSTest
+    {
+        public partial class MainWindow : AvaloniaChrome.ChromeWindow
+        {
+            private static void SortStringArray(string[] array) { … }
+        }
+    }
+```
+
+and we inserted that **inside** the class that was already there. `dotnet build`: `CS1513: } expected` (the
+nested class closes the outer one early) and `CS1022: Type or namespace definition, or end-of-file expected`.
+The file had to be repaired by hand (the wrapper removed; the member itself was fine — `private static`,
+`Array.Sort`, exactly what the rules ask for).
+
+**Why it happened:** the prompt shows the file header *including* `public partial class MainWindow : Window` as
+context, and a small model copies what it is shown. The contract already said "do not repeat the class"; that is
+not the same as "do not wrap your answer in one", and the model chose the second reading.
+
+**Three layers now, in the order they can fail:**
+1. the prompt says it outright — *"Do not wrap it in a namespace or a class: the file already has both, your
+   member goes INSIDE the existing class"*, plus "start on the declaration itself, indented one level";
+2. `unwrapMemberBlock()` removes a wrapper before anything is shown or applied — and an answer that declared
+   **several** members is **refused**, not guessed at, because in this flow the model picks the names and only
+   the user knows which one they meant;
+3. `insertMember()` strips a wrapper as a backstop. It *strips* rather than refusing: a silent refusal here
+   would report "added" while writing nothing, which is the one thing this project keeps re-learning.
+
+**The subtle half:** unwrapping must not touch a legitimate member. `unwrapMemberBlock` only acts on a type
+declared **before** the first member, so a local `class` written inside a method — legal C#, and a real
+pattern — is not mistaken for a wrapper. The regression test uses the **verbatim** answer from the user's file,
+so this exact failure cannot come back unnoticed.
+
+**Observation worth keeping:** the request did not appear in `logs/ai.log` at all, even though the diagnostics
+landed in 0.9.37 — so that attempt ran on 0.9.36 (or in a window still holding it). The lesson from §120 holds:
+when a report has no log line, check *which build* produced it before reading anything into the silence.
+
+**Suite:** 4003 passed / 0 failed (was 3985).

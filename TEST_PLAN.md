@@ -276,6 +276,13 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.39` (2026-09-16)** — a model answered a "create a function" request with a whole
+  `namespace`/`class`, and it was inserted inside the existing class (`CS1513` in the user's app). Three layers
+  now prevent it: the prompt forbids the wrapper in words, `unwrapMemberBlock()` removes one before the diff
+  (refusing an answer that declared several members, since the model chose those names), and `insertMember`
+  strips as a backstop. T2 pins the **verbatim** broken answer from the user's file, the two-member refusal, the
+  VB `Namespace`/`Class` case, a clean answer left untouched, and a local class inside a method *not* being
+  mistaken for a wrapper. Suite **4003**.
 - **Release `0.9.38` (2026-09-16)** — the description dialog is planned against the model's window: the room
   is the window minus the answer budget (`promptRoom`), the parts are weighed and the optional ones dropped in
   a stated order with the drops named in the log (`fitPromptParts`), and the sentence's allowance

@@ -32,7 +32,8 @@ const {
     memberSignatures,
     normaliseMemberVisibility,
     parseNewMemberAnswer,
-    sniffMemberName
+    sniffMemberName,
+    unwrapMemberBlock
 } = require('../../out/assistant.js');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -97,6 +98,8 @@ module.exports = async (t) => {
             'the marker that separates needed usings from the member is spelled out');
         t.ok(/ONE ```csharp code block/.test(user), 'prompt', 'the answer is constrained to one block');
         t.ok(/Always `private`/.test(user), 'prompt', 'private is mandatory');
+        t.ok(/Do not wrap it in a namespace or a class/.test(user), 'prompt',
+            'and the wrapper that broke a real file is forbidden in so many words (2026-09-16)');
         t.ok(/Add `static` only when/.test(user), 'prompt', 'and static is conditional, with the condition given');
         t.ok(/no `this`/.test(user) && /never be static/.test(user), 'prompt',
             'including why the event handler of a form never can be static');
@@ -424,5 +427,77 @@ module.exports = async (t) => {
         t.equal(alreadyImported('using System;', 'using System.Linq;'), false, 'imports', 'a new one is kept');
         t.equal(alreadyImported('Imports System\nImports System.Linq', 'Imports System.Linq'), true, 'imports-vb',
             'the same for VB Imports');
+    }
+
+    // ---------------- the model that answers with a whole class (2026-09-16) ----------------
+    // Reported from the user's own test app: asked for a sorting function, the model replied with a complete
+    // `namespace … { class MainWindow … { … } }` and we inserted it **inside** the existing class —
+    // `CS1513: } expected`, and a file that would not build. The answer below is the verbatim shape from
+    // their `MainWindow.axaml.cs`, so the regression cannot come back unnoticed.
+    {
+        const WRAPPED = [
+            '    namespace OptimisedCSTest',
+            '    {',
+            '        public partial class MainWindow : AvaloniaChrome.ChromeWindow',
+            '        {',
+            '            private static void SortStringArray(string[] array)',
+            '            {',
+            '                if (array == null)',
+            '                    throw new ArgumentNullException(nameof(array));',
+            '',
+            '                Array.Sort(array);',
+            '            }',
+            '        }',
+            '    }'
+        ].join('\n');
+
+        const unwrapped = unwrapMemberBlock(WRAPPED, 'cs');
+        t.equal(unwrapped.unwrapped, true, 'unwrap', 'a namespace/class wrapper is recognised and removed');
+        t.equal(unwrapped.count, 1, 'unwrap', 'the wrapper held one member');
+        t.equal(unwrapped.names.join(','), 'SortStringArray', 'unwrap', 'and it is named');
+        t.ok(/^\s*private static void SortStringArray\(string\[\] array\)/.test(unwrapped.member), 'unwrap',
+            'so the member starts at its own declaration (its wrapper indentation is re-based on insert)');
+        t.ok(!/namespace|class MainWindow/.test(unwrapped.member), 'unwrap',
+            'and nothing of the wrapper survives — that is what broke the user\'s file');
+        t.ok(/Array\.Sort\(array\);/.test(unwrapped.member), 'unwrap', 'the body is intact');
+
+        // Two members: refused rather than guessed at, because the model (not the user) chose the name.
+        const two = unwrapMemberBlock(
+            'namespace N\n{\n    class C\n    {\n        void A()\n        {\n        }\n\n        void B()\n        {\n        }\n    }\n}',
+            'cs'
+        );
+        t.equal(two.count, 2, 'unwrap-many', 'a wrapper with two members is counted');
+        t.equal(two.names.join(','), 'A,B', 'unwrap-many', 'and both are named, so the message can say what came back');
+
+        const vb = unwrapMemberBlock(
+            'Namespace Demo\n    Partial Public Class MainWindow\n        Private Shared Sub SortArray(values() As Integer)\n            Array.Sort(values)\n        End Sub\n    End Class\nEnd Namespace',
+            'vb'
+        );
+        t.equal(vb.unwrapped, true, 'unwrap-vb', 'VB gets the same treatment for Namespace/Class');
+        t.equal(vb.names.join(','), 'SortArray', 'unwrap-vb', 'with the member intact');
+
+        const clean = unwrapMemberBlock('private static void SortArray(int[] v)\n{\n    Array.Sort(v);\n}', 'cs');
+        t.equal(clean.unwrapped, false, 'unwrap-clean', 'an answer that is already just a member is untouched');
+        t.equal(clean.count, 1, 'unwrap-clean', 'and counted as one');
+
+        // A local class written *inside* a method is legal C# and is not a wrapper — which is exactly what
+        // the "declared before the first member" rule in `unwrapMemberBlock` is for.
+        const local = unwrapMemberBlock(
+            'private static void Expand()\n{\n    class Helper\n    {\n    }\n\n    _ = new Helper();\n}',
+            'cs'
+        );
+        t.equal(local.unwrapped, false, 'unwrap-local', 'a local class is not mistaken for a wrapper');
+        t.ok(/class Helper/.test(local.member), 'unwrap-local', 'and it stays where the model put it');
+
+        // The insertion itself is the last line of defence: it would rather strip than write a class into a
+        // class — and never silently do nothing, which would report "added" while changing no file.
+        const type = enclosingTypeSpan(CS_FILE, 15, 'cs');
+        const rescued = insertMember({ text: CS_FILE, caretLine: 14, member: WRAPPED, type, language: 'cs' });
+        t.ok(/private static void SortStringArray/.test(rescued), 'insert-guard', 'the member is inserted');
+        t.ok(!/namespace OptimisedCSTest/.test(rescued), 'insert-guard',
+            'and the wrapper is stripped even if a caller forgets');
+        t.equal((rescued.match(/^\s*(?:class|namespace|struct|record)\b/gm) || []).length,
+            (CS_FILE.match(/^\s*(?:class|namespace|struct|record)\b/gm) || []).length, 'insert-guard',
+            'so no nested type declaration can ever reach the file — the count is the file\'s own, unchanged');
     }
 };

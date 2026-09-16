@@ -49,6 +49,7 @@ import {
     readHardwareFacts,
     sniffMemberName,
     spliceMethod,
+    unwrapMemberBlock,
     type AssistantConfig,
     type ChatMessage,
     type MemberInfo,
@@ -710,7 +711,24 @@ async function proposeMethod(
         // needs. Everything the user asked for is enforced here rather than hoped for in the prompt —
         // a name that already exists is refused outright, and the visibility is corrected (2026-09-16).
         const parsed = parseNewMemberAnswer(answer);
-        code = parsed.member;
+        // A model that answers with a whole `namespace`/`class` — which happens even though the prompt
+        // forbids it, reported on 2026-09-16 with `CS1513` in a user's file — would otherwise be inserted
+        // *inside* the existing class and break it. The wrapper comes off here, and an answer that declared
+        // several members is refused rather than guessed at (the model, not the user, chose the name here).
+        const unwrapped = parsed.member.trim()
+            ? unwrapMemberBlock(parsed.member, target.language)
+            : { member: '', unwrapped: false, count: 0, names: [] as string[] };
+        if (unwrapped.unwrapped) {
+            log(`The answer wrapped the member in a class; removed it (${unwrapped.names.join(', ')}).`);
+        }
+        if (unwrapped.count > 1) {
+            void vscode.window.showWarningMessage(
+                `The model answered with ${unwrapped.count} members (${unwrapped.names.join(', ')}) instead of one — ` +
+                'nothing was added. Say what you want in a single sentence ("a function named X that …") and try again.'
+            );
+            return undefined;
+        }
+        code = unwrapped.member;
         usings = parsed.usings;
         note = parsed.note;
         const name = code.trim() ? memberNameOf(code, target.language) : undefined;

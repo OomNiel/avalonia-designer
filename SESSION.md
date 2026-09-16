@@ -19,8 +19,15 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.38`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.39`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.39 — the model that answered with a whole class.** A "create a function" request came back as
+  `namespace … { class MainWindow … { … } }` and was inserted *inside* the existing class — `CS1513` in the
+  user's app, repaired by hand (their file now builds 0/0). The prompt now forbids the wrapper outright, the
+  answer is unwrapped before the diff (and refused when it declared several members), and `insertMember` strips
+  as a backstop — while a local `class` inside a method is left alone. §122 has the write-up, and the regression
+  test uses the verbatim broken answer.
 
 - **0.9.38 — the prompt is planned, not just sent.** The description dialog now says how much room your
   sentence has (*"~315 tokens (~1260 characters) left"*) and refuses to accept more; the optional context
