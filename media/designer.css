@@ -1273,6 +1273,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     border-color: #c52b3b;
     color: #fff;
 }
+
 .modal-btn.warning:hover {
     background: #a62330;
     border-color: #a62330;
@@ -1310,17 +1311,21 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     cursor: pointer;
     user-select: none;
 }
+
 .settings-section-head:focus-visible {
     outline: 1px dotted var(--accent, #4ea1ff);
     outline-offset: 1px;
 }
+
 .settings-section-arrow {
     font-size: 11px;
     opacity: 0.6;
 }
+
 .settings-section-head:hover .settings-section-arrow {
     opacity: 0.9;
 }
+
 .settings-section-body[hidden] {
     display: none;
 }
@@ -1996,6 +2001,23 @@ body.pv-dark #menuDummies .menu-dummy-sep {
    scrolls, because Save is the last thing the user needs to press. */
 #settingsModal .modal-box {
     width: min(94vw, 560px);
+    /* The tallest dialog in the extension, and the one whose last rows matter — the House rules box sits at
+       the very end of the AI section. Measured in Chromium against this stylesheet and the real markup
+       (2026-09-16): at a 1024x700 editor area the box was 672px tall for 754px of content, so the last ~4
+       rows sat behind a scroll. It now uses the window to within 8px instead of 28px and carries a slightly
+       tighter vertical rhythm, which together is ~2-4 more rows — and only this dialog: the eight small ones
+       keep the shared `.modal-box` values. */
+    max-height: calc(100vh - 8px);
+    padding: 10px;
+}
+
+/* Tighter only where those pixels are repeated: the hints under the switches and the option rows. */
+#settingsModal .modal-hint {
+    margin-bottom: 6px;
+}
+
+#settingsModal .settings-section-head {
+    padding: 2px 0;
 }
 
 /* Direct child on purpose: the first `.modal-buttons` in the box belongs to `#aiBody` (Refresh/Scan) and

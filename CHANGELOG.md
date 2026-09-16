@@ -15,6 +15,26 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.44] - 2026-09-16 · *the ⚙ Settings dialog gets its last rows back*
+
+### Fixed
+
+- **The ⚙ Settings dialog now uses the window it is in.** Measured in Chromium against the real stylesheet and
+  the real markup (2026-09-16): at a 1024×700 editor area the box was 672 px tall for 754 px of content, so the
+  last ~4 rows — the **House rules** box at the very end of the AI section — sat behind a scroll. It is now
+  capped to the window minus **8 px** instead of 28, with a slightly tighter vertical rhythm inside it (10 px
+  padding, 6 px between the hints, 2 px section heads): worth **~3 rows** at that size. At 1440×900 everything
+  already fitted and still does. Only this dialog changed — the eight small ones keep the shared `.modal-box`
+  values, and the pinned Save row, the viewport cap and the internal scrolling are all still asserted.
+
+### Added
+
+- **`tools/measure-settings-panel.py`** — writes a standalone page of that dialog (real CSS + real markup, no
+  extension host, no app) and exposes `window.__measure()`, so the panel's size is *measured* rather than
+  guessed. This is the second time this dialog's height has been the subject of a report, and both times the
+  numbers came from a Chromium render that was thrown away afterwards. It is a tape measure, not a test: it is
+  not part of `npm test` and it renders nothing of the user's project.
+
 ## [0.9.43] - 2026-09-16 · *house rules — the model writes like you do*
 
 ### Added
