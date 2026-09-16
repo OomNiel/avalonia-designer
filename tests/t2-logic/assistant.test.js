@@ -28,6 +28,11 @@ const {
     looksLikeEmbeddingModel,
     methodTooLong,
     normalizeAssistantConfig,
+    MAX_DESCRIPTION_TOKENS,
+    allowanceText,
+    descriptionAllowance,
+    fitPromptParts,
+    promptRoom,
     normalizeEndpoint,
     parseChatCompletion,
     parseSseDelta,
@@ -74,6 +79,50 @@ module.exports = async (t) => {
             'an explicit false is honoured — that is the "apply it directly" choice');
         t.equal(normalizeAssistantConfig({ showDiff: 'nonsense' }).showDiff, true, 'config',
             'anything unreadable keeps the safe default rather than silently skipping the review');
+
+        // --- how big a prompt may be (asked 2026-09-16: "limit the length of the prompt to ensure the
+        // model's response does not take too long to process but still replies with a reasonably accurate
+        // result") ---
+        t.equal(promptRoom(6144, 4096), 6144 - 4096 - 64, 'budget',
+            'the prompt gets the window minus the answer budget and a little slack');
+        t.equal(promptRoom(4096, 4096), 0, 'budget',
+            'and nothing at all when the answer budget wants the whole window');
+
+        // `estimateTokens` is characters/4, so 400 characters is 100 tokens — the arithmetic below is in
+        // those terms: ~1 token of header, 100 of method, then two optional 100-token parts.
+        const parts = [
+            { name: 'header', text: 'using System;', required: true },
+            { name: 'method', text: 'x'.repeat(400), required: true },
+            { name: 'members', text: 'm'.repeat(400), required: false },
+            { name: 'style', text: 's'.repeat(400), required: false }
+        ];
+        const roomy = fitPromptParts(parts, 10000);
+        t.equal(roomy.dropped.length, 0, 'fit', 'a roomy window drops nothing');
+        t.equal(roomy.kept.map((p) => p.name).join(','), 'header,method,members,style', 'fit',
+            'and keeps the order it was given');
+
+        const tight = fitPromptParts(parts, 251);
+        t.equal(tight.dropped.join(','), 'style', 'fit',
+            'the last optional part is dropped first — the caller orders them by value');
+        t.equal(tight.kept.some((p) => p.name === 'members'), true, 'fit', 'so the member list stays');
+        t.equal(tight.kept.some((p) => p.name === 'style'), false, 'fit', 'and the style sample goes');
+
+        const cramped = fitPromptParts(parts, 151);
+        t.equal(cramped.dropped.join(','), 'members,style', 'fit', 'when it is really tight, both optional parts go');
+        t.equal(cramped.kept.filter((p) => p.required).length, 2, 'fit', 'the required ones are never dropped');
+
+        const impossible = fitPromptParts(parts, 100);
+        t.ok(impossible.overflowTokens > 0, 'fit',
+            'required parts that do not fit are reported — the caller refuses rather than sending a guess');
+        t.equal(impossible.kept.length, 2, 'fit', 'and nothing required is silently cut');
+
+        t.equal(descriptionAllowance(1000, 600), 400, 'allowance',
+            'the sentence gets what is left of the room, capped at the maximum');
+        t.equal(descriptionAllowance(5000, 100), MAX_DESCRIPTION_TOKENS, 'allowance',
+            'a pasted wall of text cannot dominate the prompt or the wait');
+        t.equal(descriptionAllowance(100, 200), 0, 'allowance', 'and the allowance is never negative');
+        t.ok(/tokens/.test(allowanceText(315)) && /1260/.test(allowanceText(315)), 'allowance',
+            'it is shown as tokens *and* characters, because people count characters');
 
         const external = normalizeAssistantConfig({ backend: 'external', endpoint: 'http://127.0.0.1:1234' });
         t.equal(external.endpoint, 'http://127.0.0.1:1234/v1', 'config', '/v1 is appended when missing');

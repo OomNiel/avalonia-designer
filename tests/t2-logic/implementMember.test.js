@@ -392,6 +392,24 @@ module.exports = async (t) => {
             'offering Undo by name — in that mode the change is already in the file');
         t.ok(/showDiff: cfg\.get<boolean>\('showDiff', true\)/.test(read('src/assistantUi.ts')), 'command',
             'read at the one place every entry point shares');
+
+        // --- the prompt budget (asked 2026-09-16) ---
+        t.equal((ui.match(/await askDescription\(\{/g) || []).length, 2, 'budget',
+            'both dialogs go through the one description box — same wording, same allowance, same refusal');
+        t.ok(/const limited = cfg\.backend === 'bundled';/.test(ui), 'budget',
+            'only the bundled runtime is planned: an external server owns its own context');
+        t.ok(/await askDescription\(\{[\s\S]{0,400}?limited: fitAllowance\.limited/.test(ui), 'budget',
+            'and the dialog is told whether there is a limit at all');
+        t.ok(/About \$\{allowanceText\(input\.allowance\)\} left for your sentence/.test(ui), 'budget',
+            'the prompt line says how much room the sentence has');
+        t.ok(/estimateTokens\(text\) > input\.allowance/.test(ui) && /Shorten it, or raise the model/.test(ui),
+            'budget', 'and over-long input is refused with what is left, not silently trimmed');
+        t.ok(/if \(limited && allowance < MIN_DESCRIPTION_TOKENS\)/.test(ui), 'budget',
+            'when nothing is left after the required parts, the request is refused before the dialog');
+        t.ok(/if \(fit\.overflowTokens > 0\)/.test(ui), 'budget',
+            'a method or class body that cannot fit its own window is refused with the reason');
+        t.ok(/fit\.kept\.some\(\(p\) => p\.name === 'style'\)/.test(ui) && /fit\.kept\.some\(\(p\) => p\.name === 'members'\)/.test(ui),
+            'budget', 'and the parts that were dropped are really left out of the prompt, not merely counted');
     }
 
     // ---------------- the small conveniences ----------------

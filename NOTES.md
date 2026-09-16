@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3962 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3985 passed, 0 failed / 0 skipped** (2026-09-16, ~42 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2489,3 +2489,36 @@ already in the file. The webview's "a state that forgot the field" case defaults
 that is the side that protects a file from a bad answer.
 
 **Suite:** 3962 passed / 0 failed (was 3940).
+
+### §121 — "Limit the prompt so the answer does not take too long" (2026-09-16, release 0.9.38)
+
+The request, and the aim behind it: *"The aim is to limit the length of the prompt to ensure the model's
+response does not take too long to process but still replies with a reasonably accurate result. You decide if
+this is possible or not."* It is possible, partly — and the honest split is what shaped the implementation:
+
+- **Physics (real):** prompt-processing time is linear in prompt tokens, so a capped prompt genuinely bounds
+  how long the model takes to *start* answering. That is what the feature buys.
+- **Trade-off (not a free win):** everything dropped is context the model would have used. This project
+  includes one short sibling method on purpose — `siblingOf`'s comment says it is what lifts a small model
+  from "plausible C#" to "compiles here" — so trimming makes the answer *cheaper*, never *better*. Hence a
+  **stated order** (style sample first, member list next, required parts never) and a log line naming what
+  went, rather than a silently thinner prompt.
+- **Not possible:** a prompt cap cannot shorten the *answer* — that is `maxTokens`, a separate decision — and
+  it cannot promise accuracy at all; only "the request fitted, and the model saw what mattered".
+
+**Implementation:** `promptRoom(context, answer)` is the room, `fitPromptParts()` weighs the parts and drops
+optional ones in the caller's order, `descriptionAllowance()` is what is left of the room capped at
+`MAX_DESCRIPTION_TOKENS` (400 — a sentence or two, not a word count), and one shared `askDescription()` shows
+the allowance in the prompt line and **refuses** over-long text via `validateInput` (the user's choice: block,
+not warn). Two refusals come before the dialog ever appears: required parts that do not fit (`overflowTokens`)
+and an allowance below 40 tokens.
+
+**Deliberate exemption:** external servers are not limited at all (the user's choice). LM Studio loads the
+model with the window *it* was told to use, so a limit computed from our own setting would refuse sentences
+that server would have served happily — and the dialog says that instead of showing an invented number.
+
+**Interaction worth remembering:** this plan is the *intent*, and `answerBudget()` (0.9.37) is the
+*guarantee*: if the prompt is still bigger than planned — a file edited while the dialog was open — the
+request's answer budget is reduced to make it fit instead of the request failing.
+
+**Suite:** 3985 passed / 0 failed (was 3962).

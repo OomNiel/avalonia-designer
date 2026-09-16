@@ -933,6 +933,107 @@ export function contextForBudget(requestedContext: number, maxTokens: number): n
     return Math.max(DEFAULT_CONTEXT_SIZE, Math.round(maxTokens) + 2048);
 }
 
+// ---------------- how big a prompt may be (asked 2026-09-16) ----------------
+//
+// The user's aim, in their words: *"limit the length of the prompt to ensure the model's response does not take
+// too long to process but still replies with a reasonably accurate result."*
+//
+// Half of that is physics and half is a trade-off, and they are worth keeping apart:
+//   - **Physics:** prompt-processing time is linear in prompt tokens, so capping the prompt genuinely bounds
+//     how long the model takes to *start* answering. That is real and worth doing.
+//   - **Trade-off:** what gets dropped is context the model would have used. This project includes one short
+//     sibling method on purpose — it is what lifts a small model from "plausible C#" to "compiles here" — so
+//     dropping it makes the answer *cheaper*, not *better*. The parts are therefore dropped in a fixed,
+//     explainable order (the optional ones only), the order is reported, and the user's own sentence is
+//     capped rather than their code.
+//   - What a cap cannot do is make the *answer* shorter: that is `maxTokens`, a separate decision.
+
+/** Tokens reserved for the chat template, the stop marker and rounding. */
+const PROMPT_SLACK_TOKENS = 64;
+
+/** How much of the window is left for the prompt once the answer has its share. */
+export function promptRoom(contextSize: number, maxTokens: number): number {
+    return Math.max(0, Math.floor(contextSize - maxTokens - PROMPT_SLACK_TOKENS));
+}
+
+/** One part of a prompt, so it can be left out when the window is full. */
+export interface PromptPart {
+    /** Named in the log when it is dropped: `style`, `members`, `method`… */
+    name: string;
+    text: string;
+    /** Required parts are never dropped; if they alone do not fit, the request is refused. */
+    required: boolean;
+}
+
+export interface PromptFit {
+    /** The parts to send, in the order they were given. */
+    kept: PromptPart[];
+    /** Names of the optional parts that had to go, in the order they were dropped. */
+    dropped: string[];
+    /** Tokens the *required* parts need beyond the room (0 when everything fitted). */
+    overflowTokens: number;
+    /** The room the fit was computed against. */
+    room: number;
+    /** Tokens the kept parts need. */
+    usedTokens: number;
+}
+
+/**
+ * Keeps the parts that fit and drops the optional ones that do not — in the order they are given.
+ *
+ * Callers order the optional parts by value, so the first one is the last to be dropped. For the
+ * generate-a-member prompt that order is the member list (cheap, and it is what stops the model inventing
+ * calls) before the style sample (expensive, and only about idiom).
+ */
+export function fitPromptParts(parts: PromptPart[], room: number): PromptFit {
+    const tokensOf = (p: PromptPart) => estimateTokens(p.text);
+    const required = parts.filter((p) => p.required);
+    const optional = parts.filter((p) => !p.required);
+    const requiredTokens = required.reduce((n, p) => n + tokensOf(p), 0);
+    if (requiredTokens > room) {
+        return { kept: required, dropped: [], overflowTokens: requiredTokens - room, room, usedTokens: requiredTokens };
+    }
+    let left = room - requiredTokens;
+    const dropped: string[] = [];
+    const keptOptional: PromptPart[] = [];
+    for (const part of optional) {
+        const cost = tokensOf(part);
+        if (cost <= left) {
+            left -= cost;
+            keptOptional.push(part);
+        } else {
+            dropped.push(part.name);
+        }
+    }
+    // The original order is restored so the prompt reads the way it always did when nothing was dropped.
+    const kept = parts.filter((p) => required.includes(p) || keptOptional.includes(p));
+    return {
+        kept,
+        dropped,
+        overflowTokens: 0,
+        room,
+        usedTokens: kept.reduce((n, p) => n + tokensOf(p), 0)
+    };
+}
+
+/**
+ * The cap on the developer's own sentence.
+ *
+ * A sentence or two is what the feature asks for, so this is generous rather than strict: it exists to stop a
+ * pasted wall of text from dominating the prompt (and the wait), not to make people count words.
+ */
+export const MAX_DESCRIPTION_TOKENS = 400;
+
+/** Tokens left for the sentence: what the prompt does not need, capped, never negative. */
+export function descriptionAllowance(room: number, usedTokens: number): number {
+    return Math.max(0, Math.min(MAX_DESCRIPTION_TOKENS, Math.floor(room - usedTokens)));
+}
+
+/** `315` → `~315 tokens (~1260 characters)`. One wording for every place that shows the allowance. */
+export function allowanceText(tokens: number): string {
+    return `~${tokens} tokens (~${tokens * 4} characters)`;
+}
+
 // ---------------- a brand-new member (asked 2026-09-16) ----------------
 //
 // "AI: Implement in Function…" could only *rewrite the method the caret is in*. The user asked for the

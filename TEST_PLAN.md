@@ -276,6 +276,15 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.38` (2026-09-16)** — the description dialog is planned against the model's window: the room
+  is the window minus the answer budget (`promptRoom`), the parts are weighed and the optional ones dropped in
+  a stated order with the drops named in the log (`fitPromptParts`), and the sentence's allowance
+  (`descriptionAllowance`, capped at 400 tokens) is shown while typing and **refused** when exceeded. Required
+  parts that cannot fit refuse the whole request with the numbers. External servers are exempt on purpose. T2
+  covers the arithmetic (a roomy window keeps everything, 251 tokens drops the style sample only, 151 drops
+  both, 100 overflows the required parts, the allowance never goes negative and is capped, tokens *and*
+  characters are shown) and guards that both dialogs share the one box and that dropped parts really leave the
+  prompt. Suite **3985**.
 - **Release `0.9.37` (2026-09-16)** — the ⚙ panel gained **"show the proposed code as a diff"** (off = the
   code is written straight in, one undoable edit, the same rules first), and the token budget was fixed: the
   bundled window (4096) and the answer budget (4096) could not both hold a prompt, which is how a 12B model

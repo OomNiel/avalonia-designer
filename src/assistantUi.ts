@@ -17,6 +17,7 @@ import * as fs from 'fs';
 import {
     addMemberToFile,
     addXamlEventAttribute,
+    allowanceText,
     answerBudget,
     assistantEnabled,
     assessHardware,
@@ -26,12 +27,14 @@ import {
     chat,
     chatDetailed,
     contextForBudget,
+    descriptionAllowance,
     describeEmptyAnswer,
     describeModel,
     describeLoadedNow,
     enclosingTypeSpan,
     estimateTokens,
     extractCode,
+    fitPromptParts,
     handlerFromMemberName,
     knownControlNames,
     looksLikeEmbeddingModel,
@@ -42,12 +45,15 @@ import {
     normalizeAssistantConfig,
     parseNewMemberAnswer,
     probeServer,
+    promptRoom,
     readHardwareFacts,
     sniffMemberName,
     spliceMethod,
     type AssistantConfig,
     type ChatMessage,
     type MemberInfo,
+    type PromptFit,
+    type PromptPart,
     type ServerModelInfo,
     type TypeSpan
 } from './assistant';
@@ -907,6 +913,66 @@ export async function runBuildTask(): Promise<void> {
     else void vscode.window.showWarningMessage('The build did not finish in 5 minutes — check the terminal.');
 }
 
+/** The least a description can be and still be worth sending (about 160 characters). */
+const MIN_DESCRIPTION_TOKENS = 40;
+
+/**
+ * How much room this request's prompt has, and what had to be left out to respect it.
+ *
+ * **Only the bundled runtime is planned.** An external server owns its own context — LM Studio loads the
+ * model with the window *it* was told to use — so capping a request there would refuse perfectly good
+ * sentences for a limit we cannot even measure (decided 2026-09-16). For `external` the room is unlimited,
+ * which is exactly what the dialog then shows.
+ */
+function planPrompt(cfg: AssistantConfig, parts: PromptPart[]): { fit: PromptFit; limited: boolean } {
+    const limited = cfg.backend === 'bundled';
+    const room = limited ? promptRoom(cfg.contextSize, cfg.maxTokens) : Number.MAX_SAFE_INTEGER;
+    const fit = fitPromptParts(parts, room);
+    if (fit.dropped.length) {
+        log(`Prompt is full (${fit.usedTokens} of ${fit.room} tokens): left out ${fit.dropped.join(', ')}.`);
+    }
+    return { fit, limited };
+}
+
+/**
+ * The one description dialog, shared by both paths: same wording, same allowance, same refusal.
+ *
+ * With a limit the prompt line carries what is left **and** `validateInput` refuses to accept more, so the
+ * user finds out while typing instead of from a request that never fitted (asked 2026-09-16). The estimate
+ * is the same characters/4 rule the request itself is planned with, so the two cannot disagree.
+ */
+async function askDescription(input: {
+    title: string;
+    prompt: string;
+    placeHolder: string;
+    allowance: number;
+    limited: boolean;
+    dropped: string[];
+}): Promise<string | undefined> {
+    const note = input.limited
+        ? `About ${allowanceText(input.allowance)} left for your sentence`
+            + (input.dropped.length ? ` — the prompt is full, so ${input.dropped.join(' and ')} was left out` : '')
+            + '.'
+        : 'This server decides its own context, so there is no length limit here.';
+    const description = await vscode.window.showInputBox({
+        title: input.title,
+        prompt: `${input.prompt} ${note}`,
+        placeHolder: input.placeHolder,
+        ignoreFocusOut: true,
+        validateInput: (v) => {
+            const text = v.trim();
+            if (text.length < 8) return 'Say a little more — at least a few words.';
+            if (input.limited && estimateTokens(text) > input.allowance) {
+                return `That is about ${estimateTokens(text)} tokens, and ${allowanceText(input.allowance)} is left `
+                    + "for your sentence. Shorten it, or raise the model's window "
+                    + '(avaloniaDesigner.assistant.loadContextLength) in the ⚙ Settings panel.';
+            }
+            return undefined;
+        }
+    });
+    return description === undefined ? undefined : description.trim();
+}
+
 /**
  * "Implement in Function…" — the caret decides which of the two things happens.
  *
@@ -946,22 +1012,52 @@ export async function implementInFunction(): Promise<void> {
         return;
     }
 
-    const description = await vscode.window.showInputBox({
+    // What this prompt needs, and what this model's window can hold. The method and the file header are
+    // required — a rewrite without them is a guess — and the style sample is the first thing to go when the
+    // prompt is full: it is the largest optional part and the least load-bearing (2026-09-16).
+    const header = headerOf(editor.document, language);
+    const all = methodsIn(editor.document.fileName, editor.document.getText());
+    const sibling = siblingOf(editor.document, span, all);
+    const { fit, limited } = planPrompt(cfg, [
+        { name: 'header', text: header, required: true },
+        { name: 'method', text: method, required: true },
+        { name: 'style', text: sibling ?? '', required: false }
+    ]);
+    if (fit.overflowTokens > 0) {
+        void vscode.window.showWarningMessage(
+            `${span.name}() needs about ${estimateTokens(method)} tokens and this model's window has room for ` +
+            `${fit.room} — nothing was sent. Raise "avaloniaDesigner.assistant.loadContextLength", split the ` +
+            'method, or choose a model with a bigger window.'
+        );
+        return;
+    }
+    const allowance = descriptionAllowance(fit.room, fit.usedTokens);
+    if (limited && allowance < MIN_DESCRIPTION_TOKENS) {
+        void vscode.window.showWarningMessage(
+            `There is no room left for a description: ${span.name}() and its context already take about ` +
+            `${fit.usedTokens} of this model's ${fit.room} prompt tokens. Raise ` +
+            '"avaloniaDesigner.assistant.loadContextLength" or split the method.'
+        );
+        return;
+    }
+    const fitAllowance = { allowance, limited, dropped: fit.dropped };
+
+    const description = await askDescription({
         title: `What should ${span.name}() do?`,
         prompt: 'Describe it in a sentence or two. The model writes the body; the signature stays as it is.',
         placeHolder: 'e.g. read the row the user picked and fill the TextBoxes',
-        ignoreFocusOut: true,
-        validateInput: (v) => (v.trim().length < 8 ? 'Say a little more — at least a few words.' : undefined)
+        allowance: fitAllowance.allowance,
+        limited: fitAllowance.limited,
+        dropped: fitAllowance.dropped
     });
     if (!description) return;
 
-    const all = methodsIn(editor.document.fileName, editor.document.getText());
     const messages = buildImplementPrompt({
         language,
-        description: description.trim(),
+        description,
         method,
-        header: headerOf(editor.document, language),
-        sibling: siblingOf(editor.document, span, all)
+        header,
+        sibling: fit.kept.some((p) => p.name === 'style') ? sibling : undefined
     });    // The dialog comes first: starting the bundled server takes a few seconds (a cold build can take
     // much longer), so nothing is started until there is a request to send.
     const resolved = await effectiveConfig(cfg);
@@ -1000,12 +1096,44 @@ async function createMemberInClass(
         return;
     }
     const members = memberSignatures(text, language);
-    const description = await vscode.window.showInputBox({
+
+    // The same planning as the rewrite path, with the member list where the method was: the header is
+    // required, the member list is worth more than the style sample (it is cheap and it is what stops the
+    // model inventing calls), so the style goes first when the window is tight (2026-09-16).
+    const header = headerOf(document, language);
+    const memberList = members.map((m) => m.declaration).join('\n');
+    const styleRef = styleReferenceOf(document);
+    const { fit, limited } = planPrompt(cfg, [
+        { name: 'header', text: header, required: true },
+        { name: 'members', text: memberList, required: false },
+        { name: 'style', text: styleRef ?? '', required: false }
+    ]);
+    if (fit.overflowTokens > 0) {
+        void vscode.window.showWarningMessage(
+            `The context of ${type.name} needs about ${estimateTokens(header)} tokens and this model's window ` +
+            `has room for ${fit.room} — nothing was sent. Raise "avaloniaDesigner.assistant.loadContextLength" ` +
+            'or choose a model with a bigger window.'
+        );
+        return;
+    }
+    const allowance = descriptionAllowance(fit.room, fit.usedTokens);
+    if (limited && allowance < MIN_DESCRIPTION_TOKENS) {
+        void vscode.window.showWarningMessage(
+            `There is no room left for a description: the context of ${type.name} already takes about ` +
+            `${fit.usedTokens} of this model's ${fit.room} prompt tokens. Raise ` +
+            '"avaloniaDesigner.assistant.loadContextLength", or pick a model with a bigger window.'
+        );
+        return;
+    }
+    const fitAllowance = { allowance, limited, dropped: fit.dropped };
+
+    const description = await askDescription({
         title: `What should the new function do?   (it is added to ${type.name}, below line ${caretLine})`,
         prompt: 'The model writes the name, the signature and the body. You see the diff before anything is applied.',
         placeHolder: "e.g. Create a function named 'SortArray' that sorts the contents of a passed array",
-        ignoreFocusOut: true,
-        validateInput: (v) => (v.trim().length < 8 ? 'Say a little more — at least a few words.' : undefined)
+        allowance: fitAllowance.allowance,
+        limited: fitAllowance.limited,
+        dropped: fitAllowance.dropped
     });
     if (!description) return;
 
@@ -1021,10 +1149,10 @@ async function createMemberInClass(
     const form = siblingFormOf(document);
     const messages = buildGeneratePrompt({
         language,
-        description: description.trim(),
-        header: headerOf(document, language),
-        members: members.map((m) => m.declaration).join('\n'),
-        style: styleReferenceOf(document)
+        description,
+        header,
+        members: fit.kept.some((p) => p.name === 'members') ? memberList : '',
+        style: fit.kept.some((p) => p.name === 'style') ? styleRef : undefined
     });
     const resolved = await effectiveConfig(cfg);
     if (!resolved) return;

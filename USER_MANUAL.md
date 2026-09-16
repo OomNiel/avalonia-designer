@@ -916,8 +916,7 @@ and says why instead of pretending.
 
 **Two ways to use it:**
 
-- **AI: Implement in Function…** — **the caret decides which of two things happens.** *Inside a method*:
-  the model returns the **complete method** and the name, signature and indentation stay as they were.
+- **AI: Implement in Function…** — **the caret decides which of two things happens.** *Inside a method*:  the model returns the **complete method** and the name, signature and indentation stay as they were.
   *Outside every method*: it writes a **new** member at that line — describe it in a sentence,
   *"Create a function named 'SortArray' that sorts the contents of a passed array"*, and the model chooses
   the name, the signature and the body. New members are always **private**, and `static`/`Shared` only
@@ -939,6 +938,19 @@ long as it takes, and a notification that vanishes after a few seconds is the wr
 pane of the diff is a read-only preview, so nothing ever asks you to save it. The extension then offers
 **Build to verify**, which saves your unsaved files first (that is what a build compiles) and runs your
 project's `build` task, reporting the exit code — the check that actually matters for generated code.
+
+**The dialog tells you how much room your sentence has.** A local model's speed depends on how much text it
+has to read before it starts writing, so the prompt is measured before the dialog opens: the model's window,
+minus the answer budget, minus the code the model has to see. What is left is yours, and it is shown while you
+type — *"About ~315 tokens (~1260 characters) left for your sentence"*. Type more than that and the dialog
+refuses to accept it (rather than quietly cutting your words or sending a request that cannot fit); the message
+says how much is left. When the prompt is nearly full the extension drops the *optional* context first — the
+style sample, then the list of existing members — and names what it dropped in **View → Output → "Avalonia
+Designer"**. If even the required parts (the method, or the class context) cannot fit, nothing is sent and the
+message says so with the numbers, so you can raise the context window or split the method. Two notes: a longer
+prompt costs *time*, not accuracy by itself — the answer's own length is `avaloniaDesigner.assistant.maxTokens`
+— and **LM Studio or Ollama are not limited at all**, because their context is theirs to decide; the dialog
+says that instead of showing a number it made up.
 
 **Prefer no review step?** Clear **Show the proposed code as a diff before it is applied** in the ⚙ Settings
 panel — the same switch as `avaloniaDesigner.assistant.showDiff` (on by default). The model's code is then

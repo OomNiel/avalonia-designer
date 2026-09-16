@@ -19,8 +19,16 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.37`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.38`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.38 — the prompt is planned, not just sent.** The description dialog now says how much room your
+  sentence has (*"~315 tokens (~1260 characters) left"*) and refuses to accept more; the optional context
+  (style sample, then member list) is dropped in a stated order when the window is tight, named in the Output
+  channel; if the required parts do not fit, nothing is sent and the message carries the numbers. External
+  servers (LM Studio/Ollama) are deliberately exempt. §121 records the honest split the user asked for:
+  a cap bounds *time to first token*, it does not make the answer better, and it cannot shorten the answer
+  (that is `maxTokens`). Suite **3985** passed / 0 failed.
 
 - **0.9.37 — a switch for the diff, and a window that fits the prompt.** The ⚙ Settings panel gained
   **"Show the proposed code as a diff before it is applied"** (`assistant.showDiff`, on by default): cleared,

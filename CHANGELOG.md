@@ -15,6 +15,28 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.38] - 2026-09-16 · *a prompt that fits the model, and a sentence that fits the prompt*
+
+### Added
+
+- **The description dialog now knows what the model can hold.** Asked with a clear aim — *"limit the length of
+  the prompt to ensure the model's response does not take too long to process but still replies with a
+  reasonably accurate result"* — the prompt is planned before the dialog opens: the window minus the answer
+  budget is the room (`promptRoom`), the parts that need it are weighed (`fitPromptParts`), and what is left
+  is the sentence's allowance, shown while typing (*"About ~315 tokens (~1260 characters) left for your
+  sentence"*). Typing more than fits is **refused**, with the count in the message, instead of being silently
+  trimmed or sent to become an empty answer.
+- **Context that does not fit is dropped in a stated order, and said out loud.** The method (or the class
+  context) and the file header are required — a rewrite without them is a guess. When the window is tight the
+  style sample goes first, then the member list, each named in the Output channel; if even the required parts
+  do not fit, nothing is sent and the message names the number and the way out (a bigger
+  `loadContextLength`, a split method, or a model with a wider window).
+- **LM Studio and Ollama are deliberately not limited.** Their context belongs to the server, and a limit we
+  cannot measure would refuse perfectly good sentences; the dialog says so instead of showing a number it
+  made up.
+
+Suite **3985** passed / 0 failed.
+
 ## [0.9.37] - 2026-09-16 · *review it, or write it straight in — and a window that can hold both*
 
 ### Added
