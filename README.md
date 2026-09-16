@@ -97,6 +97,16 @@ It can run **by itself** (when you return to the designer tab by default — als
 or only on demand, via **⚙ Settings**), publishes findings to **PROBLEMS**, and marks a control whose
 handler is missing with a **⚠ badge** right on the canvas.
 
+**It also checks what the AI writes.** The same check runs the moment a model has changed the file, in both
+diff modes, because that is when a finding is cheapest to act on. The rules it gained for that job are the
+mistakes generated code actually makes: a handler **nothing calls** (fixed by wiring the event into the form),
+a name that is **not a control of this form but starts like one** (`Status` where the form has `StatusDate1`, so
+`CS0103` never reaches the build unchecked), a **second member with the same name** (`CS0111`), a **class or
+`namespace` declared inside a class** — the shape a pasted answer leaves behind, and the `CS1513` one user hit —
+and **braces that do not balance**, which a truncated answer leaves open. The structural ones are repaired rather
+than reported: the wrapper is unwrapped with the members kept, the missing braces are closed at the end.
+It is a rule checker, not a compiler — type errors, wrong API use and a missing `using` are still the build's job.
+
 The striking part: it is never destructive. Every finding offers a **“keep my edit”** alternative
 *Leave it — keep my code*, or *Keep my delete — un-wire it*, which removes the event from the form so
 the XAML and the code agree again. A handler you **renamed** by hand is offered as a one-click
@@ -162,45 +172,68 @@ Code. On **Windows** the same two buttons produce an **MSI** (WiX) that installs
 `Program Files` with a Start-menu entry and an *Apps & features* entry, and installing a newer build
 replaces the old one.
 
-## 10. ✨ AI assist — write the handler, or fix what a rule cannot
+## 10. ✨ AI assist — write the handler, write a new function, or fix what a rule cannot
 
 The Code Fix engine repairs what can be expressed as a rule. For the rest — an empty handler, or a
-change you can only describe in words — the extension can ask a **local** model: *AI: Implement in
-Function…* takes one sentence ("read the row the user picked and fill the TextBoxes") and returns the
-complete method, and *✨ Fix with AI…* appears on findings that sit inside a method. Put the caret *outside*
-every method and the same command writes a **new** one there instead — "create a function named
-`SortArray` that sorts a passed array" — `private`, with `static`/`Shared` only when the body needs no
-instance state, its `using`s added for it, and its event wired into the form when the name matches a
-control. The diff review can be switched off (⚙ Settings → *Show the proposed code as a diff*) for those who
-would rather have the code written straight in — it stays one undoable edit. The proposal always
-opens as a **diff**, applying it is a normal undoable edit, and **Build to verify** runs your project's
-build so generated code is not taken on trust.
+change you can only describe in words — the extension can ask a **local** model.
+
+**The caret decides what your sentence means.** *Inside a method* (*AI: Implement in Function…*) the model
+returns the **complete method** — same name, signature and indentation — from one sentence ("read the row the
+user picked and fill the TextBoxes"). *Outside every method* the same command writes a **new** member where the
+caret is: *"create a function named `SortArray` that sorts a passed array"* gives you
+`private static void SortArray(int[] values)` — `private` always, `static`/`Shared` only when the body needs no
+instance state and no form control (never for a `<Control>_<Event>` handler, since XAML resolves those on the
+instance), any `using` it needs added after the last one, and, when the name matches a control in the form, an
+offer to write `Click="…"` onto it. A name that **already exists is refused**, never quietly replaced: the
+message tells you to put the caret inside it and run the same command to rewrite it instead.
+
+**Nothing is written without you saying so.** The answer opens as a **diff** with *✓ Apply AI change* and
+*✕ Discard*, also offered in the status bar and directly above the member, so the decision cannot expire while
+you read it; *✨ Fix with AI…* appears on findings that sit inside a method; and **Build to verify** runs your
+project's build, because generated code is not taken on trust. Prefer no review step? Clear **⚙ Settings →
+Show the proposed code as a diff** and the code is written straight in — still one undoable edit, still the same
+rules first (the duplicate refusal, the visibility correction), with **Undo** offered by name afterwards.
+
+**The prompt is planned against the model, not guessed.** A local model's speed is linear in the text it has to
+read, so the dialog shows how much room your sentence has — *"About ~315 tokens (~1260 characters) left for your
+sentence"* — and refuses to accept more rather than quietly cutting your words or sending a request that cannot
+fit. When the prompt is nearly full the optional context goes first (the style sample, then the list of existing
+members), and what was dropped is named in **View → Output → "Avalonia Designer"**. If even the required parts
+(the method, or the class context) cannot fit, nothing is sent and the message carries the numbers.
+
+**The answer is checked before and after it lands.** A model that wraps its reply in a `namespace`/`class` of
+its own is unwrapped (that failure once produced `CS1513` in a user's file), an answer that declared several
+members is refused rather than guessed at, and the designer's own check runs the moment the file changes — so a
+handler nothing calls, a control name the form does not have, a duplicate member or unbalanced braces are
+reported immediately instead of at the next save.
 
 **It brings its own model.** For a developer with no AI at all there is nothing to install and no
 account to create: *AI: Set Up Local Model…* builds a small C# model server with the .NET SDK the
 designer already uses — one extension package for every platform and architecture, because the native
-code is resolved by NuGet on your machine — and offers **five code-specialised downloads** (2.0 GB and
-4.4 GB Qwen2.5-Coder, 7.0 GB and 8.0 GB DeepSeek-Coder-V2-Lite, 6.9 GB Gemma-4-Coder 12B), fetched
-**once**, verified against the SHA-256 the Hub publishes, into the extension's own storage. Sizes are
-the ones the picker shows (binary units — the model pages count decimal, so a 6.9 GB entry is the same
-file as a 7.4 GB one). Nothing is fetched until you press **Load Model**, and **Remove Model** gives
-the disk space back when you are done with one.
-A second developer who already runs LM Studio or Ollama can point it there instead, with the same diff
-and the same build check. Either way nothing leaves the machine, the feature ships **off**, and a
-hardware check (RAM, CPU threads, AVX2) refuses the models this machine cannot run well instead of
-letting you find out the hard way.
+code is resolved by NuGet on your machine — and offers **five pinned code-specialised downloads** (2.0 GB
+and 4.4 GB Qwen2.5-Coder, 7.0 GB and 8.0 GB DeepSeek-Coder-V2-Lite, 6.9 GB Gemma-4-Coder 12B), each fetched
+**once**, verified against the SHA-256 the Hub publishes, into the extension's own storage. Sizes are the
+ones the picker shows (binary units — the model pages count decimal, so a 6.9 GB entry is the same file as a
+7.4 GB one). **Any other GGUF is one command away:** *AI: Add a Model from Hugging Face…* takes a model page or
+a file URL, lists the files in the repo with their sizes, reads the size and the hash from **Hugging Face
+itself**, and downloads it through the same verification — after which it behaves exactly like a built-in one,
+including **Remove Model**, which gives the disk space back. Nothing is fetched until you press **Load Model**.
 
-**Or let it set the model up for you.** *AI: Choose a Local Model…* lists the models you already have
-(straight from LM Studio), and picking one starts LM Studio's server if it is not running, warns you
-*before* loading if the model does not fit in the free memory, loads it with recommended start values,
-points the extension at it, and proves it answers — one command, no ports, no model ids, no settings
-to edit.
+**Or point it at a model you already run.** The picker lists the three ways a model can arrive, in the order
+the extension can guarantee them: **its own runtime** (llama.cpp via LLamaSharp, weights from Hugging Face, no
+other program needed), then **a server you run** (your own `llama-server`, Ollama — the address is a setting),
+then **LM Studio's library**, then loose `.gguf` files found on disk. For the LM Studio case, *AI: Choose a
+Local Model…* still does the work: it starts its server if it is not running, warns you *before* loading if the
+model does not fit in the free memory, loads it with recommended start values, points the extension at it and
+proves it answers. Either way nothing leaves the machine, the feature ships **off**, and a hardware check (RAM,
+CPU threads, AVX2) refuses the models this machine cannot run well instead of letting you find out the hard way.
 
 **The ⚙ Settings panel shows where every entry comes from**, because that is what decides whether it can work:
-*LM Studio · in My Models, ready to load* (the extension is a remote control there — LM Studio is the runtime and
-can only load a name it has), *This extension's own runtime · weights on disk, ready to load* (or *not downloaded
+*LM Studio · in My Models, ready to load* (the extension is a remote control there — LM Studio is the runtime andcan only load a name it has), *This extension's own runtime · weights on disk, ready to load* (or *not downloaded
 yet — 4.4 GB to fetch on the first load*), *Found on this machine · … added to LM Studio first by a symbolic link*
-for a file the scan found, and *a server I run myself* for anything else already listening.
+for a file the scan found, and *a server I run myself* for anything else already listening. Its two checkboxes
+are the decisions that are not about one model: **Use a local model for Code Fix and Implement** (the switch
+that loads, and unloads when cleared) and **Show the proposed code as a diff before it is applied**.
 
 **When a load fails, LM Studio's own log is translated rather than shown** — the two aborts that actually happen
 are a model bigger than the kernel's locked-memory limit (with **Keep Model in Memory** named as LM Studio's own
@@ -215,7 +248,7 @@ settings point at, so "did my load take?" is answerable from the panel.
 
 ## 11. Engineering discipline
 
-- **~3,750 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~4,100 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release
