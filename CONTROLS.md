@@ -599,6 +599,20 @@ It is the safety net for the cases that otherwise fail as an unhelpful compile e
 - **Structure** — `InitializeComponent()` never called, `chrome:ChromeWindow` root with a `Window`
   base class.
 
+Rules aimed at code the **AI writes** (added 0.9.40, after the user asked whether the checker could cover the
+generation feature too). The check runs the moment a model changes the code-behind, in both diff modes and also
+in *manual* mode:
+
+- **A handler nothing calls** — a `<Control>_<Event>` method that exists while no element in the form asks for
+  it (the model writes one happily). Fix writes the attribute onto the control, through the same edit the AI's
+  wiring offer uses.
+- **A name that is not a control of this form** — `Status.Text` where the form has `StatusDate1` (a `CS0103` at
+  build time). Reported only when a control *starts with* the name used, and never rewritten: the report asks
+  *"did you mean StatusDate1?"*, so `Console.WriteLine` and locals cannot produce noise.
+- **A class or `namespace` inside a class** — the shape a pasted answer leaves behind, and the
+  `CS1513: } expected` a real report produced. Fix keeps the members and drops the wrapper.
+- **Braces that do not balance** — a truncated answer left a method or the class open. Fix closes them at the
+  end of the file, one per line.
 Findings appear in the designer's list **and** in the **PROBLEMS** pane (diagnostics on the
 `.vb`/`.cs`, or on the `.axaml` for XAML-side findings such as a wired handler that doesn't exist).
 Each finding has **Go to line** and, when the repair is mechanical, **Fix**; **Fix all** applies

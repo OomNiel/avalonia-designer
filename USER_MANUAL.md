@@ -788,6 +788,18 @@ What it checks and can fix:
 | **Data-Image binding** | block half-deleted, or its `' DataImage:` marker lost, or the Image/grid was deleted | regenerates it from the DataSet, re-stamps the marker, or un-binds it |
 | **DataSet drift** | a column/table was renamed (`row.Image`, `LoadCustomers()`) | re-generates that binding from the DataSet |
 | **`ItemsSource` on a deleted control** | the ComboBox was removed | deletes the statement |
+| **A handler nothing calls** | the AI (or you) wrote `Save_Click`, but no element in the form asks for it | writes `Click="Save_Click"` onto the control — the same edit the AI's wiring offer makes |
+| **A name that is not a control** | `Status.Text` in a form that has `StatusDate1` | nothing — it asks *"did you mean StatusDate1?"* and leaves the code alone (the candidate is a guess) |
+| **A class inside a class** | an answer pasted with its own `namespace … { class MainWindow … }` wrapper — `CS1513: } expected` | keeps the members and drops the wrapper |
+| **Braces that do not balance** | a truncated answer left a method or the class unclosed | closes them at the end of the file, one per line |
+
+**It also checks what the AI writes.** The same check runs the moment a model changes the code-behind, in
+both diff modes, so those findings appear while you are still looking at the change — and in **manual** mode
+too, where nothing else would have run. The rules above are the mistakes generated code actually makes; the
+structural ones (the pasted wrapper, the unclosed braces) are repaired rather than reported.
+
+It is a rule checker, not a compiler: a wrong type, a wrong API call or a missing `using` is still found by
+building, which is what **Build to verify** in the AI flow is for.
 | **Bundled helper missing** | `ExifImageLoader` / `ChromeWindow` / `AnchorHelper` / `GrumpyPanel` / `PathPicker` not in the project | copies the file in |
 | **Missing `Imports`** | `BC30002 'Line' is not defined'` | adds the `Imports`/`using` |
 | **ChromeWindow mismatch** | root is `<chrome:ChromeWindow>` but the class still `Inherits Window` | changes the base class |
@@ -985,7 +997,9 @@ Having no AI at all is the case this feature exists for, so it does not require 
 
 1. Run **AI: Choose a Local Model…** from the Command Palette.
 2. Pick **This extension's own model**. Five code-specialised models are offered, and the size is shown
-before anything is downloaded:
+before anything is downloaded — and any other `.gguf` from Hugging Face can be added with
+*AI: Add a Model from Hugging Face…* (paste the model page or file URL; the size and the SHA-256 are read from
+Hugging Face, and it is downloaded through the same verification as the five below):
 
    | Model | Size | Min. RAM | Trade-off |
    |---|---|---|---|
@@ -1028,11 +1042,17 @@ Each entry says where it comes from, because that decides whether it can work at
 
 | Entry says | What it means |
 |---|---|
-| *LM Studio · in My Models, ready to load* | LM Studio is the runtime here. The extension only *asks* it to load a model — so the model has to be one LM Studio knows (anything in its **My Models**, i.e. what its own model list shows). |
 | *This extension's own runtime · weights on disk, ready to load* | This is the built-in model, already downloaded. If it says *not downloaded yet — 4.4 GB to fetch*, press **Load Model** and it downloads it (once, resumable, verified). |
 | *… a partial download is on disk — Load Model resumes it* | An earlier download was interrupted. Loading continues it rather than starting over. |
-| *Found on this machine · … added to LM Studio first (a symbolic link…)* | A `.gguf` the scan found somewhere else. Loading it **adds it to LM Studio** as a link — your file stays where it is — and then loads it. |
 | *A server I run myself* | Anything else already listening (Ollama, your own `llama-server`). Set its address below. |
+| *LM Studio · in My Models, ready to load* | LM Studio is the runtime here. The extension only *asks* it to load a model — so the model has to be one LM Studio knows (anything in its **My Models**, i.e. what its own model list shows). |
+| *Found on this machine · … added to LM Studio first (a symbolic link…)* | A `.gguf` the scan found somewhere else. Loading it **adds it to LM Studio** as a link — your file stays where it is — and then loads it. |
+| *… · Hugging Face* | A model you added yourself with *AI: Add a Model from Hugging Face…*. It behaves exactly like a built-in one, including **Remove Model**. |
+
+The entries are grouped in this order on purpose: **the extension's own runtime first** (it needs no other
+program), then **a server you run**, then LM Studio's library, then loose files found on disk. The extension
+is not built around any one of them — LM Studio is a program it can *drive*, not a requirement, and everything
+above works with it uninstalled.
 
 **After loading, look under the list.** A marker on the entry (`● in use`, `● loaded`, `● pinned, runtime
 stopped`) and a sentence underneath say what is actually true, and **Status & hardware check** adds a *Loaded

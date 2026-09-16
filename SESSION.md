@@ -19,8 +19,17 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.40`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.41`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.41 — a model of your own, and no default program.** *AI: Add a Model from Hugging Face…* takes a model
+  page or file URL, lists the repo's `.gguf` files with their sizes, and reads the size and SHA-256 from the
+  Hub's own answer before downloading it through the same verified pipeline as the pinned five; the added
+  model is an ordinary spec, so the picker, the load path, the hardware gate and Remove Model treat it
+  identically. The picker is also regrouped — own runtime, then a server you run, then LM Studio, then loose
+  files — after the user found a llama.cpp server answered faster and better than the LM Studio models. LM
+  Studio was *not* removed: there was no dependency, and its GPU engines are the only ones this machine has.
+  §124.
 
 - **0.9.40 — the Code Fix checks generated code.** Five deterministic rules for what a model gets wrong
   (a handler nothing calls, a name that is not a control of the form but starts like one, a duplicate member in
@@ -117,7 +126,7 @@ server (LM Studio, Ollama, your own `llama-server`), tier 2 brings its own — `
 built on the user's machine with the .NET SDK, so one VSIX fits every platform, and weights are downloaded once
 with a SHA-256 check. Both are **off by default**.
 
-- **Versions 0.9.5 – 0.9.35 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
+- **Versions 0.9.5 – 0.9.41 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
   `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F (numbers-only
   version, both GitHub release flags, no BETA suffix). The repo tags only the `v1.0.0-beta.N` series — the 0.9.x
   releases are commits, not tags.

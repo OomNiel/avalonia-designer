@@ -2604,3 +2604,46 @@ brace repair appended `}}` on one line, which is correct C# and a lie about the 
 asserting on the repaired file, not by reading the rule.
 
 **Suite:** 4043 passed / 0 failed (was 4003).
+
+### §124 — a model of your own, and no default program (2026-09-16, release 0.9.41)
+
+Two questions in one message, after the user had been testing the AI writes for a day: *"I found that models
+served by the Llama.cpp server respond faster and better than the LM Studio models. Should we remove the LM
+Studio dependency from the extension and load everything from Hugging Face?"* — and, separately, whether the
+model could be *trained* as it gains experience.
+
+**The premise was worth correcting with the code rather than with memory.** `grep` and the manifests say there
+are **three** paths, and LM Studio is one of them: the extension's own sidecar (`LLamaSharp 0.27` +
+`LLamaSharp.Backend.Cpu` — i.e. *llama.cpp*, weights from the Hub, CPU-only), LM Studio through its `lms` CLI,
+and any OpenAI-compatible endpoint — which is where the user's own `llama-server` already lives. Nothing depends
+on LM Studio: its absence is reported as *"LM Studio is not installed — N downloadable models still work"*.
+So removing it would delete a working path and, on this machine, the **only GPU offload** there is. Rejected,
+and said so — the user agreed ("keep it working, just no longer the default").
+
+**What the question did uncover was two real gaps**, both closed:
+- **Any GGUF can now be fetched from the Hub.** Before, only the five pinned files (or a `.gguf` already on
+disk, or a server) were possible. `parseHubUrl()` reads what a browser gives you (page, `/tree`, `/blob`,
+`/resolve`, bare `owner/repo`) and **refuses any other host** — the test caught that `https://example.com/owner/repo`
+was being read as the repo `example.com/owner`, which would have downloaded from the wrong place.
+`hubGgufFiles()` parses the Hub's `?blobs=true` answer (the shape this session read by hand to verify the Gemma
+spec), and files the Hub does not hash are **not offered** — the download verifies what it fetches. The added
+model is stored as an ordinary `ModelSpec`, so picker/load/gate/Remove Model cannot tell it from a built-in one.
+- **The picker no longer opens on LM Studio.** It was grouped by *integration*, which made a program the
+extension merely drives look like the way to use the feature. It now sorts by group — `any` → `bundled` →
+`custom` → `lmstudio` → `file` — i.e. in the order the extension can guarantee the path.
+
+**Two existing guards had to be updated rather than deleted, and that is the useful part:** one asserted
+*"a server I run myself is last: it is the least common answer"* (now the reverse, with the reason written into
+the test), and one enforces *"no model URL is hardcoded outside the registry"* — my new `fetch` had put
+`huggingface.co/api/...` straight into `modelRuntime.ts`, so the URLs moved into the registry as
+`hubApiUrl()`/`hubResolveUrl()`. A guard that fails on a change is doing its job; the fix is to satisfy it, not
+to relax it.
+
+**On "training":** local fine-tuning was answered *no, not honestly* (a LoRA on a 12B needs dedicated VRAM; this
+machine's iGPU shares ~11.4 GiB of system RAM, and it would produce a model file to version, verify and
+explain). The user picked **conventions memory** instead — remember the idioms they accept and put them in the
+prompt — which is the cheap, deterministic version of the same wish. Still queued: managing the user's own
+`llama-server` (start/stop with their GGUF and flags) and **Vulkan as an opt-in** for the bundled runtime with a
+CPU fallback, noting that the earlier `device lost` abort came from llama.cpp on exactly that iGPU.
+
+**Suite:** 4081 passed / 0 failed (was 4043).
