@@ -167,7 +167,11 @@ replaces the old one.
 The Code Fix engine repairs what can be expressed as a rule. For the rest — an empty handler, or a
 change you can only describe in words — the extension can ask a **local** model: *AI: Implement in
 Function…* takes one sentence ("read the row the user picked and fill the TextBoxes") and returns the
-complete method, and *✨ Fix with AI…* appears on findings that sit inside a method. The proposal always
+complete method, and *✨ Fix with AI…* appears on findings that sit inside a method. Put the caret *outside*
+every method and the same command writes a **new** one there instead — "create a function named
+`SortArray` that sorts a passed array" — `private`, with `static`/`Shared` only when the body needs no
+instance state, its `using`s added for it, and its event wired into the form when the name matches a
+control. The proposal always
 opens as a **diff**, applying it is a normal undoable edit, and **Build to verify** runs your project's
 build so generated code is not taken on trust.
 

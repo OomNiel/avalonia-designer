@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 3841 passed, 0 failed / 0 skipped** (2026-09-15, ~40 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 3940 passed, 0 failed / 0 skipped** (2026-09-16, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2411,3 +2411,43 @@ success message for a file that is still there.
 dialog) that the inventory did not mention; reading the diff, not the summary, is what found it.
 
 **Suite:** 3841 passed / 0 failed (was 3762).
+
+### §119 — "Create a function named 'SortArray'", said to the caret (2026-09-16, release 0.9.36)
+
+The request: *"enable the selected AI model to be able to generate new functions as well as add code to
+existing control handlers … the tool should be able to accept a prompt e.g. 'Create a function named
+SortArray that sorts the contents of a passed array', the control should respond by placing the new function
+at the current cursor position."* Six questions settled the shape: **the model writes the name and the
+signature** (the diff is the review); **a name that already exists is refused**; the member goes **at the
+caret, snapped to a line boundary**; the rewrite path is untouched; **`using`s may come with the member**;
+**wiring the event is offered**; and the freeform answer supplied the rule that shaped the code —
+*"Function visibility must be 'Private' and 'Static' where possible."*
+
+**Design:** one command, two targets. `proposeMethod(document, target, …)` now takes `{ kind: 'replace',
+span }` or `{ kind: 'insert', caretLine, type, language, members, controls }`, so the request, the diff, the
+Apply button, the status bar, the lens and *Build to verify* are the same code for both — a developer
+thinking "write me this function" should not have to learn two entries because one writes over a method and
+the other beside it. Everything that decides **where** and **what** is pure (`buildGeneratePrompt`,
+`parseNewMemberAnswer`, `memberSignatures`, `enclosingTypeSpan`, `insertMember`, `addMemberToFile`,
+`normaliseMemberVisibility`, `addXamlEventAttribute`) and is driven by 99 assertions in
+`tests/t2-logic/implementMember.test.js`.
+
+**"Where possible" is code's decision, not the model's.** A wrong `static` is a build error in exactly the
+cases that matter: an event handler that XAML resolves on the instance, and a helper that touches a control
+or a non-static sibling member. So the body is checked against the controls read from the sibling `.axaml`
+and against the class's own members: `static` is removed when anything instance-shaped is used, added only
+when the body provably needs nothing but its parameters and the BCL. VB gets its own rule — a member-level
+`Static` there means something else and does not compile, so it becomes `Shared`.
+
+**Two bugs the tests caught before the user could.** (1) `Private Static Sub` was not recognised as a
+declaration at all (`Static` was missing from the modifier list), so the answer would have shipped
+uncorrected *and* the duplicate check would never have seen its own name. (2) The usings went to the top of
+the file instead of after the last one, because the anchor search was handed line 1 — outside the class —
+and so never ran. Both came out of asserting the **result text**, not from reading the code.
+
+**Lesson:** a refusal can only be honest if it is checked **twice** — once on the sentence (a cheap sniff,
+so no model call is wasted) and once on the answer (the name that actually matters, because the model chose
+it). The cheap check is not a substitute for the authoritative one, and the authoritative one is not a
+reason to skip the cheap one.
+
+**Suite:** 3940 passed / 0 failed (was 3841).

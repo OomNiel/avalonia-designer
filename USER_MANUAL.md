@@ -916,9 +916,16 @@ and says why instead of pretending.
 
 **Two ways to use it:**
 
-- **AI: Implement in Function…** — put the caret inside the method, run the command, and describe the
-  behaviour in the dialog. The model returns the **complete method**; the name, signature and
-  indentation stay as they were.
+- **AI: Implement in Function…** — **the caret decides which of two things happens.** *Inside a method*:
+  the model returns the **complete method** and the name, signature and indentation stay as they were.
+  *Outside every method*: it writes a **new** member at that line — describe it in a sentence,
+  *"Create a function named 'SortArray' that sorts the contents of a passed array"*, and the model chooses
+  the name, the signature and the body. New members are always **private**, and `static`/`Shared` only
+  when the body needs no instance state or form control (so a handler never becomes static). If the line
+  is not inside a class, or the name you ask for already exists, nothing is written and the message says
+  what to do instead — an existing member is meant to be *rewritten*, which is the same command with the
+  caret inside it. If the new member looks like a control's event handler (`Save_Click`), the extension
+  offers to add `Click="Save_Click"` to that control in the form as well.
 - **✨ Fix with AI (local model)…** — offered on a finding in the **PROBLEMS** pane (and in its
   light-bulb menu) when the line sits inside a method. Structural findings — a missing accessor, a lost
   Data-Image block — keep their exact rule-based fix and do not offer the model at all.

@@ -15,6 +15,37 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 
 _Nothing yet._
 
+## [0.9.36] - 2026-09-16 · *"create a function named SortArray" — said to the caret*
+
+### Added
+
+- **A new member, written where the caret is.** *AI: Implement in Function…* refused a caret that was not
+  inside a method; it now writes a **new** one there. The dialog takes a sentence — *"Create a function
+  named 'SortArray' that sorts the contents of a passed array"* — and the model writes the name, the
+  signature and the body. Placement is decided by the caret and snapped to a line boundary: on its own
+  lines, one blank line of separation, indented like its neighbours, never above the class's opening
+  brace, and refused outright when the caret is not inside a class at all. **Inside a method nothing
+  changes** — the model still rewrites exactly that method.
+- **`private`, and `static`/`Shared` where that is possible.** Visibility is corrected rather than hoped
+  for: anything else becomes `private`; `static`/`Shared` is added when the body provably needs no
+  instance state (no `this`/`Me`, no control of the form, no non-static sibling member) and removed when
+  it does — which includes every `<Control>_<Event>` handler, since XAML resolves those on the instance.
+  In VB a member-level `Static` becomes `Shared`, because that is the keyword that compiles.
+- **The `using`/`Imports` lines the new member needs come with it.** They are inserted after the last
+  existing one, where they compile, never above the file's own imports and never twice.
+- **A new handler offers to wire its event.** When the new member is named after a control in the form
+  (`Save_Click`), the extension offers to add `Click="Save_Click"` to that control in the `.axaml` — one
+  click, a normal undoable edit, and it says which file it touched.
+
+### Fixed
+
+- **A name that already exists is refused, never replaced.** *"Create a function named X"* when `X`
+  exists answers with what to do instead — put the caret inside it and run the same command to rewrite it
+  — and writes nothing. It is checked twice: the name spelled out in the sentence (before a model call is
+  spent) and the name in the answer (before any diff is shown).
+
+Suite **3940** passed / 0 failed.
+
 ## [0.9.35] - 2026-09-15 · *the 7 GB button, a third built-in model, and a dialog that folds*
 
 ### Added

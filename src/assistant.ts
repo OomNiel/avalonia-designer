@@ -27,6 +27,10 @@
 import * as fs from 'fs';
 import * as os from 'os';
 
+// The event catalogue only (a pure table): a new member whose name looks like `<Control>_<Event>` is a
+// form handler, and a form handler can never be `static`/`Shared`.
+import { isKnownEventName } from './controlEvents';
+
 /** How the assistant gets its model. `bundled` = the extension builds and runs its own local server. */
 export type AssistantBackend = 'off' | 'external' | 'bundled';
 
@@ -850,4 +854,498 @@ export function spliceMethod(text: string, span: MethodSpan, code: string, eol =
 /** Line count guard: a method too long for a small model is refused before we send anything. */
 export function methodTooLong(method: string): boolean {
     return method.split('\n').length > MAX_METHOD_LINES;
+}
+
+// ---------------- a brand-new member (asked 2026-09-16) ----------------
+//
+// "AI: Implement in Function…" could only *rewrite the method the caret is in*. The user asked for the
+// other half: a caret outside every method should mean "write me a new one" — *"Create a function named
+// 'SortArray' that sorts the contents of a passed array"* — placed at the caret, `private`, and
+// `static`/`Shared` whenever that is possible.
+//
+// Everything below is pure: the prompt, the answer parser, the visibility rules, the insertion and the
+// XAML attribute edit. The command in `assistantUi.ts` only gathers facts and shows the diff. That split
+// is what lets the whole feature be tested without VS Code — the same reason `extractCode` and
+// `spliceMethod` live here rather than in the UI layer.
+
+/**
+ * Separates the `using`/`Imports` lines the new member needs from the member itself.
+ *
+ * The prompt asks for it, but a small model often just puts the usings at the top of the block and
+ * carries on — so the parser accepts both, and only treats *leading* using lines as header additions.
+ * Anything else (including a leading comment) belongs to the member.
+ */
+export const NEW_MEMBER_MARKER = '--- new member ---';
+
+export interface GeneratePromptInput {
+    language: 'cs' | 'vb';
+    description: string;
+    /** `using …`/`Imports …` and the class declaration line — context the model may read. */
+    header: string;
+    /** The members the class already has, one per line, with their modifiers. */
+    members: string;
+    /** One short existing member, as a style reference. */
+    style?: string;
+}
+
+/** The visibility the answer must end up with, spelled out so a small model cannot guess wrong. */
+function visibilityContract(language: 'cs' | 'vb'): string {
+    return language === 'vb'
+        ? 'Always `Private`. Add `Shared` only when the body uses no instance member, no form control and ' +
+          'no `Me` — never `Static` (in VB that keyword is for local variables, not members).'
+        : 'Always `private`. Add `static` only when the body uses no instance member, no form control and ' +
+          'no `this` — the event handler of a form can never be static.';
+}
+
+export function buildGeneratePrompt(input: GeneratePromptInput): ChatMessage[] {
+    const fence = input.language === 'vb' ? 'vb' : 'csharp';
+    const lines = [
+        `Language: ${languageLabel(input.language)}`,
+        '',
+        'The class these members belong to (context only — do not change it, do not repeat it):',
+        CODE_FENCE + fence,
+        input.header.trimEnd(),
+        CODE_FENCE,
+        ''
+    ];
+    if (input.members.trim()) {
+        lines.push(
+            'Members the class already has (context only — do not change them, do not write them again; ' +
+            'you may call them):',
+            CODE_FENCE + fence,
+            input.members.trimEnd(),
+            CODE_FENCE,
+            ''
+        );
+    }
+    if (input.style?.trim()) {
+        lines.push(
+            'One of those members in full, as a style reference (do not change it):',
+            CODE_FENCE + fence,
+            input.style.trimEnd(),
+            CODE_FENCE,
+            ''
+        );
+    }
+    lines.push(
+        `The developer wants a NEW member, which does not exist yet:\n"""${input.description.trim()}"""`,
+        '',
+        'Write that member — its declaration and its complete body, nothing else:',
+        CODE_FENCE + fence,
+        `(${visibilityContract(input.language)})`,
+        `(if the body needs a namespace this file does not import yet, put those using/Imports lines ` +
+            `FIRST, then a line containing exactly ${NEW_MEMBER_MARKER}, then the member)`,
+        CODE_FENCE,
+        '',
+        `Reply with ONE ${CODE_FENCE}${fence} code block and nothing outside it. The block must contain the ` +
+        `complete new member — indented one level inside the class, with a real body rather than a ` +
+        `comment like "TODO". Do not write a second member, do not repeat the class or the existing ` +
+        `members, and do not explain anything.`
+    );
+    return [
+        {
+            role: 'system',
+            content:
+                `You are a precise ${languageLabel(input.language)} coding assistant inside a desktop form ` +
+                'designer. You return complete, compilable members and nothing else. You never invent ' +
+                'APIs: types and members must come from the code and the names you are given, or from the ' +
+                'base class library.'
+        },
+        { role: 'user', content: lines.join('\n') }
+    ];
+}
+
+export interface NewMemberAnswer {
+    /** `using`/`Imports` lines the member asked for (may be empty). */
+    usings: string[];
+    /** The member itself, complete. */
+    member: string;
+    note: string;
+}
+
+/** A `using X;` / `Imports X` line, as either language spells it. */
+function isUsingLine(line: string): boolean {
+    const t = line.trim();
+    return /^using\s+[\w.]+\s*;$/.test(t) || /^using\s+[\w.]+\s*=\s*[\w.]+;$/.test(t) || /^Imports\s+[\w.]+$/i.test(t) || /^Global\s+Imports/i.test(t);
+}
+
+export function parseNewMemberAnswer(answer: string): NewMemberAnswer {
+    const { code, note } = extractCode(answer);
+    const text = String(code ?? '').replace(/\r\n/g, '\n');
+    // The marker may arrive commented out (`// --- new member ---`, `' --- new member ---`) — models do
+    // that when the ask itself was inside a code block. Accepting it costs nothing.
+    const markerRe = new RegExp("^[ \\t]*(?://+|'|#|--)?\\s*" + NEW_MEMBER_MARKER.trim() + "\\s*$", 'mi');
+    const at = markerRe.exec(text);
+    const head = at ? text.slice(0, at.index) : '';
+    const tail = at ? text.slice(at.index + at[0].length) : text;
+
+    const usings: string[] = [];
+    const bodyLines = tail.split('\n');
+    // Without a marker the usings are whatever leads the block — `using` cannot appear inside a class,
+    // so those lines are unambiguously header additions.
+    while (bodyLines.length && !bodyLines[0].trim()) bodyLines.shift();
+    while (bodyLines.length && isUsingLine(bodyLines[0])) usings.push(bodyLines.shift()!.trim());
+    for (const line of head.split('\n')) {
+        const t = line.trim();
+        if (isUsingLine(t)) usings.push(t);
+    }
+    return { usings, member: tidyCode(bodyLines.join('\n')), note };
+}
+
+/** True for a `using`/`Imports` line the file already has, so a duplicate is never added. */
+export function alreadyImported(header: string, line: string): boolean {
+    const wanted = line.trim().replace(/;$/, '').replace(/^(using|Imports)\s+/i, '').toLowerCase();
+    return header.split(/\r?\n/).some((l) => l.trim().replace(/;$/, '').replace(/^(using|Imports)\s+/i, '').toLowerCase() === wanted);
+}
+
+/** One member the class already has, as the prompt and the safety rails need it. */
+export interface MemberInfo {
+    name: string;
+    /** The declaration line, trimmed — what goes into the prompt's member list. */
+    declaration: string;
+    isStatic: boolean;
+    /** 1-based line of the declaration. */
+    line: number;
+}
+
+const CS_MEMBER_RE = /^[ \t]*((?:(?:public|private|protected|internal|static|async|virtual|override|sealed|partial|new|extern|unsafe|readonly)\s+)*)([\w<>\[\],.?]+)\s+([A-Za-z_]\w*)\s*(<[^>]*>)?\s*\(/;
+const VB_MEMBER_RE = /^[ \t]*((?:(?:Public|Private|Protected|Friend|Shared|Overrides|Overridable|NotOverridable|MustOverride|Async|Iterator|Partial|Static)\s+)*)(Sub|Function)\s+([A-Za-z_]\w*)\s*\(/i;
+// A property is a member too, and it is the one a new method is most likely to collide with.
+const CS_PROP_RE = /^[ \t]*((?:(?:public|private|protected|internal|static|virtual|override|sealed|partial|new|required)\s+)*)([\w<>\[\],.?]+)\s+([A-Za-z_]\w*)\s*\{/;
+const VB_PROP_RE = /^[ \t]*((?:(?:Public|Private|Protected|Friend|Shared|Overrides|Overridable|NotOverridable|MustOverride|ReadOnly|WriteOnly|Default)\s+)*)Property\s+([A-Za-z_]\w*)/i;
+const VB_TYPE_RE = /^[ \t]*(?:(?:Public|Private|Protected|Friend|Partial|NotInheritable|MustInherit)\s+)*(Class|Module|Structure)\s+([A-Za-z_]\w*)/i;
+const CS_TYPE_RE = /^[ \t]*(?:(?:public|private|protected|internal|sealed|abstract|partial|static|unsafe)\s+)*(class|struct|record|interface)\s+([A-Za-z_]\w*)/;
+
+/**
+ * Words that can never be a return type, so a statement is never mistaken for a declaration.
+ *
+ * Without this, `return Foo(1);` reads as a member called `Foo` — and a member list that contains the
+ * body's call sites would then make the "is this body safe to make static?" check refuse everything.
+ */
+const NOT_A_RETURN_TYPE = new Set([
+    'return', 'throw', 'yield', 'await', 'var', 'if', 'else', 'foreach', 'while', 'for', 'switch',
+    'case', 'using', 'lock', 'do', 'try', 'catch', 'finally', 'new', 'goto', 'break', 'continue',
+    'default', 'nameof', 'typeof', 'sizeof', 'checked', 'unchecked', 'get', 'set', 'add', 'remove'
+]);
+
+/**
+ * The members a file declares, read line by line.
+ *
+ * A real parser would be better, but this has to agree with `methodsIn()` in `codeBehindCheck.ts` (which
+ * is line-based for the same reason) and it only ever *suggests*: every use below is either prompt
+ * context, a duplicate check or an insertion point, and the diff is what the developer approves. Nested
+ * lambdas and local functions are not members and are not matched — none of them can carry a modifier.
+ */
+export function memberSignatures(text: string, language: 'cs' | 'vb'): MemberInfo[] {
+    const out: MemberInfo[] = [];
+    const lines = text.replace(/\uFEFF/g, '').split(/\r?\n/);
+    lines.forEach((raw, index) => {
+        const m = (language === 'vb' ? VB_MEMBER_RE : CS_MEMBER_RE).exec(raw);
+        const p = m ? undefined : (language === 'vb' ? VB_PROP_RE : CS_PROP_RE).exec(raw);
+        if (!m && !p) return;
+        if (m && language === 'cs' && NOT_A_RETURN_TYPE.has(m[2])) return;
+        if (p && language === 'cs' && NOT_A_RETURN_TYPE.has(p[2])) return;
+        const modifiers = (m ?? p)![1];
+        const name = (m ?? p)![3];
+        out.push({
+            name,
+            declaration: raw.trim(),
+            isStatic: language === 'vb' ? /\bShared\b/i.test(modifiers) : /\bstatic\b/.test(modifiers),
+            line: index + 1
+        });
+    });
+    return out;
+}
+
+/** A type (class/module/struct) in the file, with the span an insertion needs. */
+export interface TypeSpan {
+    name: string;
+    /** 1-based line of the declaration. */
+    declLine: number;
+    /** 1-based line of the closing brace / `End Class`. */
+    endLine: number;
+}
+
+/**
+ * The innermost type whose body contains `line`, or undefined when the caret is not inside one.
+ *
+ * C# has no `End Class` to search for, so the closing brace is found by counting from the declaration —
+ * ignoring braces in line comments and string literals, which is as much as this needs to be right
+ * about: it decides *where to insert*, and a caret outside every type is refused rather than guessed at.
+ */
+export function enclosingTypeSpan(text: string, line: number, language: 'cs' | 'vb'): TypeSpan | undefined {
+    const lines = text.replace(/\uFEFF/g, '').split(/\r?\n/);
+    const found: TypeSpan[] = [];
+    if (language === 'vb') {
+        const stack: { name: string; declLine: number }[] = [];
+        lines.forEach((raw, index) => {
+            const decl = VB_TYPE_RE.exec(raw);
+            if (decl) stack.push({ name: decl[2], declLine: index + 1 });
+            else if (/^[ \t]*End\s+(Class|Module|Structure)\b/i.test(raw) && stack.length) {
+                const open = stack.pop()!;
+                found.push({ name: open.name, declLine: open.declLine, endLine: index + 1 });
+            }
+        });
+    } else {
+        lines.forEach((raw, index) => {
+            const decl = CS_TYPE_RE.exec(raw);
+            if (!decl) return;
+            const end = csBlockEnd(lines, index);
+            if (end > index) found.push({ name: decl[2], declLine: index + 1, endLine: end + 1 });
+        });
+    }
+    const hits = found.filter((t) => t.declLine <= line && line <= t.endLine);
+    if (!hits.length) return undefined;
+    // Innermost wins: a nested class is a legal home for a member too.
+    return hits.sort((a, b) => b.declLine - a.declLine)[0];
+}
+
+/** Index of the line holding the `}` that closes the block starting at `declIndex` (0-based). */
+function csBlockEnd(lines: string[], declIndex: number): number {
+    let depth = 0;
+    let seenOpen = false;
+    for (let i = declIndex; i < lines.length; i++) {
+        const code = lines[i]
+            .replace(/\/\/.*$/, '')
+            .replace(/\/\*.*?\*\//g, '')
+            .replace(/'(?:\\.|[^'\\])*'/g, "''")
+            .replace(/"(?:\\.|[^"\\])*"/g, '""');
+        for (const ch of code) {
+            if (ch === '{') { depth++; seenOpen = true; }
+            else if (ch === '}') {
+                depth--;
+                if (seenOpen && depth <= 0) return i;
+            }
+        }
+    }
+    return -1;
+}
+
+/** The indentation a new member should get: the first existing member's, else one level inside the type. */
+export function memberIndent(text: string, type: TypeSpan, language: 'cs' | 'vb'): string {
+    const lines = text.replace(/\uFEFF/g, '').split(/\r?\n/);
+    for (let i = type.declLine; i < type.endLine - 1 && i < lines.length; i++) {
+        if ((language === 'vb' ? VB_MEMBER_RE : CS_MEMBER_RE).test(lines[i] ?? '')) {
+            return /^[ \t]*/.exec(lines[i] ?? '')?.[0] ?? '    ';
+        }
+    }
+    const declIndent = /^[ \t]*/.exec(lines[type.declLine - 1] ?? '')?.[0] ?? '';
+    return declIndent + '    ';
+}
+
+export interface InsertMemberInput {
+    text: string;
+    /** 1-based line the caret is on. The member goes after it, never inside it. */
+    caretLine: number;
+    member: string;
+    type: TypeSpan;
+    language: 'cs' | 'vb';
+}
+
+/**
+ * Inserts a new member just below the caret, on its own lines, with one blank line of separation.
+ *
+ * "At the caret" is deliberately snapped to a line boundary (asked 2026-09-16): inserting *at* the caret
+ * character would split whatever line it is on and produce two half-statements — and a `}` on the far
+ * side of the caret is worse. The member therefore starts on the line after the caret's, keeps the
+ * neighbouring members' indentation, and is kept apart by a blank line unless the next line already is
+ * one or closes the type.
+ */
+export function insertMember(input: InsertMemberInput): string {
+    const eol = detectEol(input.text);
+    const hadBom = input.text.charCodeAt(0) === 0xFEFF;
+    const body = input.text.replace(/\uFEFF/g, '');
+    const lines = body.split(/\r\n|\n/);
+    const indent = memberIndent(body, input.type, input.language);
+    const memberLines = reindent(input.member, indent, '\n').split('\n');
+
+    // Where the member may go: after the type's first body line (never between `class F` and its `{`),
+    // and no further than its closing line — a caret parked on the final `}` still means "inside".
+    const bodyStart = input.language === 'vb'
+        ? input.type.declLine
+        : Math.max(input.type.declLine, lines.findIndex((l, i) => i >= input.type.declLine - 1 && l.includes('{')) + 1);
+    const after = Math.min(Math.max(input.caretLine, bodyStart), input.type.endLine - 1);
+    // Index of the first line that moves down: the one after whichever line the caret is on.
+    const at = Math.min(Math.max(after, bodyStart), lines.length);
+
+    const prev = at > 0 ? (lines[at - 1] ?? '') : '';
+    const next = lines[at] ?? '';
+    const closesType = input.language === 'vb'
+        ? /^[ \t]*End\s+(Class|Module|Structure)\b/i.test(next)
+        : /^\s*\}/.test(next);
+    // A blank line already next to the caret is used as the separator instead of adding a second one, and
+    // no blank is added before a closing brace — that is the shape every file in this project already has.
+    const leading = prev.trim() ? [''] : [];
+    const trailing = next.trim() && !closesType ? [''] : [];
+    const result = [...lines.slice(0, at), ...leading, ...memberLines, ...trailing, ...lines.slice(at)].join(eol);
+    return (hadBom ? '\uFEFF' : '') + result;
+}
+
+/**
+ * The two edits that add a member to a file: the member itself, and the `using`/`Imports` lines it asked
+ * for.
+ *
+ * The member goes in first, so the line numbers it was computed from still mean what they meant; the
+ * usings are then inserted above it, where they cannot move it. They go after the last `using` (C#) or
+ * the last `Imports` (VB — or the last `Option`, when the file has none), because a using written after
+ * a namespace or a class body does not compile. A line the file already has is never added twice, so
+ * applying the same member again cannot damage the header.
+ */
+export function addMemberToFile(input: InsertMemberInput & { usings: string[] }): { text: string; added: string[] } {
+    const withMember = insertMember(input);
+    const missing = (input.usings ?? [])
+        .map((u) => String(u ?? '').trim())
+        .filter((u) => u.length > 0 && isUsingLine(u) && !alreadyImported(withMember, u));
+    if (!missing.length) return { text: withMember, added: [] };
+
+    const eol = detectEol(input.text);
+    const hadBom = input.text.charCodeAt(0) === 0xFEFF;
+    const lines = withMember.replace(/\uFEFF/g, '').split(/\r\n|\n/);
+    // Only the lines above the class are searched: the member went in *below* the declaration, so this
+    // line number still means what it meant when the caret was read.
+    const limit = Math.max(0, input.type.declLine - 1);
+    let anchor = -1;
+    for (let i = 0; i < limit; i++) {
+        const t = (lines[i] ?? '').trim();
+        if (input.language === 'vb' ? /^Imports\b/i.test(t) : /^using\b/.test(t)) anchor = i;
+        else if (input.language === 'vb' && anchor < 0 && /^Option\b/i.test(t)) anchor = i;
+    }
+    const at = anchor >= 0 ? anchor + 1 : 0;
+    const merged = [...lines.slice(0, at), ...missing, ...lines.slice(at)].join(eol);
+    return { text: (hadBom ? '\uFEFF' : '') + merged, added: missing };
+}
+
+/** A member's declared name, from the answer. Used for the duplicate check, so it must not guess. */export function memberNameOf(member: string, language: 'cs' | 'vb'): string | undefined {
+    for (const raw of String(member ?? '').split(/\r?\n/)) {
+        if (!raw.trim() || /^[ \t]*(?:\/\/|'|#|\/\*)/.test(raw)) continue;
+        const vb = /^[ \t]*(?:(?:Public|Private|Protected|Friend|Shared|Overrides|Overridable|NotOverridable|MustOverride|Async|Iterator|Partial|Static)\s+)*(?:Sub|Function)\s+([A-Za-z_]\w*)/i.exec(raw);
+        if (vb) return vb[1];
+        const cs = /^[ \t]*(?:(?:public|private|protected|internal|static|async|virtual|override|sealed|partial|new|extern|unsafe|readonly)\s+)*[\w<>\[\],.?]+\s+([A-Za-z_]\w*)\s*(?:<[^>]*>)?\s*\(/.exec(raw);
+        if (cs) return cs[1];
+    }
+    return undefined;
+}
+
+export interface VisibilityFix {
+    member: string;
+    /** What was changed, for the log — empty when the answer was already right. */
+    changed: string[];
+}
+
+/** `private` (C#) / `Private` (VB), whatever the answer said. */
+function withVisibility(modifiers: string, language: 'cs' | 'vb'): { modifiers: string; stripped: boolean; already: boolean } {
+    const source = language === 'vb'
+        ? /\b(Public|Private|Protected|Friend|Protected\s+Friend|Private\s+Protected)\b/gi
+        : /\b(public|private|protected|internal)\b(\s+(?:internal|protected))?/g;
+    const already = language === 'vb' ? /\bPrivate\b/.test(modifiers) : /\bprivate\b/.test(modifiers);
+    const stripped = source.test(modifiers);
+    const kept = modifiers.replace(source, ' ').replace(/\s+/g, ' ').trim();
+    const word = language === 'vb' ? 'Private' : 'private';
+    return { modifiers: `${word} ${kept}`.trim(), stripped, already };
+}
+
+/**
+ * Forces the visibility the user asked for: always `private`, and `static`/`Shared` **only** where it can
+ * do no harm.
+ *
+ * "Where possible" is decided here rather than trusted to the model, because a wrong `static` is a build
+ * error in the one case that matters most: a form's event handler can never be static, and a helper that
+ * touches a control or another instance member cannot be either. The body is checked against the names
+ * the class already has — a body that mentions only its parameters and framework types is safe.
+ */
+export function normaliseMemberVisibility(
+    member: string,
+    language: 'cs' | 'vb',
+    controls: readonly string[],
+    members: readonly MemberInfo[],
+    selfName?: string
+): VisibilityFix {
+    const changed: string[] = [];
+    const lines = String(member ?? '').split(/\r?\n/);
+    const declIndex = lines.findIndex((l) => (language === 'vb' ? VB_MEMBER_RE : CS_MEMBER_RE).test(l));
+    if (declIndex < 0) return { member, changed };
+    const decl = lines[declIndex];
+    const re = language === 'vb' ? VB_MEMBER_RE : CS_MEMBER_RE;
+    const m = re.exec(decl)!;
+    const modifiers = m[1];
+    const body = lines.slice(declIndex + 1).join('\n');
+    const name = memberNameOf(member, language) ?? '';
+    const isHandler = handlerFromMemberName(name, controls) !== undefined;
+
+    const usesInstance = /\bthis\b/.test(body) || (language === 'vb' && /\bMe\b/.test(body))
+        || controls.some((c) => c && new RegExp(`\\b${c.replace(/[$]/g, '\\$')}\\b`).test(body))
+        || members.some((other) => other.name !== name && other.name !== selfName && !other.isStatic
+            && new RegExp(`\\b${other.name}\\b`).test(body));
+    const wantsStatic = !usesInstance && !isHandler;
+
+    const vis = withVisibility(modifiers, language);
+    if (vis.stripped && !vis.already) changed.push(`visibility → ${language === 'vb' ? 'Private' : 'private'}`);
+
+    let rest = vis.modifiers;
+    if (language === 'vb') {
+        const had = /\bShared\b/i.test(rest);
+        rest = rest.replace(/\bShared\b/gi, ' ').replace(/\bStatic\b/gi, ' ').replace(/\s+/g, ' ').trim();
+        if (/\bStatic\b/.test(modifiers)) changed.push('removed `Static` (VB uses `Shared` for members)');
+        if (wantsStatic) { rest = `${rest} Shared`; if (!had) changed.push('added `Shared`'); }
+        else if (had) changed.push('removed `Shared` (the body uses instance state)');
+    } else {
+        const had = /\bstatic\b/.test(rest);
+        rest = rest.replace(/\bstatic\b/g, ' ').replace(/\s+/g, ' ').trim();
+        if (wantsStatic) { rest = `${rest} static`; if (!had) changed.push('added `static`'); }
+        else if (had) changed.push('removed `static` (the body uses instance state)');
+    }
+    lines[declIndex] = decl.replace(m[1], rest ? `${rest} ` : '');
+    return { member: lines.join('\n'), changed };
+}
+
+/** ``Create a function named 'SortArray' …`` → `SortArray`, so an existing member is caught before a call. */
+export function sniffMemberName(description: string): string | undefined {
+    const m = /\b(?:named|called)\s+['"`]?([A-Za-z_]\w{2,})['"`]?/i.exec(String(description ?? ''))?.[1];
+    return m;
+}
+
+/** `<Control>_<Event>` → its two halves, but only when the control exists in the form and the event is real. */
+export function handlerFromMemberName(name: string, controls: readonly string[]): { control: string; event: string } | undefined {
+    const at = String(name ?? '').lastIndexOf('_');
+    if (at <= 0) return undefined;
+    const control = name.slice(0, at);
+    const event = name.slice(at + 1);
+    if (!controls.includes(control)) return undefined;
+    if (!isKnownEventName(event)) return undefined;
+    return { control, event };
+}
+
+/** `x:Name="Save"` / `Name='Save'` in the form, for the handler check and the wiring offer. */
+export function knownControlNames(axamlText: string): string[] {
+    const out: string[] = [];
+    const re = /\b(?:x:Name|Name)\s*=\s*("([^"]+)"|'([^']+)')/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(String(axamlText ?? '')))) {
+        const name = (m[2] ?? m[3] ?? '').trim();
+        if (name && !out.includes(name)) out.push(name);
+    }
+    return out;
+}
+
+/**
+ * Adds `Event="Handler"` to the control's start tag — the wiring half of "create a new function".
+ *
+ * A text edit rather than a model edit: the designer rewrites the whole file from its own model when it
+ * saves, and reaching into that model from the code editor would mean two owners for one document. The
+ * attribute goes immediately after the name attribute, which leaves the rest of the tag untouched.
+ * Returns undefined when the control is not in the file or the event is already wired — in that case
+ * there is nothing to offer and nothing to change.
+ */
+export function addXamlEventAttribute(axamlText: string, control: string, event: string, handler: string): string | undefined {
+    const text = String(axamlText ?? '');
+    const nameRe = new RegExp(`\\b(?:x:Name|Name)\\s*=\\s*("${control.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"|'${control.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}')`);
+    const hit = nameRe.exec(text);
+    if (!hit) return undefined;
+    const tagStart = text.lastIndexOf('<', hit.index);
+    const tagEnd = text.indexOf('>', hit.index);
+    if (tagStart < 0 || tagEnd < 0) return undefined;
+    const tag = text.slice(tagStart, tagEnd + 1);
+    if (new RegExp(`\\b${event}\\s*=`).test(tag)) return undefined; // already wired to something
+    const insertAt = hit.index + hit[0].length;
+    return text.slice(0, insertAt) + ` ${event}="${handler}"` + text.slice(insertAt);
 }

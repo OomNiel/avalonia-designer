@@ -17,7 +17,26 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-15)
+## Where the last session left off (2026-09-16)
+
+**Released and installed: `0.9.36`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+`NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.36 — "Create a function named 'SortArray'".** *AI: Implement in Function…* now branches on the
+  caret: **inside a method** it rewrites that method (unchanged), **outside every method** it writes a new
+  member where the caret is. The model picks the name and signature from one sentence; the placement is
+  snapped to a line boundary with a blank line of separation; visibility is forced to `private` with
+  `static`/`Shared` only where the body provably needs no instance state; `using`/`Imports` the member needs
+  are added after the last existing one; a name that already exists is **refused** (checked on the sentence
+  *and* on the answer); and a new `<Control>_<Event>` member offers to wire `Click="…"` in the form. All of
+  it is pure code under test (`tests/t2-logic/implementMember.test.js`, 99 assertions). Suite **3940**
+  passed / 0 failed; §119 has the write-up, including the two bugs the tests caught (a `Private Static Sub`
+  that was not recognised, and usings that landed above the file's own imports).
+- **Standing rule that keeps paying:** put the interesting decision in a pure function so the suite can
+  drive it. Every bug of the day was found by asserting **result text** (an inserted member, a corrected
+  declaration), never by re-reading the code.
+
+### From 2026-09-15
 
 **Released and installed: `0.9.35`** (0.9.16 → 0.9.35 all landed today, each one from a report made while the
 user clicked through the real panel, except the last one, which the *user* wrote and this session verified;

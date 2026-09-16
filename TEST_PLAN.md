@@ -276,6 +276,15 @@ Each step ends with the log green before the next begins.
   0 warnings — which is what proves the helper is emitted wherever something references it. Live on the
   Marketplace the same day: `0.9.2` on the listing, with the gallery's `VsixSha256` equal to the local
   VSIX byte for byte.
+- **Release `0.9.36` (2026-09-16)** — *AI: Implement in Function…* branches on the caret: inside a method
+  the model rewrites it (unchanged), outside every method it writes a **new** member at the caret —
+  `private`, `static`/`Shared` only where the body provably needs no instance state or form control,
+  optional `using`/`Imports` added after the last one, and a **refusal** (never a replacement) when the
+  name already exists, checked both on the sentence and on the answer. A new `<Control>_<Event>` member
+  offers to wire the event into the form. `tests/t2-logic/implementMember.test.js` (99 assertions) drives
+  the whole pure core — prompt, answer parser, member/type scanning, the exact inserted text (blank lines,
+  indentation, CRLF, BOM, nested classes), the C#/VB visibility rules, the usings anchor and the XAML
+  attribute edit — and guards the command's refusals against the source. Suite **3940**.
 - **Release `0.9.35` (2026-09-15)** — three features in one change set: **Remove Model** (deletes the selected
   built-in model's weights plus its `.part`/`.verified` markers, after a host-side modal that names the file;
   stops the runtime first if that model is in use and clears the pin), a **fifth download**

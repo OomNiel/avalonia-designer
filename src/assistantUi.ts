@@ -12,26 +12,41 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 import {
+    addMemberToFile,
+    addXamlEventAttribute,
     assistantEnabled,
     assessHardware,
     buildFixPrompt,
+    buildGeneratePrompt,
     buildImplementPrompt,
     chat,
     chatDetailed,
     describeEmptyAnswer,
     describeModel,
     describeLoadedNow,
+    enclosingTypeSpan,
     extractCode,
+    handlerFromMemberName,
+    knownControlNames,
     looksLikeEmbeddingModel,
+    memberNameOf,
+    memberSignatures,
     methodTooLong,
+    normaliseMemberVisibility,
     normalizeAssistantConfig,
+    parseNewMemberAnswer,
     probeServer,
     readHardwareFacts,
+    sniffMemberName,
     spliceMethod,
     type AssistantConfig,
     type ChatMessage,
-    type ServerModelInfo
+    type MemberInfo,
+    type ServerModelInfo,
+    type TypeSpan
 } from './assistant';
 import { methodsIn, type MethodSpan } from './codeBehindCheck';
 import { log } from './logger';
@@ -195,7 +210,9 @@ export const proposalContent = new ProposalContentProvider();
 
 interface PendingProposal {
     documentUri: vscode.Uri;
-    /** the method the model rewrote — looked up again when Apply is pressed */
+    /** `replace` = the method the caret was in was rewritten; `insert` = a new member was written. */
+    kind: 'replace' | 'insert';
+    /** the member this proposal is about — looked up again when Apply is pressed */
     name: string;
     startLine: number;
     endLine: number;
@@ -205,6 +222,10 @@ interface PendingProposal {
     original: string;
     proposalUri: vscode.Uri;
     summary: string;
+    /** `insert` only: where it goes, and the `using`/`Imports` lines it asked for. */
+    insert?: { caretLine: number; type: TypeSpan; language: 'cs' | 'vb'; usings: string[] };
+    /** `insert` only: the form event to offer to wire once the member exists. */
+    wiring?: { axamlUri: vscode.Uri; control: string; event: string; handler: string };
 }
 
 let pending: PendingProposal | undefined;
@@ -228,7 +249,7 @@ function publishPending(p: PendingProposal): void {
     // that is waiting for the developer.
     applyItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     discardItem.text = '$(close) Discard';
-    discardItem.tooltip = `Leave ${p.name}() as it is.`;
+    discardItem.tooltip = p.kind === 'insert' ? `Do not add ${p.name}().` : `Leave ${p.name}() as it is.`;
     discardItem.command = 'avaloniaDesigner.assistant.discardProposal';
     applyItem.show();
     discardItem.show();
@@ -264,12 +285,12 @@ class ProposalLensProvider implements vscode.CodeLensProvider {
         return [
             new vscode.CodeLens(range, {
                 title: '$(check) Apply AI change',
-                tooltip: `${p.summary}. Replaces ${p.name}(); Ctrl+Z undoes it.`,
+                tooltip: `${p.summary}. ${p.kind === 'insert' ? `Adds ${p.name}();` : `Replaces ${p.name}();`} Ctrl+Z undoes it.`,
                 command: 'avaloniaDesigner.assistant.applyProposal'
             }),
             new vscode.CodeLens(range, {
                 title: '$(close) Discard',
-                tooltip: `Leave ${p.name}() as it is.`,
+                tooltip: p.kind === 'insert' ? `Do not add ${p.name}().` : `Leave ${p.name}() as it is.`,
                 command: 'avaloniaDesigner.assistant.discardProposal'
             })
         ];
@@ -353,36 +374,78 @@ export async function applyProposal(): Promise<void> {
     }
 
     const current = document.getText();
-    const spans = methodsIn(document.fileName, current);
-    // The method may have moved while the diff was on screen, so match on the name first and fall back
-    // to "the method that now occupies the span we proposed".
-    const span =
-        spans.find((m) => m.name === p.name) ??
-        spans.find((m) => p.startLine <= m.endLine && m.line <= p.endLine);
-    if (!span) {
-        clearPending();
-        void vscode.window.showWarningMessage(`"${p.name}" is no longer in the file — nothing was applied.`);
-        return;
-    }
+    let proposed: string;
+    let addedUsings: string[] = [];
 
-    // The diff may have been on screen for minutes: if the method moved or was edited meanwhile, the
-    // model's answer is spliced into the CURRENT text, and that is worth confirming.
-    if (current !== p.original) {
-        const pick = await vscode.window.showWarningMessage(
-            `The file changed while you were reviewing the proposal. Applying replaces ${p.name}() as it is now.`,
-            { modal: true },
-            'Apply',
-            'Discard'
-        );
-        if (pick === 'Discard') {
-            await discardProposal();
+    if (p.kind === 'insert') {
+        const plan = p.insert;
+        // The class may have moved while the diff was on screen, so it is found again by its declaration
+        // line. If it is gone, nothing is written — a member placed into the wrong class (or outside every
+        // class, which does not compile) is worse than no member.
+        const type = plan ? enclosingTypeSpan(current, plan.type.declLine, plan.language) : undefined;
+        if (!plan || !type) {
+            clearPending();
+            void vscode.window.showWarningMessage(
+                `${p.name}() was not added — the class it was meant for is no longer in the file.`
+            );
             return;
         }
-        if (pick !== 'Apply') return;
+        if (current !== p.original) {
+            const pick = await vscode.window.showWarningMessage(
+                `The file changed while you were reviewing the proposal. Applying adds ${p.name}() to it as it is now.`,
+                { modal: true },
+                'Apply',
+                'Discard'
+            );
+            if (pick === 'Discard') {
+                await discardProposal();
+                return;
+            }
+            if (pick !== 'Apply') return;
+        }
+        const merged = addMemberToFile({
+            text: current,
+            caretLine: plan.caretLine,
+            member: p.code,
+            usings: plan.usings,
+            type,
+            language: plan.language
+        });
+        proposed = merged.text;
+        addedUsings = merged.added;
+    } else {
+        const spans = methodsIn(document.fileName, current);
+        // The method may have moved while the diff was on screen, so match on the name first and fall back
+        // to "the method that now occupies the span we proposed".
+        const span =
+            spans.find((m) => m.name === p.name) ??
+            spans.find((m) => p.startLine <= m.endLine && m.line <= p.endLine);
+        if (!span) {
+            clearPending();
+            void vscode.window.showWarningMessage(`"${p.name}" is no longer in the file — nothing was applied.`);
+            return;
+        }
+
+        // The diff may have been on screen for minutes: if the method moved or was edited meanwhile, the
+        // model's answer is spliced into the CURRENT text, and that is worth confirming.
+        if (current !== p.original) {
+            const pick = await vscode.window.showWarningMessage(
+                `The file changed while you were reviewing the proposal. Applying replaces ${p.name}() as it is now.`,
+                { modal: true },
+                'Apply',
+                'Discard'
+            );
+            if (pick === 'Discard') {
+                await discardProposal();
+                return;
+            }
+            if (pick !== 'Apply') return;
+        }
+
+        const eol = current.includes('\r\n') ? '\r\n' : '\n';
+        proposed = spliceMethod(current, span, p.code, eol);
     }
 
-    const eol = current.includes('\r\n') ? '\r\n' : '\n';
-    const proposed = spliceMethod(current, span, p.code, eol);
     const edit = new vscode.WorkspaceEdit();
     edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(current.length)), proposed);
     if (!(await vscode.workspace.applyEdit(edit))) {
@@ -400,12 +463,56 @@ export async function applyProposal(): Promise<void> {
     await document.save();
 
     const next = await vscode.window.showInformationMessage(
-        `${name}() replaced — Ctrl+Z undoes it.`,
+        p.kind === 'insert'
+            ? `${name}() added${addedUsings.length ? ` (with ${addedUsings.join(', ')})` : ''} — Ctrl+Z undoes it.`
+            : `${name}() replaced — Ctrl+Z undoes it.`,
         'Build to verify',
         'Dismiss'
     );
     if (next === 'Build to verify') await runBuildTask();
+    if (p.kind === 'insert') await offerWiring(p);
     void summary;
+}
+
+/**
+ * The second half of "create a handler": the event attribute in the form.
+ *
+ * Offered, never assumed — it edits a *different* file than the one the developer was looking at, so it
+ * asks first and reports what it changed. A normal undoable edit (`WorkspaceEdit`), not a write behind
+ * the designer's back: the designer owns the file whenever its own tab is open.
+ */
+async function offerWiring(p: PendingProposal): Promise<void> {
+    const w = p.wiring;
+    if (!w) return;
+    const pick = await vscode.window.showInformationMessage(
+        `Wire ${w.event}="${w.handler}" onto ${w.control} in ${path.basename(w.axamlUri.fsPath)}?`,
+        'Wire it',
+        'Not now'
+    );
+    if (pick !== 'Wire it') return;
+    try {
+        const doc = await vscode.workspace.openTextDocument(w.axamlUri);
+        const text = doc.getText();
+        const updated = addXamlEventAttribute(text, w.control, w.event, w.handler);
+        if (!updated) {
+            void vscode.window.showInformationMessage(
+                `Nothing to wire — ${w.control} either already has ${w.event} or is not in ${path.basename(w.axamlUri.fsPath)}.`
+            );
+            return;
+        }
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(w.axamlUri, new vscode.Range(doc.positionAt(0), doc.positionAt(text.length)), updated);
+        if (!(await vscode.workspace.applyEdit(edit))) {
+            void vscode.window.showErrorMessage(`Could not edit ${path.basename(w.axamlUri.fsPath)} — it may be read-only.`);
+            return;
+        }
+        await doc.save();
+        log(`Wired ${w.event}="${w.handler}" onto ${w.control} in ${w.axamlUri.fsPath}`);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log(`Could not wire ${w.event} onto ${w.control}: ${message}`);
+        void vscode.window.showWarningMessage(`Could not wire the event: ${message}`);
+    }
 }
 
 /** "AI: Discard the Proposed Change" — closes the diff, changes nothing. */
@@ -424,7 +531,7 @@ export async function discardProposal(): Promise<void> {
 /** Opens what the model actually said, in a read-only tab — the evidence, not a summary of it. */
 async function showRawAnswer(
     answer: string,
-    span: MethodSpan,
+    label: string,
     cfg: AssistantConfig,
     thinking = ''
 ): Promise<void> {
@@ -433,7 +540,7 @@ async function showRawAnswer(
     // thing that arrived, and "0 characters" with nothing else on screen is not evidence of anything.
     const header = [
         `# The model's answer, exactly as it arrived`,
-        `# method: ${span.name}()   model: ${cfg.model || '(the bundled model)'}   ${answer.length} characters`
+        `# target: ${label}   model: ${cfg.model || '(the bundled model)'}   ${answer.length} characters`
         + (thinking ? `   + ${thinking.length} characters of thinking (below, never used as code)` : ''),
         ''
     ].join('\n');
@@ -446,12 +553,40 @@ async function showRawAnswer(
 }
 
 /**
+ * What a proposal is about: a method being rewritten, or a member that does not exist yet.
+ *
+ * One request path, one diff, one Apply button for both — the developer should not have to learn two
+ * flows because one writes over a method and the other writes next to it (2026-09-16).
+ */
+type ProposalTarget =
+    | { kind: 'replace'; span: MethodSpan }
+    | {
+          kind: 'insert';
+          caretLine: number;
+          type: TypeSpan;
+          language: 'cs' | 'vb';
+          members: MemberInfo[];
+          controls: string[];
+          form?: { uri: vscode.Uri };
+      };
+
+/** The event to offer to wire, when the new member looks like a handler of a control in the form. */
+function wiringFor(
+    name: string,
+    target: { controls: string[]; form?: { uri: vscode.Uri } }
+): PendingProposal['wiring'] {
+    const hit = handlerFromMemberName(name, target.controls);
+    if (!hit || !target.form) return undefined;
+    return { axamlUri: target.form.uri, control: hit.control, event: hit.event, handler: name };
+}
+
+/**
  * Asks the model for a replacement method, shows it as a diff, and applies it only when the developer
  * says so. Returns a short summary, or undefined when the attempt was cancelled or failed.
  */
 async function proposeMethod(
     document: vscode.TextDocument,
-    span: MethodSpan,
+    target: ProposalTarget,
     messages: ChatMessage[],
     what: string,
     cfg: AssistantConfig
@@ -502,7 +637,45 @@ async function proposeMethod(
         void refreshAiState();
     }
 
-    const { code, note } = extractCode(answer);
+    const label = target.kind === 'replace' ? target.span.name : target.type.name;
+    let code = '';
+    let usings: string[] = [];
+    let note = '';
+    if (target.kind === 'replace') {
+        const parsed = extractCode(answer);
+        code = parsed.code;
+        note = parsed.note;
+    } else {
+        // A new member: the answer is a declaration plus a body, optionally preceded by the usings it
+        // needs. Everything the user asked for is enforced here rather than hoped for in the prompt —
+        // a name that already exists is refused outright, and the visibility is corrected (2026-09-16).
+        const parsed = parseNewMemberAnswer(answer);
+        code = parsed.member;
+        usings = parsed.usings;
+        note = parsed.note;
+        const name = code.trim() ? memberNameOf(code, target.language) : undefined;
+        if (code.trim() && !name) {
+            log(`The answer for ${target.type.name} has no member declaration in it:\n${answer}`);
+            const choice = await vscode.window.showWarningMessage(
+                'The answer does not contain a member declaration — nothing was added.',
+                'Show the raw answer'
+            );
+            if (choice === 'Show the raw answer') await showRawAnswer(answer, target.type.name, cfg, thinking);
+            return undefined;
+        }
+        if (name && target.members.some((m) => m.name.toLowerCase() === name.toLowerCase())) {
+            void vscode.window.showWarningMessage(
+                `${target.type.name} already has a member called ${name}(). Nothing was added — put the caret ` +
+                'inside it and run "AI: Implement in Function…" again to rewrite it instead.'
+            );
+            return undefined;
+        }
+        if (name) {
+            const fixed = normaliseMemberVisibility(code, target.language, target.controls, target.members, name);
+            if (fixed.changed.length) log(`New member ${name}(): ${fixed.changed.join('; ')}`);
+            code = fixed.member;
+        }
+    }
     if (!code.trim()) {
         // Never swallow the evidence again: the raw answer goes to the output channel and can be opened
         // as a read-only tab. The first real failure (2026-09-14) was unactionable for exactly this
@@ -520,14 +693,24 @@ async function proposeMethod(
             'Show the raw answer',
             'Show status'
         );
-        if (choice === 'Show the raw answer') await showRawAnswer(answer, span, cfg, thinking);
+        if (choice === 'Show the raw answer') await showRawAnswer(answer, label, cfg, thinking);
         if (choice === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
         return undefined;
     }
 
     const original = document.getText();
     const eol = original.includes('\r\n') ? '\r\n' : '\n';
-    const proposed = spliceMethod(original, span, code, eol);
+    const proposed = target.kind === 'replace'
+        ? spliceMethod(original, target.span, code, eol)
+        : addMemberToFile({
+              text: original,
+              caretLine: target.caretLine,
+              member: code,
+              usings,
+              type: target.type,
+              language: target.language
+          }).text;
+    const name = target.kind === 'replace' ? target.span.name : memberNameOf(code, target.language) ?? target.type.name;
 
     // A new proposal replaces an older one: its diff is stale, so its tab and content go.
     const previous = pending;
@@ -547,21 +730,31 @@ async function proposeMethod(
         'vscode.diff',
         document.uri,
         proposalUri,
-        `${fileBaseName(document)} — AI proposal for ${span.name}()`
+        target.kind === 'replace'
+            ? `${fileBaseName(document)} — AI proposal for ${name}()`
+            : `${fileBaseName(document)} — AI proposal: new member ${name}()`
     );
     publishPending({
         documentUri: document.uri,
-        name: span.name,
-        startLine: span.line,
-        endLine: span.endLine,
+        kind: target.kind,
+        name,
+        startLine: target.kind === 'replace' ? target.span.line : target.caretLine,
+        endLine: target.kind === 'replace' ? target.span.endLine : target.caretLine,
         code,
         original,
         proposalUri,
-        summary: summarise(code)
+        summary: summarise(code),
+        insert: target.kind === 'insert'
+            ? { caretLine: target.caretLine, type: target.type, language: target.language, usings }
+            : undefined,
+        wiring: target.kind === 'insert' ? wiringFor(name, target) : undefined
     });
 
     const pick = await vscode.window.showInformationMessage(
-        `AI proposal for ${span.name}(): ${summarise(code)}. Review the diff, then apply.${note ? ` (${note})` : ''}`,
+        target.kind === 'replace'
+            ? `AI proposal for ${name}(): ${summarise(code)}. Review the diff, then apply.${note ? ` (${note})` : ''}`
+            : `AI proposal: a new member ${name}() in ${target.type.name}, ${summarise(code)}. Review the diff, ` +
+              `then apply.${note ? ` (${note})` : ''}`,
         'Apply',
         'Discard'
     );
@@ -573,12 +766,12 @@ async function proposeMethod(
         await applyProposal();
         return summarise(code);
     }
-    // The toast expired or was dismissed — the lens on the method, the status bar and the diff's title
+    // The toast expired or was dismissed — the lens on the member, the status bar and the diff's title
     // bar still offer the decision, so nothing is lost and nothing is applied without a word. Say so in
     // the output channel as well, so a developer who cannot find the buttons has a breadcrumb.
     if (pending) {
         log(
-            `Proposal for ${span.name}() is waiting — apply it with the buttons above the method, in the `
+            `Proposal for ${name}() is waiting — apply it with the buttons above the method, in the `
             + 'status bar (bottom right), or in the diff editor\'s title bar.'
         );
     }
@@ -619,7 +812,15 @@ export async function runBuildTask(): Promise<void> {
     else void vscode.window.showWarningMessage('The build did not finish in 5 minutes — check the terminal.');
 }
 
-/** "Implement in function…" — the developer describes the behaviour, the model writes the body. */
+/**
+ * "Implement in Function…" — the caret decides which of the two things happens.
+ *
+ * Inside a method: the model rewrites *that* method (unchanged since 0.9.x). Outside every method, the
+ * caret is a place to put a **new** member — asked on 2026-09-16 with exactly that sentence in mind:
+ * *"Create a function named 'SortArray' that sorts the contents of a passed array"*. One command, because
+ * a developer who is thinking "write me this function" should not have to know which of two entries to
+ * pick; the caret already says it.
+ */
 export async function implementInFunction(): Promise<void> {
     const cfg = assistantConfig();
     if (!assistantEnabled(cfg)) {
@@ -638,9 +839,7 @@ export async function implementInFunction(): Promise<void> {
     }
     const span = methodAt(editor.document, editor.selection.active.line + 1);
     if (!span) {
-        void vscode.window.showWarningMessage(
-            'Put the caret inside the method you want written — the model replaces exactly that method.'
-        );
+        await createMemberInClass(editor, language, cfg);
         return;
     }
     const method = editor.document.getText().slice(span.start, span.end).replace(/\uFEFF/g, '');
@@ -673,7 +872,115 @@ export async function implementInFunction(): Promise<void> {
     // much longer), so nothing is started until there is a request to send.
     const resolved = await effectiveConfig(cfg);
     if (!resolved) return;
-    await proposeMethod(editor.document, span, messages, `Asking ${cfg.model || 'the local model'}…`, resolved);
+    await proposeMethod(
+        editor.document,
+        { kind: 'replace', span },
+        messages,
+        `Asking ${cfg.model || 'the local model'}…`,
+        resolved
+    );
+}
+
+/**
+ * The caret is not inside a method: write a new member where it is.
+ *
+ * Three things are decided before the model is asked anything, and all three are refusals rather than
+ * guesses: the caret has to be inside a class (a member cannot be written into a `using` block), a name
+ * the developer spells out must not already exist, and the message says what to do instead — rewriting an
+ * existing member is the *other* half of this command, so the answer is one keystroke away.
+ */
+async function createMemberInClass(
+    editor: vscode.TextEditor,
+    language: 'cs' | 'vb',
+    cfg: AssistantConfig
+): Promise<void> {
+    const document = editor.document;
+    const caretLine = editor.selection.active.line + 1;
+    const text = document.getText();
+    const type = enclosingTypeSpan(text, caretLine, language);
+    if (!type) {
+        void vscode.window.showWarningMessage(
+            'That line is not inside a class, so there is nowhere to put a new member — put the caret ' +
+            'between two members (or inside the method you want rewritten).'
+        );
+        return;
+    }
+    const members = memberSignatures(text, language);
+    const description = await vscode.window.showInputBox({
+        title: `What should the new function do?   (it is added to ${type.name}, below line ${caretLine})`,
+        prompt: 'The model writes the name, the signature and the body. You see the diff before anything is applied.',
+        placeHolder: "e.g. Create a function named 'SortArray' that sorts the contents of a passed array",
+        ignoreFocusOut: true,
+        validateInput: (v) => (v.trim().length < 8 ? 'Say a little more — at least a few words.' : undefined)
+    });
+    if (!description) return;
+
+    const named = sniffMemberName(description);
+    if (named && members.some((m) => m.name.toLowerCase() === named.toLowerCase())) {
+        void vscode.window.showWarningMessage(
+            `${type.name} already has a member called ${named}(). Nothing was added — put the caret inside it ` +
+            'and run "AI: Implement in Function…" again to rewrite it instead.'
+        );
+        return;
+    }
+
+    const form = siblingFormOf(document);
+    const messages = buildGeneratePrompt({
+        language,
+        description: description.trim(),
+        header: headerOf(document, language),
+        members: members.map((m) => m.declaration).join('\n'),
+        style: styleReferenceOf(document)
+    });
+    const resolved = await effectiveConfig(cfg);
+    if (!resolved) return;
+    await proposeMethod(
+        document,
+        {
+            kind: 'insert',
+            caretLine,
+            type,
+            language,
+            members,
+            controls: form?.controls ?? [],
+            form: form ? { uri: form.uri } : undefined
+        },
+        messages,
+        `Asking ${cfg.model || 'the local model'} for a new function…`,
+        resolved
+    );
+}
+
+/** One short member, as a style reference for a new one — the same rule `siblingOf` uses. */
+function styleReferenceOf(document: vscode.TextDocument): string | undefined {
+    const text = document.getText();
+    for (const m of methodsIn(document.fileName, text)) {
+        const body = text.slice(m.start, m.end).replace(/\uFEFF/g, '');
+        if (body.split('\n').length > 24) continue;
+        if (/\b(InitializeComponent|Dispose|BrowseAsync)\b/.test(body)) continue;
+        return body;
+    }
+    return undefined;
+}
+
+/**
+ * The form a code-behind belongs to (`MainWindow.axaml.cs` → `MainWindow.axaml`), with the control names
+ * in it.
+ *
+ * Two uses: the names are context for the model (a handler that touches `Status` must not be made static),
+ * and they decide whether a new member that *looks* like a handler can be wired. Best effort — a file
+ * without a form, or one that is not readable, simply has no controls to offer.
+ */
+function siblingFormOf(document: vscode.TextDocument): { uri: vscode.Uri; controls: string[] } | undefined {
+    const file = document.fileName;
+    if (!/\.(cs|vb)$/i.test(file)) return undefined;
+    const axaml = file.replace(/\.(cs|vb)$/i, '');
+    if (!/\.axaml$/i.test(axaml)) return undefined;
+    try {
+        return { uri: vscode.Uri.file(axaml), controls: knownControlNames(fs.readFileSync(axaml, 'utf8')) };
+    } catch {
+        return undefined;
+    }
 }
 
 /** "Fix with AI…" — offered from the PROBLEMS pane on a finding the checker published. */
@@ -705,7 +1012,13 @@ export async function fixFindingWithAI(uri: vscode.Uri, line: number, message: s
     });
     const resolved = await effectiveConfig(cfg);
     if (!resolved) return;
-    await proposeMethod(document, span, messages, `Asking ${cfg.model || 'the local model'} to fix the finding…`, resolved);
+    await proposeMethod(
+        document,
+        { kind: 'replace', span },
+        messages,
+        `Asking ${cfg.model || 'the local model'} to fix the finding…`,
+        resolved
+    );
 }
 
 /** Backend off: explain what to switch on rather than failing silently. */

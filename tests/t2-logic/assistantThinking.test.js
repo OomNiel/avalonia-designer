@@ -196,7 +196,7 @@ module.exports = async (t) => {
         const ui = read('src/assistantUi.ts');
         t.ok(/onReasoning/.test(ui), 'wiring',
             'the progress notification says the model is thinking rather than looking stuck');
-        t.ok(/showRawAnswer\(answer, span, cfg, thinking\)/.test(ui), 'wiring',
+        t.ok(/showRawAnswer\(answer, label, cfg, thinking\)/.test(ui), 'wiring',
             'and the raw-answer tab carries the thinking, so it can never be "0 characters" with no evidence');
     }
 };
