@@ -2767,3 +2767,39 @@ file — language isolation, the prompt position in all three prompts, and the w
 command and the manifest), plus the uneven-parts fit assertions in `assistant.test.js` and the house-rules
 editor in the t3 webview suite.
 
+### §127 — the ⚙ Settings dialog, this time measured (2026-09-16, release 0.9.44)
+
+**Asked:** *"Resize the Settings dialog, it needs a few lines of height to be added."* This panel's height has
+been the subject of a report before (2026-09-15: *"hides the top and bottom items"*, fixed by capping the box
+to the viewport and pinning the Save row). Guessing CSS numbers is how such a fix becomes a second report, so
+this one was measured.
+
+**The tape measure: `tools/measure-settings-panel.py`** → `tests/out/settings-measure.html`. It slices the real
+`#settingsModal` markup out of `src/designerPanel.ts`, inlines the real `media/designer.css`, fakes the VS Code
+theme variables (every `var()` the sheet reads, with a fallback value for the rest), shows the modal and the AI
+body, and exposes `window.__measure()` → `{ viewport, boxH, top, contentH, hiddenPx, scrolls,
+houseRulesVisible, saveBottom }`. **jsdom/T3 has no layout engine**, so no test could ever have answered these
+questions; it is not in `npm test` and renders nothing of the user's project.
+
+**What it said** (AI section expanded, content ≈ 736 px):
+
+| editor area | before | after |
+|---|---|---|
+| 1440×900 | 756 px box / 754 px content — fits | 738 / 736 — fits |
+| **1024×700** | 672 / 754 → **82 px hidden** | 692 / 736 → 46 px hidden |
+| 1000×520 | 492 / 754 → 262 px hidden | 512 / 736 → 226 px hidden |
+| 1024×700, AI folded | 254 px box | 240 px |
+
+So the last ~4 rows behind the scroll were the **House rules box** (added hours earlier, at the very end of the
+AI section — the timing of the report was the clue). The change: cap *this* dialog to `calc(100vh - 8px)`,
+10 px padding, 6 px between hints, 2 px section heads — ~3 rows, and only this dialog (the eight small ones
+keep the shared `.modal-box` values). The three declarations the t2 guard pins are untouched: the viewport cap,
+`overflow-y: auto`, and the sticky Save row.
+
+**The trap worth remembering:** a **`min-height` floor is the wrong tool** for "make the dialog taller". The
+Save row is `position: sticky; bottom: 0` and lives *at the end of the flow*, so a floor does not push it down —
+it leaves dead space **below** the buttons (measured: box 658 px, Save row 281 px). A floor only becomes sane if
+the box is also switched to a flex column with `margin-top: auto` on that row, which is a bigger change than the
+question asked for. Two reversible ways to gain the remaining 46 px at 1024×700 are named in the CHANGELOG's
+follow-up: the House rules textarea at 3 rows instead of 4 (−18 px), or that box behind its own fold (−92 px).
+

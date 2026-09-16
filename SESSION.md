@@ -19,8 +19,19 @@
 
 ## Where the last session left off (2026-09-16)
 
-**Released and installed: `0.9.43`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
+**Released and installed: `0.9.44`** — *plus* everything from the 2026-09-15 marathon (§100–§118 in
 `NOTES.md`, `TEST_PLAN.md` §10, `CHANGELOG.md`).
+
+- **0.9.44 — the ⚙ Settings dialog uses the window it is in.** Asked as *"it needs a few lines of height to be
+  added"*, and this panel's height has now been reported twice — so it was **measured** instead of guessed:
+  `python3 tools/measure-settings-panel.py` writes `tests/out/settings-measure.html` (the real `#settingsModal`
+  markup + the real `media/designer.css`, VS Code theme variables faked) and exposes `window.__measure()`.
+  With the AI section expanded the content is ~736 px, so 1440×900 fits, **1024×700 hid 82 px** (the last ~4
+  rows — the House rules box) and 1000×520 hid 262 px. The dialog is now capped to `calc(100vh - 8px)` (the
+  shared `.modal-box` still stops 28 px short) with a tighter rhythm inside (10 px padding, 6 px hint gaps,
+  2 px section heads) — ~3 rows gained, only this dialog. Lesson recorded in §127: **a floor (`min-height`) is
+  the wrong tool here** — the Save row is `position: sticky` and last in flow, so a floor leaves dead space
+  *below* the buttons (measured: box 658 px, row 281 px).
 
 - **0.9.43 — house rules: the model writes like the code around it.** The honest replacement for "train it on my
   code" (§124 said no to fine-tuning): the idioms your code already follows, **measured** from up to 40 of the
@@ -153,7 +164,7 @@ server (LM Studio, Ollama, your own `llama-server`), tier 2 brings its own — `
 built on the user's machine with the .NET SDK, so one VSIX fits every platform, and weights are downloaded once
 with a SHA-256 check. Both are **off by default**.
 
-- **Versions 0.9.5 – 0.9.43 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
+- **Versions 0.9.5 – 0.9.44 are local builds only.** The Marketplace still carries **0.9.4** (GitHub release
   `v1.0.0-beta.11`, hash-verified); publishing a newer one means following `PUBLISHING.md` part F (numbers-only
   version, both GitHub release flags, no BETA suffix). The repo tags only the `v1.0.0-beta.N` series — the 0.9.x
   releases are commits, not tags.
