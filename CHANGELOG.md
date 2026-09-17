@@ -6,11 +6,44 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.10.1` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.10.2` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.10.2] - 2026-09-17 · *the fixer can reach the model that wrote the code*
+
+Two fixes for one failure, hit hours after `0.10.1` was tagged: the user asked the assistant to link a ComboBox's
+selection to the matching grid row, the answer did not compile — `CS1061: 'DataGrid' does not contain a
+definition for 'Items'` — the checker reported **no** findings on that file, so the build-driven loop had no rule
+to apply, and the loop's model fallback then refused to ask a model at all even though a 30 B model was serving
+on the machine. Neither cause was the compiler, the rules or the model.
+
+### Fixed
+
+- **The repair loop could only see two of the three runtimes.** `repairRuntime` accepted the built-in runtime
+  when it was already running and otherwise probed `assistant.endpoint`; the **user's own `llama-server`** — the
+  "My own llama-server" entry in the picker, often a service that outlives a window reload — was invisible to
+  it. In the reported case the app pinned `backend: bundled` (nothing running after a reload), the endpoint
+  pointed at LM Studio's 1234 where nothing listened, and the model that answered was on 8080: the guard gave
+  up and the compiler error was simply listed. It now checks, in order, the built-in runtime *if it is already
+  running*, a server this window started, **anything that answers as llama.cpp** (the same probe the picker
+  uses) and the configured endpoint — and still never starts a runtime just to repair something.
+- **The model was never told what the form's data is.** `src/dataSetFacts.ts` (new) renders the DataSet
+  bindings the **rules** already use into the prompt: the row type, its columns, and — the sentence that
+  matters — that a control bound to a column *holds that column's value, not a row*. Told this, the model has
+  no reason to invent `DataGrid.Items`. The panel's own copy of that mapping was removed and now delegates, so
+  the rules and the prompts cannot drift apart again.
+- Together they close the hole the user found: the loop can ask the runtime that wrote the code, and that
+  runtime is told what the code should assume. `tests/t2-logic/dataSetFacts.test.js` (34 assertions) covers the
+  facts text, the prompt block and both wirings.
+
+### Notes
+
+- Suite **4,707** assertions, 0 failed.
+- `0.10.1` was tagged and released but **never uploaded** to the Marketplace — this release supersedes it, so
+  the first listing from this line carries these fixes.
 
 ## [0.10.1] - 2026-09-17 · *the build becomes the referee*
 

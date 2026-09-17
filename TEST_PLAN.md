@@ -202,6 +202,17 @@ Three new t2 files, and the loop's *policy* is asserted with fakes rather than w
 - `tests/t3-webview/designer.test.js` grew the host verdict: a refused machine disables the AI controls, shows
   the reason and offers the escape; an allowed-but-tight machine only warns.
 
+### 0.10.2 (2026-09-17) — the fixer, the runtime and the data
+
+- `tests/t2-logic/dataSetFacts.test.js` (34) — the text the AI prompts now carry: the DataSet class, the grid's
+  row type and columns, **that a control bound to a column holds a value rather than a row** (the mistake that
+  produced `DataGrid.Items`), and the Data-Image description. Plus the prompt rendering itself (the block is
+  present, says it is authoritative, sits before the task, and is absent when there is nothing to say), and both
+  wirings: the panel delegates the one DataSet mapping, and all three AI request paths pass the facts.
+- `tests/t2-logic/repairLoop.test.js` — two assertions re-pointed at the rebuilt runtime guard (the loop uses
+  `repairRuntime`, which knows all three runtimes and never starts one; `effectiveConfig` must not appear on that
+  path).
+
 Each step ends with the log green before the next begins.
 
 ### Status 2026-09-11 — full suite green (2176 passed / 0 failed / 0 skipped, 35 s)

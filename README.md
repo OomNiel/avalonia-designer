@@ -30,7 +30,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.1`**, so the command above installs it (add `--force` to reinstall, or to
+The current version is **`0.10.2`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -39,11 +39,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.10.1.vsix --force
+code --install-extension avalonia-designer-0.10.2.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.10.1` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.10.2` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -117,8 +117,8 @@ second on the test app). The compiler's errors appear in the same list and the s
 rule can *write* are repaired **one at a time, rebuilding after each**, until the build is clean: a missing `;`
 anywhere in a body (the compiler knows the line, so the rules' semicolon fix is handed it), a missing brace, a
 missing `using`. A repair that does not bring the project closer to compiling is **undone**, and an error no rule
-understands is listed for you — the model is offered it only while it is already running. Nothing about the
-designer's own edits pays for a build: a handler it inserted lands on disk and stays instant.
+understands is listed for you — the model is offered it only while a model is already running (the built-in
+runtime, or any `llama-server` answering on this machine). Nothing about the designer's own edits pays for a build: a handler it inserted lands on disk and stays instant.
 
 `avaloniaDesigner.codeCheck.build` turns the build off; `codeCheck.aiRepair` turns off the model's part in it; a
 `maxPasses` bound (10) and the panel being closed stop the loop.

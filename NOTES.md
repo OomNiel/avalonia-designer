@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4670 passed, 0 failed / 0 skipped** (2026-09-17, ~39 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4707 passed, 0 failed / 0 skipped** (2026-09-17, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2961,4 +2961,40 @@ re-decided against their own machine: 28 GB RAM with an integrated Radeon 760M i
 `minRamGb` the fit check uses) and a refused machine always offers **Use it anyway**.
 
 Suite 4438 → **4670** assertions (three new t2 files, one grown t3 layer, no failures).
+
+### §131 — the fixer could not reach the model, and the model did not know the data (2026-09-17, release 0.10.2)
+
+Hours after 0.10.1 was tagged the user reported the *whole point* of the loop failing on their own app: they
+asked the assistant to link the ComboBox's selected item to the matching grid row, and got
+`var rowIndex = DataGrid1.Items.IndexOf(selectedItem);` → `CS1061: 'DataGrid' does not contain a definition for
+'Items'`. The checker reported **0** findings on that file (verified by running `analyzeCodeBehind` on it), so
+the loop had no rule to apply; and the model fallback refused to ask anything. Two independent bugs, neither in
+the compiler, the rules or the model:
+
+- **The guard knew two of three runtimes.** `bundledRuntimeRunning()` (the extension's own ModelHost, dead after
+the window reload I had just asked for) and `probeServer(cfg)` against `assistant.endpoint`
+(`http://127.0.0.1:1234/v1` — LM Studio's port, nothing listening). The model that answered their requests was
+their **own `llama-server` on 8080** — `pgrep` showed a bare llama.cpp binary serving Qwen3-Coder-30B with
+`--alias qwen3-coder-local`, and `llamaServer.ts`'s own doc comment says it is a **systemd user service** —
+which `ownLlamaServerStatus()` cannot see either, because it only tracks a child *this window* spawned. Fix:
+`repairRuntime()` checks bundled-if-running → own-this-window → **any llama-server answering**
+(`findRunningLlamaServer`, the picker's probe) → bundled ⇒ `undefined` (never started for a repair) → external
+after a probe. Invariant asserted in the tests: **`effectiveConfig` must not be used on the repair path** —
+that is the function that starts the bundled runtime.
+- **The prompt never described the data.** `buildImplementPrompt`/`buildFixPrompt` got the method, the header, a
+sibling method and the house rules — and nothing about the `.adset`, so a ComboBox bound to `Customers.Name`
+through a `ColumnFollower` looked exactly like a row-selecting control, and the model reached for WPF's
+`DataGrid.Items`. Fix: `src/dataSetFacts.ts` — `dataSetContextFor()` moved out of `designerPanel` (the panel's
+`codeCheckDataSetContext` now delegates, so rules and prompts share one mapping) and `describeDataSetFacts()`
+turns it into prompt text, including the sentence that matters: *“its selected item is the value of that column —
+a plain value, not a `CustomersRow` … never index the grid by the selected item.”* `facts` is rendered before the
+ask (after the sibling, before the house rules) under an “authoritative — never invent a member” heading, and all
+**three** AI paths pass it through `formFactsFor(uri)`.
+- Worth remembering: the AI had **replaced working code**. The handler previously contained the correct
+`_customers` lookup by `Name`; the answer wiped it. Git is not the safety net in `TestExtApps` — the previous
+text came from the transcript of the same session.
+- Suite 4670 → **4707**; `tests/t2-logic/dataSetFacts.test.js` (34 assertions) is the new file. Two assertions in
+`repairLoop.test.js` had to be re-pointed at the new guard shape (they had pinned the old code, which is what
+they were for). Version **0.10.2**, tagged and released — and it supersedes `0.10.1`, which was tagged but never
+uploaded.
 

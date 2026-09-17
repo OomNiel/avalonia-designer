@@ -123,7 +123,7 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.1`**, so the command above installs it; add `--force` to
+The current version is **`0.10.2`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -135,7 +135,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.10.1` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.10.2` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -788,7 +788,9 @@ compiler's errors are listed next to the rules' findings, and the ones a rule ca
 missing brace) are repaired **one at a time, rebuilding after each**, until the build is clean or everything
 left is an error no rule understands — those are listed for you, and the model is offered them when it is
 already running. A repair that does not make the project build better is **undone**, so your file is never left
-worse than it was. Two settings control it: `avaloniaDesigner.codeCheck.build` (the build itself, on by
+worse than it was. "Already running" means any local model that is answering: the built-in runtime, or a
+`llama-server` you started yourself — including one that a service keeps alive between windows. Two settings
+control it: `avaloniaDesigner.codeCheck.build` (the build itself, on by
 default) and `codeCheck.aiRepair` (the model's part in it). The automatic re-check only pays for a build when
 the code actually changed since the last one; a handler the designer inserted itself stays instant.
 
@@ -906,6 +908,14 @@ The checker's fixes are exact because each one is a rule. That leaves a gap: a h
 **empty**, or a change no rule can describe ("read the row the user picked and fill the TextBoxes"). For
 those the extension can ask a **local language model** — one running on your own machine. Nothing is
 sent anywhere: the request goes to `127.0.0.1`, and the feature ships **off**.
+
+**The request carries what your form is bound to.** Along with the method, the file header and a sibling method
+as a style reference, every request is told the DataSet facts the checks already know: which table a grid is
+bound to, what a row type is and which columns it has, that a control which *follows a column* holds that
+column's value (a plain value, not a row), and which column an Image shows. It is written from the same
+`.adset` bindings the code check uses, and it is labelled authoritative — the model is told not to invent a
+member and not to assume a control holds something other than what it says. (Added in `0.10.2`: without it, a
+ComboBox bound to the `Name` column was handed a lookup by row and the model invented `DataGrid.Items`.)
 
 **Turning it on — one command.** Run **AI: Choose a Local Model…** from the Command Palette. The list
 shows every chat model **LM Studio** already has on disk — its size, its parameter count, and whether it

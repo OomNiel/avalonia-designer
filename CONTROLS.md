@@ -602,8 +602,11 @@ It is the safety net for the cases that otherwise fail as an unhelpful compile e
   (`avaloniaDesigner.codeCheck.build`) and lists `dotnet build`'s own errors next to the rules' findings: only the
   project's source, de-duplicated, with `CS1002` in the form's code-behind repaired by the same one-click fix the
   semicolon rule uses. This is also the loop: each fix is followed by a rebuild, a fix that does not help is
-  undone, and what no rule can repair is listed for the user (the model is offered it only while it is already
-  running). A statement nothing terminated — a missing `;` — is its own finding (`insert-semicolon`), because the
+  undone, and what no rule can repair is listed for the user (the model is offered it only while one is already
+  running — the built-in runtime, or a `llama-server` you started yourself). The request carries the form's
+  `.adset` facts, so the model knows the row type and its columns, and that a control bound to a column holds
+  that column's value rather than a row — the mistake that invented `DataGrid.Items`. A statement nothing
+  terminated — a missing `;` — is its own finding (`insert-semicolon`), because the
   braces still balance and no structural rule can see it.
 
 Rules aimed at code the **AI writes** (added 0.9.40, after the user asked whether the checker could cover the

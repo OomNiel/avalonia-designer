@@ -233,22 +233,27 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.10.1` (2026-09-17) — GitHub release live; the Marketplace upload is the developer's.** Built, tested,
-> committed (`620d613`) and installed the same day it was asked for, then tagged and released:
-> **`v0.10.1` is the repository's *Latest* release** (not a pre-release, `/releases/latest` resolves to it) with
-> the VSIX attached — re-downloaded and hash-checked against the local build and against GitHub's own asset
-> `digest`, all three equal. What it adds: the **project's own compiler as the second half of the code check**
-> (a Code Fix… run builds the project and merges `dotnet build`'s errors into the list and PROBLEMS), the
-> **`insert-semicolon` rule** for a statement nothing terminated, the **build-driven repair loop** (fix one
-> error, rebuild, undo what does not help, list what no rule can fix), and the **host check** with the
-> **EXPERIMENTAL FEATURE-USE WITH CAUTION** notice in ⚙ Settings, the README and the manual.
+> **`0.10.2` (2026-09-17) — tagged and released; THIS is the file to upload.** Supersedes `0.10.1` (tagged the
+> same day, never uploaded) and `0.10.0` (prepared the day before, never uploaded): the published listing still
+> carries `0.9.4`, so the first version from this line is `0.10.2` and it carries everything — the AI assist,
+> the compiler as the second half of the code check, the `insert-semicolon` rule, the build-driven repair loop,
+> the host check with the experimental notice — **plus** the two fixes for the failure the user hit on their own
+> app hours after `0.10.1` was tagged: the loop's guard could not see a `llama-server` the user had started
+> themselves (so no model was ever asked), and the AI prompts never described the form's DataSet bindings (so
+> the model invented `DataGrid.Items` for a ComboBox bound to a column). See `NOTES.md` §131.
 >
-> Plain VSIX — `avalonia-designer-0.10.1.vsix`, sha256
-> `37b55532d70cb2027e7a0fceac25d5aac912f1f798a06c497aa917e27675c391`, 868,987 bytes — after a green suite
-> (**4,670 assertions, 0 failed**). **Upload this one, not `0.10.0`** (the user's instruction on 2026-09-17: *"Do
-> 1, I will upload to the extension marketplace"* — option 1 was the tag/release, and the upload supersedes the
-> prepared `0.10.0`). Leave *Pre-release* **unchecked** in the portal, then confirm with the `flags: 914` query
-> that the version is `0.10.1` and `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above.
+> Plain VSIX — `avalonia-designer-0.10.2.vsix`, 873,063 bytes, sha256
+> `bb77c940000da84c22c1953b258d702981784b4383c4a4286057ac6cfc947a1a` — built by `npm run package` after a green
+> suite (**4,707 assertions, 0 failed**). Note the docs ride **inside** the VSIX (`README.md`, `USER_MANUAL.md`,
+> `CHANGELOG.md`, `CONTROLS.md`), so any edit to those changes the hash — this one is the final build.
+> Leave *Pre-release* **unchecked** in the portal, then confirm with the `flags: 914` query that the version is
+> `0.10.2` and `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above.
+
+> **`0.10.1` (2026-09-17) — tagged and released on GitHub, NEVER UPLOADED (superseded by `0.10.2`).** Built,
+> tested (4,670), committed (`620d613`), installed, and tagged: `v0.10.1` is a live GitHub release with its VSIX
+> (sha256 `37b55532d70cb2027e7a0fceac25d5aac912f1f798a06c497aa917e27675c391`, verified three ways). It was the
+> release prepared for the upload, and then the user's own app turned up two failures that made it the wrong
+> first impression — so it stays as history and `0.10.2` goes out instead.
 
 > **The Marketplace version must be numbers only** — a suffix is rejected outright (uploading `1.0.0-beta.7`
 > failed on 2026-09-12 with *"The version string '1.0.0-beta.7' doesn't conform to the requirements for a

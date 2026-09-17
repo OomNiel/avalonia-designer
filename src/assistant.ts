@@ -627,6 +627,16 @@ export interface FixPromptInput {
      * recently (asked 2026-09-16 — "remember the idioms I accept and put them in the prompt").
      */
     rules?: string;
+    /**
+     * What the form and its data actually are (`describeDataSetFacts`), when the file belongs to a project
+     * with a DataSet — the row type, the columns, and what a control that *follows a column* holds.
+     *
+     * Added 2026-09-17 after the model wrote `DataGrid1.Items.IndexOf(selectedItem)` for a ComboBox that is
+     * bound to a **column** (a `ColumnFollower` over `Customers.Name`), so its items are strings and never
+     * rows: two things the compiler then complains about and no rule can repair. The facts are the same ones
+     * the rules use, so the model is told instead of being left to guess.
+     */
+    facts?: string;
 }
 
 export interface ImplementPromptInput {
@@ -638,6 +648,8 @@ export interface ImplementPromptInput {
     sibling?: string;
     /** See {@link FixPromptInput.rules}. */
     rules?: string;
+    /** See {@link FixPromptInput.facts}. */
+    facts?: string;
 }
 
 const CODE_FENCE = '```';
@@ -667,7 +679,7 @@ function answerContract(language: 'cs' | 'vb'): string {
     );
 }
 
-function promptBody(language: 'cs' | 'vb', header: string, method: string, sibling: string | undefined, ask: string, rules?: string): string {
+function promptBody(language: 'cs' | 'vb', header: string, method: string, sibling: string | undefined, ask: string, rules?: string, facts?: string): string {
     const lines = [
         `Language: ${languageLabel(language)}`,
         '',
@@ -686,6 +698,17 @@ function promptBody(language: 'cs' | 'vb', header: string, method: string, sibli
             ''
         );
     }
+    // Before the house rules, because it is about *what the code is*, not about style: it answers the
+    // questions the compiler would otherwise have to (which members exist, what a control holds).
+    if (facts?.trim()) {
+        lines.push(
+            'What this form and its data actually are (authoritative — never invent a member that is not in ' +
+            'the code above or in this list, and never assume a control holds a different kind of value than ' +
+            'this says):',
+            facts.trimEnd(),
+            ''
+        );
+    }
     if (rules?.trim()) lines.push(rules.trimEnd(), '');
     lines.push(ask, CODE_FENCE + (language === 'vb' ? 'vb' : 'csharp'), method.trimEnd(), CODE_FENCE, '', answerContract(language));
     return lines.join('\n');
@@ -698,7 +721,7 @@ export function buildFixPrompt(input: FixPromptInput): ChatMessage[] {
         'Fix exactly that problem by rewriting this method:';
     return [
         systemMessage(input.language),
-        { role: 'user', content: promptBody(input.language, input.header, input.method, input.sibling, ask, input.rules) }
+        { role: 'user', content: promptBody(input.language, input.header, input.method, input.sibling, ask, input.rules, input.facts) }
     ];
 }
 
@@ -709,7 +732,7 @@ export function buildImplementPrompt(input: ImplementPromptInput): ChatMessage[]
         'Implement it inside this method, changing nothing else:';
     return [
         systemMessage(input.language),
-        { role: 'user', content: promptBody(input.language, input.header, input.method, input.sibling, ask, input.rules) }
+        { role: 'user', content: promptBody(input.language, input.header, input.method, input.sibling, ask, input.rules, input.facts) }
     ];
 }
 

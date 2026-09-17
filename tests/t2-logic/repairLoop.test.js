@@ -276,15 +276,24 @@ module.exports = async (t) => {
         t.ok(ai.length > 500, 'ai-repair', 'repairWithAI was found in the assistant module');
         t.ok(/if \(!assistantEnabled\(cfg\)\) return false;/.test(ai), 'ai-repair',
             'it does nothing at all unless the AI assist is enabled');
-        t.ok(/cfg\.backend === 'bundled'[\s\S]{0,220}?if \(!bundledRuntimeRunning\(\)\)[\s\S]{0,160}?return false;/.test(ai),
-            'ai-repair',
-            'a bundled runtime that is NOT running ends the attempt — the loop never starts a model');
+        // The guard moved into `repairRuntime` on 2026-09-17 (it must know all three runtimes), so these
+        // assertions name the invariants rather than one code shape: a runtime that is already up is used,
+        // and nothing is ever STARTED for a repair — `effectiveConfig` (which does start the built-in runtime)
+        // must not appear in this path at all.
+        t.ok(/if \(cfg\.backend === 'bundled' && bundledRuntimeRunning\(\)\.running\) return cfg;/.test(ui), 'ai-repair',
+            'the built-in runtime answers only when it is already running');
+        t.ok(/if \(cfg\.backend === 'bundled'\) return undefined;/.test(ui), 'ai-repair',
+            'and is never started just to repair something');
+        t.equal(/effectiveConfig\(cfg\)/.test(ai), false, 'ai-repair',
+            'the loop does not use the config path that STARTS a runtime');
+        t.ok(/return \(await probeServer\(cfg\)\)\.ok \? cfg : undefined;/.test(ui), 'ai-repair',
+            'an external server is only asked if it answers a probe');
         t.ok(/\{ applyWithoutDiff: true, quiet: true \}/.test(ai), 'ai-repair',
             'the answer is applied without a diff and without a dialog, because the rebuild is the review');
         t.ok(/not inside a method/.test(ai), 'ai-repair',
             'a finding outside a method is refused — the prompt asks for a method replacement');
-        t.ok(/await probeServer\(cfg\)/.test(ai), 'ai-repair',
-            'an external server is only asked if it answers a probe');
+        t.ok(/probeServer\(cfg\)/.test(ui), 'ai-repair',
+            'and an external server is probed before it is used at all');
         t.ok(/opts\.quiet[\s\S]{0,300}?return `\$\{target\.kind === 'replace' \? 'Rewrote' : 'Added'\} \$\{name\}\(\)`/.test(ui),
             'ai-repair', 'and the quiet branch reports success without the "Build to verify" prompt');
         t.equal(/showWarningMessage\(\\`\$\{written\.message\}/.test(ui.slice(ui.indexOf('if (opts.quiet)'), ui.indexOf('if (opts.quiet)') + 400)), false,

@@ -61,6 +61,8 @@ import {
 import { analyzeCodeBehind, methodsIn, publishIssues, type MethodSpan } from './codeBehindCheck';
 import { markCodeEdited } from './writeStamp';
 import { hostGate, hostBlockMessage } from './hostCheck';
+import { dataSetFactsFor } from './dataSetFacts';
+import { findProject } from './projectParser';
 import { log } from './logger';
 import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
 import { sidecarContextSize, sidecarGpuLayers } from './localModels';
@@ -68,7 +70,7 @@ import { loadedNow } from './localModelCore';
 import { refreshAiState } from './aiPanel';
 import { configView, updateSetting } from './settingWrite';
 import { panelFor } from './aiPanel';
-import { findRunningLlamaServer, llamaServerBinary, llamaServerStatusLines } from './llamaServer';
+import { findRunningLlamaServer, llamaServerBinary, llamaServerStatusLines, ownLlamaServerStatus } from './llamaServer';
 import { conventionsFor } from './conventionsUi';
 import { bundledRuntimeRunning, bundledStatusLines, ensureBundledEndpoint, sidecarTail, stopModelServer } from './modelRuntime';
 import {
@@ -1146,7 +1148,8 @@ export async function implementInFunction(): Promise<void> {
         description,
         method,
         header,
-        sibling: fit.kept.some((p) => p.name === 'style') ? sibling : undefined
+        sibling: fit.kept.some((p) => p.name === 'style') ? sibling : undefined,
+        facts: formFactsFor(editor.document.uri)
     });    // The dialog comes first: starting the bundled server takes a few seconds (a cold build can take
     // much longer), so nothing is started until there is a request to send.
     const resolved = await effectiveConfig(cfg);
@@ -1334,7 +1337,8 @@ export async function fixFindingWithAI(uri: vscode.Uri, line: number, message: s
         method,
         header: headerOf(document, language),
         sibling: siblingOf(document, span, all),
-        rules: conventionsFor(language)
+        rules: conventionsFor(language),
+        facts: formFactsFor(document.uri)
     });
     const resolved = await effectiveConfig(cfg);
     if (!resolved) return;
@@ -1345,6 +1349,49 @@ export async function fixFindingWithAI(uri: vscode.Uri, line: number, message: s
         `Asking ${cfg.model || 'the local model'} to fix the finding…`,
         resolved
     );
+}
+
+/**
+ * Which runtime may answer a repair — the one that is ALREADY up, and nothing else.
+ *
+ * Three runtimes can be serving a model, and the loop must know all three:
+ *  - the extension's own bundled runtime, when it is running (`bundledRuntimeRunning` — this never starts it);
+ *  - the user's **own `llama-server`** ("My own llama-server" in the picker), which is often the runtime that
+ *    wrote the code in the first place;
+ *  - a server at the configured endpoint, after a probe.
+ *
+ * The third bullet was missing until 2026-09-17, and that is exactly what the user hit: their app pinned
+ * `assistant.backend` to `bundled` (no runtime up after a window reload), the configured endpoint pointed at
+ * LM Studio's 1234 where nothing was listening, and a 30B model was serving on 8080 — the loop refused to ask
+ * it and simply listed the compiler error. A guard that can only see two of three runtimes is worse than no
+ * guard, because it looks like the feature is broken.
+ */
+async function repairRuntime(cfg: AssistantConfig): Promise<AssistantConfig | undefined> {
+    if (cfg.backend === 'bundled' && bundledRuntimeRunning().running) return cfg;
+    // A server THIS window started (the "My own llama-server" button) — a child process we know about.
+    const own = ownLlamaServerStatus();
+    if (own.running && own.info) return { ...cfg, endpoint: `http://127.0.0.1:${own.info.port}/v1` };
+    // …and one that is answering but was not started by us: the user's own llama-server as a service, or one
+    // from a previous window. This is the check that matters here — the configured endpoint was LM Studio's
+    // 1234, while the model serving the requests was on 8080.
+    const answering = await findRunningLlamaServer(cfg.endpoint);
+    if (answering) return { ...cfg, endpoint: `http://127.0.0.1:${answering.port}/v1` };
+    if (cfg.backend === 'bundled') return undefined;          // never started just to repair something
+    return (await probeServer(cfg)).ok ? cfg : undefined;
+}
+
+/**
+ * The form's DataSet facts as prompt text, for the file a request is about (empty when there are none). The
+ * model is told what the designer already knows — the row type, the columns, and that a control bound to a
+ * column holds a value rather than a row (see `dataSetFacts.ts`).
+ */
+function formFactsFor(file: vscode.Uri): string {
+    try {
+        const project = findProject(file);
+        return project ? dataSetFactsFor(path.dirname(project.projectUri.fsPath)) : '';
+    } catch {
+        return '';
+    }
 }
 
 /**
@@ -1369,13 +1416,10 @@ export async function repairWithAI(uri: vscode.Uri, line: number, message: strin
         log('Repair loop: the host check has the AI assist disabled on this machine — listing the error instead.');
         return false;
     }
-    if (cfg.backend === 'bundled') {
-        if (!bundledRuntimeRunning()) {
-            log('Repair loop: the bundled runtime is not running — not starting it, listing the error instead.');
-            return false;
-        }
-    } else if (!(await probeServer(cfg)).ok) {
-        log('Repair loop: no external model server answered — listing the error instead of asking one.');
+    const resolved = await repairRuntime(cfg);
+    if (!resolved) {
+        log('Repair loop: no model server is running — checked the built-in runtime, your own llama-server and '
+            + `${cfg.endpoint}. Nothing is started for a repair; the error is listed instead.`);
         return false;
     }
     let document: vscode.TextDocument;
@@ -1390,8 +1434,6 @@ export async function repairWithAI(uri: vscode.Uri, line: number, message: strin
         log(`Repair loop: ${message} is not inside a method — nothing to send to a model.`);
         return false;
     }
-    const resolved = await effectiveConfig(cfg);
-    if (!resolved) return false;
     const method = document.getText().slice(span.start, span.end).replace(/\uFEFF/g, '');
     const messages = buildFixPrompt({
         language,
@@ -1399,7 +1441,8 @@ export async function repairWithAI(uri: vscode.Uri, line: number, message: strin
         method,
         header: headerOf(document, language),
         sibling: siblingOf(document, span, all),
-        rules: conventionsFor(language)
+        rules: conventionsFor(language),
+        facts: formFactsFor(document.uri)
     });
     try {
         const done = await proposeMethod(

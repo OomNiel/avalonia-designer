@@ -11,6 +11,7 @@ import {
     CodeIssue, CheckOptions, DataSetContext, DataSetFollowerInfo, DataSetGridInfo, DataSetImageInfo
 } from './codeBehindCheck';
 import { buildProject, compilerIssues, publishBuildDiagnostics, BuildResult, CompilerDiagnostic } from './buildDiagnostics';
+import { dataSetContextFor } from './dataSetFacts';
 import { repairUntilClean, RepairReport } from './repairLoop';
 import { markCodeEdited, codeEditedSinceBuild, codeEditedReason, clearCodeEdited } from './writeStamp';
 import { withDesignerHeader } from './xamlHeader';
@@ -4877,38 +4878,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     }
 
     /** Every table that is bound to a control of this project — with the row type and columns the
-     *  code-behind has to match, plus the image bindings recorded on those tables. */
+     *  code-behind has to match, plus the image bindings recorded on those tables. The mapping lives in
+     *  `dataSetFacts` so the rules and the AI prompts cannot disagree about what a form's data is. */
     private codeCheckDataSetContext(projectFolder: string): DataSetContext {
-        const grids: DataSetGridInfo[] = [];
-        const images: DataSetImageInfo[] = [];
-        const followers: DataSetFollowerInfo[] = [];
-        const datasetClasses: string[] = [];
-        for (const f of readDataSetFiles(projectFolder)) {
-            datasetClasses.push(f.spec.name);
-            for (const t of f.spec.tables) {
-                const rowType = `${t.name}Row`;
-                if (t.boundTo && t.boundToType === 'DataGrid') {
-                    grids.push({
-                        datasetName: f.spec.name, datasetClass: f.spec.name, tableName: t.name,
-                        rowType, columns: t.columns.map((c) => c.name), gridName: t.boundTo
-                    });
-                }
-                if (!t.boundTo) continue;
-                for (const b of t.boundImages ?? []) {
-                    images.push({
-                        datasetName: f.spec.name, datasetClass: f.spec.name, tableName: t.name,
-                        rowType, controlName: b.control, gridName: t.boundTo, column: b.column
-                    });
-                }
-                for (const fl of t.followers ?? []) {
-                    followers.push({
-                        datasetName: f.spec.name, tableName: t.name, rowType, column: fl.column,
-                        controlName: fl.control, ownerGrid: t.boundTo, adsetPath: f.adsetPath
-                    });
-                }
-            }
-        }
-        return { datasetClasses, grids, images, followers };
+        return dataSetContextFor(projectFolder);
     }
 
     /** Takes ONE backup of the code-behind per "Code Fix…" run (kept in the extension's storage, so

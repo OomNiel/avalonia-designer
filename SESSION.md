@@ -19,9 +19,23 @@
 
 ## Where the last session left off (2026-09-17)
 
-**Built, tested and installed: `0.10.1`** — the release that makes the project's own build the referee of the
-code check. Suite **4670 passed / 0 failed**, PROBLEMS clean, VSIX packed and installed; the docs
-(CHANGELOG, README, USER_MANUAL, CONTROLS, TEST_PLAN, tests/README, NOTES §130) were updated with it.
+**Built, tested, released and installed: `0.10.2`** — the release that makes the project's own build the referee
+of the code check, and then fixes the two reasons the referee could not get the repairs done. Suite **4707
+passed / 0 failed**, PROBLEMS clean, VSIX packed, tagged `v0.10.2`, GitHub release live, installed locally.
+`0.10.1` was tagged and released the same day but **never uploaded** — `0.10.2` supersedes it, and it is the
+file to upload to the Marketplace (one listing version, `0.10.0` never went out either).
+
+- **The last hour of the session was a live bug hunt on the user's own app**, and it is the most useful part of
+  this log: the assistant wrote `DataGrid1.Items.IndexOf(selectedItem)` for a ComboBox bound to a *column*
+  (`CS1061`, and WPF's API name), the checker found **nothing** on that file, and the repair loop then refused to
+  ask any model — because the guard knew only the built-in runtime (dead after a reload) and the configured
+  endpoint (LM Studio's 1234, nothing listening), while the model answering everything was the user's own
+  **systemd `llama-server` on 8080**. Fixed in `repairRuntime` (three runtimes, the third one found by probing)
+  and in the prompt (`src/dataSetFacts.ts` now tells the model what the form is bound to). Both are written up in
+  `NOTES.md` §131 — read that before touching either area.
+- The three answers the user gave for the loop's design are the architecture now: rules first, the model only
+  when it is **already running**, a build on the way back from the editor for hand/AI edits, designer-made edits
+  stay instant, and what cannot be fixed is listed rather than guessed at.
 
 - **The complaint it started from** was *"Code Fix… does not pick up syntax (or any other) errors"* after
   removing a `;` by hand. Diagnosis: **not a regression** — no semicolon rule ever existed, and the syntax rules
