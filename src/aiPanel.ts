@@ -53,6 +53,7 @@ import {
     startOwnLlamaServer,
     stopOwnLlamaServer
 } from './llamaServer';
+import { llamaServerState, type LlamaServerState } from './llamaService';
 
 export const SETTINGS = 'avaloniaDesigner.assistant';
 
@@ -103,6 +104,12 @@ export interface PanelState {
     hint: string;
     /** What requests will actually use, in words — the panel's answer to "did my load take?". */
     pinned: string;
+    /**
+     * The user's own `llama-server`: who is serving the endpoint, how Start would bring it up, and whether
+     * either is possible (2026-09-17). One object, so the panel's row and the status dialog cannot disagree
+     * about who started it.
+     */
+    llamaServer: LlamaServerState;
 }
 
 /** Anything a scan found this session, kept so the dropdown does not lose it on the next refresh. */
@@ -294,6 +301,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
         showDiff: cfg.get<boolean>('showDiff', true),
         bundledBackend: sidecarBackend(cfg.get<string>('bundledBackend', 'cpu')),
         conventions: normaliseConventions(cfg.get<unknown>('conventions', [])),
+        llamaServer: await llamaServerState(endpoint),
         selected: currentSelection(
             choices,
             cfg.get<string>('model', ''),

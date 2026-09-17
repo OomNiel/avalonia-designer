@@ -123,7 +123,7 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.2`**, so the command above installs it; add `--force` to
+The current version is **`0.10.3`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -135,7 +135,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.10.2` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.10.3` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -1154,11 +1154,26 @@ is the usual case, and starting a second copy would put the same weights in memo
 (`owned_by: llamacpp`, or a `/props` with a `model_path`), so an LM Studio or Ollama server on a similar port is
 never mistaken for one.
 
-**Start / stop, and whose process it is.** *AI: Stop My llama-server* stops **the server this extension
-started**. One you started yourself — a terminal, or a systemd user service — is deliberately left alone: the
-status dialog says *"already running on port N … Started outside this window"*, because killing a service you
-wrote is not this extension's business. *Unload* in the panel frees the built-in runtime and the `llama-server`
-this window started, and names any server of yours that is still holding memory.
+**Start / stop, and whose process it is.** The ⚙ panel has a *My llama-server* row for this, and the Command
+Palette has the same two commands. **Start server** brings it up the way the dropdown above the buttons says —
+*as a systemd user unit* (`systemctl --user start`, which survives a reload of this window) or *as this window's
+process* (a child that dies with the window) — and when the chosen way fails, the other one is tried, with the
+reason it fell back reported rather than hidden. **Stop server** stops whatever is serving the configured
+address, and it **always asks first**, in a dialog that names it: the unit with its uptime and whether it returns
+at login, or a plain process with its pid and command line. A unit belonging to the **system** manager is never
+acted on — an extension should not escalate — so the `sudo systemctl stop …` line is printed for you to run in a
+terminal, and a port held by something that is not a `llama-server` is reported rather than signaled. *Unload* in
+the panel frees the built-in runtime and the `llama-server` this window started, and names any server of yours
+that is still holding memory.
+
+**The line under those buttons answers "who started it?"** It is read from the machine instead of guessed: the
+process's own cgroup names its unit and systemd says since when and whether it comes back by itself, so *"nobody
+knows who started this"* becomes `llama-server.service — systemd user unit, active since Tue 2026-09-15
+20:04:49 SAST, pid 1918, enabled at login`. Two settings back it:
+`avaloniaDesigner.assistant.llamaServerService` (the unit to use; empty means *find it* — from the running
+server, or from the only user unit on this machine whose `ExecStart` runs a `llama-server`) and
+`avaloniaDesigner.assistant.llamaServerStartTarget` (*unit* or *process*, written by the dropdown). The same
+owner line appears in **Status & hardware check**, where it replaces the old "leave it alone" sentence.
 
 **In the ⚙ panel**, *My own llama-server* is a normal entry: the context-length and GPU-offload fields are the
 ones passed to it when it starts (`--ctx-size`, `--n-gpu-layers` — a **layer count** here, where LM Studio takes

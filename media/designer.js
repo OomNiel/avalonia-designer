@@ -123,6 +123,12 @@
         aiUnload: $('aiUnload'),
         aiRemove: $('aiRemove'),
         aiStatus: $('aiStatus'),
+        // The user's own llama-server (asked 2026-09-17): which way to start it, the two buttons, and the
+        // line that answers "who started it?" without leaving the panel.
+        aiLlamaTarget: $('aiLlamaTarget'),
+        aiLlamaStart: $('aiLlamaStart'),
+        aiLlamaStop: $('aiLlamaStop'),
+        aiLlamaOwner: $('aiLlamaOwner'),
         aiProgress: $('aiProgress'),
         aiStatusText: $('aiStatusText'),
         helpPanel: $('helpPanel'),
@@ -1194,7 +1200,7 @@
         const blocked = host.aiAllowed === false;
         ['aiEnabled', 'aiShowDiff', 'aiModel', 'aiRefresh', 'aiScan', 'aiLoad', 'aiUnload', 'aiRemove',
             'aiContext', 'aiGpu', 'aiTtl', 'aiMaxTokens', 'aiTimeout', 'aiEndpoint', 'aiConvText',
-            'aiLearnConventions'].forEach((id) => {
+            'aiLearnConventions', 'aiLlamaTarget', 'aiLlamaStart', 'aiLlamaStop'].forEach((id) => {
                 const el = els[id];
                 if (el) el.disabled = blocked;
             });
@@ -1211,10 +1217,37 @@
         }
     }
 
+    /**
+     * The user's own llama-server (asked 2026-09-17: *"I don't know who started the llama server (could have
+     * been me!)"*). The line is the answer — read from the process's own cgroup by the extension, never
+     * guessed here — and the buttons beside it are the control that sentence used to lack. Nothing in this
+     * function asks the machine anything: the panel draws what the state says and posts intents, exactly
+     * like the rest of the AI section.
+     */
+    function renderLlamaServer(server) {
+        if (!server) return;
+        if (els.aiLlamaTarget && document.activeElement !== els.aiLlamaTarget) {
+            els.aiLlamaTarget.value = server.target === 'process' ? 'process' : 'unit';
+        }
+        if (els.aiLlamaStart) {
+            els.aiLlamaStart.disabled = !server.canStart;
+            els.aiLlamaStart.title = server.canStart ? '' : (server.note || 'nothing to start it with yet');
+        }
+        if (els.aiLlamaStop) els.aiLlamaStop.disabled = !server.canStop;
+        if (els.aiLlamaOwner) {
+            const unit = server.units && server.units.length
+                ? `  ·  unit: ${server.configuredUnit || server.units[0]}`
+                : '';
+            els.aiLlamaOwner.textContent = `Your llama-server is ${server.ownerText || 'not running'}`
+                + `${server.port && server.canStop ? ` (port ${server.port})` : ''}${unit}`;
+        }
+    }
+
     function fillAi(state) {
         if (!state) return;
         aiState = state;
         renderAiHost(state);
+        renderLlamaServer(state.llamaServer);
         els.aiEnabled.checked = !!state.enabled;
         // Anything but an explicit `false` keeps the diff: the safe default belongs on the side that shows
         // the code before it is written, so a state that forgot the field must not silently skip review.
@@ -1392,6 +1425,32 @@
         armAiWatchdog();
         post({ type: 'aiUnload' });
     });
+    // Start / Stop for the server that is *not* ours. Both are extension-side: the stop asks for confirmation
+    // there (a dialog that names the unit or the pid, always, whatever it turns out to be), and the start
+    // honours the dropdown's choice with an automatic fallback to the other way.
+    if (els.aiLlamaStart) {
+        els.aiLlamaStart.addEventListener('click', () => {
+            setAiBusy(true);
+            setAiProgress(els.aiLlamaTarget && els.aiLlamaTarget.value === 'process'
+                ? 'starting your llama-server as this window\'s process…'
+                : 'starting your llama-server\'s systemd unit…');
+            armAiWatchdog();
+            post({ type: 'aiLlamaStart', target: els.aiLlamaTarget ? els.aiLlamaTarget.value : '' });
+        });
+    }
+    if (els.aiLlamaStop) {
+        els.aiLlamaStop.addEventListener('click', () => {
+            setAiBusy(true);
+            setAiProgress('stopping your llama-server — confirm the dialog…');
+            armAiWatchdog();
+            post({ type: 'aiLlamaStop' });
+        });
+    }
+    if (els.aiLlamaTarget) {
+        // Remembered as a setting the moment it changes, so the choice survives a reload — the palette's
+        // Start command uses the same setting, and two ways to start one server must not disagree.
+        els.aiLlamaTarget.addEventListener('change', () => post({ type: 'aiLlamaTarget', value: els.aiLlamaTarget.value }));
+    }
     // "Remove Model" deletes the selected weights from disk. The host shows the confirmation warning and
     // validates the pick (only a downloaded bundled model can be removed), so this button only posts.
     els.aiRemove.addEventListener('click', () => {
@@ -1463,7 +1522,7 @@
         // Cleared on both edges: a note that the extension "has not reported back yet" must never appear
         // after the action has already finished.
         clearTimeout(aiWatchdog);
-        for (const b of [els.aiLoad, els.aiUnload, els.aiRemove, els.aiScan, els.aiRefresh]) b.disabled = !!busy;
+        for (const b of [els.aiLoad, els.aiUnload, els.aiRemove, els.aiScan, els.aiRefresh, els.aiLlamaStart, els.aiLlamaStop]) b.disabled = !!busy;
     }
     /** Arms the "no answer yet" note both long actions share (see the Load handler). */
     function armAiWatchdog() {

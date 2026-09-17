@@ -45,6 +45,7 @@ import {
     type PanelAiRequest,
     type PanelState
 } from './aiPanel';
+import { startLlamaServerByChoice, stopLlamaServerConfirmed } from './llamaService';
 
 const DEFAULT_SIZE = { width: 800, height: 450 };
 
@@ -1889,6 +1890,73 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         await panel.webview.postMessage({ type: 'aiResult', action: 'unload', ok: false, message });
                         await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
                     }
+                    return;
+                }
+                case 'aiLlamaStart': {
+                    attachPanel(panel);
+                    const wanted = String(msg.target ?? '').trim() === 'process' ? 'process' as const : 'unit' as const;
+                    try {
+                        const outcome = await startLlamaServerByChoice(wanted, {
+                            onProgress: (message) => void panel.webview.postMessage({ type: 'aiProgress', message })
+                        });
+                        stopProgress();
+                        // A fallback is *said*, never silent: "started as this window's process instead" is only
+                        // useful with the reason the chosen way did not work (asked 2026-09-17).
+                        const message = outcome.fellBack && outcome.why
+                            ? `${outcome.message} (${wanted === 'unit' ? 'the systemd unit' : 'this window\'s process'} did not work: ${outcome.why})`
+                            : outcome.message;
+                        aiLog(this.context, `llama-server start (${wanted}): ${outcome.ok ? 'ok' : 'failed'} — ${message}`);
+                        const state = await panelState();
+                        await panel.webview.postMessage({ type: 'aiResult', action: 'llamaStart', ok: outcome.ok, message, state });
+                        await panel.webview.postMessage({ type: 'aiState', state });
+                        await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                        await this.postStatus(panel, outcome.ok ? 'llama-server started' : 'llama-server start failed');
+                    } catch (err) {
+                        stopProgress();
+                        const message = err instanceof Error ? err.message : String(err);
+                        logError(`llama-server start handler failed: ${message}`);
+                        await panel.webview.postMessage({ type: 'aiResult', action: 'llamaStart', ok: false, message });
+                    }
+                    return;
+                }
+                case 'aiLlamaStop': {
+                    attachPanel(panel);
+                    try {
+                        const outcome = await stopLlamaServerConfirmed({
+                            onProgress: (message) => void panel.webview.postMessage({ type: 'aiProgress', message })
+                        });
+                        stopProgress();
+                        aiLog(this.context, `llama-server stop: ${outcome.ok ? 'ok' : outcome.cancelled ? 'cancelled' : 'failed'} — ${outcome.message}`);
+                        const state = await panelState();
+                        // A cancelled stop is not a failure and is not dressed as one: the line says what
+                        // happened and nothing turns red (2026-09-17).
+                        await panel.webview.postMessage({
+                            type: 'aiResult',
+                            action: 'llamaStop',
+                            ok: outcome.ok || !!outcome.cancelled,
+                            message: outcome.cancelled ? 'Stop cancelled — nothing was changed.' : outcome.message,
+                            state
+                        });
+                        await panel.webview.postMessage({ type: 'aiState', state });
+                        await panel.webview.postMessage({ type: 'aiStatus', lines: await statusLines() });
+                        await this.postStatus(panel, outcome.ok ? 'llama-server stopped' : 'llama-server left running');
+                    } catch (err) {
+                        stopProgress();
+                        const message = err instanceof Error ? err.message : String(err);
+                        logError(`llama-server stop handler failed: ${message}`);
+                        await panel.webview.postMessage({ type: 'aiResult', action: 'llamaStop', ok: false, message });
+                    }
+                    return;
+                }
+                case 'aiLlamaTarget': {
+                    // Written the moment the dropdown changes (`assistant.llamaServerStartTarget`), so the
+                    // panel's Start and the palette command cannot end up choosing differently later.
+                    const target = String(msg.value ?? '').trim() === 'process' ? 'process' : 'unit';
+                    try {
+                        await vscode.workspace.getConfiguration('avaloniaDesigner')
+                            .update('assistant.llamaServerStartTarget', target, vscode.ConfigurationTarget.Global);
+                    } catch { /* read-only in some hosts — the next Start simply uses the default */ }
+                    await panel.webview.postMessage({ type: 'aiState', state: await panelState() });
                     return;
                 }
                 case 'aiHostOverride': {
@@ -6608,6 +6676,17 @@ ${publishButtons}      <span class="sep"></span>
             <button id="aiRemove" type="button" class="modal-btn warning">Remove Model</button>
             <button id="aiStatus" type="button" class="modal-btn">Status &amp; hardware check</button>
           </div>
+          <label class="modal-field"><span>My llama-server</span>
+            <select id="aiLlamaTarget">
+              <option value="unit">start as a systemd user unit</option>
+              <option value="process">start as this window's process</option>
+            </select>
+          </label>
+          <div class="modal-buttons modal-buttons-tight">
+            <button id="aiLlamaStart" type="button" class="modal-btn">Start server</button>
+            <button id="aiLlamaStop" type="button" class="modal-btn">Stop server</button>
+          </div>
+          <p class="modal-hint" id="aiLlamaOwner"></p>
           <div id="aiProgress" class="ai-progress" hidden></div>
           <pre id="aiStatusText" class="ai-status" hidden></pre>
 

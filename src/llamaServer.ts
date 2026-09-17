@@ -391,7 +391,8 @@ export async function llamaServerVersion(bin: string): Promise<string | undefine
  */
 export function llamaServerStatusLines(
     lookup: LlamaBinaryLookup = llamaServerBinary(),
-    elsewhere?: RunningLlamaServer
+    elsewhere?: RunningLlamaServer,
+    ownerLine?: string
 ): string[] {
     const running = ownLlamaServerStatus();
     const lines: string[] = [];
@@ -405,7 +406,12 @@ export function llamaServerStatusLines(
         const name = elsewhere.modelPath ? path.basename(elsewhere.modelPath) : elsewhere.modelId;
         lines.push(`Your llama-server: already running on port ${elsewhere.port} — ${name}`
             + `${elsewhere.buildInfo ? ` (build ${elsewhere.buildInfo})` : ''}`);
-        lines.push('Started outside this window — "Stop" and "Unload" leave it alone on purpose.');
+        // With an owner line the vague sentence is replaced by the answer itself (2026-09-17): the cgroup
+        // says which unit holds it, so "who started it?" no longer needs a shrug. Without one — the two-arg
+        // call this function has always had — the old sentence stands, because guessing would be worse.
+        lines.push(ownerLine
+            ? `Started outside this window: ${ownerLine}. Start / Stop in ⚙ Settings → AI assist control it.`
+            : 'Started outside this window — "Stop" and "Unload" leave it alone on purpose.');
         return lines;
     }
     if (lookup.configuredMissing) {

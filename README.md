@@ -30,7 +30,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.2`**, so the command above installs it (add `--force` to reinstall, or to
+The current version is **`0.10.3`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -39,11 +39,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.10.2.vsix --force
+code --install-extension avalonia-designer-0.10.3.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.10.2` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.10.3` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -281,10 +281,12 @@ reason) and starts it; *AI: Stop My llama-server* stops it again. Nothing is cop
 llama.cpp reads the file where it is. It passes **llama.cpp's own flags** (`--model`, `--host`, `--port`,
 `--ctx-size`, `--threads`, `--n-gpu-layers`, `--alias`) and waits for `/health` to say the weights are in RAM
 before calling it ready. If a llama-server **is already running**, you are asked instead of a second copy of the
-same weights being loaded — and one you started yourself (a service, a terminal) is never killed by this
-extension: the status report says *“already running on port 8080 … Started outside this window”*, because that
-is whose process it is. The extra flags you want are a setting (`--device none -nr`, say), added last so they
-win.
+same weights being loaded. One you started yourself is now **managed rather than shrugged at**: ⚙ Settings → AI
+assist has *Start server* / *Stop server* for it, and the line beside those buttons says who owns it — the unit
+with its uptime and whether it returns at login, or a plain process with its pid (`src/llamaService.ts`, added in
+`0.10.3`). Stop always asks first, and a unit belonging to the *system* manager is never touched: the
+`sudo systemctl stop …` line is printed instead. The extra flags you want are a setting (`--device none -nr`,
+say), added last so they win.
 
 **And it can be taught how your code reads.** *AI: Learn the House Rules from My Code…* (or the button in the ⚙
 panel) reads your project's C# and VB files and **measures** the idioms — indentation, brace style, member
@@ -323,7 +325,7 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~4,700 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~4,800 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

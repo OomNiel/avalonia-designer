@@ -32,6 +32,8 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'aiLoad', 'aiUnload', 'aiRemove', 'aiStatus', 'aiProgress', 'aiStatusText',
     // the host check's verdict in that section (2026-09-17): the reason, the tight-memory warning, the escape
     'aiHostBlocked', 'aiHostWarning', 'aiHostOverride',
+    // the user's own llama-server row (2026-09-17): how to start it, the two buttons, who started it
+    'aiLlamaTarget', 'aiLlamaStart', 'aiLlamaStop', 'aiLlamaOwner',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
@@ -84,6 +86,10 @@ function setup(omit = []) {
         // The host check's reason and warning are paragraphs in the real markup, and the escape is a button.
         if (id === 'aiHostBlocked' || id === 'aiHostWarning') return 'p';
         if (id === 'aiHostOverride') return 'button';
+        // The llama-server row: a dropdown, two buttons, and the sentence that answers "who started it?".
+        if (id === 'aiLlamaTarget') return 'select';
+        if (id === 'aiLlamaStart' || id === 'aiLlamaStop') return 'button';
+        if (id === 'aiLlamaOwner') return 'p';
         if (id === 'aiLoad' || id === 'aiUnload' || id === 'aiRemove' || id === 'aiStatus' || id === 'aiRefresh' || id === 'aiScan' || id === 'aiLearnConventions') return 'button';
         if (id.startsWith('dotGridSpacing') || id === 'dotGridColor' || id === 'dotGridDotSize') return 'input';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'

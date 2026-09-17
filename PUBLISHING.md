@@ -233,7 +233,26 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.10.2` (2026-09-17) — tagged and released; THIS is the file to upload.** Supersedes `0.10.1` (tagged the
+> **`0.10.3` (2026-09-17) — packaged and installed; THIS is the file to upload.** Supersedes `0.10.2` (tagged the
+> same day, never uploaded), `0.10.1` and `0.10.0`: the published listing still carries `0.9.4`, so the first
+> version from this line is `0.10.3`, and it carries everything — the AI assist, the compiler as the second half
+> of the code check, the `insert-semicolon` rule, the build-driven repair loop, the host check with the
+> experimental notice, the two fixes `0.10.2` carries (the loop's guard could not see a user's own
+> `llama-server`, and the prompts never described the form's DataSet bindings) — **plus** *Start server* /
+> *Stop server* for the user's own `llama-server` in ⚙ Settings → AI assist, the "who started it" owner line
+> (unit, scope, uptime, pid, enabled at login) in the panel and in the status dialog, and a stop that always
+> asks first. See `NOTES.md` §132.
+>
+> Plain VSIX — `avalonia-designer-0.10.3.vsix`, 887,507 bytes, sha256
+> `cf7a7644f9d0b60ac10a8bc3c644d8e5130d4e5a0995e1f70e29e7fb49530843` — built by `npm run package` after a green
+> suite (**4,781 assertions, 0 failed**), then installed locally with `code --install-extension … --force` and
+> checked inside the package (version `0.10.3`, both new settings present, dev docs absent). Note the docs ride
+> **inside** the VSIX (`README.md`, `USER_MANUAL.md`, `CHANGELOG.md`, `CONTROLS.md`), so any edit to those
+> changes the hash — this one is the final build. Leave *Pre-release* **unchecked** in the portal, then confirm
+> with the `flags: 914` query that the version is `0.10.3` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above.
+
+> **`0.10.2` (2026-09-17) — tagged and released on GitHub, NEVER UPLOADED (superseded by `0.10.3`).** Supersedes `0.10.1` (tagged the
 > same day, never uploaded) and `0.10.0` (prepared the day before, never uploaded): the published listing still
 > carries `0.9.4`, so the first version from this line is `0.10.2` and it carries everything — the AI assist,
 > the compiler as the second half of the code check, the `insert-semicolon` rule, the build-driven repair loop,

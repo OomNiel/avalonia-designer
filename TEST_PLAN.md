@@ -215,6 +215,26 @@ Three new t2 files, and the loop's *policy* is asserted with fakes rather than w
 
 Each step ends with the log green before the next begins.
 
+### 0.10.3 (2026-09-17) — the server you can see and control
+
+- `tests/t2-logic/llamaService.test.js` (new, **72** assertions) — the module that answers "who started the
+  user's llama-server?" and drives the Start / Stop controls. The parsers are pinned against output captured
+  from this machine: real `ss -ltnp` (a service on 8080, our own sidecar on 45725, an established connection
+  that must not count as a listener, a socket whose owner is not visible), the **real cgroup** of the
+  llama-server process, the **real unit file** (whose `ExecStart` is written over nine lines with trailing
+  backslashes, so a first-line parser would see `-m` and no binary), and the real `systemctl show` output.
+  What cannot be proved without touching a service is asserted against the source: every stop is confirmed in a
+  modal dialog, a *system* unit is never acted on (its `sudo` line is printed), a plain process is signaled
+  only when `ss` named it a `llama-server`, and the four panel ids plus the three webview intents exist.
+- `tests/t2-logic/llamaServer.test.js` — one assertion re-pointed at the new shape of the status dialog call
+  (the probe result now also carries the owner line). The two-argument call keeps its old sentence, which the
+  existing "leave it alone" assertion still pins.
+- `tests/t3-webview/designer.test.js` — the `IDS` fixture and `tagFor` learned the four new control ids
+  (`aiLlamaTarget`, `aiLlamaStart`, `aiLlamaStop`, `aiLlamaOwner`), so the webview script runs against a DOM
+  that has them (a missing id would make `setAiBusy` throw).
+
+Each step ends with the log green before the next begins.
+
 ### Status 2026-09-11 — full suite green (2176 passed / 0 failed / 0 skipped, 35 s)
 
 - **T2** gained `bundledComponents.test.js`, `chromeProps.test.js`, `multiProps.test.js`,

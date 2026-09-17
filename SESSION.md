@@ -19,7 +19,22 @@
 
 ## Where the last session left off (2026-09-17)
 
-**Built, tested, released and installed: `0.10.2`** — the release that makes the project's own build the referee
+**Built, tested, packed and installed: `0.10.3`** — *the server you already had becomes something you can see and
+control*. Suite **4781 passed / 0 failed** (was 4707), PROBLEMS clean, VSIX packed and installed. It answers the
+question the user asked while comparing their two local runtimes — *"I don't know who started the llama server
+(could have been me!)"* — with **Start / Stop** controls for their own `llama-server` in ⚙ Settings → AI assist,
+the owner line (unit, scope, uptime, pid, enabled at login) in the panel and in the status dialog, and a stop that
+always asks first. Read `NOTES.md` §132 before touching `src/llamaService.ts`. `0.10.2` was tagged and released
+the same day but **never uploaded**, so `0.10.3` supersedes it and is the file to send to the Marketplace (the
+listing still carries `0.9.4`; one number everywhere, and `0.10.0` never went out either).
+
+**Also true of that session:** the extension's own bundled runtime was found **broken** — started from a temp copy
+of the extension whose folder had been deleted, so `/health` said `loaded:true` while every request failed with
+`Could not load file or assembly 'Microsoft.Extensions.Logging.Abstractions'`. Killed, rebuilt in the installed
+folder, restarted (4.3 s to load). An extension **update** replaces that folder while such a process lives on, so
+the same breakage is reachable in the field — see `NOTES.md` §132 for the two candidate fixes.
+
+**Previously: `0.10.2`** — the release that makes the project's own build the referee
 of the code check, and then fixes the two reasons the referee could not get the repairs done. Suite **4707
 passed / 0 failed**, PROBLEMS clean, VSIX packed, tagged `v0.10.2`, GitHub release live, installed locally.
 `0.10.1` was tagged and released the same day but **never uploaded** — `0.10.2` supersedes it, and it is the

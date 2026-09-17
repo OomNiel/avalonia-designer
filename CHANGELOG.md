@@ -12,6 +12,48 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
+## [0.10.3] - 2026-09-17 · *the server you already had becomes something you can see and control*
+
+Asked while comparing the two local runtimes on this machine: *"I don't know who started the llama server
+(could have been me!). Could you add a control in the Settings panel to start and stop the llama server?"* The
+extension could already report *that* something was answering on 8080, and it could start a `llama-server` of
+its own — but for one it had not started it said only *"Started outside this window — Stop and Unload leave it
+alone on purpose."* True, and useless for a process holding 19 GB: the answer to "who started it?" was on the
+machine all along, in the process's own cgroup.
+
+### Added — `src/llamaService.ts`: the server as a *service*, not only as a child
+
+- **"Who started it?" is read from the kernel and systemd, never guessed.** The cgroup of the process holding
+  the configured port names its unit, and `systemctl --user show` adds since when and whether it returns at
+  login — the difference between "someone started this" and "this starts itself". On this machine the answer
+  was the second one: `llama-server.service`, a **systemd user unit**, enabled, up since the last login.
+- **⤓ Settings → AI assist has a *My llama-server* row**: a dropdown (*start as a systemd user unit* / *start
+  as this window's process*), **Start server**, **Stop server**, and the owner line — unit, scope, uptime, pid
+  and whether it comes back by itself. The choice is `assistant.llamaServerStartTarget`, written the moment the
+  dropdown changes, so the panel and the palette cannot disagree about how it starts.
+- **Start honours the choice and falls back to the other way when that fails**, carrying the failed route's own
+  words into the message: a silent fallback leaves the user believing the thing they chose is what ran.
+- **Stop asks first, every time, and names what it is about to stop** (the user's decision): the unit with its
+  uptime and whether it returns at login, or a plain process with its pid and command line. A user unit goes
+  through `systemctl --user stop`, so systemd's own state stays true. A **system** unit is never acted on — the
+  exact `sudo systemctl stop …` line is printed instead, because this extension cannot escalate. A port held by
+  something `ss` did not name as a `llama-server` is reported, never signaled.
+- Settings `assistant.llamaServerService` (the unit; empty = find it, from the running server's cgroup or from
+  the only user unit whose `ExecStart` runs a `llama-server`) and `assistant.llamaServerStartTarget`.
+- **The status & hardware check** prints the same owner line where it used to say "leave it alone".
+- Both palette commands use these paths: *AI: Start My llama-server…* applies the setting with the fallback
+  (and still opens the interactive picker when neither way can work), *AI: Stop My llama-server* stops whatever
+  holds the port, after the dialog.
+
+### Notes
+
+- Suite **4,781** assertions, 0 failed.
+- One bug was caught by the new tests before it ever ran: a first-match cgroup regex answers `user@1000.service`
+  — systemd's *own* user manager — which would have offered to stop the wrong thing. The unit is now taken from
+  the **last** `.service` in the path, and the manager's own unit is refused outright.
+- Measured, not guessed: the row adds **68 px** to the Settings dialog (41 + 27, plus ~16 for the owner line
+  once it has text), whose cap, internal scroll and pinned Save row are unchanged (`tools/measure-settings-panel.py`).
+
 ## [0.10.2] - 2026-09-17 · *the fixer can reach the model that wrote the code*
 
 Two fixes for one failure, hit hours after `0.10.1` was tagged: the user asked the assistant to link a ComboBox's

@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox — with an optional local AI assist that writes handlers and repairs code from a sentence, on your own machine.",
-    "version": "0.10.2",
+    "version": "0.10.3",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -591,6 +591,24 @@
                     "type": "string",
                     "default": "",
                     "markdownDescription": "Extra command-line flags for that `llama-server`, e.g. `--flash-attn on --no-warmup`. Added **after** the flags the extension computes, so yours win."
+                },
+                "avaloniaDesigner.assistant.llamaServerService": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "The **systemd user unit** to start and stop for **My own llama-server** (e.g. `llama-server.service`) — the ⤓ Settings → AI *Start server* / *Stop server* controls use it. Empty finds it: the unit the running server belongs to, or the only user unit on this machine whose `ExecStart` runs a `llama-server`."
+                },
+                "avaloniaDesigner.assistant.llamaServerStartTarget": {
+                    "type": "string",
+                    "enum": [
+                        "unit",
+                        "process"
+                    ],
+                    "enumDescriptions": [
+                        "Start the systemd user unit above (`systemctl --user start`). It survives a reload of this window, and Stop can stop it again.",
+                        "Start a `llama-server` of this extension's own, as a child of this window. It dies with the window."
+                    ],
+                    "default": "unit",
+                    "markdownDescription": "How the Settings panel's **Start server** brings your llama-server up. If the chosen way fails, the other one is tried and the reason it fell back is reported rather than hidden."
                 }
             }
         }

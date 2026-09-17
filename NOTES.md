@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4707 passed, 0 failed / 0 skipped** (2026-09-17, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4781 passed, 0 failed / 0 skipped** (2026-09-17, ~38 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2997,4 +2997,41 @@ text came from the transcript of the same session.
 `repairLoop.test.js` had to be re-pointed at the new guard shape (they had pinned the old code, which is what
 they were for). Version **0.10.2**, tagged and released — and it supersedes `0.10.1`, which was tagged but never
 uploaded.
+
+### §132 — who started that server, and the controls to do something about it (2026-09-17, release 0.10.3)
+
+- **The question.** *"I don't know who started the llama server (could have been me!). Could you add a control in
+the Settings panel to start and stop the llama server?"* — asked while comparing the two local runtimes, after a
+probe showed the extension's own bundled runtime was a **zombie**: `/proc/<pid>/exe` pointed at
+`/tmp/g7CLVK4G/host/ModelHost/bin/Debug/net8.0/ModelHost (deleted)` — a temp copy of the extension that had been
+removed while the process lived on — so `/health` answered `loaded:true` while **every** completion failed with
+`Could not load file or assembly 'Microsoft.Extensions.Logging.Abstractions, Version=10.0.0.0'` in 3 ms. Killed,
+rebuilt inside the installed extension (`dotnet build` 0/0, 5 s) and restarted: loaded in 4.3 s and answered.
+**The same failure will hit users when an update replaces the extension folder** — a running `ModelHost`
+outlives its own files. Candidate for a later release: hold the runtime's binaries in `globalStorage`, or put a
+build id in `/health` so a stale server is recognised instead of trusted.
+- **The answer to "who started it?" is the cgroup, not a guess.** `ss -ltnp` gives the pid holding the port,
+`/proc/<pid>/cgroup` gives `/user.slice/user-1000.slice/user@1000.service/app.slice/llama-server.service`, and
+`systemctl --user show` gives `ActiveEnterTimestamp` + `UnitFileState`. On this machine: `llama-server.service`,
+**enabled**, up since Tue 2026-09-15 20:04:49 — started at login by the user's own unit, which is the honest
+answer to "could have been me": it was, 1 d 19 h earlier.
+- **`src/llamaService.ts` (new, ~685 lines).** Pure parsers (`parseListeners`, `unitFromCgroup`,
+`llamaUnitsFromUnitFiles`, `parseSystemctlShow`, `describeOwner`, `endpointPort`) plus thin `run`/`runStatus`
+calls, so the decisions are testable with no systemd, no `ss` and no server. `detectServerOwner` answers
+`ours | unit | process | none`; `resolveLlamaUnit` finds the unit even while the service is **stopped** (reading
+`ExecStart` in `~/.config/systemd/user/*.service`); `startLlamaServerByChoice` honours the setting and falls
+back, carrying the failed route's words into the message; `stopLlamaServerConfirmed` always asks, uses
+`systemctl --user stop` for a user unit, **prints** (never runs) the `sudo` line for a system unit, and signals a
+plain process only when `ss` named it a `llama-server`.
+- **Gotcha found by the new test before it ever ran:** a first-match cgroup regex returns `user@1000.service` —
+the *manager's* own unit — so the panel would have offered to stop systemd's user manager. Take the **last**
+`.service` in the path, and refuse `user@*` outright.
+- **UI.** ⚙ Settings → AI assist gained a *My llama-server* row (dropdown + Start / Stop + the owner line):
+**68 px** measured with `tools/measure-settings-panel.py` against the real stylesheet (cap, internal scroll and
+the pinned Save row unchanged; rows hidden at 1024×700 went 62 → 130 px, still reachable by scrolling).
+`PanelState.llamaServer` is one object so the panel and the status dialog cannot disagree, cached 5 s because
+`panelState()` runs on every panel open, save and focus. Both palette commands now go through these paths.
+- Suite 4707 → **4781**; `tests/t2-logic/llamaService.test.js` (72 assertions) is the new file, pinned against
+real `ss`/cgroup/unit-file/`systemctl` output. **Not** verified against a live service on purpose: a test that
+stops the user's 19 GB server is not a test.
 

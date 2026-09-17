@@ -12,6 +12,7 @@ import { hostGate } from './hostCheck';
 import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, chooseBundledBackend, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, refreshPanels, removeHubModel, showStatus } from './assistantUi';
 import { initModelRuntime, stopModelServer } from './modelRuntime';
 import { initLlamaServer, startMyLlamaServerFlow, stopOwnLlamaServer } from './llamaServer';
+import { startLlamaServerByChoice, startTarget, stopLlamaServerConfirmed } from './llamaService';
 import { learnConventions } from './conventionsUi';
 import { unloadOnExit } from './localModelCore';
 import { chooseLocalModel, unloadLoadedModel } from './localModelSetup';
@@ -180,15 +181,35 @@ export function activate(context: vscode.ExtensionContext): void {
             // The user's own llama.cpp server (asked 2026-09-16). It is the one runtime whose binary the
             // extension does not ship, so the flow starts by finding it and says so plainly when it is absent.
             vscode.commands.registerCommand('avaloniaDesigner.assistant.startLlamaServer', async () => {
+                // The panel's dropdown decides here too (one setting, one behaviour): start it the chosen way
+                // and fall back to the other when that fails. The interactive picker is only reached when
+                // neither way can work — the case where no model file has been chosen yet (2026-09-17).
+                const outcome = await vscode.window.withProgress(
+                    { location: vscode.ProgressLocation.Notification, title: 'Starting your llama-server…', cancellable: false },
+                    () => startLlamaServerByChoice(startTarget())
+                );
+                if (outcome.ok) {
+                    const message = outcome.fellBack && outcome.why
+                        ? `${outcome.message} (the way chosen in the settings did not work: ${outcome.why})`
+                        : outcome.message;
+                    void vscode.window.showInformationMessage(message);
+                    void refreshPanels();
+                    return;
+                }
                 // An open panel has to hear about the result: it is the panel, not the notification, that
                 // the user looks at next (2026-09-15).
-                if (await startMyLlamaServerFlow(context)) void refreshPanels();
+                if (await startMyLlamaServerFlow(context)) {
+                    void refreshPanels();
+                } else {
+                    void vscode.window.showWarningMessage(outcome.message);
+                }
             }),
-            vscode.commands.registerCommand('avaloniaDesigner.assistant.stopLlamaServer', () => {
-                const stopped = stopOwnLlamaServer();
-                void vscode.window.showInformationMessage(stopped
-                    ? 'Your llama-server has been stopped — its memory is free again.'
-                    : 'Your llama-server was not running.');
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.stopLlamaServer', async () => {
+                // Whatever is serving the configured address, after a dialog that names it — the unit and its
+                // uptime, or the pid and command line of a plain process (asked 2026-09-17).
+                const outcome = await stopLlamaServerConfirmed();
+                if (outcome.ok) void vscode.window.showInformationMessage(outcome.message);
+                else if (!outcome.cancelled) void vscode.window.showWarningMessage(outcome.message);
                 void refreshPanels();
             }),
             vscode.commands.registerCommand('avaloniaDesigner.assistant.stopModel', () => {

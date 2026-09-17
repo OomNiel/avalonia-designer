@@ -293,9 +293,12 @@ module.exports = async (t) => {
             'and reaches it through the command, so the two modules keep one dependency direction');
 
         const status = read('src/assistantUi.ts');
-        t.ok(/llamaServerStatusLines\(llamaServerBinary\(\), await findRunningLlamaServer/.test(status), 'wiring',
+        t.ok(/llamaServerStatusLines\(llamaServerBinary\(\), elsewhereLlama,/.test(status)
+            && /await findRunningLlamaServer\(cfg\.endpoint\)/.test(status), 'wiring',
             'the status dialog reports it — the third runtime would otherwise be invisible there, including '
             + 'whether the answer came from a server this window did not start');
+        t.ok(/describeOwner\(await detectServerOwner\(/.test(status), 'wiring',
+            'and names who started that server: the one fact that decides whether Stop can free its memory');
 
         const ext = read('src/extension.ts');
         t.ok(/initLlamaServer\(context\)/.test(ext), 'wiring', 'the manager is created once per window');
