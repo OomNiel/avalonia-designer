@@ -1243,11 +1243,25 @@
         }
     }
 
+    /**
+     * "Remove Model" acts on the *selection*, and the selection is often not a downloaded model — a server
+     * entry, an LM Studio key, a `.gguf` somewhere else on the machine. The host resolves what the button would
+     * actually delete and says why when it cannot, so the button is greyed out with that reason as its tooltip
+     * instead of looking broken (reported 2026-09-17: it was refusing, silently and by design).
+     */
+    function renderRemove(state) {
+        if (!els.aiRemove) return;
+        const remove = state.remove || { allowed: true, hint: '' };
+        els.aiRemove.disabled = !remove.allowed || (state.host && state.host.aiAllowed === false);
+        els.aiRemove.title = remove.hint || '';
+    }
+
     function fillAi(state) {
         if (!state) return;
         aiState = state;
         renderAiHost(state);
         renderLlamaServer(state.llamaServer);
+        renderRemove(state);
         els.aiEnabled.checked = !!state.enabled;
         // Anything but an explicit `false` keeps the diff: the safe default belongs on the side that shows
         // the code before it is written, so a state that forgot the field must not silently skip review.

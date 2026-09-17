@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4781 passed, 0 failed / 0 skipped** (2026-09-17, ~38 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4810 passed, 0 failed / 0 skipped** (2026-09-17, ~40 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -3034,4 +3034,28 @@ the pinned Save row unchanged; rows hidden at 1024×700 went 62 → 130 px, stil
 - Suite 4707 → **4781**; `tests/t2-logic/llamaService.test.js` (72 assertions) is the new file, pinned against
 real `ss`/cgroup/unit-file/`systemctl` output. **Not** verified against a live service on purpose: a test that
 stops the user's 19 GB server is not a test.
+
+### §133 — "Remove Model is not removing the selected model" (2026-09-17, release 0.10.4)
+
+- **The report:** *"The Remove Model function is not removing the selected model. check please."* Nothing was
+  wrong with the delete — it never ran. `confirmAndRemoveModel` accepted only `bundled:<id>`, and the *selection*
+  was a server entry (`llama:`/`any:`) whose weights are the file `assistant.modelPath` pins.
+- **Why it was invisible:** a refusal was the one path that **logged nothing**, so `ai.log` had no line for the
+  attempt — the only removal ever recorded was `14:56:58 … gemma4-coding-Q4_K_M.gguf`, which is why gemma was
+  absent from the folder. Two more artefacts agreed: `settings.json` held `backend: external` + a dynamic
+  endpoint (37857 = a server this window started) and `modelPath` = the downloaded 7B in the extension's own
+  storage. **Lesson: a refusal must be as visible as a success — log it and say why.**
+- **`resolveRemoveTarget(input)`** (exported, pure) resolves *any* selection to the file behind it: `bundled:` →
+  the spec's file; `file:` → that path; `llama:`/`any:`/`custom:` → `ownServedPath` or `pinnedModelPath`.
+  **Only a file whose folder equals `modelFolder(context)` is deletable**; anything else is refused *naming that
+  folder* (HF cache, LM Studio, the user's own folder).
+- **Second bug found on the way:** models added from the Hub (`user-models.json`) could never be removed, because
+  the lookup used `specById` (the pinned table) while the picker lists `allModelSpecs()`. The resolver now takes
+  the same list the picker uses.
+- **UX:** `PanelState.remove = { allowed, hint }` + `renderRemove(state)` → the button is **greyed out** with the
+  reason as its tooltip; the confirm dialog shows the **full path**; removing also stops *this window's*
+  `llama-server` when that is what serves the file; every refusal and cancel is logged.
+- Suite 4781 → **4810**; `removeModel.test.js` 40 → 69. Verified against the real machine: `any:` and `llama:`
+  → `qwen2.5-coder-7b…gguf` ALLOWED; `file:` the HF-cache 30B → refused (folder named); `lms:` → refused
+  (LM Studio named); `custom:` with nothing pinned → refused.
 

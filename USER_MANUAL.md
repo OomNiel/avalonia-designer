@@ -123,7 +123,7 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.3`**, so the command above installs it; add `--force` to
+The current version is **`0.10.4`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -135,7 +135,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.10.3` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.10.4` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -1257,9 +1257,15 @@ Studio — and everything is freed when you close the IDE, so a 6 GB model is no
 Unloading keeps the model *pinned* (the next request loads it again); it just stops it being resident.
 
 **Getting the disk space back.** Downloads stay on disk until you say otherwise, and one of them can be
-several gigabytes. **Remove Model** deletes the weights of the model currently selected in the list: it asks
-first, in a dialog that names the file and warns that the next **Load Model** downloads it again, then removes
-the file together with its partial-download and checksum markers. If you remove the model that is in use, the
+several gigabytes. **Remove Model** deletes the weights behind whatever the list has selected: it asks first, in
+a dialog that names the file **and its full path** and warns that the next **Load Model** downloads it again,
+then removes the file together with its partial-download and checksum markers. The selection does not have to be
+a *downloaded* entry — a server entry (**My own llama-server**, or an address) removes the `.gguf` it is serving
+when that file lives in the extension's own storage, because that is very often the model you are actually
+using. What it will never do is delete a file that is not the extension's own: an LM Studio model, or a `.gguf`
+in a Hugging Face cache or any other folder, is refused with the reason and the folder it *is* allowed to delete
+from. When the selection cannot be removed at all, the button is greyed out and its tooltip says why — so
+"nothing happened" is not an outcome. If you remove the model that is in use, the
 runtime is stopped first and the selection returns to *“— choose a model —”* — nothing else about your settings
 changes. The other entries are untouched, and a file that cannot be deleted (still held open by a running
 runtime) is reported as a failure rather than a success, with the way out: press **Unload**, then try again.

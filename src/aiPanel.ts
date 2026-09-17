@@ -43,7 +43,7 @@ import {
     type LocalModel,
     type RequestedLoad
 } from './localModels';
-import { bundledFilesOnDisk, bundledRuntimeRunning, allModelSpecs, ensureBundledEndpoint, ensureModelFile, modelFileFor, stopModelServer } from './modelRuntime';
+import { bundledFilesOnDisk, bundledRuntimeRunning, allModelSpecs, ensureBundledEndpoint, ensureModelFile, extensionContext, modelFolder, modelFileFor, stopModelServer } from './modelRuntime';
 import { proveItWorks } from './localModelSetup';
 import { normaliseConventions, parseConventionsText } from './conventions';
 import {
@@ -110,6 +110,12 @@ export interface PanelState {
      * about who started it.
      */
     llamaServer: LlamaServerState;
+    /**
+     * Whether "Remove Model" can act on the current selection, and why not when it cannot (2026-09-17).
+     * The panel greys the button out and uses this as its tooltip, so "nothing happened" cannot be the answer
+     * — which is exactly what the button used to give when the selection was a server entry.
+     */
+    remove: { allowed: boolean; hint: string };
 }
 
 /** Anything a scan found this session, kept so the dropdown does not lose it on the next refresh. */
@@ -294,6 +300,17 @@ export async function panelState(fresh = false): Promise<PanelState> {
         + (scanned.length ? ` · ${scanned.length} file(s) found by the scan` : ' · nothing scanned yet')
         : `LM Studio is not installed — ${allModelSpecs().length} downloadable model(s) and files found on disk still work`;
 
+    // The selection is computed once and used twice: as the panel's value, and as the thing "Remove Model"
+    // would act on — the two must be the same string or the button's promise and its result differ.
+    const selectedValue = currentSelection(
+        choices,
+        cfg.get<string>('model', ''),
+        backend,
+        cfg.get<string>('modelPath', ''),
+        ownServer.running
+    );
+    const context = extensionContext();
+
     return {
         enabled: backend !== 'off',
         endpoint,
@@ -302,13 +319,14 @@ export async function panelState(fresh = false): Promise<PanelState> {
         bundledBackend: sidecarBackend(cfg.get<string>('bundledBackend', 'cpu')),
         conventions: normaliseConventions(cfg.get<unknown>('conventions', [])),
         llamaServer: await llamaServerState(endpoint),
-        selected: currentSelection(
-            choices,
-            cfg.get<string>('model', ''),
-            backend,
-            cfg.get<string>('modelPath', ''),
-            ownServer.running
-        ),
+        selected: selectedValue,
+        remove: removeAdvice({
+            value: selectedValue,
+            specs: allModelSpecs(),
+            folder: context ? modelFolder(context) : '',
+            pinnedModelPath: cfg.get<string>('modelPath', ''),
+            ownServedPath: ownServer.running ? ownServer.info?.modelPath : undefined
+        }),
         choices,
         options: {
             contextLength: cfg.get<number>('loadContextLength', 0) || recommended.contextLength,
@@ -679,29 +697,132 @@ export async function unloadEverything(): Promise<LoadOutcome> {
  * `.part`/`.verified` sidecar markers are removed, so the entry returns to its "download once when you
  * press Load Model" state instead of lingering as a half-downloaded file.
  */
-export async function confirmAndRemoveModel(context: vscode.ExtensionContext, value: string): Promise<{ ok: boolean; message?: string }> {
-    const { kind, key } = parseChoiceValue(value);
-    if (kind !== 'bundled' || !key) return { ok: false, message: 'Pick a downloaded model to remove it from disk.' };
-    const spec = specById(key);
-    if (!spec) return { ok: false, message: `The chosen model (${key}) is no longer in the built-in list.` };
-    const file = modelFileFor(context, spec);
-    if (!fs.existsSync(file)) return { ok: false, message: `${spec.fileName} is not on disk — there is nothing to remove.` };
+/**
+ * What "Remove Model" would delete for a given selection — resolved, or refused with a reason.
+ *
+ * WHY THIS EXISTS (reported 2026-09-17: *"The Remove Model function is not removing the selected model."*).
+ * The button acts on the **selection**, and the selection is frequently not a downloaded model at all: after a
+ * Load the pinned value is `llama:`/`any:`, while the file behind it is one this extension downloaded itself.
+ * The old code looked only at `bundled:<id>` and refused everything else with one terse sentence — no log line,
+ * no trace, and a file the extension owned sitting right there. Three artefacts from that report agreed: the
+ * log held no removal line for the attempt (a refusal logged nothing), `settings.json` had `backend: external`
+ * with a dynamic endpoint (so the selection was a server entry) and `modelPath` pointed at the downloaded 7B
+ * inside the extension's own storage.
+ *
+ * The rule the resolution follows is the rule deletion has always followed: **only a file inside this
+ * extension's model folder is ours to delete.** Anything else — a Hugging Face cache, LM Studio's library, a
+ * folder the user chose — is refused, with the reason *and* the folder we do own named, so the answer is
+ * actionable instead of silent.
+ */
+export interface RemoveTarget {
+    /** The `.gguf` to delete. */
+    file: string;
+    /** What to call it in the dialogs — the file's name, never an internal id. */
+    name: string;
+    /** The spec id when the file is one the picker knows, so the pin can be cleared with it. */
+    specId?: string;
+}
 
-    // "Confirm Removal" warning — the panel never deletes without this host-side answer.
+export function resolveRemoveTarget(input: {
+    value: string;
+    specs: ModelSpec[];
+    /** The extension's own model folder — the only place it may delete from. */
+    folder: string;
+    /** `assistant.modelPath`: the file the settings pin, which is what a server entry is serving. */
+    pinnedModelPath?: string;
+    /** The file this window's own `llama-server` is serving, when one is running. */
+    ownServedPath?: string;
+}): { target?: RemoveTarget; why?: string } {
+    const { kind, key } = parseChoiceValue(input.value);
+    const folder = input.folder ? path.resolve(input.folder) : '';
+    const fromPath = (p: string): { target?: RemoveTarget; why?: string } => {
+        const file = path.resolve(p);
+        const name = path.basename(file);
+        if (!folder || path.dirname(file) !== folder) {
+            return {
+                why: `${name} is not in this extension's model folder (${input.folder || 'unknown'}), so it is not `
+                    + 'ours to delete — remove it with the tool you downloaded it with.'
+            };
+        }
+        return { target: { file, name, specId: input.specs.find((s) => s.fileName === name)?.id } };
+    };
+
+    if (kind === 'bundled') {
+        const spec = input.specs.find((s) => s.id === key);
+        if (!spec) return { why: `The chosen model (${key}) is no longer in the model list.` };
+        return fromPath(path.join(folder, spec.fileName));
+    }
+    if (kind === 'file' && key) return fromPath(key);
+    if (kind === 'lms') {
+        return {
+            why: `${key} belongs to LM Studio — this extension is only a remote control for it, so its library `
+                + 'is LM Studio\'s to delete (My Models), not ours.'
+        };
+    }
+    // `llama:` · `any:` · `custom:` — a server entry. Its weights are the file the settings pin, and after a
+    // Load that is usually one this extension downloaded: the case the report was about.
+    const served = input.ownServedPath || input.pinnedModelPath || '';
+    if (!served) {
+        return {
+            why: 'That entry is an address rather than a downloaded model, so there is no file of ours behind it. '
+                + 'Pick a downloaded model — or a server entry whose .gguf lives in this extension\'s storage.'
+        };
+    }
+    return fromPath(served);
+}
+
+/** What the panel needs in order to grey the button out and explain itself (2026-09-17). */
+export function removeAdvice(input: Parameters<typeof resolveRemoveTarget>[0]): { allowed: boolean; hint: string } {
+    const resolved = resolveRemoveTarget(input);
+    if (resolved.target) return { allowed: true, hint: `Deletes ${resolved.target.name} from disk.` };
+    return { allowed: false, hint: resolved.why ?? 'There is nothing here for Remove Model to delete.' };
+}
+
+export async function confirmAndRemoveModel(context: vscode.ExtensionContext, value: string): Promise<{ ok: boolean; message?: string }> {
+    const cfg = configView(SETTINGS);
+    const own = ownLlamaServerStatus();
+    const resolved = resolveRemoveTarget({
+        value,
+        specs: allModelSpecs(),
+        folder: modelFolder(context),
+        pinnedModelPath: cfg.get<string>('modelPath', ''),
+        ownServedPath: own.running ? own.info?.modelPath : undefined
+    });
+    if (!resolved.target) {
+        // Logged on purpose: the report that produced this resolver had *nothing* in the log for the attempt,
+        // because refusing was the one path that told nobody anything except the user's own eye.
+        aiLog(context, `Remove Model refused (${value || 'nothing selected'}): ${resolved.why ?? 'unknown reason'}`);
+        return { ok: false, message: resolved.why };
+    }
+    const { file, name } = resolved.target;
+    if (!fs.existsSync(file)) {
+        aiLog(context, `Remove Model: ${name} is not on disk`);
+        return { ok: false, message: `${name} is not on disk — there is nothing to remove.` };
+    }
+
+    // "Confirm Removal" warning — the panel never deletes without this host-side answer. The path is in it
+    // because one file name can exist in two folders, and this is the last moment to notice.
     const confirmed = await vscode.window.showWarningMessage(
-        `Remove ${spec.fileName} from disk?\n\nIt will re-download the next time you press Load Model. This cannot be undone.`,
+        `Remove ${name} from disk?\n\n${file}\n\nIt will re-download the next time you press Load Model. This cannot be undone.`,
         { modal: true }, 'Remove', 'Cancel'
     );
-    if (confirmed !== 'Remove') return { ok: false, message: 'removal cancelled' };
+    if (confirmed !== 'Remove') {
+        aiLog(context, `Remove Model cancelled for ${name}`);
+        return { ok: false, message: 'removal cancelled' };
+    }
 
-    const cfg = configView(SETTINGS);
     const backend = cfg.get<string>('backend', 'off');
     const modelPath = cfg.get<string>('modelPath', '');
-    const isActive = backend === 'bundled' && !!modelPath && modelPath.endsWith(spec.fileName);
+    const pinned = !!modelPath && path.resolve(modelPath) === file;
+    const isActive = pinned && backend !== 'off';
 
-    // If this is the model currently in use, the sidecar holds its file open (Windows locks files that are
-    // in use) and it is loaded in RAM — stopping the runtime is what unloads it and frees the file.
-    if (isActive && bundledRuntimeRunning().running) { try { stopModelServer(); } catch { /* ignore — best-effort */ } }
+    // A running runtime holds this file open (and Windows locks files that are in use), so the one that is
+    // serving it is stopped first — the built-in runtime, and this window's own llama-server when that is what
+    // serves the file. Best-effort: a delete that works anyway is not a failure because a stop did not.
+    if (isActive && bundledRuntimeRunning().running) { try { stopModelServer(); } catch { /* best-effort */ } }
+    if (own.running && own.info && path.resolve(own.info.modelPath) === file) {
+        try { stopOwnLlamaServer(); } catch { /* best-effort */ }
+    }
     // Only files that are really gone count. `unlinkSync` fails when another process holds the file open —
     // exactly the case the unload above is meant to prevent, and one a silent `catch` would turn into a
     // cheerful "removed" for a 7 GB file that is still there (found out only at the next download).
@@ -725,8 +846,8 @@ export async function confirmAndRemoveModel(context: vscode.ExtensionContext, va
         await cfg.update('modelPath', '');
         await cfg.update('model', '');
     }
-    aiLog(context, `Removed model file from disk: ${spec.fileName}`);
-    return { ok: true, message: `${spec.fileName} removed. It will re-download on next Load Model.` };
+    aiLog(context, `Removed model file from disk: ${name}`);
+    return { ok: true, message: `${name} removed. It will re-download on next Load Model.` };
 }
 
 /** What the panel's Save sends. The same shape a load carries, read through the same type. */

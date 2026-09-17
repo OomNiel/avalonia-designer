@@ -18,7 +18,7 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 const runtime = require('../../out/modelRuntime.js');
-const { confirmAndRemoveModel } = require('../../out/aiPanel.js');
+const { confirmAndRemoveModel, removeAdvice, resolveRemoveTarget } = require('../../out/aiPanel.js');
 const { MODEL_SPECS } = require('../../out/modelSpecs.js');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -63,12 +63,13 @@ module.exports = async (t) => {
     try {
         // --- what it refuses -------------------------------------------------------------------------
         const notBundled = await confirmAndRemoveModel(context, 'lms:qwen/qwen3.5-9b');
-        t.equal(notBundled.ok, false, 'refuse', 'an LM Studio key is not removable — that file is not ours');
-        t.ok(/downloaded model/i.test(notBundled.message), 'refuse', 'and the message says what to pick');
+        t.equal(notBundled.ok, false, 'refuse', 'an LM Studio key is never removable — that file is not ours');
+        t.ok(/LM Studio/.test(notBundled.message) && /remote control/.test(notBundled.message), 'refuse',
+            'and the message says *whose* file it is and where to delete it (2026-09-17: it used to say only "pick a downloaded model")');
 
         const unknown = await confirmAndRemoveModel(context, 'bundled:not-a-spec');
         t.equal(unknown.ok, false, 'refuse', 'a bundled id that is no longer in the table is refused');
-        t.ok(/no longer in the built-in list/.test(unknown.message), 'refuse', 'naming the id it could not find');
+        t.ok(/no longer in the model list/.test(unknown.message), 'refuse', 'naming the id it could not find');
 
         const missing = await confirmAndRemoveModel(context, `bundled:${spec.id}`);
         t.equal(missing.ok, false, 'refuse', 'a model that is not on disk is not "removed"');
@@ -164,12 +165,112 @@ module.exports = async (t) => {
         fs.rmSync(fileOf(spec), { recursive: true, force: true });
 
         // --- the other specs are untouched by all of this -------------------------------------------
+        // --- the reported failure (2026-09-17): a SERVER selection with an owned .gguf behind it -------
+        // *"The Remove Model function is not removing the selected model."* The selection was `any:` — a server
+        // entry, with `backend: external` and a dynamic endpoint — and the file behind it was a model this
+        // extension had downloaded into its own folder. The old code accepted only `bundled:<id>` and refused
+        // everything else with one sentence and **no log line**, so neither the user nor the extension's own
+        // log could tell what happened.
+        {
+            const served = fileOf(spec);
+            fs.writeFileSync(served, 'weights');
+            let servedWrites = [];
+            const viaServer = await withPatches([
+                [vscode.window, 'showWarningMessage', async () => 'Remove'],
+                [runtime, 'bundledRuntimeRunning', () => ({ running: false })],
+                [runtime, 'stopModelServer', () => { }],
+                [vscode.workspace, 'getConfiguration', () => {
+                    const c = fakeConfig({ backend: 'external', modelPath: served, model: '' });
+                    servedWrites = c.writes;
+                    return c;
+                }]
+            ], () => confirmAndRemoveModel(context, 'any:'));
+            t.equal(viaServer.ok, true, 'server entry',
+                'a server entry whose .gguf lives in our folder can be removed');
+            t.equal(fs.existsSync(served), false, 'server entry', 'and the file is really deleted');
+            t.equal(servedWrites.length, 2, 'server entry', 'the pin that named it is cleared with it');
+        }
+
+        // A file that is *not* ours is refused — with the folder we do own named, so the answer is actionable.
+        {
+            const foreign = path.join(storage, 'elsewhere', spec.fileName);
+            fs.mkdirSync(path.dirname(foreign), { recursive: true });
+            fs.writeFileSync(foreign, 'not ours');
+            let refusedWrites = [];
+            const outside = await withPatches([
+                [vscode.window, 'showWarningMessage', async () => 'Remove'],
+                [runtime, 'bundledRuntimeRunning', () => ({ running: false })],
+                [runtime, 'stopModelServer', () => { }],
+                [vscode.workspace, 'getConfiguration', () => {
+                    const c = fakeConfig({ backend: 'external', modelPath: foreign, model: '' });
+                    refusedWrites = c.writes;
+                    return c;
+                }]
+            ], () => confirmAndRemoveModel(context, 'any:'));
+            t.equal(outside.ok, false, 'foreign', 'a file outside our folder is never deleted');
+            t.ok(/not in this extension's model folder/.test(outside.message), 'foreign',
+                'the message names the rule and the folder that *is* ours');
+            t.equal(fs.existsSync(foreign), true, 'foreign', 'the file is untouched');
+            t.equal(refusedWrites.length, 0, 'foreign', 'and nothing was unpinned either');
+        }
+
         t.equal(MODEL_SPECS.length >= 3, true, 'specs', 'the table offers more than one built-in model');
         t.ok(MODEL_SPECS.every((s) => /^[0-9a-f]{64}$/.test(s.sha256)), 'specs',
             'every spec carries a full SHA-256 — the sidecar refuses a file that does not match');
         t.ok(other.sha256 !== spec.sha256, 'specs', 'and no two entries share a hash');
     } finally {
         try { fs.rmSync(storage, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+
+    // --- the resolution itself: what a selection would delete, and what is refused --------------------
+    {
+        const folder = path.join(os.tmpdir(), 'remove-model-resolution');
+        const specs = [spec, { ...other, id: 'from-the-hub', fileName: 'from-the-hub.gguf' }];
+        const inside = path.join(folder, spec.fileName);
+        const base = { specs, folder };
+
+        const bundled = resolveRemoveTarget({ ...base, value: `bundled:${spec.id}` });
+        t.equal(bundled.target && bundled.target.file, path.join(folder, spec.fileName), 'resolve',
+            'a bundled id resolves to its file inside our folder');
+        t.equal(bundled.target.name, spec.fileName, 'resolve', 'named by file, not by internal id');
+        t.equal(bundled.target.specId, spec.id, 'resolve', 'and it knows which spec it belongs to');
+
+        // A model added from the Hugging Face Hub lives in the same folder but not in the pinned table —
+        // `specById` alone could not see it, which made those models unremovable.
+        const hub = resolveRemoveTarget({ ...base, value: 'bundled:from-the-hub' });
+        t.equal(hub.target && hub.target.file, path.join(folder, 'from-the-hub.gguf'), 'resolve',
+            'a model added from the Hub resolves too, because the list is passed in');
+
+        // The report: a server selection, with the downloaded file pinned behind it.
+        const any = resolveRemoveTarget({ ...base, value: 'any:', pinnedModelPath: inside });
+        t.equal(any.target && any.target.file, inside, 'resolve',
+            'a server entry resolves to the .gguf the settings pin — the case that was reported');
+        const llama = resolveRemoveTarget({ ...base, value: 'llama:', ownServedPath: inside });
+        t.equal(llama.target && llama.target.file, inside, 'resolve',
+            'and "my own llama-server" resolves to the file that server is serving');
+
+        const fileEntry = resolveRemoveTarget({ ...base, value: `file:${inside}` });
+        t.equal(fileEntry.target && fileEntry.target.file, inside, 'resolve', 'a file entry inside our folder resolves');
+        const elsewhere = resolveRemoveTarget({ ...base, value: `file:${path.join(os.tmpdir(), 'hf', 'x.gguf')}` });
+        t.equal(elsewhere.target, undefined, 'resolve', 'a file anywhere else is not ours');
+        t.ok(/not in this extension's model folder/.test(elsewhere.why), 'resolve',
+            'and the refusal says which folder would be ours');
+
+        const lms = resolveRemoveTarget({ ...base, value: 'lms:google/gemma-4-e4b' });
+        t.equal(lms.target, undefined, 'resolve', 'an LM Studio key is never ours');
+        t.ok(/LM Studio/.test(lms.why), 'resolve', 'and the refusal names whose library it is');
+
+        const address = resolveRemoveTarget({ ...base, value: 'custom:http://127.0.0.1:8080/v1' });
+        t.equal(address.target, undefined, 'resolve', 'an address with nothing pinned behind it has no file');
+        t.ok(/address rather than a downloaded model/.test(address.why), 'resolve', 'and the refusal says so');
+
+        const adviceYes = removeAdvice({ ...base, value: `bundled:${spec.id}` });
+        t.equal(adviceYes.allowed, true, 'advice', 'the panel is told the button can act');
+        t.ok(new RegExp(spec.fileName.replace('.', '\\.')).test(adviceYes.hint), 'advice',
+            'and which file it would delete, so the tooltip is specific');
+        const adviceNo = removeAdvice({ ...base, value: 'lms:google/gemma-4-e4b' });
+        t.equal(adviceNo.allowed, false, 'advice', 'and when it cannot, the button is greyed out instead');
+        t.ok(/LM Studio/.test(adviceNo.hint), 'advice', 'with the reason as its tooltip');
     }
 
     // --- the parts that only exist in the two source files -------------------------------------------
@@ -179,8 +280,18 @@ module.exports = async (t) => {
     const css = read('media/designer.css');
 
     t.ok(/export async function confirmAndRemoveModel/.test(host), 'source', 'the host owns the removal');
-    t.ok(/showWarningMessage\([\s\S]{0,200}\{ modal: true \}/.test(host), 'source',
+    t.ok(/showWarningMessage\([\s\S]{0,400}\{ modal: true \}/.test(host), 'source',
         'and it is a modal confirmation, not a toast that quietly expires');
+    t.ok(/Remove \$\{name\} from disk\?[\s\S]{0,120}\$\{file\}/.test(host), 'source',
+        'the dialog names the file *and its path*, because one file name can exist in two folders');
+    t.ok(/Remove Model refused/.test(host) && /aiLog\(context, `Remove Model refused/.test(host), 'source',
+        'a refusal is logged — the reported failure left no trace anywhere (2026-09-17)');
+    t.ok(/export function resolveRemoveTarget/.test(host) && /export function removeAdvice/.test(host), 'source',
+        'both the resolution and the advice for the panel are exported, so button and action cannot disagree');
+    t.ok(/remove: \{ allowed: boolean; hint: string \}/.test(host), 'source',
+        'the panel state carries the verdict for the button');
+    t.ok(/renderRemove\(state\)/.test(js) && /els\.aiRemove\.disabled/.test(js), 'source',
+        'and the webview greys the button out with the reason as its tooltip');
     t.ok(/id="aiRemove"[^>]*class="modal-btn warning"/.test(panel), 'source',
         'the button is styled as the destructive one, not as a primary action');
     t.ok(/\.modal-btn\.warning \{/.test(css), 'source', 'and that class exists in the stylesheet');

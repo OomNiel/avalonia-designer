@@ -12,6 +12,36 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
+## [0.10.4] - 2026-09-17 · *the button that refused silently now says why*
+
+Reported minutes after `0.10.3` went up: *"The Remove Model function is not removing the selected model. check
+please."* Nothing was wrong with the delete — the delete never ran, and the reason it did not was invisible.
+
+### Fixed
+
+- **Remove Model only ever accepted a `bundled:<id>` selection.** The button acts on the **selection**, and after
+  a Load that selection is a **server entry** (`llama:` / `any:`) whose weights are the file the settings pin —
+  very often one this extension downloaded itself. Everything else was refused with one terse sentence, **and a
+  refusal was the one path that logged nothing at all**, so neither the user nor the extension's own log could
+  show what happened. Three artefacts from the report agreed: `ai.log` had no removal line for the attempt,
+  `settings.json` held `backend: external` with a dynamic endpoint, and `modelPath` pointed at the downloaded 7B
+  inside the extension's own storage. `resolveRemoveTarget()` now resolves **any** selection to the file behind
+  it and deletes it when that file is inside the extension's model folder — and refuses, *naming the folder we
+  do own*, when it is not (a Hugging Face cache, LM Studio's library, a folder you chose).
+- **A refusal is logged**, the confirmation names the **full path** (one file name can live in two folders), and
+  removing a model now also stops this window's own `llama-server` when that is what serves the file.
+- **Models added from the Hugging Face Hub could never be removed either**: the lookup used the pinned table
+  (`specById`) while the picker lists the built-in table **plus** `user-models.json`. The resolution now takes
+  the same list the picker uses.
+
+### Notes
+
+- **The button greys itself out** when the selection cannot be deleted, with the reason as its tooltip
+  (`PanelState.remove`), so "nothing happened" is no longer an outcome.
+- Suite **4,810** assertions, 0 failed (`removeModel.test.js` 40 → 69, pinned against the reported scenario
+  end-to-end: a server selection with an owned `.gguf` behind it, a file outside the folder, an LM Studio key,
+  and the advice the panel shows the button).
+
 ## [0.10.3] - 2026-09-17 · *the server you already had becomes something you can see and control*
 
 Asked while comparing the two local runtimes on this machine: *"I don't know who started the llama server

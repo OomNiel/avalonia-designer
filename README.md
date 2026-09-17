@@ -30,7 +30,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.3`**, so the command above installs it (add `--force` to reinstall, or to
+The current version is **`0.10.4`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -39,11 +39,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.10.3.vsix --force
+code --install-extension avalonia-designer-0.10.4.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.10.3` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.10.4` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -252,7 +252,10 @@ ones the picker shows (binary units — the model pages count decimal, so a 6.9 
 7.4 GB one). **Any other GGUF is one command away:** *AI: Add a Model from Hugging Face…* takes a model page or
 a file URL, lists the files in the repo with their sizes, reads the size and the hash from **Hugging Face
 itself**, and downloads it through the same verification — after which it behaves exactly like a built-in one,
-including **Remove Model**, which gives the disk space back. Nothing is fetched until you press **Load Model**.
+including **Remove Model**, which gives the disk space back — it deletes the weights behind whatever the list has
+selected (a downloaded model, **or** a server entry whose `.gguf` is in this extension's storage), and refuses
+anything else by naming the folder it *is* allowed to delete from (`0.10.4`). Nothing is fetched until you press
+**Load Model**.
 
 **The built-in runtime can use your GPU — when you ask it to.** It runs llama.cpp's **CPU** build by
 default: that works everywhere and needs nothing from the GPU. *AI: Built-in Runtime Backend…* switches it to
@@ -325,7 +328,7 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~4,800 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~4,850 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

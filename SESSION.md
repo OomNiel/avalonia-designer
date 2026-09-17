@@ -19,7 +19,16 @@
 
 ## Where the last session left off (2026-09-17)
 
-**Built, tested, packed and installed: `0.10.3`** — *the server you already had becomes something you can see and
+**Built, tested, packed and installed: `0.10.4`** — *the button that refused silently now says why*. Reported
+minutes after `0.10.3`: *"The Remove Model function is not removing the selected model."* It was **refusing**: only
+`bundled:<id>` selections were ever accepted, the selection is usually a server entry, and a refusal logged
+nothing at all — so the attempt left no trace anywhere (the log's only removal line was gemma, at 14:56:58).
+`resolveRemoveTarget()` now resolves any selection to the file behind it, deleting it only inside the extension's
+own model folder and refusing anything else **by naming that folder**; Hub-added models became removable (they
+were looked up in the pinned table alone); the button greys itself out with the reason as its tooltip. Suite
+**4810 passed / 0 failed** (`removeModel.test.js` 40 → 69). Read `NOTES.md` §133.
+
+**Previously: `0.10.3`** — *the server you already had becomes something you can see and
 control*. Suite **4781 passed / 0 failed** (was 4707), PROBLEMS clean, VSIX packed and installed. It answers the
 question the user asked while comparing their two local runtimes — *"I don't know who started the llama server
 (could have been me!)"* — with **Start / Stop** controls for their own `llama-server` in ⚙ Settings → AI assist,

@@ -235,6 +235,17 @@ Each step ends with the log green before the next begins.
 
 Each step ends with the log green before the next begins.
 
+### 0.10.4 (2026-09-17) — the button that refused silently
+
+- `tests/t2-logic/removeModel.test.js` 40 → **69** assertions. The new ones are the report, end to end: a server
+  selection (`any:`) with an owned `.gguf` behind it is removed and its pin cleared; a file **outside** the
+  extension's folder is refused, untouched, with the message naming the folder that *is* ours; an LM Studio key
+  is refused by naming whose library it is; `resolveRemoveTarget` is exercised directly for `bundled:` (built-in
+  and Hub-added), `file:` (inside and outside), `llama:`/`any:`/`custom:`, and `removeAdvice` for the button's
+  enabled/hint verdict. Source pins cover the refusal being **logged** and the dialog naming the full path.
+
+Each step ends with the log green before the next begins.
+
 ### Status 2026-09-11 — full suite green (2176 passed / 0 failed / 0 skipped, 35 s)
 
 - **T2** gained `bundledComponents.test.js`, `chromeProps.test.js`, `multiProps.test.js`,
