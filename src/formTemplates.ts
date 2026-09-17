@@ -132,7 +132,7 @@ export function buildAxaml(tpl: FormTemplate, name: string, kind: string, rootNa
 
 function buildAxamlBody(tpl: FormTemplate, name: string, kind: string, rootNamespace: string, displayName?: string): string {
     // VB's root namespace is applied to global-namespace classes, so x:Class is fully
-    // qualified in both languages (e.g. DevHelper.frmTest).
+    // qualified in both languages (e.g. MyProject.frmTest).
     const xClass = `${rootNamespace}.${name}`;
     // displayName (usually the project name) feeds the window Title + any name-based
     // template text; it defaults to the form name for the "New Form" tool.

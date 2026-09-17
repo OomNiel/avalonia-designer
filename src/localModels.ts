@@ -720,7 +720,7 @@ export function recommendedLlamaOptions(
 //
 // Asked 2026-09-16, and it matters because of what this machine actually runs: the developer's own
 // `llama-server` is a **systemd user service** (`~/.config/systemd/user/llama-server.service`) serving a
-// 30 B Qwen3-Coder on port 8080 with `--alias qwen3-coder-local`. Starting a second one from the extension
+// 30 B Qwen3-Coder on port 8080 with `--alias my-local-model`. Starting a second one from the extension
 // would put another ~17 GB of weights in RAM to answer the same requests. So before any start, the first
 // question is "is one already answering?" — and it is answered from the server's own words, not from a
 // process list (this extension cannot see a process it did not spawn).
@@ -772,7 +772,7 @@ export interface ServedModel {
 /**
  * Reads `/v1/models`. Real answer from this machine's service (2026-09-16):
  *
- *   {"object":"list","data":[{"id":"qwen3-coder-local","object":"model","created":1789569219,
+ *   {"object":"list","data":[{"id":"my-local-model","object":"model","created":1789569219,
  *     "owned_by":"llamacpp","meta":{"n_ctx":16384,"n_params":30532122624,"ftype":"Q4_K - Small"}}]}
  *
  * `owned_by` is the identifier that makes this safe to act on: it is llama.cpp's own marker, so a server
@@ -808,7 +808,7 @@ export interface LlamaProps {
 
 /**
  * Reads `/props`, which is llama.cpp's own endpoint (no OpenAI equivalent): real answer from this machine
- * (2026-09-16) carries `model_path`, `build_info: "b10365-9afff1b74"` and `total_slots: 1`. A second
+ * (2026-09-16) carries `model_path`, `build_info: "b1234-abcdef"` and `total_slots: 1`. A second
  * identity check on purpose — `/v1/models` is what the client uses, and a server that answers *both* the
  * OpenAI shape and this one is a llama-server beyond argument.
  */

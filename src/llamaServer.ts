@@ -584,7 +584,7 @@ export interface RunningLlamaServer {
  * Is one already answering?
  *
  * This machine's own setup is exactly why this exists: the developer's `llama-server` is a **systemd user
- * service** on port 8080 holding a 30 B Qwen3-Coder (`--alias qwen3-coder-local`). Without this check,
+ * service** on port 8080 holding a 30 B Qwen3-Coder (`--alias my-local-model`). Without this check,
  * "Start My llama-server" would load a *second* copy of the same weights into 28 GB of RAM to answer the
  * same questions — the one failure a user would notice immediately and never forgive.
  *

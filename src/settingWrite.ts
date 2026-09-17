@@ -2,7 +2,7 @@
  *
  * Found the hard way on 2026-09-15, after six exchanges with the user: their app project contained
  *
- *     /home/niel/Projekte/TestExtApps/OptimisedCSTest/.vscode/settings.json
+ *     <project folder>/.vscode/settings.json
  *     { "avaloniaDesigner.assistant.backend": "external" }
  *
  * — a *workspace* setting. A workspace value beats a global one, so every `backend: bundled` the panel saved to

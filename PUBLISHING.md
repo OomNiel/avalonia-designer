@@ -246,16 +246,22 @@ listing when that release is uploaded — a repo-only README edit does not.
 > and the DataSet facts describe the generated class as it is — the fix that let the Vulkan-built 7B repair the
 > user's own `CS1061` on the first run. See `NOTES.md` §135.
 >
-> Plain VSIX — `avalonia-designer-0.10.9.vsix`, 905,053 bytes, sha256
-> `01ddd09ff8440c1c16c56d69d8fdb60a8cdb2079351bf682e40ac8b8d355d5fc`
+> Plain VSIX — `avalonia-designer-0.10.9.vsix`, **905,002 bytes**, sha256
+> `9cf2316ffb62f0a41f4c29c9187cecc5bf23f543cdf133c3fba28280d08a8aa1`
 > — built by `npm run package` after a green suite (**4,868 assertions, 0 failed**), and checked inside the
 > package (manifest `Version="0.10.9"`, **no `PreRelease` attribute** — so it goes to the stable channel —
 > `README.md`, `USER_MANUAL.md`, `CHANGELOG.md` and `CONTROLS.md` present, `NOTES.md`/`TEST_PLAN.md`/
 > `PUBLISHING.md` correctly absent). The docs ride **inside** the VSIX, so any later edit to those four changes
-> the hash — this is the final build. Tag `v0.10.9` → commit **`b48d0b5`**, pushed; the GitHub release is
-> ***Latest*** and not a pre-release (`draft=false`, `prerelease=false`), and the asset was verified **three
-> ways** — local build, a fresh `gh release download`, and the API's own `digest` — all
-> `01ddd09ff8440c1c16c56d69d8fdb60a8cdb2079351bf682e40ac8b8d355d5fc`, 905,053 bytes.
+> the hash — this is the final build. Tag `v0.10.9` → commit **`b48d0b5`**.
+>
+> **This is the *second* `0.10.9` build, and the one to use.** The first (905,053 bytes,
+> `01ddd09f…`) was released on GitHub and then found to carry dev-machine references in **comments**: `tsc`
+> keeps comments, `.vscodeignore` re-includes `out/**/*.js`, and the host's `.cs` sources ship too — so a
+> `/home/<user>/…` path from a bug-hunt note, `DevHelper.frmTest`, the user's server alias and its build id
+> were all inside the published artefact. The audit that followed is now scriptable: extract the VSIX and
+> `grep -rl` for the user name, the hostname, the project folders and the server alias. The rebuilt file has
+> **none** of them; the only `/home/` left is in generic samples (`/home/x/a.gguf`). The GitHub release asset
+> needs this file (replace it — the tag does not move) or a follow-up version.
 > Leave *Pre-release* **unchecked** in the portal, then confirm with the
 > `flags: 914` query that the version is `0.10.9` and `Microsoft.VisualStudio.Services.VsixSha256` equals the
 > hash above.

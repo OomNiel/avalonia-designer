@@ -754,7 +754,7 @@ Suite **3762** passed / 0 failed.
 ### Fixed
 
 - **Settings are written where the value already lives — this was the real cause of the picker reverting.**
-  `OptimisedCSTest/.vscode/settings.json` contains
+  A project's own `.vscode/settings.json` contained
 
   ```json
   { "avaloniaDesigner.assistant.backend": "external" }
