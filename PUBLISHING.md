@@ -259,7 +259,11 @@ listing when that release is uploaded — a repo-only README edit does not.
 > suite (**4,868 assertions, 0 failed**), and checked inside the package (manifest `Version="0.10.10"`, **no
 > `PreRelease` attribute** — so it goes to the stable channel — `README.md`, `USER_MANUAL.md`, `CHANGELOG.md` and
 > `CONTROLS.md` present; `NOTES.md`, `TEST_PLAN.md` and this file correctly absent). The docs ride **inside** the
-> VSIX, so any later edit to those four changes the hash — this is the final build.
+> VSIX, so any later edit to those four changes the hash — this is the final build. Tag `v0.10.10` → commit
+> **`d5edf83`**, pushed; the GitHub release is ***Latest*** and not a pre-release (`draft=false`,
+> `prerelease=false`), and the asset was verified **three ways** — local build, a fresh `gh release download`,
+> and the API's own `digest` — all `ec4acc0e376e27b4e18120b8ad3e7bb2ab23befc7b03986efebbf3970bdab9a2`,
+> 905,176 bytes. Installed locally as `grumpy.avalonia-designer@0.10.10`.
 > Leave *Pre-release* **unchecked** in the portal, then confirm with the
 > `flags: 914` query that the version is `0.10.10` and `Microsoft.VisualStudio.Services.VsixSha256` equals the
 > hash above.
