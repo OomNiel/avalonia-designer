@@ -16,7 +16,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { normalizeAssistantConfig, looksLikeEmbeddingModel, probeServer } from './assistant';
-import { log, logError } from './logger';
+import { log, logError, mirrorLogTo } from './logger';
 import {
     chatModels,
     discover,
@@ -140,7 +140,7 @@ export function parseChoiceValue(value: string): { kind: string; key: string } {
 }
 
 /** Builds the dropdown: everything that could be loaded, in the order a developer would look. */
-export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string, backend = 'off', modelPath = '', bundled: Record<string, { onDisk: boolean; bytes: number }> = {}, specs: ModelSpec[] = MODEL_SPECS, llamaBin = '', llamaRunning = ''): ModelChoice[] {
+export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint: string, backend = 'off', modelPath = '', bundled: Record<string, { onDisk: boolean; bytes: number }> = {}, specs: ModelSpec[] = MODEL_SPECS, llamaBin = '', llamaRunning = '', native: SidecarBackend = 'cpu'): ModelChoice[] {
     const choices: ModelChoice[] = [];
     // "Whatever is loaded" is a real answer, and it is the one the settings most often hold (`model` empty).
     // Without an entry for it the dropdown showed the *first* LM Studio model as if it had been chosen — and
@@ -171,7 +171,12 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
         // that tells the user their load took. Without it, loading the extension's own model looked like
         // nothing had happened (reported 2026-09-15).
         const running = bundledRuntimeRunning();
-        const isPinned = backend === 'bundled' && !!modelPath && modelPath.endsWith(spec.fileName);
+        // Two entries share one file since 0.10.5, so "is this one pinned?" cannot be answered by the file name
+        // alone: the entry also has to be the **build that is configured**, or both entries call themselves
+        // pinned at once — reported 2026-09-17 as *"the picker is listing both the vulcan and non-valcon is
+        // pinned"*. An entry with no build of its own (a Hub-added model) is always a match.
+        const mine = !spec.backend || spec.backend === native;
+        const isPinned = mine && backend === 'bundled' && !!modelPath && modelPath.endsWith(spec.fileName);
         // Whether these weights are already on this machine, said outright. "Downloaded once when you press
         // Load Model" was true of every entry and therefore told the user nothing — a 4.4 GB entry that had
         // never been fetched looked exactly like the ready one (asked 2026-09-15: "the Qwen models does not
@@ -252,13 +257,19 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
 }
 
 /** The model the settings point at right now, as a dropdown value. */
-export function currentSelection(choices: ModelChoice[], model: string, backend: string, modelPath: string, ownServerRunning = false): string {
+export function currentSelection(choices: ModelChoice[], model: string, backend: string, modelPath: string, ownServerRunning = false, native: SidecarBackend = 'cpu'): string {
     if (backend === 'bundled') {
-        const byName = modelPath ? specByFileName(modelPath) : undefined;
+        // The entry whose build is the configured one wins (the two entries share a file since 0.10.5), so
+        // picking "CPU only" does not leave the picker pointing at the GPU entry — and a spec with no build of
+        // its own (a model added from the Hub) still matches by name.
+        const named = modelPath
+            ? MODEL_SPECS.find((s) => path.basename(modelPath) === s.fileName && (!s.backend || s.backend === native))
+            ?? specByFileName(modelPath)
+            : undefined;
         // No weights pinned to the setting: the placeholder (`""`), never the first spec. Falling back to the
         // first entry is how a picker ends up naming a model nobody chose — the webview already refused that
         // (2026-09-15), and the host now agrees with it. Only a real, on-disk pin selects a bundled model.
-        return byName ? choiceValue('bundled', byName.id) : '';
+        return named ? choiceValue('bundled', named.id) : '';
     }
     // Our own `llama-server` is the one entry whose pin the panel cannot recognise from `model` alone (the
     // id is whichever alias the running process reports, and the address is a port that changes every time).
@@ -274,7 +285,11 @@ export async function panelState(fresh = false): Promise<PanelState> {
     const backend = cfg.get<string>('backend', 'off');
     const endpoint = cfg.get<string>('endpoint', '') || 'http://127.0.0.1:1234/v1';
     if (fresh) scanned = [];
-    const found = await discover();
+    // Asked with a cache and a short patience (2026-09-17): this runs on every panel open, save and focus, and
+    // the first `lms` call of a session starts LM Studio's service on the way — 20 s per call, twice per state,
+    // which is what made ⚙ Settings crawl the first time it was opened after a reload. `fresh` is the user's own
+    // Refresh list, so that one asks in full; the load and import flows do the same.
+    const found = await discover(fresh ? { maxAgeMs: 0, cliTimeoutMs: 20000 } : { maxAgeMs: 15000, cliTimeoutMs: 3000 });
     const lookup = llamaServerBinary(cfg.get<string>('llamaServerPath', ''));
     const ownServer = ownLlamaServerStatus();
     // Cached for 15 s inside the probe: a state refresh happens on every panel open, save and focus, and
@@ -284,7 +299,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
     const llamaRunning = elsewhere
         ? `already running on port ${elsewhere.port}${elsewhere.modelId ? ` (${elsewhere.modelId})` : ''}`
         : '';
-    const choices = buildChoices(found, scanned, endpoint, backend, cfg.get<string>('modelPath', ''), bundledFilesOnDisk(), allModelSpecs(), lookup.path ?? '', llamaRunning);
+    const choices = buildChoices(found, scanned, endpoint, backend, cfg.get<string>('modelPath', ''), bundledFilesOnDisk(), allModelSpecs(), lookup.path ?? '', llamaRunning, sidecarBackend(cfg.get<string>('bundledBackend', 'vulkan')));
     if (choices.length === 0 && !found.cli) {
         choices.push({
             value: choiceValue('custom', endpoint),
@@ -312,7 +327,8 @@ export async function panelState(fresh = false): Promise<PanelState> {
         cfg.get<string>('model', ''),
         backend,
         cfg.get<string>('modelPath', ''),
-        ownServer.running
+        ownServer.running,
+        sidecarBackend(cfg.get<string>('bundledBackend', 'vulkan'))
     );
     const context = extensionContext();
 
@@ -321,7 +337,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
         endpoint,
         host: await hostGate(),
         showDiff: cfg.get<boolean>('showDiff', true),
-        bundledBackend: sidecarBackend(cfg.get<string>('bundledBackend', 'cpu')),
+        bundledBackend: sidecarBackend(cfg.get<string>('bundledBackend', 'vulkan')),
         conventions: normaliseConventions(cfg.get<unknown>('conventions', [])),
         llamaServer: await llamaServerState(endpoint),
         selected: selectedValue,
@@ -538,9 +554,23 @@ async function startLoad(
         // build and once for the CPU build, so which one was picked is written here — the same key the status
         // line reads back to say which build actually loaded.
         if (spec.backend) {
-            const before = cfg.get<string>('bundledBackend', 'cpu');
+            const before = cfg.get<string>('bundledBackend', 'vulkan');
             await cfg.update('bundledBackend', spec.backend, vscode.ConfigurationTarget.Global);
             if (before !== spec.backend) aiLog(context, `Load: native build ${before} → ${spec.backend} (from the entry)`);
+        }
+        // …and the offload, because a "GPU" entry whose layers all stay on the CPU is a label that lies — and it
+        // did, silently (asked 2026-09-17): ModelHost's own argv said `--gpu-layers 0` while both the picker and
+        // `Native backend: Vulkan build` said GPU, because `sidecarGpuLayers` turns only `max` into a layer count
+        // and everything else — `auto` included — into 0. Only the shipped entries carry a `backend`, so a model
+        // the user added keeps their own GPU field: its size is unknown to us, and guessing `max` for a 16 GB
+        // model on a shared-memory GPU is exactly the mistake this setting was written to avoid.
+        const wantedGpu = spec.backend ? (spec.backend === 'cpu' ? 'off' : 'max') : undefined;
+        if (wantedGpu) {
+            const beforeGpu = cfg.get<string>('loadGpu', 'auto');
+            if (beforeGpu !== wantedGpu) {
+                await cfg.update('loadGpu', wantedGpu, vscode.ConfigurationTarget.Global);
+                aiLog(context, `Load: GPU offload ${beforeGpu} → ${wantedGpu} (from the entry)`);
+            }
         }
         // Say which of the two things is about to happen. The webview cannot know — it used to guess
         // "downloading (first time)" even when the weights were already on disk (the user's report,
@@ -558,7 +588,9 @@ async function startLoad(
         await cfg.update('modelPath', file, vscode.ConfigurationTarget.Global);
         await cfg.update('model', '', vscode.ConfigurationTarget.Global);
         progress('starting the built-in runtime…');
-        const endpoint = await startBundled(request, file, cfg.get<number>('threads', 0));
+        // The load in progress uses the entry's own choice too, not the field the webview sent a moment ago: the
+        // setting was just written, so reading the old value here would offload nothing until the *next* load.
+        const endpoint = await startBundled(wantedGpu ? { ...request, gpu: wantedGpu } : request, file, cfg.get<number>('threads', 0));
         aiLog(context, `Bundled runtime answering on ${endpoint}`);
         return { ok: true, endpoint, message: `${spec.label} is answering from the extension's own runtime.` };
     }
@@ -1007,15 +1039,11 @@ function aiLogFile(context: vscode.ExtensionContext): string {
 }
 
 export function aiLog(context: vscode.ExtensionContext, line: string): void {
-    const text = `[${new Date().toISOString()}] ${line}`;
-    log(text);
-    try {
-        const file = aiLogFile(context);
-        if (fs.existsSync(file) && fs.statSync(file).size > 512 * 1024) fs.rmSync(file, { force: true });
-        fs.appendFileSync(file, text + '\n');
-    } catch {
-        /* logging must never be the reason a load fails */
-    }
+    // The file sink lives in the logger now, so `log` and `aiLog` land in the same place: the AI client's own
+    // lines (requests, answers, failures) used to reach the Output channel only, which is exactly the half a
+    // bug report cannot hand over.
+    mirrorLogTo(aiLogFile(context));
+    log(line);
 }
 
 export function attachPanel(panel: vscode.WebviewPanel | undefined): void {

@@ -1245,6 +1245,18 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     margin-top: 10px;
 }
 
+/* The dialog's own "still arriving" marker, to the left of Cancel/Save (asked 2026-09-17): the AI section of
+   ⚙ Settings is filled from a state the extension has to ask the machine for, and on the first open after a
+   window reload that is not instant. `margin-right: auto` keeps it against the left edge of the same row, so
+   the buttons never move while it appears and disappears. */
+.modal-busy {
+    margin-right: auto;
+    align-self: center;
+    font-size: 12px;
+    color: var(--muted, var(--fg));
+    opacity: 0.85;
+}
+
 .modal-btn {
     background: var(--panel-2);
     color: var(--fg);

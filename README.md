@@ -30,7 +30,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.5`**, so the command above installs it (add `--force` to reinstall, or to
+The current version is **`0.10.9`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -39,11 +39,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.10.5.vsix --force
+code --install-extension avalonia-designer-0.10.9.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.10.5` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.10.9` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -249,8 +249,10 @@ code is resolved by NuGet on your machine — and offers **one model, two ways t
 GPU (Vulkan)* and *Qwen2.5-Coder 7B · CPU only (no GPU)* — **the same 4.4 GB download**, fetched **once**,
 verified against the SHA-256 the Hub publishes, into the extension's own storage. The 7B is the model that
 measured best on this project (the only one of five whose generated C# compiled), and the two entries are the
-real choice a person faces: **use the GPU or not** — 9.7 s for a handler on the Vulkan build against 13.0 s on
-the CPU. Everything else a picker could offer lives under one **Advanced…** fold (`0.10.5`). **Any other GGUF is one command away:** *AI: Add a Model from Hugging Face…* takes a model page or
+real choice a person faces: **use the GPU or not** — measured on these weights, 9.7 s for a handler with the GPU
+layers offloaded against 13.0 s entirely on the CPU. The entry you pick decides both halves of that (`0.10.9`):
+the GPU entry writes the Vulkan build **and** a full offload, the CPU entry writes the CPU build and none, so the
+label cannot lie about what is running. Everything else a picker could offer lives under one **Advanced…** fold (`0.10.5`). **Any other GGUF is one command away:** *AI: Add a Model from Hugging Face…* takes a model page or
 a file URL, lists the files in the repo with their sizes, reads the size and the hash from **Hugging Face
 itself**, and downloads it through the same verification — after which it behaves exactly like a built-in one,
 including **Remove Model**, which gives the disk space back — it deletes the weights behind whatever the list has
@@ -307,6 +309,14 @@ request, and a codebase split 50/50 deliberately produces **no** rule — a hous
 none. Rules are counted per language, learning calls no model at all, and the list is empty until you ask for it
 (12 max, editable by hand in the same box).
 
+**And it is told what your form's data actually is.** The generated DataSet is described to the model the way the
+generator emits it (`0.10.9`): a class of **static helpers** with a **top-level** row class per table — not the
+nested typed `DataSet` earlier versions produced — with the members that do **not** exist named outright, and the
+plain fact that a grid's rows *are* what `ItemsSource` holds (never `.Items`, which is WPF's name). That sentence
+is what makes *"link the ComboBox to the selected row"* come out as code that compiles: on this project the
+assistant had rewritten the same method three times with the old shape and got CS1061 every time, and the Vulkan
+build fixed it on the first run once the facts told the truth.
+
 **The ⚙ Settings panel shows where every entry comes from**, because that is what decides whether it can work:
 *LM Studio · in My Models, ready to load* (the extension is a remote control there — LM Studio is the runtime and
 can only load a name it has), *This extension's own runtime · weights on disk, ready to load* (or *not downloaded
@@ -316,9 +326,12 @@ panel — and if one of yours is already answering, the entry says so rather tha
 run myself* for anything else already listening. Its two checkboxes
 are the decisions that are not about one model: **Use a local model for Code Fix and Implement** (the switch
 that loads, and unloads when cleared) and **Show the proposed code as a diff before it is applied**. While it
-is asking your machine for its model list it says so — *looking for local models…* — because the first such
-look of a session also starts LM Studio's own service, and an empty dropdown should never look like a broken
-one.
+is asking your machine for its model list it says so — *looking for local models…* in the AI section, and
+**`Loading…`** beside Cancel and Save while the dialog itself is still being filled (`0.10.9`) — because the first
+such look of a session also starts LM Studio's own service, and an empty dropdown should never look like a broken
+one. That wait is short now: an answer is reused for 15 seconds and the `lms` helper is given 3 in that path
+(*Refresh list*, loads and imports still ask in full), where it used to be a 20-second default timeout, twice per
+state, on every open, save and focus.
 
 **When a load fails, LM Studio's own log is translated rather than shown** — the two aborts that actually happen
 are a model bigger than the kernel's locked-memory limit (with **Keep Model in Memory** named as LM Studio's own
@@ -335,7 +348,7 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~4,830 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~4,870 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

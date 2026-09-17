@@ -81,13 +81,35 @@ export function describeDataSetFacts(ctx: DataSetContext | undefined): string {
     if (!ctx) return '';
     const lines: string[] = [];
     const datasets = [...new Set(ctx.datasetClasses)];
+    // One table per dataset, for the concrete example below (`MyDataSet.Customers` is the shape a model keeps
+    // writing, and it is the shape the compiler refuses).
+    const tableOf = new Map<string, string>();
+    for (const g of ctx.grids) if (!tableOf.has(g.datasetClass)) tableOf.set(g.datasetClass, g.tableName);
     for (const name of datasets) {
-        lines.push(`- The form's data comes from the generated DataSet class \`${name}\`.`);
+        // WHAT THIS CLASS IS — asked 2026-09-17, after the user's own build reported
+        // CS1061 "'MyDataSet' does not contain a definition for 'Customers'". The generator emits a *helper*
+        // class: static methods, plus one **top-level** row class per table. It is NOT the ADO.NET typed
+        // `DataSet` that earlier versions produced. Calling it "the generated DataSet class" was enough for a
+        // model to keep writing `((MyDataSet.CustomersDataTable)DataGrid1.ItemsSource)`, which is exactly the
+        // code the compiler refused — and it kept doing it, because nothing said the shape had changed.
+        const t = tableOf.get(name);
+        lines.push(
+            `- \`${name}\` is a **generated class of static methods**, not an ADO.NET \`DataSet\` and not a `
+            + 'container of tables. It has no table or row *properties*: there is no '
+            + (t
+                ? `\`${name}.${t}\`, no nested \`${name}.${t}DataTable\` and no nested \`${name}.${t}Row\`; `
+                : 'nested `…DataTable` or `…Row` type; ')
+            + 'every table has a top-level row class (named below) and the generated helpers '
+            + '`Load…()`, `Save…(rows)`, `Wire…Grid(grid, rows)`, `Add…Row`, `Edit…Row`, `Delete…Row`, `Build…Columns(grid)`.'
+        );
     }
     for (const g of ctx.grids) {
         lines.push(
             `- \`${g.gridName}\` is bound to the \`${g.tableName}\` table of ${g.datasetClass}; each item in it is a `
-            + `\`${g.rowType}\` with these members: ${g.columns.map((c) => `\`${c}\``).join(', ')}.`
+            + `\`${g.rowType}\` with these members: ${g.columns.map((c) => `\`${c}\``).join(', ')}. `
+            + `The rows it shows **are** what \`${g.gridName}.ItemsSource\` holds — read them from there (that is `
+            + `the \`ObservableCollection<${g.rowType}>\` the generated \`Load${g.tableName}()\` returns), never by `
+            + `casting that collection to the DataSet class and never through \`.Items\` (that name is WPF's).`
         );
     }
     for (const f of ctx.followers) {

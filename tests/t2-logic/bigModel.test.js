@@ -123,9 +123,20 @@ module.exports = async (t) => {
                 'and once, with the same loop as the retry — never a loop of offers');
             t.ok(/cfg\.get<string>\('assistant\.backend', 'off'\) !== 'bundled'\) return undefined;/.test(panel), 'wiring',
                 'only when the small local model is what failed — an external or big model is already in use');
-            t.ok(/const resolved = await resolveLlamaUnit\(\);[\s\S]{0,200}unitText: resolved\.unit \? llamaUnitText\(resolved\.unit\)/.test(panel), 'wiring',
+            t.ok(/const resolved = await resolveLlamaUnit\(\);[\s\S]{0,700}unitIsActive\(resolved\.unit\)[\s\S]{0,300}unitText: resolved\.unit \? llamaUnitText\(resolved\.unit\)/.test(panel), 'wiring',
                 'the unit is the setting first and discovery second — never this machine\'s name hardcoded in code');
-            t.ok(/showWarningMessage\([\s\S]{0,400}'Use the 30B', 'No'/.test(panel), 'wiring',
+            t.ok(/freeGb,\s*\n\s*running\s*\n\s*\}\)/.test(panel), 'wiring',
+                'a unit that is already up is passed as running, so the offer does not ask for memory it has spent');
+            t.ok(/\(running[\s\S]{0,500}which is already running/.test(panel), 'wiring',
+                'and the question then says it is already running instead of promising a minute of loading ' +
+                "(measured 2026-09-17: the offer refused itself twice, with the 30 B up and resident in swap)");
+            const llama = read('src/llamaService.ts');
+            t.ok(/export async function unitIsActive\(unit: string\)[\s\S]{0,180}systemctl', \['--user', 'is-active'/.test(llama), 'wiring',
+                'and is-active is asked in one place, so "already up" means the same thing to the start path and ' +
+                'to the offer');
+            t.ok(/const active = await unitIsActive\(unit\);/.test(llama), 'wiring',
+                'the start path uses it too — a unit that is active but silent is the case that needed restarting');
+            t.ok(/showWarningMessage\([\s\S]{0,1200}'Use the 30B', 'No'/.test(panel), 'wiring',
                 'the user is asked, with the cost in the question, before anything is started');
             t.ok(/\/proc\/meminfo[\s\S]{0,200}MemAvailable/.test(panel), 'wiring',
                 'free memory is read as MemAvailable — MemFree would refuse an offer that fits, because a machine '

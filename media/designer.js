@@ -92,6 +92,7 @@
         settingsBadges: $('settingsBadges'),
         settingsSave: $('settingsSave'),
         settingsCancel: $('settingsCancel'),
+        settingsBusy: $('settingsBusy'),
         aiEnabled: $('aiEnabled'),
         aiShowDiff: $('aiShowDiff'),
         aiShowDiffHint: $('aiShowDiffHint'),
@@ -1036,7 +1037,7 @@
     // the same `codeSettings` message) reopened the panel a moment after the user closed it — the flicker
     // they reported on 2026-09-15. Opening is a user action; filling is not.
     let settingsPending = false;
-    function closeSettings() { els.settingsModal.hidden = true; settingsOpen = false; settingsPending = false; }
+    function closeSettings() { els.settingsModal.hidden = true; settingsOpen = false; settingsPending = false; if (els.settingsBusy) els.settingsBusy.hidden = true; }
     function fillSettings(msg) {
         const mode = String(msg && msg.mode ? msg.mode : 'onReturn');
         els.settingsModes.innerHTML = '';
@@ -1534,6 +1535,10 @@
     function beginAiStateWait() {
         aiStateWait += 1;
         setAiProgress(AI_WAIT_TEXT);
+        // The same wait, where the user asked to see it (2026-09-17): the ⚙ dialog itself cannot be complete the
+        // moment it opens, and a button row that is already usable while the fields are still arriving made the
+        // panel look broken. It is cleared by the state that follows, and by closing the dialog.
+        if (els.settingsBusy) els.settingsBusy.hidden = false;
         armAiWatchdog();
     }
     function requestAiState(options) {
@@ -1541,6 +1546,7 @@
         post({ type: 'aiState', rescan: !!(options && options.rescan) });
     }
     function endAiStateWait() {
+        if (els.settingsBusy) els.settingsBusy.hidden = true;
         if (!aiStateWait) return;
         aiStateWait = 0;
         clearTimeout(aiWatchdog);

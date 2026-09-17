@@ -46,7 +46,7 @@ import {
     type PanelAiRequest,
     type PanelState
 } from './aiPanel';
-import { startLlamaServerByChoice, stopLlamaServerConfirmed, resolveLlamaUnit } from './llamaService';
+import { startLlamaServerByChoice, stopLlamaServerConfirmed, resolveLlamaUnit, unitIsActive } from './llamaService';
 
 const DEFAULT_SIZE = { width: 800, height: 450 };
 
@@ -5096,11 +5096,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // llama-server. Naming this machine's unit in code would quietly limit the step-up to one machine
         // (2026-09-17).
         const resolved = await resolveLlamaUnit();
+        // A unit that is already up has already answered the "will it fit?" question by existing. Leaving this
+        // out made the offer refuse itself on this machine (2026-09-17): the 30 B was running — resident in
+        // swap — so MemAvailable read 16 GB and the offer said "would not fit" twice, at the exact moment the
+        // user was pressing it expecting something to happen.
+        const running = resolved.unit ? await unitIsActive(resolved.unit) : false;
         const offer = bigModelOffer({
             unit: resolved.unit,
             unitText: resolved.unit ? llamaUnitText(resolved.unit) : undefined,
             localBytes,
-            freeGb
+            freeGb,
+            running
         });
         if (!offer.ok) {
             aiLog(this.context, `30B step-up not offered: ${offer.why}`);
@@ -5110,8 +5116,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const pick = await vscode.window.showWarningMessage(
             `The local 7B model could not fix everything — ${report.remaining.length} error(s) are left.\n\n`
             + `Try once more with your 30B model?\n\n`
-            + `It unloads the 7B, starts ${offer.unit} and loads ${offer.sizeGb} GB: about a minute. `
-            + `This machine has ${Math.round(freeGb)} GB free right now.`,
+            + (running
+                // A unit that is up needs no start and no wait — and saying "about a minute" here would be a
+                // promise the run itself contradicts.
+                ? `It unloads the 7B and uses ${offer.unit}, which is already running — about as long as the last attempt.\n\n`
+                + `If it has been idle for a long time its weights may be in swap; the extension restarts it `
+                + `in that case, so this can take a minute after all.`
+                : `It unloads the 7B, starts ${offer.unit} and loads ${offer.sizeGb} GB: about a minute. `
+                + `This machine has ${Math.round(freeGb)} GB free right now.`),
             { modal: true }, 'Use the 30B', 'No'
         );
         if (pick !== 'Use the 30B') {
@@ -6803,6 +6815,10 @@ ${publishButtons}      <span class="sep"></span>
         </div>
 
         <div class="modal-buttons">
+          <!-- The dialog cannot be complete the moment it opens: the AI section is filled from the extension's
+               own state (and, when LM Studio is installed but not running, that state can take seconds). Saying
+               so beats a dialog whose fields arrive later, which reads as a broken panel (asked 2026-09-17). -->
+          <span id="settingsBusy" class="modal-busy" hidden>Loading…</span>
           <button id="settingsCancel" type="button" class="modal-btn">Cancel</button>
           <button id="settingsSave" type="button" class="modal-btn primary">Save</button>
         </div>

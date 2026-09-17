@@ -280,8 +280,17 @@ module.exports = async (t) => {
         // assertions name the invariants rather than one code shape: a runtime that is already up is used,
         // and nothing is ever STARTED for a repair — `effectiveConfig` (which does start the built-in runtime)
         // must not appear in this path at all.
-        t.ok(/if \(cfg\.backend === 'bundled' && bundledRuntimeRunning\(\)\.running\) return cfg;/.test(ui), 'ai-repair',
-            'the built-in runtime answers only when it is already running');
+        // 2026-09-17, later the same day: returning `cfg` unchanged was a bug, not a shortcut. `cfg.endpoint`
+        // is the *external* setting — on this machine a dead port (37857) while the built-in runtime answered on
+        // 33709, so every repair request failed with "No server answered … is the local model server running?"
+        // while the status panel said the runtime was fine. The address the request uses is part of the guard.
+        const guard = ui.slice(ui.indexOf('async function repairRuntime'), ui.indexOf('export async function repairWithAI'));
+        t.ok(/const bundled = bundledRuntimeRunning\(\);[\s\S]{0,400}?return \{ \.\.\.cfg, endpoint: bundled\.endpoint \};/.test(guard),
+            'ai-repair', 'the built-in runtime answers with its OWN address — never the endpoint setting');
+        t.equal(/return cfg;/.test(guard), false, 'ai-repair',
+            'and the shape that handed the config back unchanged (so the request went to a dead port) is gone');
+        t.ok(/nothing of ours is up, but a llama-server is answering on/.test(guard), 'ai-repair',
+            'a server found by probing is named in the log, and a mismatch with the setting is reported before the request');
         t.ok(/if \(cfg\.backend === 'bundled'\) return undefined;/.test(ui), 'ai-repair',
             'and is never started just to repair something');
         t.equal(/effectiveConfig\(cfg\)/.test(ai), false, 'ai-repair',
@@ -296,6 +305,10 @@ module.exports = async (t) => {
             'and an external server is probed before it is used at all');
         t.ok(/opts\.quiet[\s\S]{0,300}?return `\$\{target\.kind === 'replace' \? 'Rewrote' : 'Added'\} \$\{name\}\(\)`/.test(ui),
             'ai-repair', 'and the quiet branch reports success without the "Build to verify" prompt');
+        // A failed assist used to be the one path with nothing in the log file: "No server answered" was shown
+        // and never recorded, so the address it had tried could only be guessed (2026-09-17).
+        t.ok(/AI assist failed: \$\{message\} — the request went to \$\{request\.endpoint\} \(backend \$\{request\.backend\}\)/.test(ui),
+            'ai-repair', 'a failed request is logged with the address it actually used');
         t.equal(/showWarningMessage\(\\`\$\{written\.message\}/.test(ui.slice(ui.indexOf('if (opts.quiet)'), ui.indexOf('if (opts.quiet)') + 400)), false,
             'ai-repair', 'with nothing shown to the user for a repair they did not ask for');
 

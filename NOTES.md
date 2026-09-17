@@ -3090,3 +3090,76 @@ stops the user's 19 GB server is not a test.
 - **Machine state:** the four dropped models' weights were deleted (22 GB → 4.4 GB) — one file left, and it is
   the one both entries use.
 
+### §135 — an afternoon of "chaos", read out of the logs (2026-09-17, releases 0.10.6–0.10.9)
+
+The user's report, in full: *"Chaos! Please look at my test app. The picker is listin both the vulcan and
+non-valcon is pinned. The C# server is not starting, the llama 30B is not starting."* — and then, after the
+first fix: *"AI assist failed: No server answered"*, and later: *"it takes several seconds to load fully,
+display a 'Loading...' warning to the left of the 'Cancel' and 'Save' button"*, and *"could not fix the error
+which is reported as: CS1061 'MyDataSet' does not contain a definition for 'Customers'"*. Five real bugs came
+out of it, and **four of them were found by reading a file, not by guessing**: `logs/ai.log`, the process list,
+and the generated code.
+
+- **Both entries pinned (0.10.6).** The two spec entries share one `.gguf`, and `isPinned` compared only
+  `modelPath.endsWith(spec.fileName)` — so the CPU entry matched whenever the GPU one did. The marker (and
+  `currentSelection`) now require the entry to be *the configured build* as well: `mine && backend ===
+  'bundled' && …`. The generalisable rule: **when two options share a file, the file cannot be the identity.**
+- **`systemctl start` is a no-op on an active unit (0.10.6)** — and "active" is a state a llama-server can sit
+  in while being completely unusable. This machine's 30B had been `active (running) since Tue` with
+  `Memory: 50.4M (peak: 17.9G, swap: 1.7G)`: weights swapped out, `/props` silent, `Recv-Q 513`, every request
+  hanging. `startViaUnit` now waits `QUICK_ANSWER_MS` (25 s) and, if the unit is active but not answering,
+  **restarts** it — that is the command that puts the weights back in RAM. Fixed on the machine the same way
+  (restart → 11.8 GB resident → `{"content":"ready"}` in 3.2 s). **A status of `active` is not evidence that a
+  service works.**
+- **The step-up refused itself (0.10.6).** `offerBigModelRetry` calls `bigModelOffer` without `running`, so a
+  30B that was *already up* — in swap, which depresses `MemAvailable` — was refused twice with *"16.3 GB would
+  not fit in the 16 GB that would be free"*. It now asks `unitIsActive(resolved.unit)` first; a unit that is up
+  has already answered the memory question by existing, and the modal says *already running* instead of
+  promising a minute of loading.
+- **The request went to the wrong address (0.10.7).** `repairRuntime` returned `cfg` **unchanged** for
+  `backend: bundled`; `cfg.endpoint` is the *external* setting, and this machine's held
+  `http://127.0.0.1:37857/v1` — a dead port from an earlier llama-server experiment — while the bundled runtime
+  answered on `33709` (`ss` showed `ModelHost … pid=843333` listening; a completion returned `"Ready"`). Every
+  repair therefore failed with *"No server answered — is the local model server running?"* while the status
+  panel told the truth. The guard now returns `{ ...cfg, endpoint: bundled.endpoint }` and logs when it
+  overrides the setting.
+- **A failed assist left no trace (0.10.7).** `aiLog(context, …)` wrote `logs/ai.log`, but the whole AI client
+  calls plain `log()` — the Output channel only. The file was **766 lines with no `AI request:` line and no
+  failure line in it**, in the very file a report is checked against. `logger.ts` grew `mirrorLogTo(file)` +
+  `appendToMirror` (same 512 KB cap), `aiLog` just points the sink at the log file, and a failure records
+  `AI assist failed: … — the request went to <address> (backend <x>)`. **One sink, or "which log do I read?"
+  has no answer.**
+- **"GPU (Vulkan)" ran entirely on the CPU (0.10.8).** `ps` for *our* process showed `--gpu-layers 0`: only
+  `max` maps to a layer count in `sidecarGpuLayers`, and the field said `auto`. Both the picker entry and
+  `Native backend: Vulkan build — AMD Radeon 760M` were true and misleading at once. The entry now decides the
+  offload beside the build (`max` for GPU, `off` for CPU) **and** the load in progress uses it — the webview had
+  sent the old field a moment earlier, so reading it back would have offloaded nothing until the *next* load. A
+  model the user *added* keeps their own field: we do not know its size, and `max` for a 16 GB model on
+  shared-memory GPU is the mistake that setting exists to avoid.
+- **The ⚙ dialog's slowness was a 20-second timeout, twice per state (0.10.9).** `LM Studio: … (asked in
+  20025 ms)` appears on every open/save/focus: `discover()` asked `lms ls`/`ps`/`server status` with `run()`'s
+  20 s default, and `lms` starts LM Studio's *service* on the way. `discover({ maxAgeMs, cliTimeoutMs })` with
+  an opt-in cache (the load/import flows deliberately uncached) plus `CliResult.timedOut` — so a killed helper
+  is reported as an incomplete answer rather than as *no models* — and `panelState` asks with
+  `{ maxAgeMs: 15000, cliTimeoutMs: 3000 }` while *Refresh list* still asks in full. The marker the user asked
+  for rides the wait that already existed (`beginAiStateWait`/`endAiStateWait`): **one lifecycle, not two** — a
+  second "loading" flag would eventually disagree with the first.
+- **The facts block was the CS1061 (0.10.9).** Their `MainWindow.axaml.cs` held
+  `((MyDataSet.CustomersDataTable)DataGrid1.ItemsSource).Cast<MyDataSet.CustomersRow>()` — the **nested typed
+  DataSet** shape an *earlier* generator produced, while the current generator emits a helper class
+  (`LoadCustomers()`, `WireCustomersGrid(…)`, `GetCustomers()`) with a **top-level** `CustomersRow` (verified in
+  their own generated `MyDataSet.cs`). The AI rewrote that method three times (16:56, 16:59, 17:01 — 512
+  characters, `finish_reason: stop`, applied) and kept the old shape **because the prompt said "the form's data
+  comes from the generated DataSet class"** — which makes `MyDataSet.Customers` look reasonable. The facts now
+  state what the class is, name the members that do **not** exist, list the real helpers, and say the rows of a
+  grid **are** what `ItemsSource` holds (never `.Items`, WPF's name). Proof, from the same log twenty minutes
+  later: prompt 3044 → **3710 characters**, answered by the **bundled Vulkan runtime** (`the built-in runtime is
+  on http://127.0.0.1:46433/v1; the endpoint setting says …:8080 — using the runtime's own address`), and the
+  user's file then read `((ObservableCollection<CustomersRow>)DataGrid1.ItemsSource).FirstOrDefault(…)`. **A
+  prompt that describes a data model is a specification: describe the one that exists.**
+- **Method note:** every one of these was decided from an artefact — a log line, `ss`/`ps` output, the generated
+  file, the machine's own settings JSON — and the two that were *not* reproducible from the report (the
+  endpoint, the offload) were settled by asking the machine. The one thing that made the last two cost an hour
+  each was missing evidence, which is why the log now mirrors everything and names addresses.
+- Suite 4829 → **4868**, packaged as `0.10.9` for the Marketplace upload.
+

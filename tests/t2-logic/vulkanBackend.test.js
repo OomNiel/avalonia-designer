@@ -59,8 +59,9 @@ module.exports = async (t) => {
 
         const cfg = normalizeAssistantConfig({ backend: 'bundled', bundledBackend: 'vulkan' });
         t.equal(cfg.bundledBackend, 'vulkan', 'config', 'the config carries the choice to the process');
-        t.equal(normalizeAssistantConfig({ backend: 'bundled' }).bundledBackend, 'cpu', 'config',
-            'a configuration that never mentions it runs the CPU build — the behaviour of every version before this one');
+        t.equal(normalizeAssistantConfig({ backend: 'bundled' }).bundledBackend, 'vulkan', 'config',
+            'a configuration that never mentions it runs the GPU build — the picker\'s first entry since 0.10.5 ' +
+            '(asked 2026-09-17: Vulkan measured 25% faster and was right on both builds, so it is what people get)');
         t.equal(normalizeAssistantConfig({ bundledBackend: 7 }).bundledBackend, 'cpu', 'config',
             'a wrong type is the CPU build rather than a crash');
     }
@@ -217,10 +218,15 @@ module.exports = async (t) => {
         const props = manifest.contributes.configuration.properties;
         const setting = props['avaloniaDesigner.assistant.bundledBackend'];
         t.ok(!!setting, 'manifest', 'the setting exists');
-        t.equal(setting.enum, ['cpu', 'vulkan'], 'manifest', 'with exactly two values');
-        t.equal(setting.default, 'cpu', 'manifest', 'and the CPU build is the default — nobody is moved onto a GPU build');
-        t.ok(/falls back to the CPU/.test(setting.enumDescriptions[1]), 'manifest',
+        t.equal(setting.enum, ['vulkan', 'cpu'], 'manifest', 'with exactly two values, the GPU one first');
+        t.equal(setting.default, 'vulkan', 'manifest',
+            'and the GPU build is the default since 0.10.5 (asked 2026-09-17) — the picker\'s first entry and the ' +
+            'setting agree, so an unconfigured install and the entry it looks at cannot disagree');
+        t.ok(/falls back to the CPU/.test(setting.enumDescriptions[0]), 'manifest',
             'the Vulkan entry says the fallback exists, where the choice is made');
+        t.ok(/no usable device|falls back to the CPU/.test(setting.markdownDescription), 'manifest',
+            'and the setting itself repeats that asking is a request, not a guarantee — a machine without Vulkan ' +
+            'must not be left believing it has been moved onto a backend that cannot run');
         t.ok(/does not affect LM Studio or your own `llama-server`/.test(setting.markdownDescription), 'manifest',
             'and that it is about the built-in runtime only — the other two runtimes are not this extension\'s build');
         t.equal(props['bundledBackend'], undefined, 'manifest',
@@ -241,7 +247,7 @@ module.exports = async (t) => {
         const ui = read('src/assistantUi.ts');
         t.ok(/export async function chooseBundledBackend\(\)/.test(ui), 'wiring',
             'the flow lives with the other palette flows');
-        t.ok(/bundledBackend: sidecarBackend\(cfg\.get<string>\('bundledBackend', 'cpu'\)\)/.test(ui), 'wiring',
+        t.ok(/bundledBackend: sidecarBackend\(cfg\.get<string>\('bundledBackend', 'vulkan'\)\)/.test(ui), 'wiring',
             'the one config reader every AI path shares knows the setting');
         t.ok(/if \(!pick \|\| pick\.value === current\) return/.test(ui), 'wiring', 'choosing what is already set changes nothing');
         t.ok(/const wasRunning = bundledRuntimeRunning\(\)\.running;/.test(ui), 'wiring',
@@ -253,7 +259,7 @@ module.exports = async (t) => {
 
         // The answer comes from the runtime, which is the only way the panel can say "max" is or is not a promise.
         const panel = read('src/aiPanel.ts');
-        t.ok(/bundledBackend: sidecarBackend\(cfg\.get<string>\('bundledBackend', 'cpu'\)\)/.test(panel), 'wiring',
+        t.ok(/bundledBackend: sidecarBackend\(cfg\.get<string>\('bundledBackend', 'vulkan'\)\)/.test(panel), 'wiring',
             'the ⚙ panel state carries the choice');
         t.ok(/bundledBackend: SidecarBackend;/.test(panel), 'wiring', 'as a typed field of that state');
         const js = read('media/designer.js');
@@ -283,12 +289,33 @@ module.exports = async (t) => {
         // Asserted against the COMPILED object literal, not just the interface: the webview reads this field
         // on every state, and "the type has it" is not the same claim as "the object carries it".
         const compiled = read('out/aiPanel.js');
-        t.ok(/bundledBackend:[\s\S]{0,90}?sidecarBackend[\s\S]{0,60}?'bundledBackend', 'cpu'/.test(compiled), 'state',
+        t.ok(/bundledBackend:[\s\S]{0,90}?sidecarBackend[\s\S]{0,60}?'bundledBackend', 'vulkan'/.test(compiled), 'state',
             'the state the ⚙ panel receives carries the choice');
         // `panelState()` itself is deliberately NOT called here: it runs the LM Studio CLI and probes the local
         // ports, so its output depends on what this machine happens to be running — which is not a test of this
         // code (the same reason 0.9.42 patches that probe instead of depending on it).
         t.ok(/export async function panelState/.test(read('src/aiPanel.ts')), 'state',
             'the function is still the one state builder — the field rides along with everything else');
+    }
+
+    // ---------- 8) the entry decides the offload too (asked 2026-09-17) ----------
+    {
+        const panel = read('src/aiPanel.ts');
+        // What this pins, measured on the user's machine the same evening: ModelHost's own command line read
+        // `--gpu-layers 0` while the picker said "GPU (Vulkan)" and the status said "Native backend: Vulkan
+        // build — AMD Radeon 760M". Both were true and the work was 100% CPU, because `sidecarGpuLayers` turns
+        // only `max` into a layer count and everything else — `auto` included — into 0.
+        t.ok(/const wantedGpu = spec\.backend \? \(spec\.backend === 'cpu' \? 'off' : 'max'\) : undefined;/.test(panel), 'entry',
+            'the shipped GPU entry asks for every layer and the CPU entry for none');
+        t.ok(/if \(wantedGpu\) \{[\s\S]{0,400}?cfg\.update\('loadGpu', wantedGpu/.test(panel), 'entry',
+            'and that is written to the setting the runtime is started from');
+        t.ok(/GPU offload \$\{beforeGpu\} → \$\{wantedGpu\} \(from the entry\)/.test(panel), 'entry',
+            'with the change logged, so "why is this running on the CPU?" is answerable afterwards');
+        t.ok(/startBundled\(wantedGpu \? \{ \.\.\.request, gpu: wantedGpu \} : request/.test(panel), 'entry',
+            'the load in progress uses the entry\'s answer too — the webview sent the old field a moment earlier, '
+            + 'so reading it back would have offloaded nothing until the next load');
+        t.ok(/guessing `max` for a 16 GB[\s\S]{0,90}?model on a shared-memory GPU/.test(panel), 'entry',
+            'while a model the user added keeps their own field: its size is unknown to us, and `max` for a '
+            + '16 GB model on a shared-memory GPU is the mistake that setting exists to avoid');
     }
 };

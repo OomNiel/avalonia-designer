@@ -48,7 +48,14 @@ module.exports = async (t) => {
     // ---------- 1) the text ----------
     {
         const text = facts.describeDataSetFacts(CONTEXT);
-        t.ok(/DataSet class `MyDataSet`/.test(text), 'facts', 'the DataSet class is named');
+        t.ok(/`MyDataSet` is a \*\*generated class of static methods\*\*, not an ADO\.NET `DataSet`/.test(text), 'facts',
+            'the class is named, and named as what it IS — the 2026-09-17 CS1061 came from calling it a DataSet');
+        t.ok(/no `MyDataSet\.Customers`, no nested `MyDataSet\.CustomersDataTable` and no nested `MyDataSet\.CustomersRow`/.test(text),
+            'facts', 'with the exact members that do not exist, because a model kept writing them anyway');
+        t.ok(/The rows it shows \*\*are\*\* what `DataGrid1\.ItemsSource` holds/.test(text), 'facts',
+            'and where the rows of a grid actually are');
+        t.ok(/never through `\.Items` \(that name is WPF's\)/.test(text), 'facts',
+            'including the WPF name, so the same mistake cannot come back through the other door');
         t.ok(/`DataGrid1` is bound to the `Customers` table/.test(text), 'facts', 'the grid and its table');
         t.ok(/`CustomersRow`/.test(text), 'facts', 'with the row type, which is what a row IS');
         t.ok(/`Id`, `Name`, `Image`/.test(text), 'facts', 'and the members a row has, so nothing is invented');
@@ -120,7 +127,10 @@ module.exports = async (t) => {
         // The guard: three runtimes, and every one of them checked without starting anything.
         const guard = ui.slice(ui.indexOf('async function repairRuntime'), ui.indexOf('function formFactsFor'));
         t.ok(guard.length > 400, 'guard', 'repairRuntime was found');
-        t.ok(/bundledRuntimeRunning\(\)\.running/.test(guard), 'guard', 'the built-in runtime is asked whether it runs');
+        t.ok(/const bundled = bundledRuntimeRunning\(\);[\s\S]{0,160}?bundled\.running && bundled\.endpoint/.test(guard), 'guard',
+            'the built-in runtime is asked whether it runs — and, when it does, for its own address: the endpoint '
+            + 'setting belongs to the external servers and on 2026-09-17 pointed at a dead port while the runtime '
+            + 'answered elsewhere, which is what made every repair request say "No server answered"');
         t.ok(/ownLlamaServerStatus\(\)/.test(guard), 'guard', 'a server this window started is used');
         t.ok(/await findRunningLlamaServer\(cfg\.endpoint\)/.test(guard), 'guard',
             'and so is one that answers without us — the user\'s own service, which is the case that failed');

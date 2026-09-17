@@ -123,7 +123,7 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.5`**, so the command above installs it; add `--force` to
+The current version is **`0.10.9`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -135,7 +135,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.10.5` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.10.9` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -917,6 +917,14 @@ column's value (a plain value, not a row), and which column an Image shows. It i
 member and not to assume a control holds something other than what it says. (Added in `0.10.2`: without it, a
 ComboBox bound to the `Name` column was handed a lookup by row and the model invented `DataGrid.Items`.)
 
+**Since `0.10.9` the generated DataSet is described as what it is**, because that was the one fact that was
+wrong: the DataSet class is a set of **static helpers** with a **top-level** row class per table
+(`CustomersRow`), not the nested typed `DataSet` an earlier generator produced — so requests now name the
+members that do **not** exist (`MyDataSet.Customers`, `MyDataSet.CustomersDataTable`, `MyDataSet.CustomersRow`),
+and state that a grid's rows **are** what `ItemsSource` holds (never `.Items`, which is WPF's name). On this
+test project the assistant had rewritten the same method three times with the old shape and been met by
+`CS1061` every time; with the facts corrected, one run of the Vulkan-built 7B fixed it.
+
 **Turning it on — one command.** Run **AI: Choose a Local Model…** from the Command Palette. The list
 shows every chat model **LM Studio** already has on disk — its size, its parameter count, and whether it
 is loaded right now — and picking one does the rest:
@@ -944,7 +952,10 @@ llama-server** (the `llama-server` you installed yourself — see below) and **A
 (Ollama, or a `llama-server` that is already running).
 
 **Turning it on — in the designer's own Settings panel.** Click **⚙ Settings** in the designer toolbar. The
-panel holds the code-check choices and, below them, an **AI assist** section:
+panel holds the code-check choices and, below them, an **AI assist** section. While that section is still being
+fetched it says **`Loading…`**, to the left of **Cancel** and **Save** (`0.10.9`) — the first look at your
+machine's model list of a session takes a moment (LM Studio's own helper starts its service on the way), and an
+empty dropdown should never look like a broken panel:
 
 1. **Switch it on.** While it is off, the AI commands are not offered anywhere (the menu entries are hidden,
    not just refused) and the model is unloaded — turning this off really does free the memory.

@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox — with an optional local AI assist that writes handlers and repairs code from a sentence, on your own machine.",
-    "version": "0.10.5",
+    "version": "0.10.9",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -547,15 +547,15 @@
                 "avaloniaDesigner.assistant.bundledBackend": {
                     "type": "string",
                     "enum": [
-                        "cpu",
-                        "vulkan"
+                        "vulkan",
+                        "cpu"
                     ],
                     "enumDescriptions": [
-                        "CPU build — the default: works everywhere, needs nothing from the GPU.",
-                        "Vulkan build — puts model layers on the GPU. Downloaded the first time the runtime is built (~130 MB). llama.cpp falls back to the CPU by itself when Vulkan cannot be used."
+                        "Vulkan build — the default since 0.10.5: the picker's first entry is the GPU one. Downloaded the first time the runtime is built (~130 MB). llama.cpp falls back to the CPU by itself when Vulkan cannot be used.",
+                        "CPU build — works everywhere, needs nothing from the GPU. The fallback when a Vulkan load dies, and one click to keep it that way."
                     ],
-                    "default": "cpu",
-                    "markdownDescription": "Which llama.cpp build the **built-in runtime** runs (the extension's own local model server). Only the GPU-offload field matters after this: the CPU build has no GPU backend, so `max` there offloads nothing — the ⚙ Settings panel says so. This does not affect LM Studio or your own `llama-server`. The command **AI: Built-in Runtime Backend…** sets it too."
+                    "default": "vulkan",
+                    "markdownDescription": "Which llama.cpp build the **built-in runtime** runs (the extension's own local model server). Written for you when you pick one of the two picker entries, so this is normally not something to set by hand. Only the GPU-offload field matters after this: the CPU build has no GPU backend, so `max` there offloads nothing — the ⚙ Settings panel says so. **Asking for Vulkan is a request, not a guarantee:** a machine with no usable device runs the CPU libraries instead, the status report names what is actually running, and a load that dies is retried once on the CPU. This does not affect LM Studio or your own `llama-server`."
                 },
                 "avaloniaDesigner.assistant.loadContextLength": {
                     "type": "number",

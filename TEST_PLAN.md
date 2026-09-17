@@ -1,6 +1,6 @@
 # Test Script Plan — Avalonia Designer Extension
 
-Date: 2026-08-30 · Status: **PREPARED — not yet run end-to-end** (fast layers smoke-tested green)
+Date: 2026-09-17 · Status: **full suite green on this machine — 4,868 passed / 0 failed / 0 skipped (~39 s)**
 
 > Update 2026-08-30: user approved **Option (a) — full Avalonia.Headless driver** for T4, and
 > instructed to *prepare the script only* (run at a later stage) and keep it easily extensible.
@@ -262,6 +262,33 @@ Each step ends with the log green before the next begins.
   bundled entries come first and `"let the server decide"` leads the rest; `hubModels.test.js` asserts the fold
   (every non-bundled choice carries `group: 'Advanced…'`, and the optional `backend` field is the one shape
   difference an added model does not have).
+
+Each step ends with the log green before the next begins.
+
+### 0.10.9 (2026-09-17) — the picker, the logs, the offload, the loading marker, the facts
+
+- `tests/t2-logic/aiPanel.test.js` — the pin marker with two entries over one file (exactly one is marked, and
+the one for the configured build; the selection follows it in both directions), the ⚙ dialog's `Loading…` marker
+(shown by `beginAiStateWait`, hidden by the state that arrives **and** by closing the dialog, styled with
+`margin-right: auto` so a right-aligned button row keeps its buttons still), and the discovery cache the marker
+was really about: `discover({ maxAgeMs, cliTimeoutMs })`, `panelState`'s `{ 15000, 3000 }` against *Refresh
+list*'s `{ 0, 20000 }`, and `CliResult.timedOut` so a killed helper is logged as an incomplete answer rather
+than as "no models".
+- `tests/t2-logic/llamaService.test.js` — a unit that is `is-active` but silent is **restarted** (the state that
+made *"the llama 30B is not starting"* true while systemd said `active`), with `unitIsActive` asked in one place.
+- `tests/t2-logic/bigModel.test.js` — the step-up offer receives the unit's own activity (`running`), so an
+already-running 30B is not refused for memory it has spent, and the question says so instead of promising a
+minute of loading.
+- `tests/t2-logic/repairLoop.test.js` / `tests/t2-logic/dataSetFacts.test.js` — the repair guard returns the
+runtime's **own** endpoint rather than `assistant.endpoint` (the dead port that produced *"No server answered"*
+while the runtime was fine), a failure is logged with the address it used, and the DataSet facts name the class
+as it is generated (static helpers, top-level row classes, the members that do not exist, `ItemsSource` rather
+than `.Items`).
+- `tests/t2-logic/vulkanBackend.test.js` — the entry decides the offload as well as the build (`max` / `off`),
+written to the setting *and* used by the load in progress; Vulkan is the default in the manifest, in every
+fallback and in the normaliser.
+- `tests/t3-webview/designer.test.js` — `settingsBusy` joins the DOM ids the harness builds, so the marker cannot
+be renamed out from under the webview.
 
 Each step ends with the log green before the next begins.
 

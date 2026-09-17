@@ -6,11 +6,70 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.10.2` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.10.9` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.10.9] - 2026-09-17 · *the picker tells the truth, the logs have the address in them, and the assistant
+knows what the generated DataSet actually is*
+
+Supersedes `0.10.6`, `0.10.7` and `0.10.8` — internal builds from the same afternoon, kept out of the
+Marketplace on purpose — and carries everything from `0.10.0` onwards. Most of this section is the answer to a
+single afternoon of the user testing their own app: *"Chaos! Please look at my test app … The C# server is not
+starting, the llama 30B is not starting"*, and then *"AI assist failed: No server answered"*.
+
+**Fixed**
+
+- **Both 7B entries called themselves pinned.** They share one `.gguf`, and the marker compared only the file
+  name, so *"the picker is listing both the vulcan and non-valcon is pinned"*. The marker and the selection now
+  use the **configured build** (`assistant.bundledBackend`), so exactly one entry is pinned and picking
+  *CPU only* no longer leaves the picker pointing at the GPU entry.
+- **The 30B "would not start" because `systemctl start` is a no-op on an active unit.** The unit had been
+  `active (running)` for two days with its weights swapped out (`Memory: 50.4M, peak 17.9G, swap 1.7G`), `/props`
+  never answered, and every request hung — `start` reported success and changed nothing. `Start server` now
+  waits 25 s and, when the unit is active but silent, **restarts** it (which is what reloads the weights), then
+  says so while it does. The step-up offer asks the same question first, so a 30B that is already up is no
+  longer refused for memory it has spent: *"16.3 GB would not fit"* — printed twice while the 30B sat in swap —
+  is gone.
+- **Requests went to `assistant.endpoint` even when they should go to the built-in runtime.** That setting
+  belongs to external servers, and on this machine it pointed at a dead port from an earlier experiment
+  (`37857`) while the runtime answered on `33709`: the status panel was right and every repair failed with
+  *"No server answered — is the local model server running?"*. The repair guard now hands back the runtime's
+  **own address**, and logs it whenever it differs from the setting.
+- **A failed assist left nothing behind.** `aiLog` wrote `logs/ai.log` while the AI client called plain `log`
+  (Output channel only), so the file held 766 lines of panel chatter and **not one** request or failure line —
+  in the file a bug report is checked against. Every line is mirrored into it now, and a failure records the
+  address it used.
+- **"GPU (Vulkan)" ran on the CPU.** ModelHost's own command line said `--gpu-layers 0` while the picker and
+  the status line both said GPU, because only `max` maps to a layer count. The entry now decides the offload as
+  well as the build — `max` for the GPU entry, `off` for the CPU one — and the load in progress uses it, not the
+  field the panel sent a moment earlier. A model you added yourself keeps your own GPU field: its size is
+  unknown to us, and `max` for a 16 GB model on shared memory is the mistake that setting exists to avoid.
+- **The assistant kept writing an API that no longer exists** (CS1061 *"'MyDataSet' does not contain a
+  definition for 'Customers'"*). The facts it is given said *"the form's data comes from the generated DataSet
+  class"* — enough to keep writing `((MyDataSet.CustomersDataTable)DataGrid1.ItemsSource)`, the nested shape an
+  **earlier** generator produced. The facts now state what the class is (static helpers, a **top-level** row
+  class per table), name the members that do **not** exist, and say that a grid's rows **are** what
+  `ItemsSource` holds — never `.Items`, which is WPF's name. Verified on the user's own app: the Vulkan-built 7B
+  then fixed the file the compiler had been complaining about.
+
+**Changed**
+
+- **Opening ⚙ Settings says `Loading…`**, to the left of Cancel and Save, while the AI section is still being
+  fetched — the report was *"it takes several seconds to load fully"*, and it was worse than that: the state
+  path asked LM Studio's `lms` helper with the **20-second** default timeout, twice per state, on every open,
+  save and focus. An answer is now reused for 15 s and `lms` is given 3 s in that path; *Refresh list*, the
+  load and the import flows still ask in full. A helper killed at the timeout is logged as an incomplete
+  answer rather than as "no models".
+- **Vulkan is the default build**, in the setting as well as in the picker (it was `cpu` in the manifest and in
+  five fallbacks while the picker's first entry was the GPU one — two answers to one question). Asking is still
+  a request: a machine with no usable device runs the CPU libraries, the status names what is really running,
+  and a load that dies is retried once on the CPU.
+
+- Suite **4,868** assertions, 0 failed. Packaged as `avalonia-designer-0.10.9.vsix` and prepared for the
+  Marketplace upload; `0.10.6`–`0.10.8` were installed and tested on this machine but never published.
 
 ## [0.10.5] - 2026-09-17 · *two choices a novice can read, and a step up when they are not enough*
 

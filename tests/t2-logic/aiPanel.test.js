@@ -130,6 +130,27 @@ module.exports = async (t) => {
             'one that was never fetched says that, with the size of the download');
         t.ok(/partial download is on disk/.test(detailOf(disk({
             'qwen2.5-coder-7b-cpu': { onDisk: false, bytes: 1200000000 }
+        }), 'bundled:qwen2.5-coder-7b-cpu')), 'list', 'and a partial download says so, so the entry can be pressed again');
+
+        // --- the pin marker with two entries over one file (reported 2026-09-17) -------------------------
+        {
+            const pinned = '/m/qwen2.5-coder-7b-instruct-q4_k_m.gguf';
+            const list = (native) => buildChoices(discovery(), [], 'http://127.0.0.1:1234/v1', 'bundled',
+                pinned, {}, MODEL_SPECS, '', '', native);
+            const marks = (native) => list(native).filter((c) => /● pinned|● in use/.test(c.label));
+            t.equal(marks('vulkan').length, 1, 'list',
+                'exactly ONE entry is marked pinned — two entries share the file, so the build decides');
+            t.ok(/GPU/.test(marks('vulkan')[0].label), 'list', 'the GPU one when Vulkan is configured');
+            t.equal(marks('cpu').length, 1, 'list', 'and one again when the CPU build is configured');
+            t.ok(/CPU/.test(marks('cpu')[0].label), 'list', 'which is then the CPU entry');
+            t.equal(currentSelection(list('cpu'), '', 'bundled', pinned, false, 'cpu'), 'bundled:qwen2.5-coder-7b-cpu',
+                'selection', 'and the selection follows the build, so the picker does not point at the other entry');
+            t.equal(currentSelection(list('vulkan'), '', 'bundled', pinned, false, 'vulkan'), 'bundled:qwen2.5-coder-7b-gpu',
+                'selection', 'in both directions');
+        }
+
+        t.ok(/a partial download is on disk/.test(detailOf(disk({
+            'qwen2.5-coder-7b-cpu': { onDisk: false, bytes: 1200000000 }
         }), 'bundled:qwen2.5-coder-7b-cpu')), 'list',
             'an interrupted download is reported as a partial (which Load Model resumes), not as missing');
 
@@ -189,7 +210,7 @@ module.exports = async (t) => {
             + 'select the first model in the list, which is how Save used to pin one nobody chose');
         t.equal(currentSelection(choices, '', 'external', ''), 'any:', 'selection',
             'and so does an empty model setting, which is the same thing');
-        t.equal(currentSelection(choices, '', 'bundled', '/home/niel/.config/Code/User/globalStorage/x/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf'),
+        t.equal(currentSelection(choices, '', 'bundled', '/home/niel/.config/Code/User/globalStorage/x/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf', false, 'vulkan'),
             'bundled:qwen2.5-coder-7b-gpu', 'selection',
             'the bundled backend selects the spec it was set up for, from the file path alone');
         t.equal(currentSelection(choices, '', 'off', ''), 'any:', 'selection',
@@ -377,6 +398,30 @@ module.exports = async (t) => {
             'and ticking the AI switch with nothing chosen asks through the helper (the reported case)');
         t.ok(/if \(els\.aiProgress\.textContent === AI_STATUS_TEXT\) setAiProgress\(''\);/.test(web), 'wait',
             'the status answer clears the line it wrote — and never one it did not (a failure keeps its text)');
+        // The same wait, where the user asked to see it (2026-09-17): "it takes several seconds to load fully,
+        // display a 'Loading...' warning to the left of the 'Cancel' and 'Save' button while it loads." The
+        // marker rides the wait that already exists, so there is one lifecycle and not two.
+        const shell = read('src/designerPanel.ts');
+        t.ok(/<span id="settingsBusy" class="modal-busy" hidden>Loading…<\/span>[\s\S]{0,200}?id="settingsCancel"/.test(shell), 'wait',
+            'the dialog has the marker, in the button row and left of Cancel');
+        t.ok(/settingsBusy: \$\('settingsBusy'\)/.test(web), 'wait', 'the webview looks it up with the other dialog parts');
+        t.ok(/function beginAiStateWait\(\) \{[\s\S]{0,600}?els\.settingsBusy\.hidden = false;/.test(web), 'wait',
+            'starting the wait shows it');
+        t.ok(/function endAiStateWait\(\) \{[\s\S]{0,200}?els\.settingsBusy\.hidden = true;/.test(web), 'wait',
+            'the state that arrives hides it');
+        t.ok(/function closeSettings\(\) \{[^}]*settingsBusy\.hidden = true/.test(web), 'wait',
+            'and so does closing the dialog, so it can never be left showing');
+        t.ok(/\.modal-busy \{[\s\S]{0,200}?margin-right: auto;/.test(read('media/designer.css')), 'wait',
+            'its style keeps it against the left edge of a button row that stays right-aligned');
+        // The cause, not just the symptom: `lms` starts LM Studio's service on the way, and the state path
+        // waited the full 20 s for it — twice per state.
+        const modelCore = read('src/localModelCore.ts');
+        t.ok(/export async function discover\(opts: \{ maxAgeMs\?: number; cliTimeoutMs\?: number \} = \{\}\)/.test(modelCore), 'wait',
+            'discovery can be asked for a cached answer and a patience of its own');
+        t.ok(/export function run\(cmd: string, args: string\[\], timeoutMs = 20000\)/.test(modelCore) && /timedOut/.test(modelCore), 'wait',
+            'and a helper that was killed at the timeout says so instead of looking like "no models"');
+        t.ok(/const found = await discover\(fresh \? \{ maxAgeMs: 0, cliTimeoutMs: 20000 \} : \{ maxAgeMs: 15000, cliTimeoutMs: 3000 \}\);/.test(panel), 'wait',
+            'the panel reuses an answer for 15 s and gives lms 3 s — while Refresh list still asks in full');
         // Its position is a decision too: inside the AI body, so the line and the picker it describes are
         // shown together — an empty model list is never presented without it.
         const markup = read('src/designerPanel.ts');
@@ -492,6 +537,16 @@ module.exports = async (t) => {
             + 'starting even when the weights were already there, which is what the user went looking for');
         t.ok(/function aiLog\(/.test(panel) && /ai\.log/.test(panel), 'silent',
             'field failures are written to globalStorage/logs/ai.log, because the Output channel cannot be sent');
+        // One sink for both halves (2026-09-17): `aiLog` wrote the file while the AI client used plain `log`, so
+        // the file held 766 lines of panel and load chatter and not one `AI request:` or failure line — exactly
+        // the lines a report is checked for.
+        const loggerSrc = read('src/logger.ts');
+        t.ok(/mirrorLogTo\(aiLogFile\(context\)\)/.test(panel), 'silent',
+            'aiLog points the shared file sink at logs/ai.log');
+        t.ok(/export function log\(msg: string\)[\s\S]{0,300}?appendToMirror\(msg\)/.test(loggerSrc), 'silent',
+            'and every log line — the AI client uses plain `log` — is mirrored into that file');
+        t.ok(/512 \* 1024/.test(loggerSrc) && /fs\.rmSync\(mirror/.test(loggerSrc), 'silent',
+            'with the same size cap the log file already had');
 
         const js = read('media/designer.js');
         t.ok(/clearTimeout\(aiWatchdog\)/.test(js) && /the extension has not reported back yet/.test(js), 'silent',

@@ -46,13 +46,23 @@ export interface CliResult {
     code: number;
     stdout: string;
     stderr: string;
+    /**
+     * True when the helper was killed at the timeout instead of answering.
+     *
+     * `lms` starts LM Studio's service on the way, so a status ask can block for the whole timeout — 20 s of it
+     * on this machine on 2026-09-17, twice per panel state, which is what made ⚙ Settings crawl on its first
+     * open after a reload. The caller needs to be able to say "this answer is incomplete" rather than "you have
+     * no models".
+     */
+    timedOut?: boolean;
 }
 
 export function run(cmd: string, args: string[], timeoutMs = 20000): Promise<CliResult> {
     return new Promise((resolve) => {
         child_process.execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
             const code = err && typeof (err as { code?: unknown }).code === 'number' ? Number((err as { code: number }).code) : err ? 1 : 0;
-            resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
+            const timedOut = !!(err && (err as { killed?: boolean }).killed);
+            resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), timedOut });
         });
     });
 }
@@ -128,8 +138,33 @@ export const EMPTY_DISCOVERY: Discovery = {
     api: false
 };
 
-/** Everything the pickers and the panel need, in one round of calls. */
-export async function discover(): Promise<Discovery> {
+/**
+ * How long an answer may be reused by callers that asked for a cache. Zero (the default) means "never" —
+ * the load and import flows must see the machine as it is now, so nothing is cached unless the caller asks.
+ */
+const DISCOVERY_TTL_MS = 15_000;
+
+/** How long a *status* ask may take before it is written off as incomplete. See `CliResult.timedOut`. */
+const STATUS_CLI_MS = 3000;
+
+let lastDiscovery: { at: number; value: Discovery } | undefined;
+
+/** Everything the pickers and the panel need, in one round of calls.
+ *
+ * `maxAgeMs` is opt-in (the panel state passes it): a state refresh happens on every focus and save, and the
+ * first `lms` call of a session starts LM Studio's service, so the same question must not be asked again and
+ * again while it is being answered. `cliTimeoutMs` belongs with it — a status ask that would block for 20 s is
+ * a status ask that should have given up after 3.
+ */
+export async function discover(opts: { maxAgeMs?: number; cliTimeoutMs?: number } = {}): Promise<Discovery> {
+    const maxAge = opts.maxAgeMs ?? 0;
+    if (maxAge > 0 && lastDiscovery && Date.now() - lastDiscovery.at < maxAge) return lastDiscovery.value;
+    const value = await discoverNow(opts.cliTimeoutMs ?? 20000);
+    lastDiscovery = { at: Date.now(), value };
+    return value;
+}
+
+async function discoverNow(cliTimeoutMs: number): Promise<Discovery> {
     const cli = findLmsCli();
     if (!cli) {
         const api = await readApi();
@@ -143,9 +178,9 @@ export async function discover(): Promise<Discovery> {
     }
     const started = Date.now();
     const [ls, ps, status, api] = await Promise.all([
-        run(cli, ['ls']),
-        run(cli, ['ps']),
-        run(cli, ['server', 'status']),
+        run(cli, ['ls'], cliTimeoutMs),
+        run(cli, ['ps'], cliTimeoutMs),
+        run(cli, ['server', 'status'], cliTimeoutMs),
         readApi()
     ]);
     const took = Date.now() - started;
@@ -160,6 +195,10 @@ export async function discover(): Promise<Discovery> {
     log(`LM Studio: ${list.chat.length} chat + ${list.embeddings.length} embedding model(s) on disk, `
         + `${loaded.length} loaded, server ${parseLmsServerStatus(status.stdout || status.stderr).running ? 'running' : 'stopped'}`
         + ` (asked in ${took} ms)`);
+    if (ls.timedOut || ps.timedOut || status.timedOut) {
+        log(`LM Studio: the lms helper was still starting after ${cliTimeoutMs} ms, so that answer is incomplete `
+            + '— it is asked again shortly, and the load/import flows always ask in full.');
+    }
     return { cli, list, server: parseLmsServerStatus(status.stdout || status.stderr), loaded, kindById, api: !!api };
 }
 

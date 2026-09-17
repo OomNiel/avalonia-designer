@@ -237,6 +237,16 @@ module.exports = async function (t) {
         t.ok(/'Stop it',\s*\n\s*'Cancel'/.test(src), 'stop', 'with "Stop it" as the confirming action');
         t.ok(/systemctl', \['--user', 'stop', owner\.unit\]/.test(src), 'stop',
             'a user unit is stopped through systemd, so systemd\'s own state stays true');
+        // A unit that is *active* but not answering: `systemctl start` is a no-op there, which is how "the 30B
+        // is not starting" looked from outside on 2026-09-17 (weights swapped out, `/props` never answering).
+        t.ok(/\['--user', 'restart', unit\]/.test(src), 'start',
+            'a unit that is active but not answering is RESTARTED, which is what brings its weights back');
+        t.ok(/await run\('systemctl', \['--user', 'is-active', unit\]/.test(src), 'start',
+            'and only when systemd says the unit really is up — a failed start is reported, not restarted');
+        t.ok(/was already running but not answering — restarting it/.test(src), 'start',
+            'the user is told what is happening instead of watching a start that does nothing');
+        t.ok(/QUICK_ANSWER_MS/.test(src), 'start',
+            'a short wait comes first, so a healthy start is never restarted for nothing');
         t.ok(/sudo systemctl stop \$\{owner\.unit\}/.test(src), 'stop',
             'a system unit is never acted on: the command is printed for a terminal instead');
         t.ok(/looksLikeLlama/.test(src) && /SIGTERM/.test(src), 'stop',

@@ -106,7 +106,7 @@ export function assistantConfig(): AssistantConfig {
         gpuLayers: sidecarGpuLayers(cfg.get<string>('loadGpu', 'auto')),
         // Which native build the built-in runtime runs: `cpu` (default) or `vulkan`. Read here like every
         // other setting, so the palette command, the panel and a request that starts the runtime agree.
-        bundledBackend: sidecarBackend(cfg.get<string>('bundledBackend', 'cpu')),
+        bundledBackend: sidecarBackend(cfg.get<string>('bundledBackend', 'vulkan')),
         timeoutSeconds: cfg.get<number>('timeoutSeconds', 60),
         maxTokens: cfg.get<number>('maxTokens', 4096),
         temperature: cfg.get<number>('temperature', 0.2),
@@ -753,6 +753,11 @@ async function proposeMethod(
         }
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        // The address belongs in the record: "No server answered" on its own sent the user — and this log —
+        // looking for a runtime that was up and answering the whole time, while the request had gone to a stale
+        // `assistant.endpoint` (2026-09-17).
+        log(`AI assist failed: ${message} — the request went to ${request.endpoint} (backend ${request.backend})`
+            + `${sidecarTail().length ? `; the runtime last said: ${sidecarTail().slice(-1)[0]}` : '; the runtime said nothing'}`);
         const pick = await vscode.window.showErrorMessage(`AI assist failed: ${message}`, 'Show status', 'Settings');
         if (pick === 'Show status') await vscode.commands.executeCommand('avaloniaDesigner.assistant.status');
         if (pick === 'Settings') await vscode.commands.executeCommand('workbench.action.openSettings', SETTINGS);
@@ -1368,7 +1373,21 @@ export async function fixFindingWithAI(uri: vscode.Uri, line: number, message: s
  * guard, because it looks like the feature is broken.
  */
 async function repairRuntime(cfg: AssistantConfig): Promise<AssistantConfig | undefined> {
-    if (cfg.backend === 'bundled' && bundledRuntimeRunning().running) return cfg;
+    // The *runtime's own* address, never `assistant.endpoint`: that setting belongs to the external servers and
+    // is often a dead port from an earlier experiment. Measured on this machine, 2026-09-17 — the setting said
+    // `http://127.0.0.1:37857/v1` while the built-in runtime answered on 33709, so every repair request went to
+    // a closed port and came back as "No server answered — is the local model server running?". Returning `cfg`
+    // unchanged here was the bug; the address below is the one the requests actually use.
+    if (cfg.backend === 'bundled') {
+        const bundled = bundledRuntimeRunning();
+        if (bundled.running && bundled.endpoint) {
+            if (bundled.endpoint !== cfg.endpoint) {
+                log(`Repair loop: the built-in runtime is on ${bundled.endpoint}; the endpoint setting says `
+                    + `${cfg.endpoint || '(none)'} — using the runtime's own address.`);
+            }
+            return { ...cfg, endpoint: bundled.endpoint };
+        }
+    }
     // A server THIS window started (the "My own llama-server" button) — a child process we know about.
     const own = ownLlamaServerStatus();
     if (own.running && own.info) return { ...cfg, endpoint: `http://127.0.0.1:${own.info.port}/v1` };
@@ -1376,7 +1395,11 @@ async function repairRuntime(cfg: AssistantConfig): Promise<AssistantConfig | un
     // from a previous window. This is the check that matters here — the configured endpoint was LM Studio's
     // 1234, while the model serving the requests was on 8080.
     const answering = await findRunningLlamaServer(cfg.endpoint);
-    if (answering) return { ...cfg, endpoint: `http://127.0.0.1:${answering.port}/v1` };
+    if (answering) {
+        log(`Repair loop: nothing of ours is up, but a llama-server is answering on `
+            + `http://127.0.0.1:${answering.port}/v1 — asking that one.`);
+        return { ...cfg, endpoint: `http://127.0.0.1:${answering.port}/v1` };
+    }
     if (cfg.backend === 'bundled') return undefined;          // never started just to repair something
     return (await probeServer(cfg)).ok ? cfg : undefined;
 }
@@ -1723,7 +1746,7 @@ async function statusFacts(): Promise<StatusFacts> {
  */
 export async function chooseBundledBackend(): Promise<void> {
     const cfg = configView(SETTINGS);
-    const current = sidecarBackend(cfg.get<string>('bundledBackend', 'cpu'));
+    const current = sidecarBackend(cfg.get<string>('bundledBackend', 'vulkan'));
     const options = [
         {
             label: `${current === 'cpu' ? '$(check) ' : ''}CPU build`,

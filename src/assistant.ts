@@ -137,7 +137,7 @@ export function normalizeAssistantConfig(raw: RawAssistantSettings): AssistantCo
         gpuLayers: num(raw.gpuLayers, 0, 0, 999),
         // Only the exact word `vulkan` asks for the GPU build; a missing or misspelt setting is the CPU build
         // everyone already has, never a GPU request nobody made.
-        bundledBackend: sidecarBackend(raw.bundledBackend),
+        bundledBackend: sidecarBackend(raw.bundledBackend ?? 'vulkan'),
         timeoutSeconds: num(raw.timeoutSeconds, 60, 5, 600),
         maxTokens: num(raw.maxTokens, 4096, 64, 8192),
         temperature: num(raw.temperature, 0.2, 0, 1),

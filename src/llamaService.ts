@@ -397,8 +397,8 @@ export interface StartChoice {
  * port is not mistaken for a service that just came up. The probe's cache is cleared on every attempt:
  * a cached "nothing there" from the reload before is exactly the wrong answer to this question.
  */
-async function waitForAnswer(endpoint: string, onProgress?: (message: string) => void): Promise<string | undefined> {
-    const deadline = Date.now() + READY_TIMEOUT_MS;
+async function waitForAnswer(endpoint: string, onProgress?: (message: string) => void, timeoutMs = READY_TIMEOUT_MS): Promise<string | undefined> {
+    const deadline = Date.now() + timeoutMs;
     let said = 0;
     while (Date.now() < deadline) {
         forgetRunningProbe();
@@ -418,6 +418,20 @@ function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** How long a unit gets to answer before it is treated as wedged and restarted. */
+const QUICK_ANSWER_MS = 25 * 1000;
+
+/**
+ * Is that user unit up, by systemd's own answer?
+ *
+ * Exported because "is it already running?" changes what a caller should do, not just what it should say:
+ * a unit that is up needs no `start` (a no-op) and no memory to be found for it (its weights may already be
+ * resident, or swapped out — the state that made this machine's 30 B look dead on 2026-09-17).
+ */
+export async function unitIsActive(unit: string): Promise<boolean> {
+    return (await run('systemctl', ['--user', 'is-active', unit], 5000))?.trim() === 'active';
+}
+
 /** Start (or reuse) the service the settings name, then pin the settings at whatever answers. */
 async function startViaUnit(opts: { onProgress?: (message: string) => void }): Promise<StartChoice> {
     const endpoint = configView(SETTINGS).get<string>('endpoint', '');
@@ -434,10 +448,31 @@ async function startViaUnit(opts: { onProgress?: (message: string) => void }): P
         const why = (result.err || result.out).trim().split(/\r?\n/).filter(Boolean).slice(-2).join(' · ');
         return { ok: false, message: `systemctl --user start ${unit} failed${why ? `: ${why}` : ` (exit ${result.code})`}.` };
     }
-    opts.onProgress?.(`${unit} started — waiting for it to answer…`);
     forgetOwnerCache();
-    const answered = await waitForAnswer(endpoint, opts.onProgress);
-    if (!answered) return { ok: false, message: `${unit} was started but nothing answered on the configured address within 5 minutes.` };
+
+    // `systemctl start` is a NO-OP on a unit that is already active — and "active" is a state a llama-server can
+    // sit in while being completely unusable: its weights swapped out, so `/props` never answers and a request
+    // just hangs. Measured on this machine 2026-09-17: a unit "running" for two days reported `Memory: 50.4M
+    // (peak: 17.9G, swap: 1.7G)` while every request failed — the panel said "starting…", systemd said fine, and
+    // nothing ever answered. That is exactly what *"the llama 30B is not starting"* looks like from outside, so
+    // the answer is a short wait followed by a **restart**, which is what puts the weights back in RAM.
+    opts.onProgress?.(`${unit} started — waiting for it to answer…`);
+    let answered = await waitForAnswer(endpoint, opts.onProgress, QUICK_ANSWER_MS);
+    if (!answered) {
+        const active = await unitIsActive(unit);
+        if (!active) {
+            return { ok: false, message: `${unit} is not running after a start request — see "systemctl --user status ${unit}".` };
+        }
+        opts.onProgress?.(`${unit} was already running but not answering — restarting it to bring its weights back into memory…`);
+        const restarted = await runStatus('systemctl', ['--user', 'restart', unit], 60000);
+        if (restarted.code === null || restarted.code !== 0) {
+            const why = (restarted.err || restarted.out).trim().split(/\r?\n/).filter(Boolean).slice(-2).join(' · ');
+            return { ok: false, message: `systemctl --user restart ${unit} failed${why ? `: ${why}` : ''}.` };
+        }
+        forgetOwnerCache();
+        answered = await waitForAnswer(endpoint, opts.onProgress);
+    }
+    if (!answered) return { ok: false, message: `${unit} was started but nothing answered on the configured address within ${Math.round(READY_TIMEOUT_MS / 60000)} minutes.` };
     forgetRunningProbe();
     const running = await findRunningLlamaServer(endpoint, { cacheMs: 0 });
     if (running) await useRunningLlamaServer(running);

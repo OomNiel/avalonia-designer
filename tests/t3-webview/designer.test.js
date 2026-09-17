@@ -24,6 +24,8 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'eventModal', 'eventTitle', 'eventHint', 'eventList', 'eventRemember', 'eventRememberWrap', 'eventSkip', 'eventWire',
     'handlerModal', 'handlerTitle', 'handlerHint', 'handlerList', 'handlerAdd', 'handlerClose',
     'btnCodeSettings', 'settingsModal', 'settingsHint', 'settingsModes', 'settingsBadges', 'settingsSave', 'settingsCancel',
+    // the dialog's own "still arriving" marker (2026-09-17), left of Cancel/Save
+    'settingsBusy',
     // the AI assist section of that panel (2026-09-15): switch, model list, load options, actions
     'aiEnabled', 'aiShowDiff', 'aiShowDiffHint', 'aiBadge', 'aiBody', 'aiModel', 'aiModelHint', 'aiRefresh', 'aiScan',
     'aiOptions', 'aiContext', 'aiGpu', 'aiTtl', 'aiMaxTokens', 'aiTimeout', 'aiEndpoint',
@@ -76,6 +78,7 @@ function setup(omit = []) {
         if (id === 'handlerAdd' || id === 'handlerClose') return 'button';
         if (id === 'settingsBadges') return 'input';
         if (id === 'settingsSave' || id === 'settingsCancel') return 'button';
+        if (id === 'settingsBusy') return 'span';
         if (id === 'aiEnabled') return 'input';
         if (id === 'aiShowDiff') return 'input';
         if (id === 'aiBody' || id === 'aiOptions') return 'div';
