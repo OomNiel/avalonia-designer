@@ -38,11 +38,18 @@ module.exports = async (t) => {
 
     // ---------- 1) the model registry ----------
     {
-        t.ok(MODEL_SPECS.length >= 2, 'models', 'at least two models are offered (latency and quality)');
+        t.equal(MODEL_SPECS.length, 2, 'models',
+            'two entries — the 7B on the GPU build and the 7B on the CPU build (asked 2026-09-17)');
+        t.equal(MODEL_SPECS[0].id, 'qwen2.5-coder-7b-gpu', 'models',
+            'the first is the GPU build: the 7B is the only model of the five measured whose C# compiled');
+        t.equal(MODEL_SPECS[1].id, 'qwen2.5-coder-7b-cpu', 'models', 'and the second is the CPU-only fallback');
         const ids = MODEL_SPECS.map((s) => s.id);
         const names = MODEL_SPECS.map((s) => s.fileName);
         t.equal(new Set(ids).size, ids.length, 'models', 'model ids are unique');
-        t.equal(new Set(names).size, names.length, 'models', 'file names are unique');
+        t.equal(new Set(names).size, 1, 'models',
+            'both entries name the SAME file: the choice is how it runs, not which weights — one download, verified once');
+        t.equal(MODEL_SPECS[0].backend, 'vulkan', 'models', 'the first entry is the GPU build');
+        t.equal(MODEL_SPECS[1].backend, 'cpu', 'models', 'and the second is the CPU-only build');
         for (const spec of MODEL_SPECS) {
             t.ok(/\.gguf$/.test(spec.fileName), 'models', `${spec.id}: ${spec.fileName} is a .gguf`);
             t.ok(spec.url.startsWith('https://'), 'models', `${spec.id}: fetched over https`);
@@ -53,14 +60,16 @@ module.exports = async (t) => {
             t.ok(spec.label.includes('Coder') || /code/i.test(spec.label), 'models',
                 `${spec.id}: a code-specialised model (Phi-3-mini's card warns about non-Python code, NOTES §91)`);
         }
-        t.equal(specById('qwen2.5-coder-3b-q4').minRamGb < specById('qwen2.5-coder-7b-q4').minRamGb, true, 'models',
-            'the 3B is the one offered on smaller machines');
+        t.equal(specById('qwen2.5-coder-7b-gpu').minRamGb, 16, 'models',
+            'the shipped model states the memory it actually wants');
+        t.equal(specById('qwen2.5-coder-3b-q4'), undefined, 'models',
+            'and a model removed from the table is gone from the registry, not half-there');
         t.equal(specById('nope'), undefined, 'models', 'an unknown id yields nothing');
-        t.equal(specByFileName('qwen2.5-coder-3b-instruct-q4_k_m.gguf').id, 'qwen2.5-coder-3b-q4', 'models',
-            'a file already in storage is recognised by name');
-        t.equal(specByFileName('/home/x/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf').id, 'qwen2.5-coder-7b-q4', 'models',
-            'paths and separators do not matter');
-        t.equal(specByFileName('QWEN2.5-CODER-3B-INSTRUCT-Q4_K_M.GGUF').id, 'qwen2.5-coder-3b-q4', 'models',
+        t.equal(specByFileName('qwen2.5-coder-3b-instruct-q4_k_m.gguf'), undefined, 'models',
+            'the 3B is no longer recognised by file name either — it is not offered any more');
+        t.equal(specByFileName('/home/x/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf').id, 'qwen2.5-coder-7b-gpu', 'models',
+            'paths and separators do not matter (the GPU entry owns the shared file)');
+        t.equal(specByFileName('QWEN2.5-CODER-7B-INSTRUCT-Q4_K_M.GGUF').id, 'qwen2.5-coder-7b-gpu', 'models',
             'recognition is case-insensitive');
         t.equal(specByFileName('something-else.gguf'), undefined, 'models', 'and foreign files are left alone');
     }
@@ -75,7 +84,7 @@ module.exports = async (t) => {
         t.equal(formatBytes(4683073536), '4.7 GB', 'format', 'and the 7B as 4.7 GB');
         t.equal(formatBytes(NaN), '?', 'format', 'junk does not produce "NaN GB"');
 
-        t.equal(shortHash(MODEL_SPECS[0].sha256), '724fb256…', 'format', 'a hash is shortened for the UI');
+        t.equal(shortHash(MODEL_SPECS[0].sha256), '509287f7…', 'format', 'a hash is shortened for the UI');
         t.equal(shortHash('abc'), 'abc', 'format', 'but a short string is left as it is');
 
         t.equal(defaultThreads(12), 8, 'threads', 'generation is capped at 8 threads');
@@ -122,16 +131,20 @@ module.exports = async (t) => {
 
     // ---------- 4) what may be offered on this machine ----------
     {
-        t.equal(canRunSpec(MODEL_SPECS[0], { level: 'good', totalRamGb: 16 }).ok, true, 'hardware',
-            'the 3B fits a comfortable machine');
-        t.equal(canRunSpec(MODEL_SPECS[0], { level: 'minimal', totalRamGb: 8 }).ok, true, 'hardware',
+        // Two shapes rather than two table entries: the shipped table offers one model (trimmed 2026-09-17),
+        // and what is under test here is the *gate*, not which models happen to be pinned to it.
+        const small = { ...MODEL_SPECS[0], id: 'a-small-one', minRamGb: 8 };
+        const bigSpec = { ...MODEL_SPECS[0], id: 'a-big-one', minRamGb: 16 };
+        t.equal(canRunSpec(small, { level: 'good', totalRamGb: 16 }).ok, true, 'hardware',
+            'a small model fits a comfortable machine');
+        t.equal(canRunSpec(small, { level: 'minimal', totalRamGb: 8 }).ok, true, 'hardware',
             'and a minimal one (8 GB is the gate)');
-        const big = canRunSpec(MODEL_SPECS[1], { level: 'minimal', totalRamGb: 8 });
-        t.equal(big.ok, false, 'hardware', 'the 7B is not offered on 8 GB');
+        const big = canRunSpec(bigSpec, { level: 'minimal', totalRamGb: 8 });
+        t.equal(big.ok, false, 'hardware', 'a 16 GB model is not offered on 8 GB');
         t.ok(/16 GB/.test(big.reason), 'hardware', 'and the reason names the requirement');
-        t.equal(canRunSpec(MODEL_SPECS[1], { level: 'good', totalRamGb: 16 }).ok, true, 'hardware',
+        t.equal(canRunSpec(bigSpec, { level: 'good', totalRamGb: 16 }).ok, true, 'hardware',
             'but is offered on 16 GB');
-        t.equal(canRunSpec(MODEL_SPECS[0], { level: 'none', totalRamGb: 64 }).ok, false, 'hardware',
+        t.equal(canRunSpec(bigSpec, { level: 'none', totalRamGb: 64 }).ok, false, 'hardware',
             'no AVX2 or too few cores disqualifies even a big machine');
 
         t.equal(isGgufPath('/m/x.gguf'), true, 'files', 'a .gguf path is accepted');

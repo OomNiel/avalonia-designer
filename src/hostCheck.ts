@@ -32,7 +32,14 @@ import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { assessHardware, readHardwareFacts, MIN_RAM_GB, type HardwareFacts } from './assistant';
 
-/** The memory the smallest supported model needs while it runs — `minRamGb` of `qwen2.5-coder-3b-q4`. */
+/**
+ * The memory a local model needs while it runs — the floor at which the AI assist is worth trying at all.
+ *
+ * It is deliberately **not** the shipped model's `minRamGb` (the pinned 7B asks for 16 GB): the table is a
+ * menu, not a fence, and *AI: Add a Model from Hugging Face…* can add a smaller model that runs under this.
+ * Greying the whole section out for a machine that could still run one would be the wrong way round
+ * (re-checked 2026-09-17, when the table was trimmed to one model).
+ */
 export const AI_MIN_AVAILABLE_GB = 8;
 /** Below this much memory there is little headroom for a model *and* the rest of the session: warn. */
 export const AI_WARN_AVAILABLE_GB = 20;

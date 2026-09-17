@@ -123,7 +123,7 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.4`**, so the command above installs it; add `--force` to
+The current version is **`0.10.5`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -135,7 +135,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.10.4` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.10.5` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -1050,22 +1050,29 @@ usually a sign of a model too small for the job — try the 7B, or a code-specia
 Having no AI at all is the case this feature exists for, so it does not require LM Studio or Ollama:
 
 1. Run **AI: Choose a Local Model…** from the Command Palette.
-2. Pick **This extension's own model**. Five code-specialised models are offered, and the size is shown
-before anything is downloaded — and any other `.gguf` from Hugging Face can be added with
-*AI: Add a Model from Hugging Face…* (paste the model page or file URL; the size and the SHA-256 are read from
-Hugging Face, and it is downloaded through the same verification as the five below):
+2. Pick **This extension's own model**. **Two entries are offered and they are the same download** — the model
+that measured best on this project (the 7B: the only one of five whose generated C# actually compiled), on
+either native build:
 
-   | Model | Size | Min. RAM | Trade-off |
+   | Entry | Download | Min. RAM | What it means |
    |---|---|---|---|
-   | Qwen2.5-Coder 3B Instruct (Q4_K_M) | 2.0 GB | 8 GB | answers in 5–15 s on a CPU — the practical choice |
-   | Qwen2.5-Coder 7B Instruct (Q4_K_M) | 4.4 GB | 16 GB | noticeably better code, two to three times slower |
-   | Gemma-4-Coder 12B (Q4_K_M) | 6.9 GB | 16 GB | a code-tuned Gemma-4 at 12 B — good C# without the 7B's wait |
-   | DeepSeek-Coder-V2-Lite 16.8B MoE (IQ3_M) | 7.0 GB | 16 GB | the smaller of the two DeepSeek quants — 16.8 B MoE with 2.9 B active |
-   | DeepSeek-Coder-V2-Lite 16.8B MoE (IQ4_XS) | 8.0 GB | 16 GB | the most capable of the five, and the largest download |
+   | Qwen2.5-Coder 7B · **GPU (Vulkan)** | 4.4 GB | 16 GB | runs the weights on your GPU. The default, and the faster one — 9.7 s for a handler against 13.0 s on the CPU |
+   | Qwen2.5-Coder 7B · **CPU only (no GPU)** | *the same file* | 16 GB | no GPU involved at all: pick this if the Vulkan build will not load on your machine |
 
-   Sizes are the ones the picker counts in (binary units); the model pages count decimal, so the
-   6.9 GB entry is the same file as the 7.4 GB one they show. Gemma-4-Coder is a **community GGUF** of
-   Google's Gemma-4 12B — a code-tuned build, not a first-party release — which the entry says outright.
+   Picking one writes the build into `avaloniaDesigner.assistant.bundledBackend`, so the label you chose is the
+   build that runs — and the status report names what is **actually** loaded (`Native backend: …`), because
+   asking for the GPU is not the same as getting it. The size shown is what the picker counts in (binary units).
+
+   Everything else the picker can point at sits under one **Advanced…** fold — LM Studio's models, `.gguf` files
+   found on the machine, your own `llama-server`, and a bare address. Any other `.gguf` from Hugging Face can be
+   added with *AI: Add a Model from Hugging Face…* (paste the model page or file URL; the size and the SHA-256
+   are read from Hugging Face, and it downloads through the same verification).
+
+   > **When the 7B is not enough.** If a **Code Fix…** run ends without a clean build, the panel asks whether to
+   > try once more with a bigger model — your own `llama-server` unit, which already has its weights. The
+   > question states what it costs: the 7B is unloaded first, the unit is started, about 20 GB and about a
+   > minute. Every step is shown while it happens (unloading, starting, waiting for the weights with the seconds
+   > counting, then the retry), it is offered **once**, and answering **No** changes nothing.
 
    You can also point it at a `.gguf` file you already have, or paste the address of one.
 3. Wait for the download — the line under the buttons counts it out in bytes (`1.2 GB of 4.4 GB · 26%

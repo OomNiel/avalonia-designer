@@ -1283,11 +1283,25 @@
         none.value = '';
         none.textContent = state.choices.length ? '— choose a model —' : '— nothing available —';
         els.aiModel.appendChild(none);
+        // Two entries and a fold (asked 2026-09-17): the models the extension ships for come first — one for the
+        // GPU build, one for the CPU build over the *same* download — and everything else (LM Studio's library,
+        // loose .gguf files, other servers) sits under "Advanced…", where a novice never has to read it.
+        let optGroup = null;
         (state.choices || []).forEach((c) => {
             const option = document.createElement('option');
             option.value = c.value;
             option.textContent = c.label;
-            els.aiModel.appendChild(option);
+            if (c.group) {
+                if (!optGroup || optGroup.label !== c.group) {
+                    optGroup = document.createElement('optgroup');
+                    optGroup.label = c.group;
+                    els.aiModel.appendChild(optGroup);
+                }
+                optGroup.appendChild(option);
+            } else {
+                optGroup = null;
+                els.aiModel.appendChild(option);
+            }
         });
         // A selection the settings point at wins. If the state carries no selection at all, the placeholder is
         // shown — never another model: falling back to the first entry is how a picker ends up naming a model

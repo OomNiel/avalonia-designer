@@ -246,6 +246,25 @@ Each step ends with the log green before the next begins.
 
 Each step ends with the log green before the next begins.
 
+### 0.10.5 (2026-09-17) — two entries, and the step up
+
+- `tests/t2-logic/bigModel.test.js` (new, **31** assertions) — the offer and its refusals. `parseExecStartModel`
+  is pinned against this machine's real unit, whose `ExecStart` is written over nine lines with trailing
+  backslashes; `bigModelOffer` against real file sizes (sparse temp files, so the test costs no disk): a 19 GB
+  model behind the unit is a step up from the local 4.4 GB one, the same size is not, 19 GB that would not fit in
+  the free memory is refused *with the memory named*, a unit that is already answering needs no memory at all,
+  and every "no" has its own reason (no unit, no unit text, no `.gguf`, file gone). The sequence is asserted
+  against the source: unload **before** start, announce every step to the status bar *and* the panel, ask once
+  with the cost in the question, read `MemAvailable` rather than `MemFree`, and resolve the unit from the
+  setting/discovery rather than a hardcoded name.
+- The picker tests were re-pointed at the new table: `modelSpecs.test.js` asserts **two** entries that share one
+  file (`new Set(fileNames).size === 1`) with `backend` `vulkan` then `cpu`; `aiPanel.test.js` asserts the two
+  bundled entries come first and `"let the server decide"` leads the rest; `hubModels.test.js` asserts the fold
+  (every non-bundled choice carries `group: 'Advanced…'`, and the optional `backend` field is the one shape
+  difference an added model does not have).
+
+Each step ends with the log green before the next begins.
+
 ### Status 2026-09-11 — full suite green (2176 passed / 0 failed / 0 skipped, 35 s)
 
 - **T2** gained `bundledComponents.test.js`, `chromeProps.test.js`, `multiProps.test.js`,

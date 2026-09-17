@@ -84,9 +84,14 @@ module.exports = async (t) => {
 
         const lms = choices.filter((c) => c.kind === 'lmstudio');
         t.equal(lms.length, 3, 'list', 'every chat model LM Studio has is offered');
-        t.equal(choices[0].kind, 'any', 'list',
-            'first of all: "let the server decide" — the state the settings most often hold, which the panel '
-            + 'used to misrepresent by showing the first model as if it had been chosen');
+        // BOTH shipped entries first, then everything else under the fold (asked 2026-09-17: *"There should
+        // only be 2 options in the picker"* + "an 'Advanced…' fold for the rest"). "Let the server decide"
+        // used to be the first entry because the settings most often hold no model at all — it is still the
+        // first thing *inside* the fold, so nothing about the external-server case was lost.
+        t.equal(choices[0].kind, 'bundled', 'list', 'the models this extension ships for are the first entries');
+        t.equal(choices[1].kind, 'bundled', 'list', 'both of them — the GPU build and the CPU build');
+        t.equal(choices[2].kind, 'any', 'list',
+            'and "let the server decide" leads the Advanced group, which the panel folds away');
         t.equal(lms.map((c) => c.value).includes('lms:text-embedding-nomic-embed-text-v1.5'), false, 'list',
             'the embedding model is not — it cannot answer a chat request');
         t.ok(/● loaded/.test(lms[1].label), 'list', 'the loaded model is marked, so the list shows what is in memory');
@@ -114,19 +119,18 @@ module.exports = async (t) => {
         // "the Qwen models does not work - Not downloaded???"), and with no on-disk information the wording
         // must stay neutral rather than claim either way.
         const disk = (over) => buildChoices(discovery(), [], 'http://127.0.0.1:1234/v1', 'bundled',
-            '/m/qwen2.5-coder-3b-instruct-q4_k_m.gguf', over);
+            '/m/qwen2.5-coder-7b-instruct-q4_k_m.gguf', over);
         const detailOf = (all, value) => (all.find((c) => c.value === value) || {}).detail || '';
         t.ok(/weights on disk, ready to load/.test(detailOf(disk({
-            'qwen2.5-coder-3b-q4': { onDisk: true, bytes: 2104932800 },
-            'qwen2.5-coder-7b-q4': { onDisk: false, bytes: 0 }
-        }), 'bundled:qwen2.5-coder-3b-q4')), 'list', 'a built-in model already downloaded says so');
+            'qwen2.5-coder-7b-gpu': { onDisk: true, bytes: 4683073536 }
+        }), 'bundled:qwen2.5-coder-7b-gpu')), 'list', 'a built-in model already downloaded says so');
         t.ok(/not downloaded yet — 4\.4 GB to fetch/.test(detailOf(disk({
-            'qwen2.5-coder-7b-q4': { onDisk: false, bytes: 0 }
-        }), 'bundled:qwen2.5-coder-7b-q4')), 'list',
+            'qwen2.5-coder-7b-cpu': { onDisk: false, bytes: 0 }
+        }), 'bundled:qwen2.5-coder-7b-cpu')), 'list',
             'one that was never fetched says that, with the size of the download');
         t.ok(/partial download is on disk/.test(detailOf(disk({
-            'qwen2.5-coder-7b-q4': { onDisk: false, bytes: 1200000000 }
-        }), 'bundled:qwen2.5-coder-7b-q4')), 'list',
+            'qwen2.5-coder-7b-cpu': { onDisk: false, bytes: 1200000000 }
+        }), 'bundled:qwen2.5-coder-7b-cpu')), 'list',
             'an interrupted download is reported as a partial (which Load Model resumes), not as missing');
 
         const found = choices.find((c) => c.kind === 'file');
@@ -185,8 +189,8 @@ module.exports = async (t) => {
             + 'select the first model in the list, which is how Save used to pin one nobody chose');
         t.equal(currentSelection(choices, '', 'external', ''), 'any:', 'selection',
             'and so does an empty model setting, which is the same thing');
-        t.equal(currentSelection(choices, '', 'bundled', '/home/niel/.config/Code/User/globalStorage/x/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf'),
-            'bundled:qwen2.5-coder-3b-q4', 'selection',
+        t.equal(currentSelection(choices, '', 'bundled', '/home/niel/.config/Code/User/globalStorage/x/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf'),
+            'bundled:qwen2.5-coder-7b-gpu', 'selection',
             'the bundled backend selects the spec it was set up for, from the file path alone');
         t.equal(currentSelection(choices, '', 'off', ''), 'any:', 'selection',
             'an off switch still shows a sensible starting point for when it is switched on');

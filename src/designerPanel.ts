@@ -13,6 +13,7 @@ import {
 import { buildProject, compilerIssues, publishBuildDiagnostics, BuildResult, CompilerDiagnostic } from './buildDiagnostics';
 import { dataSetContextFor } from './dataSetFacts';
 import { repairUntilClean, RepairReport } from './repairLoop';
+import { bigModelOffer, escalateToBigModel, llamaUnitText } from './bigModel';
 import { markCodeEdited, codeEditedSinceBuild, codeEditedReason, clearCodeEdited } from './writeStamp';
 import { withDesignerHeader } from './xamlHeader';
 import { controlInfoFor } from './controlInfo';
@@ -45,9 +46,27 @@ import {
     type PanelAiRequest,
     type PanelState
 } from './aiPanel';
-import { startLlamaServerByChoice, stopLlamaServerConfirmed } from './llamaService';
+import { startLlamaServerByChoice, stopLlamaServerConfirmed, resolveLlamaUnit } from './llamaService';
 
 const DEFAULT_SIZE = { width: 800, height: 450 };
+
+/**
+ * Memory the machine could give a model right now (GB), from `/proc/meminfo`'s `MemAvailable`.
+ *
+ * `MemAvailable` and not `MemFree`: the page cache is reclaimable, and on a machine that has just unloaded a
+ * 7 B model most of its memory is *cache*, not free — reading `MemFree` would refuse an offer that fits, which
+ * is exactly the calculation the 30 B step-up depends on (2026-09-17). Linux-only, like systemd, which is all
+ * this step-up can ever apply to. Zero means "could not tell", and the offer treats it as tight.
+ */
+function freeRamGb(): number {
+    try {
+        const text = fs.readFileSync('/proc/meminfo', 'utf8');
+        const m = /MemAvailable:\s+(\d+)\s+kB/.exec(text);
+        return m ? Number(m[1]) / (1024 * 1024) : 0;
+    } catch {
+        return 0;
+    }
+}
 
 // Undo/redo history: 5 levels deep = up to 6 snapshots (current + 5 prior). Each step stores the
 // serialized XAML AND the code-behind text, so renames/deletes that touch code-behind are reversible.
@@ -4997,7 +5016,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // Errors the compiler reported without a file (`CSC : error CS2001: …`) are kept out of the loop —
         // no fixer can touch them — but they must still be listed, so they are carried alongside.
         let projectErrors: { code: string; message: string }[] = [];
-        const report = await repairUntilClean({
+        const once = (): Promise<RepairReport> => repairUntilClean({
             build: async () => {
                 const build = await buildProject(proj.projectUri.fsPath);
                 projectErrors = build.projectErrors;
@@ -5012,27 +5031,106 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             progress: (text) => void this.postStatus(panel, `Code Fix: ${text}`),
             cancelled: () => !panel.visible
         });
-        clearCodeEdited(key);
-        this.loopSnapshot = [];
 
-        // The list is rebuilt from what the project looks like NOW: the loop moved code around, so the
-        // rules' findings have to be re-derived rather than reused.
-        const run = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
-        const rules = this.visibleIssues(doc, run.issues);
-        publishIssues(doc.uri, run, rules);
-        publishBuildDiagnostics(report.remaining.concat(report.warnings));
-        const covered = new Set(rules
-            .filter((i) => i.line && (i.file ?? 'code') === 'code' && run.codeFile)
-            .map((i) => `${path.resolve(run.codeFile as string)}:${i.line}`));
-        const issues = rules.concat(compilerIssues(report.remaining, projectErrors, run.codeFile, covered));
-        await this.postCodeIssues(panel, doc, run, issues, {
-            ok: report.stoppedBecause === 'clean',
-            errors: report.remaining.length,
-            warnings: report.warnings.length,
-            failure: report.failure ?? '',
-            fixed: report.fixed.length
+        // What the run leaves behind, published the same way however many runs there are: a run ends with the
+        // hand-edit marker cleared, and the list is rebuilt from what the project looks like NOW — the loop
+        // moves code around, so the rules' findings have to be re-derived rather than reused.
+        const publish = async (report: RepairReport): Promise<void> => {
+            clearCodeEdited(key);
+            this.loopSnapshot = [];
+            const run = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
+            const rules = this.visibleIssues(doc, run.issues);
+            publishIssues(doc.uri, run, rules);
+            publishBuildDiagnostics(report.remaining.concat(report.warnings));
+            const covered = new Set(rules
+                .filter((i) => i.line && (i.file ?? 'code') === 'code' && run.codeFile)
+                .map((i) => `${path.resolve(run.codeFile as string)}:${i.line}`));
+            const issues = rules.concat(compilerIssues(report.remaining, projectErrors, run.codeFile, covered));
+            await this.postCodeIssues(panel, doc, run, issues, {
+                ok: report.stoppedBecause === 'clean',
+                errors: report.remaining.length,
+                warnings: report.warnings.length,
+                failure: report.failure ?? '',
+                fixed: report.fixed.length
+            });
+            await this.postStatus(panel, this.loopStatus(report, rules));
+        };
+
+        const first = await once();
+        await publish(first);
+        if (first.stoppedBecause === 'clean' || !panel.visible) return;
+
+        // The step up (asked 2026-09-17): the small model has run out of ideas, so *ask* about the big one.
+        const second = await this.offerBigModelRetry(panel, first, once);
+        if (second) await publish(second);
+    }
+
+    /**
+     * Offers the user's own big model once the small one has been unable to finish.
+     *
+     * *"When it fails the system must ask the user if it should re-try a fix with the 30B model. If the user
+     * agree the system should unload the Qwen and then automatically start the llama server and load the 30B
+     * weigths, and attempt the fix. The user must stay informed all the time."* — asked 2026-09-17, and this is
+     * that sentence in code: one modal question that states the cost, then every step on the panel's line and
+     * the status bar (unload, start, wait with the seconds running), then one more repair run.
+     *
+     * It never *starts* anything silently and never asks twice: if the offer does not apply (no unit, nothing
+     * bigger behind it, not enough memory) the reason goes to the log, because an offer that could not be made
+     * is not a failure the user needs to see.
+     */
+    private async offerBigModelRetry(
+        panel: vscode.WebviewPanel,
+        report: RepairReport,
+        once: () => Promise<RepairReport>
+    ): Promise<RepairReport | undefined> {
+        const cfg = vscode.workspace.getConfiguration('avaloniaDesigner');
+        // Only when the *small* local model is the thing that just failed. If a 30 B is already answering,
+        // offering it again would be a question with one answer.
+        if (cfg.get<string>('assistant.backend', 'off') !== 'bundled') return undefined;
+        const localFile = cfg.get<string>('assistant.modelPath', '');
+        let localBytes = 0;
+        try { localBytes = fs.statSync(localFile).size; } catch { localBytes = 0; }
+        const freeGb = freeRamGb();
+        // The unit is resolved the way the *Start server* button resolves it: the `llamaServerService` setting
+        // first, then the unit a running server belongs to, then the only user unit that starts a
+        // llama-server. Naming this machine's unit in code would quietly limit the step-up to one machine
+        // (2026-09-17).
+        const resolved = await resolveLlamaUnit();
+        const offer = bigModelOffer({
+            unit: resolved.unit,
+            unitText: resolved.unit ? llamaUnitText(resolved.unit) : undefined,
+            localBytes,
+            freeGb
         });
-        await this.postStatus(panel, this.loopStatus(report, rules));
+        if (!offer.ok) {
+            aiLog(this.context, `30B step-up not offered: ${offer.why}`);
+            return undefined;
+        }
+        aiLog(this.context, `30B step-up offered: ${offer.unit} (${offer.sizeGb} GB), ${report.remaining.length} error(s) left`);
+        const pick = await vscode.window.showWarningMessage(
+            `The local 7B model could not fix everything — ${report.remaining.length} error(s) are left.\n\n`
+            + `Try once more with your 30B model?\n\n`
+            + `It unloads the 7B, starts ${offer.unit} and loads ${offer.sizeGb} GB: about a minute. `
+            + `This machine has ${Math.round(freeGb)} GB free right now.`,
+            { modal: true }, 'Use the 30B', 'No'
+        );
+        if (pick !== 'Use the 30B') {
+            aiLog(this.context, '30B step-up declined by the user');
+            await this.postStatus(panel, 'Code Fix: keeping the 7B — the remaining errors are listed in the panel');
+            return undefined;
+        }
+        const step = (message: string): void => {
+            void this.postStatus(panel, `Code Fix · 30B: ${message}`);
+            void panel.webview.postMessage({ type: 'aiProgress', message });
+        };
+        const up = await escalateToBigModel({ onStep: step });
+        if (!up.ok) {
+            aiLog(this.context, `30B step-up failed: ${up.message}`);
+            await this.postStatus(panel, `Code Fix · 30B: ${up.message}`);
+            return undefined;
+        }
+        step(`${up.unit} is answering — asking it to fix the rest…`);
+        return await once();
     }
 
     /**

@@ -19,7 +19,15 @@
 
 ## Where the last session left off (2026-09-17)
 
-**Built, tested, packed and installed: `0.10.4`** — *the button that refused silently now says why*. Reported
+**Built, tested, packed and installed: `0.10.5`** — *two choices a novice can read, and a step up when they are
+not enough*. The picker is now the 7B **twice** — GPU (Vulkan) as the default, CPU-only as the fallback, over
+**one** 4.4 GB download — with everything else folded under *Advanced…*; and when a **Code Fix…** run ends
+without a clean build the extension **asks** before unloading the 7B and starting the user's 30B unit, narrating
+every step (unload, start, weights with the seconds counting, retry once). Suite **4829 passed / 0 failed**
+(`bigModel.test.js` is new, 31 assertions). The four models that measured badly — the 3B, both DeepSeeks and
+Gemma — are gone from the table *and* from disk: **22 GB → 4.4 GB**. Read `NOTES.md` §134.
+
+**Previously: `0.10.4`** — *the button that refused silently now says why*. Reported
 minutes after `0.10.3`: *"The Remove Model function is not removing the selected model."* It was **refusing**: only
 `bundled:<id>` selections were ever accepted, the selection is usually a server entry, and a refusal logged
 nothing at all — so the attempt left no trace anywhere (the log's only removal line was gemma, at 14:56:58).

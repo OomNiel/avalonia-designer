@@ -12,6 +12,57 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
+## [0.10.5] - 2026-09-17 · *two choices a novice can read, and a step up when they are not enough*
+
+Asked after the model comparison came in: *"We know the Qwen 7B answered correctly and that it should be a
+Vulkan build. There should only be 2 options in the picker… We know we may need something better if the Qwen
+cant fix the current issues. When it fails the system must ask the user if it should re-try a fix with the 30B
+model… The user must stay informed all the time. Please realise that the average user is not an AI tech user,
+just a simple novice programmer."*
+
+### Changed — the picker is two entries
+
+- **One model, two ways to run it:** *Qwen2.5-Coder 7B · GPU (Vulkan)* and *Qwen2.5-Coder 7B · CPU only (no
+  GPU)* — **the same 4.4 GB weights**, downloaded and verified once. The measurement decided it (NOTES §132/§134):
+  the 7B was the only one of five whose generated C# compiled, in **9.7 s on the Vulkan build** against 13.0 s on
+  the CPU; the 3B was faster and wrong, DeepSeek-Coder-V2-Lite wrote the `CS1061` failure 0.10.2 was about *with
+  the facts block in the prompt*, and Gemma-4-Coder answered nothing through the OpenAI path.
+- An entry now **is** the choice of native build: picking one writes `assistant.bundledBackend`, the same key the
+  status line reads back, so "which build actually loaded" is never a guess. Vulkan is the default, and a load
+  that dies is still retried on the CPU build automatically — with the reason in the panel.
+- **Everything else moved under one `Advanced…` fold** — LM Studio's library, `.gguf` files found on disk, *My
+  own llama-server*, *A server I run myself*, *Let the server decide*. Nothing was removed; only the reading
+  order changed, so the two entries are what a novice has to consider.
+
+### Added — the 30B step-up (`src/bigModel.ts`)
+
+- **When a repair run ends without a clean build**, and only when the bundled 7B is what just failed, the
+  extension **asks**: *"The local 7B model could not fix everything — N error(s) are left. Try once more with
+  your 30B model? It unloads the 7B, starts llama-server.service and loads 19 GB: about a minute. This machine
+  has X GB free right now."* → **Use the 30B** / **No**.
+- On yes it **unloads the 7B first** (that is what makes room), starts the user's unit through the same path the
+  *Start server* button uses (waiting for the weights, pinning the settings) and **retries the repair once**.
+- **Every step is announced**, on the status bar and the panel's own progress line: unloading → unloaded, memory
+  free → starting the unit → waiting for the weights with the seconds counting → *"…is answering — asking it to
+  fix the rest…"*.
+- It is offered **once**, never in a loop. The unit comes from `assistant.llamaServerService` → the running
+  server's cgroup → the only one discovered, so no machine's unit name is baked into the code; and it **refuses
+  to offer** when the model behind the unit is not a real step up (less than 1.5× the local one) or would not fit
+  in the free memory (plus 3 GB), with the reason in the log — an offer that cannot be made is not a failure the
+  user needs to see.
+- Free memory is read as **`MemAvailable`, not `MemFree`**: a machine that has just unloaded a 7B holds that RAM
+  as page cache, and `MemFree` would refuse an offer that actually fits. That is the state this machine was in
+  when its own 30B stopped accepting connections earlier the same day.
+
+### Notes
+
+- Suite **4,829** assertions, 0 failed — `tests/t2-logic/bigModel.test.js` is new with **31** (the unit's
+  `ExecStart` over nine lines, the step-up refusals, and the sequencing: unload *before* start, announce every
+  step, ask once).
+- The four models dropped from the table were also deleted from the disk on the machine this was written on:
+  **22 GB → 4.4 GB**, one file left, and it is the one both entries use. They remain available to anyone who
+  wants them through *AI: Add a Model from Hugging Face…*.
+
 ## [0.10.4] - 2026-09-17 · *the button that refused silently now says why*
 
 Reported minutes after `0.10.3` went up: *"The Remove Model function is not removing the selected model. check

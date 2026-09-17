@@ -22,6 +22,14 @@ export interface ModelSpec {
     sha256: string;
     /** Total RAM this model wants before it is worth offering. */
     minRamGb: number;
+    /**
+     * The native build this entry runs on, when the **same weights** are offered twice (2026-09-17).
+     *
+     * Absent means "whatever `assistant.bundledBackend` already says". Present means the entry *is* that
+     * choice: the Load path writes it to the setting before starting the runtime, so picking "GPU (Vulkan)"
+     * or "CPU only" is the whole difference — one download, two ways to run it.
+     */
+    backend?: SidecarBackend;
 }
 
 /** Folder inside the extension's global storage that holds the downloaded weights. */
@@ -35,65 +43,54 @@ export const READY_PREFIX = 'MODEL_HOST_READY';
 
 const HF = 'https://huggingface.co/Qwen';
 
+/**
+ * The two entries this extension offers — the **same weights**, twice (asked 2026-09-17).
+ *
+ * WHY TWO, AND WHY THIS PAIR. *"We know the Qwen 7B answered correctly and that it should be a Vulkan build.
+ * There should only be 2 options in the picker, the Qwen 7B built with Vulkan and the 7B build without
+ * Vulkan."* Measured on this machine with the application's own prompt — the ComboBox → grid-row handler, with
+ * the DataSet facts block in it (NOTES.md §132, §134):
+ *
+ *   - the **7B** wrote the only answer that compiles (`CustomersDataSet.Customers.FirstOrDefault(row =>
+ *     row.Name == selectedName)`), in **9.7 s on the Vulkan build** and 13.0 s on the CPU one;
+ *   - the 3B was quickest and wrong — `DataTable.Rows.Find(predicate)`, and `Find` takes a key, not a predicate;
+ *   - DeepSeek-Coder-V2-Lite wrote `DataGrid1.Items` — the `CS1061` failure 0.10.2 was about — *while the
+ *     prompt told it that member does not exist*;
+ *   - Gemma-4-Coder 12B answered nothing at all through the OpenAI path (its chat template).
+ *
+ * So the choice a novice actually faces is not "which model" but **"use the GPU or not"**, and it is offered as
+ * two entries over one download: the weights are fetched and verified once, and the only difference is which
+ * native build of llama.cpp runs them. `backend` is what makes an entry mean something — the Load path writes
+ * it to `assistant.bundledBackend`, the same key the status line reads back, so "which build actually loaded"
+ * is never a guess. A Vulkan load that dies is retried on the CPU build (`sidecarAttempts`), and the panel says
+ * so.
+ *
+ * THE STEP UP IS NOT A THIRD ENTRY. When a repair run ends without a clean build, the extension *offers* the
+ * user's own big model — *"the system must ask the user if it should re-try a fix with the 30B model"* — and
+ * `bigModel.ts` is that path.
+ */
 export const MODEL_SPECS: ModelSpec[] = [
     {
-        id: 'qwen2.5-coder-3b-q4',
-        label: 'Qwen2.5-Coder 3B Instruct (Q4_K_M)',
-        detail: '2.0 GB — the latency choice: a short method in roughly 5–15 s with no GPU',
-        fileName: 'qwen2.5-coder-3b-instruct-q4_k_m.gguf',
-        url: `${HF}/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_k_m.gguf`,
-        bytes: 2104932800,
-        sha256: '724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7',
-        minRamGb: 8
-    },
-    {
-        id: 'qwen2.5-coder-7b-q4',
-        label: 'Qwen2.5-Coder 7B Instruct (Q4_K_M)',
-        detail: '4.4 GB — the quality choice: noticeably better C#, two to three times slower',
+        id: 'qwen2.5-coder-7b-gpu',
+        label: 'Qwen2.5-Coder 7B  ·  GPU (Vulkan)',
+        detail: '4.4 GB — the same weights on the GPU build; measured 9.7 s for a handler here, against 13.0 s on the CPU',
         fileName: 'qwen2.5-coder-7b-instruct-q4_k_m.gguf',
         url: `${HF}/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf`,
         bytes: 4683073536,
         sha256: '509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c',
-        minRamGb: 16
+        minRamGb: 16,
+        backend: 'vulkan'
     },
     {
-        // DeepSeek-Coder-V2-Lite: a 16.8 B MoE (only 2.9 B params are active) at 4-bit. The file is large
-        // because all 16 experts are stored, but live RAM tracks the active expert — it runs on 16 GB. The
-        // IQ4_XS quant from bartowski's mirror keeps the download under 9 GB and is the one pinned here.
-        id: 'deepseek-coder-v2-lite-iq4xs',
-        label: 'DeepSeek-Coder-V2-Lite 16.8B MoE (IQ4_XS)',
-        detail: '8.0 GB — DeepSeek 16.8 B MoE (2.9 B active) at 4-bit; strong on C#, fits 16 GB RAM',
-        fileName: 'DeepSeek-Coder-V2-Lite-Instruct-IQ4_XS.gguf',
-        url: 'https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Instruct-IQ4_XS.gguf',
-        bytes: 8571593472,
-        sha256: 'ac0a996714d4e8ed06b4398096bae88a32c349ceab42ffe629c2ddf4c4e0706c',
-        minRamGb: 16
-    },
-    {
-        // Same 16.8 B MoE, the largest quant that still fits under 8 GB — a faster, smaller-footprint choice.
-        id: 'deepseek-coder-v2-lite-iq3m',
-        label: 'DeepSeek-Coder-V2-Lite 16.8B MoE (IQ3_M)',
-        detail: '7.0 GB — DeepSeek 16.8 B MoE (2.9 B active) at 4-bit; the smaller/faster quant of the pair',
-        fileName: 'DeepSeek-Coder-V2-Lite-Instruct-IQ3_M.gguf',
-        url: 'https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Instruct-IQ3_M.gguf',
-        bytes: 7553175296,
-        sha256: '08db93121a9e6fa3cb4978c4b4e9c37e9407160ceec77f0894c45f43bf2d91d1',
-        minRamGb: 16
-    },
-    {
-        // Gemma-4, code-tuned, at 12 B — from the community GGUF repo `yuxinlu1/gemma-4-12B-coder-…`
-        // (its card declares `base_model: google/gemma-4-12B-it`), so the label names the size and the
-        // quant and the detail says where it comes from: it is a code-tuned Gemma, not a first-party
-        // Google release. Q4_K_M is the best quant that still lands under 8 GB; 16 GB RAM is the gate
-        // for a 12 B dense model. Size and SHA-256 re-checked against the Hub on 2026-09-15.
-        id: 'gemma-4-coder-12b-q4',
-        label: 'Gemma-4-Coder 12B (Q4_K_M)',
-        detail: '6.9 GB — community GGUF of Google\'s Gemma-4 12B, code-tuned; good C# at a 12 B size',
-        fileName: 'gemma4-coding-Q4_K_M.gguf',
-        url: 'https://huggingface.co/yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF/resolve/main/gemma4-coding-Q4_K_M.gguf',
-        bytes: 7381381664,
-        sha256: '1fe90b72e105d7bc71650aa59883edece3e84751af489075217a7ae717b1fe8d',
-        minRamGb: 16
+        id: 'qwen2.5-coder-7b-cpu',
+        label: 'Qwen2.5-Coder 7B  ·  CPU only (no GPU)',
+        detail: '4.4 GB — the same weights with no GPU involved: the fallback if this machine\'s Vulkan driver will not load them',
+        fileName: 'qwen2.5-coder-7b-instruct-q4_k_m.gguf',
+        url: `${HF}/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf`,
+        bytes: 4683073536,
+        sha256: '509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c',
+        minRamGb: 16,
+        backend: 'cpu'
     }
 ];
 
@@ -245,7 +242,7 @@ export function formatBytes(bytes: number): string {
     return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
-/** `724fb256…30b7` → `724fb256…` so a hash can be shown without wrecking the layout. */
+/** `509287f7…894d3c` → `509287f7…` so a hash can be shown without wrecking the layout. */
 export function shortHash(sha256: string): string {
     return /^[0-9a-f]{16,}$/i.test(sha256) ? `${sha256.slice(0, 8)}…` : sha256;
 }

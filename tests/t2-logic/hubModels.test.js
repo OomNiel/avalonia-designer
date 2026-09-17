@@ -94,10 +94,14 @@ module.exports = async (t) => {
         t.equal(hubFileSpec({ repo: 'a/b', file: 'x.gguf' }).minRamGb, 16, 'spec',
             'and an unknown size is treated as the cautious case, not as a small model');
 
-        // A spec is the same shape the pinned ones are, so nothing downstream can tell them apart.
-        const keys = Object.keys(MODEL_SPECS[0]).sort().join(',');
-        t.equal(Object.keys(spec).sort().join(','), keys, 'spec',
+        // A spec is the same shape the pinned ones are, so nothing downstream can tell them apart — with one
+        // deliberate exception: `backend` is *optional*, and only the shipped entries carry it, because they
+        // are the same weights offered twice (the GPU build and the CPU build). An added model has no build of
+        // its own: it runs on whatever `assistant.bundledBackend` says, exactly as before (2026-09-17).
+        const keys = (s) => Object.keys(s).filter((k) => k !== 'backend').sort().join(',');
+        t.equal(keys(spec), keys(MODEL_SPECS[0]), 'spec',
             'an added model is a ModelSpec exactly like a built-in one — the picker, the load path and Remove Model treat it identically');
+        t.equal(spec.backend, undefined, 'spec', 'and it carries no build of its own, which a shipped entry may');
     }
 
     // ---------- the order the picker shows ----------
@@ -121,13 +125,15 @@ module.exports = async (t) => {
         const firstLms = order.indexOf('lmstudio');
         t.ok(firstBundled >= 0 && firstCustom >= 0 && firstLms >= 0, 'order',
             'all three paths are in the list when LM Studio happens to be installed');
-        t.ok(firstBundled < firstLms, 'order',
-            'the extension\'s own runtime comes before LM Studio\'s library — it is the path that needs nothing else');
-        t.ok(firstCustom < firstLms, 'order',
-            'and so does "a server I run myself", which is the llama.cpp server the user prefers');
-        t.ok(order.indexOf('any') < firstBundled, 'order',
-            '"let the server decide" stays first: for an external server it is a real answer');
-        t.equal(choices.filter((c) => c.kind === 'bundled').length >= 5, true, 'order',
+        t.equal(firstBundled, 0, 'order',
+            'the two entries this extension ships for come first (asked 2026-09-17)');
+        t.equal(choices.filter((c) => !c.group).length, MODEL_SPECS.length, 'order',
+            'and they are the whole visible list — nothing else is above the fold');
+        t.ok(choices.filter((c) => c.kind !== 'bundled').every((c) => c.group === 'Advanced…'), 'order',
+            'so LM Studio, loose files, other servers and "let the server decide" all sit under Advanced…');
+        t.ok(firstLms > firstBundled && firstCustom > firstBundled, 'order',
+            'nothing outside those two entries is offered above them');
+        t.equal(choices.filter((c) => c.kind === 'bundled').length, MODEL_SPECS.length, 'order',
             'every pinned model is still offered');
         t.ok(choices.some((c) => c.value === choiceValue('custom', 'http://127.0.0.1:1234/v1')), 'order',
             'and the custom-address entry is there, with the endpoint it will use');

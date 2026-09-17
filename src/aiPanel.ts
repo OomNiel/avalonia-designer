@@ -66,6 +66,13 @@ export interface ModelChoice {
     kind: 'lmstudio' | 'file' | 'bundled' | 'custom' | 'llama' | 'any';
     /** True for the entry that is serving requests right now — what "● loaded" means. */
     live?: boolean;
+    /**
+     * The `<optgroup>` this entry belongs in, or nothing for the models shown at the top (asked 2026-09-17:
+     * *"There should only be 2 options in the picker"*). The two shipped entries are the list; everything
+     * else — LM Studio's library, loose `.gguf` files, other servers — lives under one fold so a novice
+     * never has to read it.
+     */
+    group?: string;
 }
 
 export interface PanelState {
@@ -229,20 +236,18 @@ export function buildChoices(found: Discovery, files: FoundModelFile[], endpoint
         kind: 'custom'
     });
 
-    // Presentation (asked 2026-09-16: *"load everything from Hugging Face"*, after finding that a llama.cpp
-    // server answered faster and better than the LM Studio models). The dropdown used to open on LM Studio's
-    // library, which made a program the extension merely *drives* look like the way to use the feature. The
-    // three paths a model can come from are now grouped in the order the extension can actually guarantee
-    // them: **its own runtime** (llama.cpp, weights from Hugging Face, no other program needed) first, then
-    // **a server the user runs** (their own `llama-server`, Ollama), then LM Studio's library, then loose
-    // `.gguf` files found on disk. Nothing was removed — every entry still works, and one with no LM Studio
-    // installed simply has no LM Studio entries. The user's own `llama-server` is grouped with the extension's
-    // own runtime (both are engines this window is responsible for) and ahead of a bare address, which is the
-    // one entry that assumes the user has already started something.
-    const group: Record<string, number> = { any: 0, bundled: 1, llama: 2, custom: 3, lmstudio: 4, file: 5 };
+    // Presentation (re-ordered 2026-09-17, asked: *"There should only be 2 options in the picker"* — "Two, with
+    // an 'Advanced…' fold for the rest"). What this extension ships for comes first and is the whole list a
+    // novice reads: the 7B on the GPU build, then the same weights on the CPU build. Everything else is real
+    // and still works — LM Studio's library, loose `.gguf` files found on disk, the user's own `llama-server`,
+    // a bare address — but it is folded under "Advanced…", where it cannot be mistaken for the choice being
+    // asked of them. Nothing was removed; only the reading order changed.
+    const ADVANCED = 'Advanced…';
+    for (const c of choices) if (c.kind !== 'bundled') c.group = ADVANCED;
+    const order: Record<string, number> = { bundled: 0, any: 1, llama: 2, custom: 3, lmstudio: 4, file: 5 };
     return choices
         .map((c, i) => ({ c, i }))
-        .sort((a, b) => ((group[a.c.kind] ?? 9) - (group[b.c.kind] ?? 9)) || (a.i - b.i))
+        .sort((a, b) => ((order[a.c.kind] ?? 9) - (order[b.c.kind] ?? 9)) || (a.i - b.i))
         .map((x) => x.c);
 }
 
@@ -529,6 +534,14 @@ async function startLoad(
     if (kind === 'bundled') {
         const spec = specById(key);
         if (!spec) return { ok: false, message: `Unknown bundled model "${key}".` };
+        // The entry *is* the choice of native build (2026-09-17): the same weights are offered once for the GPU
+        // build and once for the CPU build, so which one was picked is written here — the same key the status
+        // line reads back to say which build actually loaded.
+        if (spec.backend) {
+            const before = cfg.get<string>('bundledBackend', 'cpu');
+            await cfg.update('bundledBackend', spec.backend, vscode.ConfigurationTarget.Global);
+            if (before !== spec.backend) aiLog(context, `Load: native build ${before} → ${spec.backend} (from the entry)`);
+        }
         // Say which of the two things is about to happen. The webview cannot know — it used to guess
         // "downloading (first time)" even when the weights were already on disk (the user's report,
         // 2026-09-15), which sent them looking for a download that never started.

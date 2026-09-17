@@ -30,7 +30,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.4`**, so the command above installs it (add `--force` to reinstall, or to
+The current version is **`0.10.5`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -39,11 +39,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.10.4.vsix --force
+code --install-extension avalonia-designer-0.10.5.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.10.4` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.10.5` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -245,11 +245,12 @@ reported immediately instead of at the next save.
 **It brings its own model.** For a developer with no AI at all there is nothing to install and no
 account to create: *AI: Set Up Local Model…* builds a small C# model server with the .NET SDK the
 designer already uses — one extension package for every platform and architecture, because the native
-code is resolved by NuGet on your machine — and offers **five pinned code-specialised downloads** (2.0 GB
-and 4.4 GB Qwen2.5-Coder, 7.0 GB and 8.0 GB DeepSeek-Coder-V2-Lite, 6.9 GB Gemma-4-Coder 12B), each fetched
-**once**, verified against the SHA-256 the Hub publishes, into the extension's own storage. Sizes are the
-ones the picker shows (binary units — the model pages count decimal, so a 6.9 GB entry is the same file as a
-7.4 GB one). **Any other GGUF is one command away:** *AI: Add a Model from Hugging Face…* takes a model page or
+code is resolved by NuGet on your machine — and offers **one model, two ways to run it**: *Qwen2.5-Coder 7B ·
+GPU (Vulkan)* and *Qwen2.5-Coder 7B · CPU only (no GPU)* — **the same 4.4 GB download**, fetched **once**,
+verified against the SHA-256 the Hub publishes, into the extension's own storage. The 7B is the model that
+measured best on this project (the only one of five whose generated C# compiled), and the two entries are the
+real choice a person faces: **use the GPU or not** — 9.7 s for a handler on the Vulkan build against 13.0 s on
+the CPU. Everything else a picker could offer lives under one **Advanced…** fold (`0.10.5`). **Any other GGUF is one command away:** *AI: Add a Model from Hugging Face…* takes a model page or
 a file URL, lists the files in the repo with their sizes, reads the size and the hash from **Hugging Face
 itself**, and downloads it through the same verification — after which it behaves exactly like a built-in one,
 including **Remove Model**, which gives the disk space back — it deletes the weights behind whatever the list has
@@ -257,15 +258,21 @@ selected (a downloaded model, **or** a server entry whose `.gguf` is in this ext
 anything else by naming the folder it *is* allowed to delete from (`0.10.4`). Nothing is fetched until you press
 **Load Model**.
 
-**The built-in runtime can use your GPU — when you ask it to.** It runs llama.cpp's **CPU** build by
-default: that works everywhere and needs nothing from the GPU. *AI: Built-in Runtime Backend…* switches it to
-the **Vulkan** build — the same runtime and the same settings, but now `max` on the GPU-offload field really
-does offload. On the machine this was written on it loaded a 3B Q4 model in **602 ms against 1409 ms** on the
-CPU, with all 37 layers on an integrated Radeon. Asking is not getting, and the extension never says otherwise:
+**The built-in runtime can use your GPU — and now that is the default.** The picker's first entry runs the 7B on
+the **Vulkan** build; the second runs the same weights on the **CPU** build, for a machine whose Vulkan driver
+will not load them. *AI: Built-in Runtime Backend…* switches either way by hand, and on the Vulkan build `max`
+on the GPU-offload field really does offload. Asking is not getting, and the extension never says otherwise:
 with no usable Vulkan device llama.cpp falls back to the CPU by itself, the status report names the build that
 is **actually running** (`Native backend: …`), and a driver that dies while the weights load is retried once on
 the CPU — reason in the log, and a one-click offer to keep it that way. The option costs one bigger first build
 (~40 MB more to download, ~130 MB more on disk in the extension's own build folder).
+
+**And when the 7B is not enough, it asks about your big model.** If a Code Fix run ends without a clean build,
+the panel offers one thing: *"Try once more with your 30B model?"* — with what that costs in the question (the
+7B is unloaded first, your `llama-server` unit is started, ~20 GB, about a minute) — and it narrates every step
+while it happens: unloading, starting, waiting for the weights with the seconds counting, then the retry. It is
+offered once, never in a loop, and only when the model behind that unit really is bigger than the 7B and really
+would fit in the free memory (`0.10.5`).
 
 **Or point it at a model you already run.** The picker lists the ways a model can arrive, in the order
 the extension can guarantee them: **its own runtime** (llama.cpp via LLamaSharp, weights from Hugging Face, no
@@ -328,7 +335,7 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~4,850 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~4,830 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

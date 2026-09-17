@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4810 passed, 0 failed / 0 skipped** (2026-09-17, ~40 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4829 passed, 0 failed / 0 skipped** (2026-09-17, ~39 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -3058,4 +3058,35 @@ stops the user's 19 GB server is not a test.
 - Suite 4781 → **4810**; `removeModel.test.js` 40 → 69. Verified against the real machine: `any:` and `llama:`
   → `qwen2.5-coder-7b…gguf` ALLOWED; `file:` the HF-cache 30B → refused (folder named); `lms:` → refused
   (LM Studio named); `custom:` with nothing pinned → refused.
+
+### §134 — two entries a novice can read, and the 30B step-up (2026-09-17, release 0.10.5)
+
+- **Asked:** *"We know the Qwen 7B answered correctly and that it should be a Vulkan build. There should only be
+  2 options in the picker… We know we may need something better if the Qwen cant fix the current issues. When it
+  fails the system must ask the user if it should re-try a fix with the 30B model… The user must stay informed
+  all the time. Please realise that the average user is not an AI tech user, just a simple novice programmer."*
+- **The picker is two entries over ONE file** (`MODEL_SPECS`): `qwen2.5-coder-7b-gpu` (backend `vulkan`, first,
+  the default) and `qwen2.5-coder-7b-cpu`. The new optional `ModelSpec.backend` is what makes an entry mean
+  something: `startLoad`'s bundled branch writes it to `assistant.bundledBackend` **before** starting, which is
+  the same key the status line reads back — so the label cannot lie about which build loaded. Asserted: both
+  entries name the same file (`new Set(fileNames).size === 1`), so there is one download and one hash.
+- **Everything else is folded:** `ModelChoice.group` (`'Advanced…'`) is set for every non-bundled choice in
+  `buildChoices`, `bundled` sorts first, and `media/designer.js` emits `<optgroup>`s. The placeholder and option
+  indices still line up because `select.options` is flat — which is what the `aiApplied` round-trip check needs.
+- **`src/bigModel.ts` (new).** Pure `parseExecStartModel` (joins the nine-line `ExecStart` of a real unit) and
+  `bigModelOffer` (refuses when the unit's model is <1.5× the local one, or would not fit free RAM + 3 GB
+  headroom; `running: true` skips the memory test). `escalateToBigModel` unloads the bundled runtime **first**,
+  then calls `startLlamaServerByChoice('unit')` — the same path the panel's Start button uses, so readiness
+  polling and pinning come for free — reporting every step through `onStep`.
+- **Offer policy:** only when `stoppedBecause !== 'clean'`, only when `assistant.backend === 'bundled'` (a big
+  model already answering has nothing to escalate to), one modal question naming the cost, **one** retry, no
+  recursion. The unit is `resolveLlamaUnit()` — setting → running server's cgroup → only discovered — never a
+  hardcoded name (caught in review: the first draft named `llama-server.service` literally).
+- **Memory gotcha that matters:** free RAM is `MemAvailable` from `/proc/meminfo`, **not** `MemFree`: a machine
+  that has just unloaded a 7B holds that memory as page cache, and `MemFree` would refuse an offer that fits —
+  the exact state this machine was in when its own 30B stopped accepting connections earlier that day.
+- Suite 4810 → **4829**; `bigModel.test.js` is new (31), and the spec/aiPanel/hubModels/removeModel tests were
+  re-pointed at two entries over one file and at the fold.
+- **Machine state:** the four dropped models' weights were deleted (22 GB → 4.4 GB) — one file left, and it is
+  the one both entries use.
 
