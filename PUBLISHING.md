@@ -213,12 +213,17 @@ listing when that release is uploaded — a repo-only README edit does not.
 > Marketplace** — the feature set was still settling. `0.10.0` is the release that carries the lot, which is
 > why its changelog entry is a summary of the range rather than a list of one day's changes.
 
-> **`0.10.0` (2026-09-16) — prepared here, handed over for upload; record the result below.** Sixth listing
+> **`0.10.0` (2026-09-16) — prepared here, handed over for upload; NEVER UPLOADED (superseded by `0.10.1`).**
+> Sixth listing
 > version and the first under the **single-number scheme**: the GitHub tag is `v0.10.0`, the release title
 > carries `v0.10.0`, and `package.json` holds `0.10.0` — tag and listing finally agree, so there is no mapping
 > to explain to anyone. What went with it: the **local AI assist** became part of the listing's description
 > (`package.json` → `description`, plus the keywords `ai` and `llm`), and the repository's About text says the
 > same thing.
+>
+> **Do not upload this file.** It was prepared on 2026-09-16 and never went out; `0.10.1` (below) carries the
+> same `0.10.0` content plus that day's work, and it is the release the user is uploading. If `0.10.0` ever
+> matters again it is still attached to its own GitHub release.
 >
 > Plain VSIX — `avalonia-designer-0.10.0.vsix`, sha256
 > `bf7e1519f9ef0ac8cb2fc28a9ad7fa7659e3cea91d3dc2debf76f5f259df5c74` — built by `npm run package` after a green
@@ -228,19 +233,22 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.10.1` (2026-09-17) — LOCAL BUILD, not uploaded.** Built, tested, committed and installed the same day it
-> was asked for (*"Bump the version and push please"*); the upload was **not** requested, so it sits in the same
-> queue as `0.10.0`. What it adds: the **project's own compiler as the second half of the code check** (a Code
-> Fix… run builds the project and merges `dotnet build`'s errors into the list and PROBLEMS), the
+> **`0.10.1` (2026-09-17) — GitHub release live; the Marketplace upload is the developer's.** Built, tested,
+> committed (`620d613`) and installed the same day it was asked for, then tagged and released:
+> **`v0.10.1` is the repository's *Latest* release** (not a pre-release, `/releases/latest` resolves to it) with
+> the VSIX attached — re-downloaded and hash-checked against the local build and against GitHub's own asset
+> `digest`, all three equal. What it adds: the **project's own compiler as the second half of the code check**
+> (a Code Fix… run builds the project and merges `dotnet build`'s errors into the list and PROBLEMS), the
 > **`insert-semicolon` rule** for a statement nothing terminated, the **build-driven repair loop** (fix one
 > error, rebuild, undo what does not help, list what no rule can fix), and the **host check** with the
 > **EXPERIMENTAL FEATURE-USE WITH CAUTION** notice in ⚙ Settings, the README and the manual.
 >
 > Plain VSIX — `avalonia-designer-0.10.1.vsix`, sha256
-> `37b55532d70cb2027e7a0fceac25d5aac912f1f798a06c497aa917e27675c391` — after a green suite
-> (**4,670 assertions, 0 failed**). If it is ever uploaded, note that it **supersedes** `0.10.0`: upload it
-> instead of the older file rather than in addition to it, and the `flags: 914` check applies unchanged
-> (`0.10.1` plus that hash).
+> `37b55532d70cb2027e7a0fceac25d5aac912f1f798a06c497aa917e27675c391`, 868,987 bytes — after a green suite
+> (**4,670 assertions, 0 failed**). **Upload this one, not `0.10.0`** (the user's instruction on 2026-09-17: *"Do
+> 1, I will upload to the extension marketplace"* — option 1 was the tag/release, and the upload supersedes the
+> prepared `0.10.0`). Leave *Pre-release* **unchecked** in the portal, then confirm with the `flags: 914` query
+> that the version is `0.10.1` and `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above.
 
 > **The Marketplace version must be numbers only** — a suffix is rejected outright (uploading `1.0.0-beta.7`
 > failed on 2026-09-12 with *"The version string '1.0.0-beta.7' doesn't conform to the requirements for a
