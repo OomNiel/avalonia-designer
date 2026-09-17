@@ -30,7 +30,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.0`**, so the command above installs it (add `--force` to reinstall, or to
+The current version is **`0.10.1`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -39,11 +39,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.10.0.vsix --force
+code --install-extension avalonia-designer-0.10.1.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.10.0` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.10.1` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -110,6 +110,18 @@ a name that is **not a control of this form but starts like one** (`Status` wher
 and **braces that do not balance**, which a truncated answer leaves open. The structural ones are repaired rather
 than reported: the wrapper is unwrapped with the members kept, the missing braces are closed at the end.
 It is a rule checker, not a compiler — type errors, wrong API use and a missing `using` are still the build's job.
+
+**So the build does that job.** Since `0.10.1` a **Code Fix…** run — and the return to the designer after you
+edited the code by hand or with the AI assist — also runs the project's own `dotnet build` (incremental, about a
+second on the test app). The compiler's errors appear in the same list and the same PROBLEMS pane, and the ones a
+rule can *write* are repaired **one at a time, rebuilding after each**, until the build is clean: a missing `;`
+anywhere in a body (the compiler knows the line, so the rules' semicolon fix is handed it), a missing brace, a
+missing `using`. A repair that does not bring the project closer to compiling is **undone**, and an error no rule
+understands is listed for you — the model is offered it only while it is already running. Nothing about the
+designer's own edits pays for a build: a handler it inserted lands on disk and stays instant.
+
+`avaloniaDesigner.codeCheck.build` turns the build off; `codeCheck.aiRepair` turns off the model's part in it; a
+`maxPasses` bound (10) and the panel being closed stop the loop.
 
 The striking part: it is never destructive. Every finding offers a **“keep my edit”** alternative
 *Leave it — keep my code*, or *Keep my delete — un-wire it*, which removes the event from the form so
@@ -178,8 +190,27 @@ replaces the old one.
 
 ## 10. ✨ AI assist — write the handler, write a new function, or fix what a rule cannot
 
+> **⚠ EXPERIMENTAL FEATURE-USE WITH CAUTION**
+>
+> The AI assist is experimental: it may change shape, and its usefulness depends on the machine it runs on —
+> a local model needs memory **available right now**. The designer therefore checks your host when it starts
+> and greys the AI section out, with the reason, when the machine cannot hold the smallest supported model.
+> See *Host requirements* below for the numbers, and for the way out if the check is wrong about your machine.
+
 The Code Fix engine repairs what can be expressed as a rule. For the rest — an empty handler, or a
 change you can only describe in words — the extension can ask a **local** model.
+
+**Host requirements (checked when the extension starts).** The model runs on *your* machine, so the designer
+asks it first and says what it found:
+
+| | |
+|---|---|
+| **Blocked** — the AI section is greyed out, with the reason shown in it | under **~8 GB of memory available to a model**. That is the smallest supported model's own requirement (roughly its size again while it runs): free RAM, plus the VRAM of a discrete card. A CPU without AVX2, or fewer than 4 threads, blocks it too. |
+| **Warning** — it runs, but you are told | under **20 GB available**: comfortable for the 3B model, tight for a larger one. |
+| **Never counted as help** | an integrated GPU's shared/carve-out VRAM — it comes out of the same RAM, so counting it would count the same gigabytes twice. A discrete card with under 4 GB VRAM is named as "no help" but is never on its own a reason to refuse. |
+| **The way out** | **Use it anyway — I know this machine** in ⚙ Settings → AI assist (`assistant.ignoreHostCheck`), for an eGPU, a card that was not detected, or a machine you know can do it. The override is remembered and logged. |
+
+*AI: Status & hardware check* prints the same verdict with the numbers behind it.
 
 **The caret decides what your sentence means.** *Inside a method* (*AI: Implement in Function…*) the model
 returns the **complete method** — same name, signature and indentation — from one sentence ("read the row the
@@ -292,7 +323,7 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~4,400 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~4,700 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

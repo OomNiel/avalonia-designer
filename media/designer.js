@@ -95,6 +95,11 @@
         aiEnabled: $('aiEnabled'),
         aiShowDiff: $('aiShowDiff'),
         aiShowDiffHint: $('aiShowDiffHint'),
+        // The host check's verdict: why the section is disabled, the warning when memory is tight, and the
+        // deliberate way out (asked 2026-09-17).
+        aiHostBlocked: $('aiHostBlocked'),
+        aiHostWarning: $('aiHostWarning'),
+        aiHostOverride: $('aiHostOverride'),
         aiConvText: $('aiConvText'),
         aiLearnConventions: $('aiLearnConventions'),
         aiBadge: $('aiBadge'),
@@ -1177,9 +1182,39 @@
         };
     }
 
+    /**
+     * The host check (asked 2026-09-17): on a machine that cannot hold the smallest supported model, the whole
+     * AI section is disabled and the reason is spelled out — with a deliberate way out, because an eGPU, a card
+     * that was not detected or a machine that runs a small model fine must not lock anyone out of their own
+     * computer. The escape is a setting (`assistant.ignoreHostCheck`), and the extension logs it.
+     */
+    function renderAiHost(state) {
+        const host = state.host;
+        if (!host) return;
+        const blocked = host.aiAllowed === false;
+        ['aiEnabled', 'aiShowDiff', 'aiModel', 'aiRefresh', 'aiScan', 'aiLoad', 'aiUnload', 'aiRemove',
+            'aiContext', 'aiGpu', 'aiTtl', 'aiMaxTokens', 'aiTimeout', 'aiEndpoint', 'aiConvText',
+            'aiLearnConventions'].forEach((id) => {
+                const el = els[id];
+                if (el) el.disabled = blocked;
+            });
+        if (els.aiHostBlocked) {
+            els.aiHostBlocked.hidden = !blocked;
+            els.aiHostBlocked.textContent = blocked
+                ? 'The AI assist is disabled on this machine. ' + (host.reasons || []).join(' ')
+                : '';
+        }
+        if (els.aiHostOverride) els.aiHostOverride.hidden = !blocked;
+        if (els.aiHostWarning) {
+            els.aiHostWarning.hidden = !host.warning;
+            els.aiHostWarning.textContent = host.warning || '';
+        }
+    }
+
     function fillAi(state) {
         if (!state) return;
         aiState = state;
+        renderAiHost(state);
         els.aiEnabled.checked = !!state.enabled;
         // Anything but an explicit `false` keeps the diff: the safe default belongs on the side that shows
         // the code before it is written, so a state that forgot the field must not silently skip review.
@@ -1372,6 +1407,16 @@
         setAiProgress(AI_STATUS_TEXT);
         post({ type: 'aiStatus' });
     });
+
+    // "Use it anyway" — the escape from the host check. It writes `assistant.ignoreHostCheck`, so the decision
+    // is remembered, visible in Settings, and logged. Nothing is applied locally first: the section un-greys
+    // when the extension sends the new state back, which is also what proves the setting was written.
+    if (els.aiHostOverride) {
+        els.aiHostOverride.addEventListener('click', () => {
+            els.aiHostOverride.disabled = true;
+            post({ type: 'aiHostOverride' });
+        });
+    }
 
     function setAiProgress(message) {
         els.aiProgress.hidden = !message;
@@ -3377,6 +3422,16 @@
         els.codeHint.textContent = issues.length === 0
             ? 'No problems found in ' + file + '.'
             : (msg.errors || 0) + ' error(s), ' + (msg.warnings || 0) + ' warning(s) in ' + file + '.';
+        // The compiler's verdict for the whole project, when a build was part of this run.
+        if (msg.build) {
+            const repaired = msg.build.fixed ? ' ' + msg.build.fixed + ' build error(s) repaired.' : '';
+            els.codeHint.textContent += msg.build.failure
+                ? ' ' + msg.build.failure
+                : msg.build.ok
+                    ? ' The project builds.' + repaired
+                    : ' The project does not build: ' + (msg.build.errors || 0) + ' error(s), '
+                    + (msg.build.warnings || 0) + ' warning(s) from dotnet build.' + repaired;
+        }
         if (msg.backup) {
             const note = document.createElement('div');
             note.className = 'code-backup';
@@ -3406,7 +3461,7 @@
                 go.type = 'button';
                 go.className = 'modal-btn';
                 go.textContent = 'Go to line ' + it.line;
-                go.addEventListener('click', () => post({ type: 'codeOpen', file: it.file, line: it.line }));
+                go.addEventListener('click', () => post({ type: 'codeOpen', file: it.file, line: it.line, path: it.path || '' }));
                 actions.appendChild(go);
             }
             if (it.fixable) {

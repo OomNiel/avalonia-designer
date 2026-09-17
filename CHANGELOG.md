@@ -6,30 +6,87 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.10.0` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.10.1` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
-## [Unreleased]
+## [0.10.1] - 2026-09-17 · *the build becomes the referee*
 
-### Documentation
+Started from a plain complaint: *"Please check the 'Code Fix...' function. It used to work but now it does not
+pick up syntax (or any other) errors. My test program is OptimisedCSTest."* … *"I removed a ; form a function.
+No error reported"*. It was not a regression — it was the ceiling of a rule-based checker, and the answer is not
+more rules.
 
-- **Every document brought up to `0.9.46`** (asked 2026-09-16: *"update all docs including the manual"*).
-  `USER_MANUAL.md` gained the GPU/Vulkan option for the built-in runtime (what it is, what it costs, what
-  happens when it cannot be used, and that it touches no other runtime), the panel's *looking for local
-  models…* line, a corrected figure for the first runtime build (~140 MB, not ~100 MB — the GPU build is
-  downloaded with it), the CPU-build caveat on the GPU-offload row, a tip in *Known issues*, and a table of
-  contents that now lists the AI subsections it was missing. `README.md` gained the same GPU paragraph, the
-  waiting line, the current assertion count (**~4,400**), and an honest statement about the repository running
-  ahead of the Marketplace listing — the old note there claimed the reverse ("a GitHub release can lag the
-  Marketplace"), which stopped being true when publishing was deferred. `PUBLISHING.md` records that
-  **`0.9.5` – `0.9.46` are local builds only** and what that means for the next upload, so the next person to
-  publish does not have to reconstruct it from the git log. `CONTROLS.md` and `Events per Control.md` were
-  checked and needed nothing (they describe Avalonia `12.1.1` and its controls, none of which changed here).
-- These copies ship **inside** the VSIX, so the installed `0.9.46` still carries the previous text; the next
-  package takes them with it.
+### Added — the project's own compiler, as the second half of the check
+
+- **`src/buildDiagnostics.ts`: `dotnet build` is parsed.** A **🩺 Code Fix…** run now also builds the project
+  (incremental, ~1 s on the test app) and merges the compiler's errors and warnings into the same list and the
+  same PROBLEMS pane, marked as coming from the build. Only the project's own source is reported (generated
+  `obj/` output and other projects are dropped), MSBuild's double-printed errors are de-duplicated, and errors
+  with **no file at all** (`CSC : error CS2001: …`) are kept rather than silently dropped. A **`CS1002` in the
+  form's own code-behind gets the same one-click fix** the rules use, because the compiler says exactly where a
+  `;` is missing while a rule can only prove it at the end of a body. Everything else is report-only — no rule
+  can repair a type error, and pretending otherwise would be worse than saying so.
+- Setting `avaloniaDesigner.codeCheck.build` (on by default); the build only ever runs on a deliberate press or
+after a fix, never on the automatic checks and never while typing.
+
+### Added — a statement nothing terminated is a finding, not silence
+
+- **`insert-semicolon` (new rule).** Braces balance when a `;` goes missing, so the structural rules could not
+see it: everything after a method body's last `;` must be a block (`}`) or nothing, and a bare expression there
+is an unfinished statement (`CS1002`). C# only — in VB a statement ends at the line. The fix adds the `;` **in
+front of a trailing `//`**, on the raw line, so a trailing string literal survives. Found with the user's own
+file: `RadioButton2.IsChecked = true` with no `;` on line 96, which the checker called clean while `dotnet
+build` refused the file. Two bugs the new tests caught: the fix first turned `Save.Content = "pressed"` into
+`Save.Content =;` (the scanner blanks literals), and the rule flagged the generator's `// TODO: Handle X` body
+until the scanned copy was used to decide whether a line holds code at all. Swept over 18 real C#/VB forms: 17
+clean, one true positive.
+
+### Added — the repair loop: build, fix one, rebuild
+
+- **`src/repairLoop.ts` + `src/writeStamp.ts`.** Asked for outright: *"the feature will never be sucessfull if we
+have to cover all errors by means of rules. The system must check for errors by running a build when it is done
+refactoring the code, then Code Fix must check for compile errors and fix each one, one at a time untill the
+build is clean"*. The build is the oracle and the rules are the hands: every pass fixes **one** error and
+rebuilds, because each edit shifts line numbers and can reveal or erase the next one. A fix that does not bring
+the project closer to compiling is **undone**; an error no fixer understands is **skipped** and the loop carries
+on ("keep fixing what it can and list the rest"); the loop is bounded (10 fixes) and stops when the panel closes.
+The trigger policy is the user's: a **designer-made** change (a handler it inserted) stays instant — the buffer it
+wrote is clean — while a **hand or AI-assisted** edit marks the form and the loop runs when they come back to the
+designer tab. The model is the last fixer, and **only when it is already running** (never started from here),
+capped at three attempts per run because a local answer costs seconds to minutes.
+- Proven end to end on a copy of the user's project with two planted errors: the first build saw only the
+`CS1002` (a syntax error hides semantic ones), the fixer added the `;`, the rebuild **revealed** a `CS0103`, no
+fixer claimed it, and the loop stopped with it listed — 1 applied, 1 remaining, 2 builds, 2.2 s.
+
+### Added — a host check, and an honest notice
+
+- **`src/hostCheck.ts`.** The AI assist is the one feature whose usefulness depends on the machine, so the
+extension now probes it once at activation (`nvidia-smi`, `lspci`, sysfs VRAM, Windows WMI, `system_profiler`)
+and greys the AI section out, with the reason, when there is not enough memory for the smallest supported model
+— **available memory, not total** (free RAM plus a real card's VRAM against the same 8 GB `minRamGb` the
+per-model fit check uses), which is what the user chose after seeing that their literal rule ("< 32 GB RAM and an
+integrated GPU") would have greyed the feature out on their own machine, the box that loads a 3B model in 602 ms
+on Vulkan. Below 20 GB available it **warns** instead, and an APU's carve-out is deliberately not counted (it is
+the same RAM twice). The refusal is never a lockout: **Use it anyway — I know this machine**
+(`assistant.ignoreHostCheck`) is offered in the explanation, remembered and logged.
+- **EXPERIMENTAL FEATURE-USE WITH CAUTION** at the top of ⚙ Settings (bold red), in `README.md` and in
+`USER_MANUAL.md`, with a table of what the check blocks, warns about, never counts, and how to override it.
+
+### Fixed
+
+- Two probe defects, both found by **running** the code rather than by reading it: `lspci -mm` lists *every* PCI
+  device, so `AMD Family 19h USB4/Thunderbolt PCIe tunnel` was picked as "the GPU" until the class field was
+  checked; and Windows `AdapterRAM` saturates at 4 GB − 1 byte, which would have made every Windows card look
+  like a 3 GB card and never be credited. The new tests also caught two bugs in the semicolon rule while it was
+  being written (a fix that blanked a trailing string literal, and the generator's comment-only body being read
+  as a statement) — neither ever shipped.
+
+- `README.md` §4/§10, `USER_MANUAL.md` (Code Fix… and the AI-assist section), `CONTROLS.md`, `TEST_PLAN.md` and
+`tests/README.md` carry the repair loop, the host check and the experimental notice; the assertion count moved
+from ~4,400 to **4,670**.
 
 ## [0.10.0] - 2026-09-16 · *the local AI assist reaches the Marketplace*
 

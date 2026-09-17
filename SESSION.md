@@ -17,7 +17,29 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-16)
+## Where the last session left off (2026-09-17)
+
+**Built, tested and installed: `0.10.1`** — the release that makes the project's own build the referee of the
+code check. Suite **4670 passed / 0 failed**, PROBLEMS clean, VSIX packed and installed; the docs
+(CHANGELOG, README, USER_MANUAL, CONTROLS, TEST_PLAN, tests/README, NOTES §130) were updated with it.
+
+- **The complaint it started from** was *"Code Fix… does not pick up syntax (or any other) errors"* after
+  removing a `;` by hand. Diagnosis: **not a regression** — no semicolon rule ever existed, and the syntax rules
+  are structural (they count braces), so a missing `;` is invisible to them while `dotnet build` refuses the
+  file. The answer was not more rules: `src/buildDiagnostics.ts` parses the compiler's own output.
+- **The strategy the user set** for the next phase, which is now the architecture: *"The system must check for
+  errors by running a build when it is done refactoring the code, then Code Fix must check for compile errors
+  and fix each one, one at a time untill the build is clean"* — rules first, then the AI **only when it is
+  already running**, hand/AI edits build on the way back to the designer, designer-made edits stay instant, and
+  what cannot be fixed is listed. `src/repairLoop.ts` is the pass logic (vscode-free, 77 assertions with fakes),
+  `src/writeStamp.ts` is how a hand edit is told apart from a designer write.
+- **Two decisions taken with the user against their own first draft**, both because the literal rule would have
+  broken their own machine: the AI gate uses **available** memory (their box: 28 GB total, integrated APU — the
+  one that runs a 3B model in 602 ms), and a greyed-out section always offers **Use it anyway**.
+- **Still open:** the `0.10.0` Marketplace upload (publisher portal, `PUBLISHING.md` part E) — and now `0.10.1`
+  is a local build too, so both are in the same queue unless the user uploads them together.
+
+## Where the session before left off (2026-09-16)
 
 **Released and installed: `0.10.0`** — the release that carries the whole `0.9.5` → `0.9.46` line (the AI
 assist and everything it forced) to the Marketplace as **one version number**, *plus* everything from the

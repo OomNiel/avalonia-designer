@@ -385,7 +385,9 @@ module.exports = async (t) => {
         t.ok(/if \(pick !== 'Wire it'\) return;/.test(ui), 'command', 'offered, never assumed — the form is a different file');
 
         // --- the diff switch (asked 2026-09-16): review first, or write it straight in ---
-        t.ok(/if \(!cfg\.showDiff\) \{/.test(ui), 'command',
+        // (the repair loop borrows the same branch — `applyWithoutDiff` — for the model's answers, which it
+        // verifies by rebuilding; see repairLoop.test.js. The branch is one, the callers are two.)
+        t.ok(/if \(!cfg\.showDiff \|\| opts\.applyWithoutDiff\) \{/.test(ui), 'command',
             'the command honours "no diff" — the same code path, without the review step');
         t.ok(/const written = await writeProposal\(document, anchor, code\);/.test(ui), 'command',
             'and writes it through the very function the Apply button uses, so the two cannot diverge');

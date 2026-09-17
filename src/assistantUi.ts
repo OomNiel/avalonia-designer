@@ -59,6 +59,8 @@ import {
     type TypeSpan
 } from './assistant';
 import { analyzeCodeBehind, methodsIn, publishIssues, type MethodSpan } from './codeBehindCheck';
+import { markCodeEdited } from './writeStamp';
+import { hostGate, hostBlockMessage } from './hostCheck';
 import { log } from './logger';
 import { DEFAULT_CONTEXT_SIZE } from './modelSpecs';
 import { sidecarContextSize, sidecarGpuLayers } from './localModels';
@@ -656,6 +658,10 @@ async function writeProposal(
 async function checkGeneratedCode(document: vscode.TextDocument): Promise<void> {
     const form = siblingFormOf(document);
     if (!form) return;
+    // A model wrote into this form's code: the user's rule (2026-09-17) is that an AI-assisted change needs
+    // a real BUILD before it is trusted, so the next time they come back to the designer tab the repair
+    // loop runs instead of only the instant rules.
+    markCodeEdited(form.uri.toString(), 'written by the assistant');
     try {
         const result = analyzeCodeBehind(form.uri, {});
         publishIssues(form.uri, result, result.issues);
@@ -688,7 +694,8 @@ async function proposeMethod(
     target: ProposalTarget,
     messages: ChatMessage[],
     what: string,
-    cfg: AssistantConfig
+    cfg: AssistantConfig,
+    opts: { applyWithoutDiff?: boolean; quiet?: boolean } = {}
 ): Promise<string | undefined> {
     let chunks = 0;
     let answer = '';
@@ -853,11 +860,18 @@ async function proposeMethod(
     // Every rule that protects the file still ran above — a name that already exists was refused, the
     // visibility was corrected — and the write is the same `WorkspaceEdit` the Apply button uses, so
     // Ctrl+Z undoes it. What is skipped is the *review*, and that is the user's own choice (2026-09-16).
-    if (!cfg.showDiff) {
+    if (!cfg.showDiff || opts.applyWithoutDiff) {
         const written = await writeProposal(document, anchor, code);
         if (!written.ok) {
             void vscode.window.showWarningMessage(`${written.message} Nothing was changed.`);
             return undefined;
+        }
+        // A repair the repair loop asked for: no dialog, no toast and no "Build to verify" offer — the loop
+        // rebuilds this second and reverts the change when the project did not get closer to compiling, so a
+        // message per error would only be noise (2026-09-17).
+        if (opts.quiet) {
+            log(`Applied ${name}() for the repair loop (no diff, no prompt).`);
+            return `${target.kind === 'replace' ? 'Rewrote' : 'Added'} ${name}()`;
         }
         log(`Applied ${name}() without showing a diff (assistant.showDiff is off).`);
         await checkGeneratedCode(document);
@@ -1294,6 +1308,13 @@ export async function fixFindingWithAI(uri: vscode.Uri, line: number, message: s
         await offerSetup();
         return;
     }
+    // The host check comes first and says the same thing everywhere: on a machine that cannot hold the
+    // smallest model there is nothing to offer, and the explanation is the whole answer (2026-09-17).
+    const gate = await hostGate();
+    if (!gate.aiAllowed) {
+        void vscode.window.showWarningMessage(hostBlockMessage(gate));
+        return;
+    }
     const document = await vscode.workspace.openTextDocument(uri);
     const language = languageOf(document);
     if (!language) return;
@@ -1324,6 +1345,76 @@ export async function fixFindingWithAI(uri: vscode.Uri, line: number, message: s
         `Asking ${cfg.model || 'the local model'} to fix the finding…`,
         resolved
     );
+}
+
+/**
+ * ONE repair attempt with the model for a compiler error, applied straight away — the repair loop's fallback
+ * for the errors no rule understands (the user's answer to "who fixes the rest?", 2026-09-17: *"rules, then
+ * the AI when it's already running"*).
+ *
+ * Two deliberate differences from "Fix with AI…", which is the same request driven by hand:
+ *  - **no runtime is ever started here.** A bundled model that is not running means this returns false and the
+ *    error is simply listed; starting a model is a decision the user makes, not something a background check
+ *    does. An external server is only asked if it answers a probe.
+ *  - **no diff.** The loop verifies the answer by rebuilding and undoes it when the project did not get closer
+ *    to compiling, which is a better review than a diff of a method the user did not ask to see — and asking
+ *    once per error would defeat "fix each one, one at a time, until the build is clean".
+ *
+ * Returns true when an edit was written (the caller decides whether it helped).
+ */
+export async function repairWithAI(uri: vscode.Uri, line: number, message: string): Promise<boolean> {
+    const cfg = assistantConfig();
+    if (!assistantEnabled(cfg)) return false;
+    if (!(await hostGate()).aiAllowed) {
+        log('Repair loop: the host check has the AI assist disabled on this machine — listing the error instead.');
+        return false;
+    }
+    if (cfg.backend === 'bundled') {
+        if (!bundledRuntimeRunning()) {
+            log('Repair loop: the bundled runtime is not running — not starting it, listing the error instead.');
+            return false;
+        }
+    } else if (!(await probeServer(cfg)).ok) {
+        log('Repair loop: no external model server answered — listing the error instead of asking one.');
+        return false;
+    }
+    let document: vscode.TextDocument;
+    try { document = await vscode.workspace.openTextDocument(uri); } catch { return false; }
+    const language = languageOf(document);
+    if (!language) return false;
+    const all = methodsIn(document.fileName, document.getText());
+    const span = all.find((m) => m.line <= line && line <= m.endLine);
+    if (!span) {
+        // Not inside a method: the prompt asks for "the complete replacement of the method the caret is in",
+        // so there is nothing to send. A field or a using is not something this feature asks a model about.
+        log(`Repair loop: ${message} is not inside a method — nothing to send to a model.`);
+        return false;
+    }
+    const resolved = await effectiveConfig(cfg);
+    if (!resolved) return false;
+    const method = document.getText().slice(span.start, span.end).replace(/\uFEFF/g, '');
+    const messages = buildFixPrompt({
+        language,
+        finding: message,
+        method,
+        header: headerOf(document, language),
+        sibling: siblingOf(document, span, all),
+        rules: conventionsFor(language)
+    });
+    try {
+        const done = await proposeMethod(
+            document,
+            { kind: 'replace', span },
+            messages,
+            `Repairing ${message}…`,
+            resolved,
+            { applyWithoutDiff: true, quiet: true }
+        );
+        return done !== undefined;
+    } catch (err) {
+        log(`Repair loop: the model attempt errored (${err instanceof Error ? err.message : String(err)}).`);
+        return false;
+    }
 }
 
 /**
@@ -1518,6 +1609,9 @@ interface StatusFacts {
 async function statusFacts(): Promise<StatusFacts> {
     const cfg = assistantConfig();
     const hw = assessHardware(readHardwareFacts());
+    // The host check, as the user will see it everywhere else: the same verdict, the same words, and the
+    // memory a model could actually use right now (2026-09-17).
+    const gate = await hostGate();
     // Ask the server first when there is one: "which model will answer" is the question the developer
     // actually has, and the settings alone cannot answer it. (`bundled` needs no probe — the model file
     // is the model.)
@@ -1537,7 +1631,17 @@ async function statusFacts(): Promise<StatusFacts> {
         `Budget: ${cfg.timeoutSeconds} s, up to ${cfg.maxTokens} tokens, temperature ${cfg.temperature}`,
         '',
         `Hardware: ${hw.level === 'good' ? 'comfortable' : hw.level === 'minimal' ? 'minimum only' : 'not usable'}`,
-        ...hw.reasons.map((r) => `• ${r}`)
+        ...hw.reasons.map((r) => `• ${r}`),
+        `Memory available to a model: ${gate.availableGb.toFixed(1)} GB`
+        + ` (${gate.hardware.freeRamGb.toFixed(1)} GB free`
+        + `${gate.gpu.kind === 'discrete' && gate.gpu.vramGb >= 4 ? ` + ${gate.gpu.vramGb.toFixed(1)} GB VRAM` : ''})`,
+        `GPU: ${gate.gpu.kind}${gate.gpu.name ? ` — ${gate.gpu.name}` : ''}`
+        + `${gate.gpu.vramGb > 0 && gate.gpu.kind !== 'discrete' ? ` (${gate.gpu.vramGb.toFixed(1)} GB shared/carve-out, not added to the budget)` : ''}`
+        + `${gate.gpu.source && gate.gpu.source !== 'none' ? `  [${gate.gpu.source}]` : ''}`,
+        gate.aiAllowed
+            ? (gate.overridden ? 'Host check: overridden — the AI assist runs on a machine it refused.' : 'Host check: this machine can run the AI assist.')
+            : `Host check: DISABLED — ${gate.reasons[0] ?? 'not enough memory'}`,
+        ...(gate.warning ? [`• ${gate.warning}`] : [])
     ];
     if (cfg.backend === 'bundled') {
         lines.push('', ...bundledStatusLines(cfg));

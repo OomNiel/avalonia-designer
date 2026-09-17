@@ -30,6 +30,8 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'aiOptContext', 'aiOptGpu', 'aiOptTtl', 'aiOptAddress',
     'aiConvText', 'aiLearnConventions',
     'aiLoad', 'aiUnload', 'aiRemove', 'aiStatus', 'aiProgress', 'aiStatusText',
+    // the host check's verdict in that section (2026-09-17): the reason, the tight-memory warning, the escape
+    'aiHostBlocked', 'aiHostWarning', 'aiHostOverride',
     'helpPanel', 'helpTitle', 'helpBody', 'btnToggleHelp', 'propsToggleRow', 'chkAdvanced',
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
@@ -79,6 +81,9 @@ function setup(omit = []) {
         if (id === 'aiModel' || id === 'aiGpu' || id === 'aiTtl') return 'select';
         if (id === 'aiContext' || id === 'aiMaxTokens' || id === 'aiTimeout' || id === 'aiEndpoint') return 'input';
         if (id === 'aiStatusText' || id === 'aiProgress' || id === 'aiBadge' || id === 'aiModelHint') return 'div';
+        // The host check's reason and warning are paragraphs in the real markup, and the escape is a button.
+        if (id === 'aiHostBlocked' || id === 'aiHostWarning') return 'p';
+        if (id === 'aiHostOverride') return 'button';
         if (id === 'aiLoad' || id === 'aiUnload' || id === 'aiRemove' || id === 'aiStatus' || id === 'aiRefresh' || id === 'aiScan' || id === 'aiLearnConventions') return 'button';
         if (id.startsWith('dotGridSpacing') || id === 'dotGridColor' || id === 'dotGridDotSize') return 'input';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
@@ -666,7 +671,17 @@ module.exports = async (t) => {
         },
         hint: '',
         pinned: 'Pinned: the built-in runtime loads this file at start',
-        conventions: []
+        conventions: [],
+        // The host check's verdict, as the extension sends it. Allowed and comfortable by default, so every
+        // test above also covers the "nothing is disabled" path.
+        host: {
+            aiAllowed: true,
+            availableGb: 24,
+            overridden: false,
+            gpu: { kind: 'integrated', name: 'AMD Radeon', vramGb: 0, source: 'lspci' },
+            hardware: { arch: 'x64', cpuCount: 12, totalRamGb: 28, freeRamGb: 24, hasAvx2: true, platform: 'linux' },
+            reasons: []
+        }
     }, over);
     msg({ type: 'aiState', state: aiState() });
     t.equal($('aiModel').value, 'bundled:qwen2.5-coder-3b-q4', 'ai-picker',
@@ -794,6 +809,58 @@ module.exports = async (t) => {
     msg({ type: 'aiResult', action: 'load', ok: false, message: 'the download stopped' });
     t.equal(posted.some((m) => m.type === 'aiState'), false, 'ai-picker', 'a failed load does not');
     t.ok(/the download stopped/.test($('aiProgress').textContent), 'ai-picker', 'a failure stays visible in the progress line');
+
+    // --- the host check greys the section out, with the reason and a way out (asked 2026-09-17) ---
+    // "If it has less than 32 GB ram and an integrated GPU … the AI assistance feature must be greyed out with
+    // an explanation" — and, agreed the same day, an explicit escape, because the numbers can be wrong about a
+    // machine (an eGPU, a card the probe could not identify) and nothing should lock a user out of their own
+    // computer. The verdict arrives with every state, so this is where it is applied.
+    {
+        const gpu = { kind: 'integrated', name: 'Intel UHD Graphics', vramGb: 0, source: 'lspci' };
+        const hw = { arch: 'x64', cpuCount: 4, totalRamGb: 16, freeRamGb: 5, hasAvx2: true, platform: 'linux' };
+        msg({
+            type: 'aiState', state: aiState({
+                host: {
+                    aiAllowed: false, availableGb: 5, overridden: false, gpu, hardware: hw,
+                    reasons: ['5.0 GB of memory is available to a model right now and the smallest supported model needs about 8 GB.']
+                }
+            })
+        });
+        t.equal($('aiEnabled').disabled, true, 'ai-host', 'a refused machine disables the AI switch');
+        t.equal($('aiLoad').disabled, true, 'ai-host', 'and everything that could start a model');
+        t.equal($('aiModel').disabled, true, 'ai-host', 'including the picker');
+        t.equal($('aiScan').disabled, true, 'ai-host', 'and the machine scan');
+        t.equal($('aiHostBlocked').hidden, false, 'ai-host', 'the reason is shown');
+        t.ok(/disabled on this machine/.test($('aiHostBlocked').textContent), 'ai-host', 'saying the feature is off');
+        t.ok(/5\.0 GB/.test($('aiHostBlocked').textContent), 'ai-host', 'with the number the machine gave');
+        t.equal($('aiHostOverride').hidden, false, 'ai-host', 'and the escape is offered');
+        posted.length = 0;
+        $('aiHostOverride').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1].type, 'aiHostOverride', 'ai-host',
+            'pressing it asks the extension to write the setting (which is what makes it remembered)');
+        $('aiHostOverride').disabled = false;
+
+        // Allowed, but tight: the warning shows on its own and nothing is disabled.
+        msg({
+            type: 'aiState', state: aiState({
+                host: {
+                    aiAllowed: true, availableGb: 16, overridden: false, gpu, hardware: hw,
+                    warning: 'Only 16.0 GB of memory is available to a model. That is enough for the smallest models, but a larger one may be slow or fail to load.'
+                }
+            })
+        });
+        t.equal($('aiEnabled').disabled, false, 'ai-host', 'an allowed machine keeps every control live');
+        t.equal($('aiHostBlocked').hidden, true, 'ai-host', 'with no reason shown');
+        t.equal($('aiHostOverride').hidden, true, 'ai-host', 'and no escape needed');
+        t.equal($('aiHostWarning').hidden, false, 'ai-host', 'but the tight-memory warning is shown');
+        t.ok(/16\.0 GB/.test($('aiHostWarning').textContent), 'ai-host', 'naming the memory available');
+
+        // Comfortable: neither line.
+        msg({ type: 'aiState', state: aiState({}) });
+        t.equal($('aiHostWarning').hidden, true, 'ai-host', 'a comfortable machine shows neither line');
+        t.equal($('aiHostBlocked').hidden, true, 'ai-host', 'nothing blocked, nothing warned');
+        t.equal($('aiEnabled').disabled, false, 'ai-host', 'and the switch is usable');
+    }
 
     // --- the wait for the model list is ON SCREEN (asked 2026-09-16) ---
     // "When opening the Settings dialog and selecting the checkbox, the system takes a while to load and

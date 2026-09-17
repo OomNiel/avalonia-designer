@@ -59,7 +59,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ```
 - Discovers `tests/**/*.test.js`; writes `tests/out/log.jsonl` + `report.md`; exit ≠ 0 on any FAIL.
 - The vscode stub lives in `tests/stubs/vscode` (NOT `node_modules` — `npm install` prunes it).
-- **Current: 4438 passed, 0 failed / 0 skipped** (2026-09-16, ~39 s). Layer map: `TEST_PLAN.md` §2;
+- **Current: 4670 passed, 0 failed / 0 skipped** (2026-09-17, ~39 s). Layer map: `TEST_PLAN.md` §2;
   per-release coverage notes: `TEST_PLAN.md` §10.
 
 ### Temporary headless UI smoke test (NOT in `npm test`)
@@ -2920,4 +2920,45 @@ is stale.
 request, the state clearing it, the failure text surviving the state *and* the status that follow it, the
 `checking…` line being cleared by its answer, the single state-request call site, and the markup position of
 the line (inside the AI body, so an empty picker is never on screen without it).
+
+### §130 — the build becomes the referee (2026-09-17, release 0.10.1)
+
+Started from the user's report that **Code Fix… had stopped picking up errors** (*"I removed a ; form a function.
+No error reported"*). It had not: no semicolon rule ever existed (`git log -S semicolon -- src/codeBehindCheck.ts`
+returns one unrelated commit), and the syntax rules the 0.9.39/0.9.40 work produced are *structural* — they count
+braces, so `CS1513` is visible and `CS1002` is invisible. Their own file proved it: `RadioButton2.IsChecked = true`
+with no `;` on line 96, braces balanced 19/19, `dotnet build` refusing the file at (96,38).
+
+**The user then set the strategy for the whole feature**, and it is now the architecture: *"the feature will never
+be sucessfull if we have to cover all errors by means of rules. The system must check for errors by running a build
+when it is done refactoring the code, then Code Fix must check for compile errors and fix each one, one at a time
+untill the build is clean"*. Their three follow-up rulings: **(b)** rules first, then the AI *only when it is
+already running*; a **build on the way back from the editor** when the edit was hand-made or AI-assisted, while a
+**designer-made** edit stays instant; and *"keep fixing what it can and list the rest"*.
+
+What that produced (four new modules, all vscode-free except the two probes):
+
+- `src/codeBehindCheck.ts` — `insert-semicolon`, the C#-only rule for "everything after a body's last `;` must be a
+  block". Text for the finding comes from the **raw** file at the scanned offsets (the scan is length-preserving),
+  because the scanned copy blanks literals; the scanned copy is used only to decide whether a line holds code (or
+  the generator's `// TODO` body would be flagged). The fix puts the `;` in front of a trailing `//`.
+- `src/buildDiagnostics.ts` — `dotnet build <proj> -nologo -v:quiet` (943 ms incremental, measured), parsed,
+  de-duplicated (MSBuild prints every error twice), filtered to the project's own source, with file-less errors kept
+  and a `CS1002` in the form's code-behind offered the rules' one-click fix.
+- `src/repairLoop.ts` — the pass logic, injected context, 77 assertions with a fake project. Rebuild after **every**
+  fix; skip-and-continue; revert when a fix does not help; keep one that trades an error for another (it revealed
+  the next); stop on clean / nothing-fixable / no-progress / budget / cancel / build-failed. Verified end to end on
+  a **copy** of the user's project with two planted errors: the `CS1002` hid a `CS0103` behind it, the fix revealed
+  it, the loop listed it — 2 builds, 2.2 s.
+- `src/writeStamp.ts` — how a hand edit is told from a designer write: `document.isDirty` (a designer write lands on
+  disk and reloads the buffer clean), plus an explicit mark from the assistant's write path.
+
+Then the two additions the user asked for once the loop worked: the **host check** (`src/hostCheck.ts` — probe,
+classifier, verdict, cached once per session, escape hatch `assistant.ignoreHostCheck`) and the **EXPERIMENTAL
+FEATURE-USE WITH CAUTION** notice in ⚙ Settings plus both documents. Both of the user's first-draft rules were
+re-decided against their own machine: 28 GB RAM with an integrated Radeon 760M is the box that loads a 3B model in
+602 ms on Vulkan, so the gate uses **available** memory (free RAM + a real card's VRAM, against the same 8 GB
+`minRamGb` the fit check uses) and a refused machine always offers **Use it anyway**.
+
+Suite 4438 → **4670** assertions (three new t2 files, one grown t3 layer, no failures).
 

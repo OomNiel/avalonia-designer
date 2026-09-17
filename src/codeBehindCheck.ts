@@ -58,6 +58,7 @@ export type LocalFixKind =
     | 'fix-handler-signature'    // handler exists, wrong EventArgs
     | 'wire-unwired-handler'     // handler exists, nothing wires it (the reverse of insert-handler)
     | 'repair-structure'         // a nested namespace/class, or braces the model never closed
+    | 'insert-semicolon'         // a C# statement nothing terminated (CS1002) — the sibling of the brace repair
     | 'insert-initialize'        // InitializeComponent() missing
     | 'add-binding-call'         // Data-Image block present, ctor call missing
     | 'restamp-marker'           // Data-Image block present, `' DataImage:` marker lost
@@ -231,6 +232,58 @@ function matchingBrace(text: string, open: number): number {
         else if (text[i] === '}') { depth--; if (depth === 0) return i; }
     }
     return -1;
+}
+
+/**
+ * Comments blanked out and string/char literals emptied, character-for-character, so an offset found
+ * in the result still points at the same place in the original text. The walk is done by hand rather
+ * than with a regex because a `//` inside a literal is not a comment: `Foo("http://x")` would be cut
+ * short, and a `;` (or a brace) inside a literal would be read as code. `comments`, when given,
+ * collects the offsets where each comment begins.
+ */
+function blankOutCommentsAndLiterals(text: string, comments?: number[]): string {
+    let out = '';
+    let i = 0;
+    while (i < text.length) {
+        const c = text[i];
+        const next = text[i + 1];
+        if (c === '/' && next === '/') {
+            const nl = text.indexOf('\n', i);
+            const end = nl < 0 ? text.length : nl;
+            comments?.push(i);
+            out += ' '.repeat(end - i);
+            i = end;
+        } else if (c === '/' && next === '*') {
+            const close = text.indexOf('*/', i + 2);
+            const end = close < 0 ? text.length : close + 2;
+            comments?.push(i);
+            out += text.slice(i, end).replace(/[^\n]/g, ' ');
+            i = end;
+        } else if (c === '"' || c === "'") {
+            // A verbatim string (`@\"…\"`) keeps its backslashes. An interpolated one needs no special
+            // care here: all that matters is that nothing inside it counts as code.
+            const verbatim = c === '"' && text[i - 1] === '@';
+            let j = i + 1;
+            while (j < text.length) {
+                if (!verbatim && text[j] === '\\') { j += 2; continue; }
+                if (text[j] === c) {
+                    if (!verbatim && text[j + 1] === c) { j += 2; continue; }
+                    j += 1;
+                    break;
+                }
+                // An unterminated literal ends at the line break instead of swallowing the rest of the file.
+                if (text[j] === '\n') break;
+                j += 1;
+            }
+            const end = Math.min(j, text.length);
+            out += ' '.repeat(end - i);
+            i = end;
+        } else {
+            out += c;
+            i += 1;
+        }
+    }
+    return out;
 }
 
 /**
@@ -1358,6 +1411,57 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
         }
     }
 
+    // 15f) A statement nothing terminated (C#). Braces balance when a `;` goes missing, so the balance rule
+    // above cannot see it: everything after a method body's last `;` must be a block (`}`) or nothing at all,
+    // and a bare expression sitting there is a statement the answer never finished — `CS1002: ; expected`.
+    // Found on the user's own form (2026-09-17): `RadioButton2.IsChecked = true` with no `;` before the closing
+    // brace, which this checker called clean while `dotnet build` refused the file. C# only — in VB a statement
+    // ends at the end of the line.
+    if (language === 'cs') {
+        const clean = blankOutCommentsAndLiterals(code.body);
+        const reported = new Set<number>();
+        for (const m of code.methods) {
+            const open = bodyBraceOffset(clean, m);
+            if (open < 0) continue;
+            const close = matchingBrace(clean, open);
+            if (close < 0) continue;
+            const inner = clean.slice(open + 1, close);
+            const tailAt = inner.lastIndexOf(';') + 1;
+            let hit: { text: string; line: number } | undefined;
+            let at = 0;
+            for (const line of inner.slice(tailAt).split('\n')) {
+                // The offsets come from the scanned copy (same length), the TEXT from the original file: the
+                // scan blanks literals, and a statement quoted without its string would be worthless. The
+                // scanned copy decides whether the line holds code at all, so a `// TODO` body — what the
+                // generator writes for a handler it cannot fill in — is not mistaken for a statement.
+                const start = open + 1 + tailAt + at;
+                const raw = code.body.substr(start, line.length);
+                const code1 = raw.trim();
+                if (line.trim() && code1 && !code1.startsWith('#')) {
+                    hit = { text: code1, line: lineAt(code.body, start + raw.indexOf(code1)) };
+                }
+                at += line.length + 1;
+            }
+            // `;`, `{` and `}` end a statement or a block legitimately — a body that stops after a nested
+            // `if`/`try` needs no terminator, and neither does the one-comment body the generator writes.
+            if (!hit || /[;{}]$/.test(hit.text) || reported.has(hit.line)) continue;
+            reported.add(hit.line);
+            const snippet = hit.text.length > 58 ? hit.text.slice(0, 55) + '…' : hit.text;
+            add({
+                severity: 'error',
+                kind: 'insert-semicolon',
+                member: m.name,
+                line: hit.line,
+                data: { method: m.name, line: String(hit.line) },
+                title: `The last statement in "${m.name}" has no ";"`,
+                detail: `C# ends every statement with a \`;\`, so \`${snippet}\` is read as part of whatever ` +
+                    `follows it — \`CS1002: ; expected\` on line ${hit.line}, where the build stops. The braces ` +
+                    `balance, which is why nothing else here notices. Fix: add the missing \`;\` at the end of ` +
+                    `that statement.`
+            });
+        }
+    }
+
     return { codeFile, language, issues };
 }
 
@@ -1435,6 +1539,43 @@ export function renameCandidates(
 /** Removes one method by its analysed span (line-start .. past the terminator). */
 function removeMethodAt(text: string, start: number, end: number): string {
     return text.slice(0, start) + text.slice(end);
+}
+
+/**
+ * The `{` opening a method's body, or -1. Parens are counted so an initializer in a default parameter or
+ * an attribute argument cannot be mistaken for the body, and a `=>` before the brace means the member is
+ * expression-bodied (`=> new Foo { … };`) — that `{` belongs to an initializer, not to a body.
+ */
+function bodyBraceOffset(clean: string, m: CodeMethod): number {
+    let depth = 0;
+    let arrow = false;
+    const end = Math.min(m.end, clean.length);
+    for (let i = m.start; i < end; i++) {
+        const c = clean[i];
+        if (c === '(') depth += 1;
+        else if (c === ')') depth = Math.max(0, depth - 1);
+        else if (depth === 0 && c === '=' && clean[i + 1] === '>') arrow = true;
+        else if (depth === 0 && c === '{') return arrow ? -1 : i;
+        else if (depth === 0 && c === ';') return -1;   // no block body
+    }
+    return -1;
+}
+
+/**
+ * Puts the `;` C# needs at the end of a statement — in front of a trailing `//` comment, so the terminator
+ * is not swallowed by it. Undefined when the line already ends with one, or holds no code at all.
+ */
+function terminateCsharpLine(line: string): string | undefined {
+    // The scan is only asked WHERE a trailing comment starts: the `;` itself goes on the raw text, or a
+    // string literal at the end of the statement would be blanked away with it.
+    const comments: number[] = [];
+    blankOutCommentsAndLiterals(line, comments);
+    const at = comments.length > 0 ? comments[0] : line.length;
+    const eol = /\r$/.test(line) ? '\r' : '';
+    const trimmed = line.slice(0, at).replace(/\s+$/, '');
+    if (!trimmed || /[;{}]$/.test(trimmed)) return undefined;
+    const rest = line.slice(at).replace(/\s+$/, '').replace(/\r$/, '');
+    return trimmed + ';' + (rest ? ' ' + rest.replace(/^ +/, '') : '') + eol;
 }
 
 /** Applies an issue whose fix only needs the code-behind / XAML files. Returns a short report. */
@@ -1527,6 +1668,19 @@ export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts
                 return `Added ${want} closing brace${want === 1 ? '' : 's'} at the end of the file.`;
             }
             return 'There are more closing braces than opening ones — remove the surplus by hand.';
+        }
+        case 'insert-semicolon': {
+            // The other half of the brace repair: the answer stopped mid-statement, so the terminator C#
+            // requires is missing. One line is touched, and the `;` goes in front of a trailing comment.
+            const facts = parseCode(codeFile, read());
+            const line = Number(issue.line ?? '0');
+            const lines = facts.body.split('\n');
+            if (!line || line > lines.length) return 'That statement is gone.';
+            const fixed = terminateCsharpLine(lines[line - 1]);
+            if (!fixed) return 'That line already ends with a ";".';
+            lines[line - 1] = fixed;
+            write(lines.join('\n'));
+            return `Added the missing ";" in "${data.method ?? 'the method'}".`;
         }
         case 'fix-handler-signature': {
             const facts = parseCode(codeFile, read());

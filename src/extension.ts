@@ -7,6 +7,8 @@ import { createNewProject, openLastProject, maybeRunFirstBuild } from './project
 import { ProjectViewProvider, setActiveContext } from './projectView';
 import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor';
 import { disposeIssues } from './codeBehindCheck';
+import { disposeBuildDiagnostics } from './buildDiagnostics';
+import { hostGate } from './hostCheck';
 import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, chooseBundledBackend, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, refreshPanels, removeHubModel, showStatus } from './assistantUi';
 import { initModelRuntime, stopModelServer } from './modelRuntime';
 import { initLlamaServer, startMyLlamaServerFlow, stopOwnLlamaServer } from './llamaServer';
@@ -22,6 +24,18 @@ let sharedHost: PreviewerHostManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
     const log = (m: string) => logger.log(m);
+    // The host check, once per session and before anything AI-related can be offered: it is what greys the
+    // assistant out on a machine that cannot hold a local model, and what warns when there is little memory
+    // left for one. Started rather than awaited — the panel and the AI commands await the same cached verdict
+    // (src/hostCheck.ts), so nothing waits for three probes to answer here.
+    void hostGate().then((gate) => {
+        log(`Host check: ${gate.aiAllowed ? 'AI assist allowed' : 'AI assist disabled'}`
+            + ` · ${gate.availableGb.toFixed(1)} GB available to a model`
+            + ` · GPU ${gate.gpu.kind}${gate.gpu.name ? ` (${gate.gpu.name})` : ''}`
+            + `${gate.overridden ? ' · overridden by assistant.ignoreHostCheck' : ''}`);
+        for (const reason of gate.reasons) log(`  · ${reason}`);
+        if (gate.warning) log(`  · warning: ${gate.warning}`);
+    }).catch((err) => logger.logError(err));
     try {
         log(`activate start (vscode ${vscode.version})`);
         setActiveContext(context);
@@ -238,4 +252,6 @@ export async function deactivate(): Promise<void> {
     sharedHost = undefined;
     // The Code Fix diagnostics collection (PROBLEMS pane) is created lazily on first use.
     try { disposeIssues(); } catch { /* never fail a shutdown over this */ }
+    // …and the collection the project's own build publishes into.
+    try { disposeBuildDiagnostics(); } catch { /* never fail a shutdown over this */ }
 }

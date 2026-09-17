@@ -598,6 +598,13 @@ It is the safety net for the cases that otherwise fail as an unhelpful compile e
   `Avalonia.Input`).
 - **Structure** — `InitializeComponent()` never called, `chrome:ChromeWindow` root with a `Window`
   base class.
+- **Compile errors, from the compiler itself** (since `0.10.1`) — a **🩺 Code Fix…** run also builds the project
+  (`avaloniaDesigner.codeCheck.build`) and lists `dotnet build`'s own errors next to the rules' findings: only the
+  project's source, de-duplicated, with `CS1002` in the form's code-behind repaired by the same one-click fix the
+  semicolon rule uses. This is also the loop: each fix is followed by a rebuild, a fix that does not help is
+  undone, and what no rule can repair is listed for the user (the model is offered it only while it is already
+  running). A statement nothing terminated — a missing `;` — is its own finding (`insert-semicolon`), because the
+  braces still balance and no structural rule can see it.
 
 Rules aimed at code the **AI writes** (added 0.9.40, after the user asked whether the checker could cover the
 generation feature too). The check runs the moment a model changes the code-behind, in both diff modes and also

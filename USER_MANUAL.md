@@ -8,7 +8,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-16)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-17)
 
 ---
 
@@ -123,7 +123,7 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.0`**, so the command above installs it; add `--force` to
+The current version is **`0.10.1`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -135,7 +135,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.10.0` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.10.1` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -782,6 +782,16 @@ re-computed on every check. Before the first fix of a run, a copy of the code-be
 the **extension's storage** (the path is shown at the top of the list), so your project folder stays
 clean and you can always go back one step.
 
+**It builds too, and repairs what the build finds.** A **🩺 Code Fix…** run — and coming back to the designer
+after you edited the code by hand or with the AI assist — also runs the project's own `dotnet build`. The
+compiler's errors are listed next to the rules' findings, and the ones a rule can *write* (a missing `;`, a
+missing brace) are repaired **one at a time, rebuilding after each**, until the build is clean or everything
+left is an error no rule understands — those are listed for you, and the model is offered them when it is
+already running. A repair that does not make the project build better is **undone**, so your file is never left
+worse than it was. Two settings control it: `avaloniaDesigner.codeCheck.build` (the build itself, on by
+default) and `codeCheck.aiRepair` (the model's part in it). The automatic re-check only pays for a build when
+the code actually changed since the last one; a handler the designer inserted itself stays instant.
+
 What it checks and can fix:
 
 | Problem | Example | Fix |
@@ -866,6 +876,31 @@ have to be fixed:
 - Anything else can simply be ignored: checks are read-only until you press a button.
 
 ### AI assist — a local model for the fixes a rule cannot express
+
+> **⚠ EXPERIMENTAL FEATURE-USE WITH CAUTION**
+>
+> The AI assist is experimental: it may change shape, and it depends on the machine it runs on. Nothing is
+> sent anywhere — every request goes to `127.0.0.1` — but a local model needs memory that is **available
+> right now**, so the designer checks your host when it starts (see *What the host check decides* below).
+
+**What the host check decides.** One check runs when the extension activates, and the same verdict is shown
+in ⚙ Settings → AI assist (the section is greyed out when it refuses), in *AI: Status & hardware check*, and
+in the log:
+
+- **Blocked when under ~8 GB is available to a model.** That figure is not arbitrary: it is the smallest
+  supported model's own `minRamGb` — roughly its size again while it runs. "Available" means free system RAM
+  plus the VRAM of a discrete graphics card.
+- **Blocked when the CPU has no AVX2, or fewer than 4 threads** — llama.cpp on such a CPU is unusably slow,
+  and no amount of memory changes that.
+- **Warned (not blocked) when under 20 GB is available.** Fine for the 3B model, tight for a larger one; the
+  warning names how much is available and suggests closing applications or picking the small model.
+- **An integrated GPU's VRAM is never added to that budget.** An APU reports a carve-out
+  (`mem_info_vram_total`) that comes *out of* system RAM — counting it would count the same gigabytes twice.
+  A discrete card with under 4 GB VRAM is reported as no help, but never blocks on its own.
+- **The way out is deliberate and remembered:** **Use it anyway — I know this machine** in the greyed-out
+  section writes `avaloniaDesigner.assistant.ignoreHostCheck`. Use it for an eGPU, a card the probe could
+  not identify, or a machine you know runs a small model fine. Every start is written to the log, and
+  switching it back off restores the check.
 
 The checker's fixes are exact because each one is a rule. That leaves a gap: a handler that is simply
 **empty**, or a change no rule can describe ("read the row the user picked and fill the TextBoxes"). For

@@ -13,7 +13,10 @@
  *   4. a class inside a class — the verbatim `CS1513` damage from the user's app — is reported and the wrapper
  *      is stripped, keeping the member;
  *   5. braces the answer never closed are reported and closed at the end of the file;
- *   6. the check runs the moment the model writes, in both diff modes.
+*   6. the check runs the moment the model writes, in both diff modes;
+*   7. a statement nothing terminated is reported and gets its `;` back — the `CS1002` half of "fix
+*      syntax errors", which the brace rule cannot see because the braces still balance (2026-09-17:
+*      the user removed a `;` in their own app and the checker called the file clean).
  */
 'use strict';
 const fs = require('fs');
@@ -285,5 +288,193 @@ public partial class TestForm : Window
             'and the findings go where the user already looks for them: the PROBLEMS pane');
         t.ok(/async function checkGeneratedCode[\s\S]{0,2600}?Code check after the model's change errored/.test(ui),
             'wiring', 'a check that throws is logged, never allowed to make a good write look failed');
+    }
+
+    // ---------- 7) a statement the answer never terminated (CS1002) ----------
+    {
+        const AXAML = `<Window ${NS} x:Class="Proj.TestForm" Width="800" Height="450">
+  <Canvas Name="Body">
+    <Button x:Name="Save" Content="Save"/>
+  </Canvas>
+</Window>`;
+        // The shape the user hit in OptimisedCSTest: a handler that stops mid-statement. The braces
+        // balance, so the build fails with CS1002 and the structure rule above stays silent.
+        const p = makeProject('TestForm.axaml.cs', `using Avalonia.Controls;
+namespace Proj;
+public partial class TestForm : Window
+{
+    public TestForm()
+    {
+        InitializeComponent();
+    }
+
+    private void PushButton()
+    {
+        Save.Content = "pressed"
+    }
+}
+`, AXAML);
+        const r = p.analysis();
+        const issue = find(r, 'insert-semicolon');
+        t.ok(issue, 'semicolon', 'a statement nothing terminated is reported');
+        t.equal(issue && issue.member, 'PushButton', 'semicolon', 'naming the method it sits in');
+        t.equal(issue && String(issue.line), '12', 'semicolon', 'on the line the build stops at');
+        t.ok(/no ";"/.test(issue.title), 'semicolon', 'with the missing token in the title');
+        t.ok(/CS1002/.test(issue.detail), 'semicolon', 'and the error the user actually sees');
+        t.ok(/Save\.Content = "pressed"/.test(issue.detail), 'semicolon', 'quoting the statement it found');
+        t.equal(kinds(r).includes('repair-structure'), false, 'semicolon',
+            'the braces do balance — which is why no other rule here can see it');
+
+        const report = await applyLocalFix(p.uri, issue);
+        t.ok(/Added the missing ";"/.test(report), 'semicolon-fix', 'Fix adds the terminator');
+        t.ok(/Save\.Content = "pressed";/.test(p.read()), 'semicolon-fix', 'ending the statement that lacked it');
+        t.equal(kinds(p.analysis()).length, 0, 'semicolon-fix', 'and nothing is left to report');
+    }
+
+    // ---------- 7b) where the `;` goes: in front of a trailing comment, after a string ----------
+    {
+        const AXAML = `<Window ${NS} x:Class="Proj.TestForm" Width="800" Height="450">
+  <Canvas Name="Body"/>
+</Window>`;
+        const commented = makeProject('TestForm.axaml.cs', `using Avalonia.Controls;
+namespace Proj;
+public partial class TestForm : Window
+{
+    public TestForm()
+    {
+        InitializeComponent();
+    }
+
+    private void Load()
+    {
+        var url = "http://example.test/a"
+        Save.Content = "loaded" // statusclock:Save: 17 September 2026|System time
+    }
+}
+`, AXAML);
+        // Only the LAST statement of a body is provable without a compiler (see 7c), and that is the one a
+        // truncated answer stops on — so the line reported is the commented one, not the one above it.
+        const issue = find(commented.analysis(), 'insert-semicolon');
+        t.equal(issue && String(issue.line), '13', 'semicolon-comment', 'the unterminated last statement is reported');
+        t.ok(/Save\.Content = "loaded"/.test(issue.detail), 'semicolon-comment',
+            'quoted with its string intact — the scan blanks literals, so the text is taken from the file');
+        await applyLocalFix(commented.uri, issue);
+        const fixed = commented.read();
+        t.ok(/Save\.Content = "loaded"; \/\/ statusclock:Save:/.test(fixed), 'semicolon-comment',
+            'the `;` goes in front of the trailing comment, which still reads as a comment');
+        t.equal((fixed.match(/; \/\/ statusclock/g) || []).length, 1, 'semicolon-comment',
+            'and only that line is touched');
+    }
+
+    // ---------- 7c) a `//` inside a string literal is not a comment ----------
+    {
+        const AXAML = `<Window ${NS} x:Class="Proj.TestForm" Width="800" Height="450">
+  <Canvas Name="Body"/>
+</Window>`;
+        const p = makeProject('TestForm.axaml.cs', `using Avalonia.Controls;
+namespace Proj;
+public partial class TestForm : Window
+{
+    public TestForm()
+    {
+        InitializeComponent();
+    }
+
+    private void Load()
+    {
+        var url = "http://example.test/a"
+    }
+}
+`, AXAML);
+        const issue = find(p.analysis(), 'insert-semicolon');
+        t.ok(issue, 'semicolon-string', 'a statement that stops after a URL is reported');
+        t.ok(/http:\/\/example\.test\/a/.test(issue.detail), 'semicolon-string',
+            'with the whole statement quoted: the `//` in the string is not a comment starting mid-line');
+        await applyLocalFix(p.uri, issue);
+        t.ok(/var url = "http:\/\/example\.test\/a";/.test(p.read()), 'semicolon-string',
+            'and the `;` lands after the string, not inside it');
+        t.equal(kinds(p.analysis()).length, 0, 'semicolon-string', 'leaving nothing to report');
+    }
+
+    // ---------- 7d) shapes that must stay quiet, and the limit of the rule ----------
+    {
+        const AXAML = `<Window ${NS} x:Class="Proj.TestForm" Width="800" Height="450">
+  <Canvas Name="Body"/>
+</Window>`;
+        // A body that ends with a block, one the generator left as a comment only, and one whose last
+        // statement is terminated: none of these is a missing `;` (a nested block needs no terminator).
+        const quiet = makeProject('TestForm.axaml.cs', `using Avalonia.Controls;
+namespace Proj;
+public partial class TestForm : Window
+{
+    public TestForm()
+    {
+        InitializeComponent();
+    }
+
+    private void PushButton()
+    {
+        // TODO: Handle PushButton
+    }
+
+    private void Toggle()
+    {
+        if (Save.IsVisible)
+        {
+            Save.IsVisible = false;
+        }
+        else
+        {
+            Save.IsVisible = true;
+        }
+    }
+
+    private void Run()
+    {
+        Save.IsVisible = true;
+    }
+}
+`, AXAML);
+        t.equal(kinds(quiet.analysis()).includes('insert-semicolon'), false, 'semicolon-quiet',
+            'a comment-only body, a body ending in a block and a terminated statement are all clean');
+
+        // The limit of a rule that is not a compiler: only the last statement of a body is provable, because
+        // a `;` dropped mid-body cannot be told from a continuation line without parsing C#. That one is the
+        // build's job, and the check says so rather than guessing.
+        const midBody = makeProject('TestForm.axaml.cs', `using Avalonia.Controls;
+namespace Proj;
+public partial class TestForm : Window
+{
+    public TestForm()
+    {
+        InitializeComponent();
+    }
+
+    private void Run()
+    {
+        var url = "http://example.test/a"
+        Save.Content = "done";
+    }
+}
+`, AXAML);
+        t.equal(kinds(midBody.analysis()).includes('insert-semicolon'), false, 'semicolon-midbody',
+            'a `;` dropped mid-body is left to the build, not guessed at');
+
+        // VB has no `;`: the same shape is the line ending a statement, so the rule must not exist there.
+        const vb = makeProject('TestForm.axaml.vb', `Imports Avalonia.Controls
+Public Class TestForm
+    Inherits Window
+
+    Public Sub New()
+        InitializeComponent()
+    End Sub
+
+    Private Sub PushButton()
+        Save.Content = "pressed"
+    End Sub
+End Class
+`, AXAML);
+        t.equal(kinds(vb.analysis()).includes('insert-semicolon'), false, 'semicolon-vb',
+            'VB statements end at the line, so nothing is reported for the same shape');
     }
 };

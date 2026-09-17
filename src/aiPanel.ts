@@ -31,6 +31,7 @@ import {
     type FoundModelFile
 } from './localModelCore';
 import { MODEL_SPECS, DEFAULT_CONTEXT_SIZE, sidecarBackend, specById, specByFileName, type ModelSpec, type SidecarBackend } from './modelSpecs';
+import { hostGate, type HostGate } from './hostCheck';
 import { configView } from './settingWrite';
 import {
     modelLabel,
@@ -69,6 +70,12 @@ export interface ModelChoice {
 export interface PanelState {
     enabled: boolean;
     endpoint: string;
+    /**
+     * The host check: whether this machine may run a local model at all, and the warning when it may but is
+     * tight on memory. Sent with every state so the panel can grey the section out and explain why
+     * (`assistant.ignoreHostCheck` is the escape hatch, and `host.overridden` says it was used).
+     */
+    host: HostGate;
     /** Show the model's code as a diff before it is applied (⚙ Settings, `assistant.showDiff`). */
     showDiff: boolean;
     /**
@@ -283,6 +290,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
     return {
         enabled: backend !== 'off',
         endpoint,
+        host: await hostGate(),
         showDiff: cfg.get<boolean>('showDiff', true),
         bundledBackend: sidecarBackend(cfg.get<string>('bundledBackend', 'cpu')),
         conventions: normaliseConventions(cfg.get<unknown>('conventions', [])),

@@ -16,6 +16,9 @@ class EventEmitter {
     dispose() { this.listeners = []; }
 }
 
+/** Every diagnostic collection the extension creates`, in creation order (test-only). */
+const __diagnosticCollections = [];
+
 const workspace = {
     fs: {
         writeFile: async (uri, content) => { fs.writeFileSync(uri.fsPath, Buffer.from(content)); },
@@ -60,10 +63,51 @@ module.exports = {
     DataTransfer: class { set() { } get() { return undefined; } },
     ProgressLocation: { Notification: 15 },
     CancellationTokenSource: class { constructor() { this.token = { isCancellationRequested: false }; } cancel() { } dispose() { } },
-    languages: { registerCompletionItemProvider: () => ({ dispose: () => { } }) },
+    languages: {
+        registerCompletionItemProvider: () => ({ dispose: () => { } }),
+        // The PROBLEMS pane, in memory and inspectable: `publishIssues` and `publishBuildDiagnostics` are
+        // the two places the extension writes diagnostics, and a test can now look at what they published.
+        // Every collection created here is pushed to `__diagnosticCollections` (newest last).
+        createDiagnosticCollection: (name) => {
+            const store = new Map();
+            const key = (uri) => (uri && (uri.fsPath ?? String(uri))) ?? '';
+            const collection = {
+                name,
+                set: (uri, list) => {
+                    if (Array.isArray(list) && list.length > 0) store.set(key(uri), list);
+                    else store.delete(key(uri));
+                },
+                get: (uri) => store.get(key(uri)),
+                all: () => store,
+                clear: () => store.clear(),
+                dispose: () => store.clear()
+            };
+            __diagnosticCollections.push(collection);
+            return collection;
+        }
+    },
+    Diagnostic: class {
+        constructor(range, message, severity) {
+            this.range = range;
+            this.message = message;
+            this.severity = severity;
+            this.source = '';
+            this.code = undefined;
+        }
+    },
+    DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
     ViewColumn: { Active: -1, One: 1 },
     StatusBarAlignment: { Left: 1, Right: 2 },
     Position: class { constructor(line, character) { this.line = line; this.character = character; } },
-    Range: class { constructor(a, b) { this.start = a; this.end = b; } },
-    Selection: class { constructor(a, b) { this.start = a; this.end = b; } }
+    // Both call shapes are used in the extension: `(start, end)` with Positions and `(l1, c1, l2, c2)`.
+    Range: class {
+        constructor(a, b, c, d) {
+            const Pos = module.exports.Position;
+            this.start = c === undefined ? a : new Pos(a, b);
+            this.end = d === undefined ? b : new Pos(c, d);
+        }
+    },
+    Selection: class { constructor(a, b) { this.start = a; this.end = b; } },
+    /** Test-only: every diagnostic collection the extension created, in creation order. */
+    __diagnosticCollections
 };

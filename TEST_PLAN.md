@@ -179,6 +179,29 @@ T4 (14). Remaining before first full run:
 - [x] 6. T4 Avalonia.Headless runtime driver → green.
 - [ ] 7. T0 project build matrix (10 combos — slow) → run at the first full `npm test`.
 
+### 0.10.1 (2026-09-17) — the build-driven code check
+
+Three new t2 files, and the loop's *policy* is asserted with fakes rather than with a compiler:
+
+- `tests/t2-logic/buildDiagnostics.test.js` (57) — the `dotnet build` parser: MSBuild's double-printed errors
+  de-duplicated, VB codes, paths with spaces, parentheses inside the compiler's own message, `obj/`/`bin/` and
+  other projects dropped, errors **with no file** kept as project-level findings. Plus the Code Fix entries a
+  compiler error becomes (`CS1002` in the form → the rule's `insert-semicolon`; anything else report-only) and
+  the PROBLEMS publishing, asserted against an inspectable stub collection.
+- `tests/t2-logic/repairLoop.test.js` (77) — the pass logic, driven by a fake project that returns error sets:
+  a rebuild after **every** fix, an error no fixer understands skipped while the loop carries on, a fix that
+  does not help **reverted**, one that trades an error for another **kept** (it revealed the next), and every
+  stop reason (clean / nothing-fixable / no-progress / budget / cancel / build-failed), including a fixer that
+  throws. The wiring is asserted from source: where the build runs, that the silent re-check never builds, the
+  dirty-buffer signal, and the three-attempt cap on model repairs.
+- `tests/t2-logic/hostCheck.test.js` (57) — the GPU probe's parsers (`lspci` display class only, `nvidia-smi`,
+  Windows `AdapterRAM` saturation, `system_profiler`), the classifier's conservative direction (an unknown name
+  is never credited VRAM), and every verdict: the user's own machine allowed with the tight-memory warning, a
+  5 GB laptop blocked with an actionable reason, a 3 GB card "no help" but not a blocker, a real card's VRAM
+  added, an override that is remembered.
+- `tests/t3-webview/designer.test.js` grew the host verdict: a refused machine disables the AI controls, shows
+  the reason and offers the escape; an allowed-but-tight machine only warns.
+
 Each step ends with the log green before the next begins.
 
 ### Status 2026-09-11 — full suite green (2176 passed / 0 failed / 0 skipped, 35 s)

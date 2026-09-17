@@ -228,6 +228,20 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
+> **`0.10.1` (2026-09-17) — LOCAL BUILD, not uploaded.** Built, tested, committed and installed the same day it
+> was asked for (*"Bump the version and push please"*); the upload was **not** requested, so it sits in the same
+> queue as `0.10.0`. What it adds: the **project's own compiler as the second half of the code check** (a Code
+> Fix… run builds the project and merges `dotnet build`'s errors into the list and PROBLEMS), the
+> **`insert-semicolon` rule** for a statement nothing terminated, the **build-driven repair loop** (fix one
+> error, rebuild, undo what does not help, list what no rule can fix), and the **host check** with the
+> **EXPERIMENTAL FEATURE-USE WITH CAUTION** notice in ⚙ Settings, the README and the manual.
+>
+> Plain VSIX — `avalonia-designer-0.10.1.vsix`, sha256
+> `37b55532d70cb2027e7a0fceac25d5aac912f1f798a06c497aa917e27675c391` — after a green suite
+> (**4,670 assertions, 0 failed**). If it is ever uploaded, note that it **supersedes** `0.10.0`: upload it
+> instead of the older file rather than in addition to it, and the `flags: 914` check applies unchanged
+> (`0.10.1` plus that hash).
+
 > **The Marketplace version must be numbers only** — a suffix is rejected outright (uploading `1.0.0-beta.7`
 > failed on 2026-09-12 with *"The version string '1.0.0-beta.7' doesn't conform to the requirements for a
 > version. It must be one to four numbers in the range 0 to 2147483647, with each number separated by a

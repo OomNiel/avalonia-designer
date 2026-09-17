@@ -1346,6 +1346,46 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     color: var(--accent);
 }
 
+/* The experimental notice at the very top of the settings dialog (asked 2026-09-17). Bold and red on
+   purpose: the AI assist is the one feature here that depends on the machine and may change shape. */
+.experimental-banner {
+    margin: 0 0 4px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.6px;
+    color: #ff5a5f;
+}
+
+/* The host check's verdict: the AI section is disabled and this is the reason. */
+.ai-blocked {
+    margin: 6px 0;
+    padding: 6px 8px;
+    border: 1px solid #ff5a5f;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #ffb3b5;
+    background: rgba(255, 90, 95, 0.08);
+}
+
+/* Allowed, but little memory left for a model — the user's "20 GB" warning (2026-09-17). */
+.ai-warn {
+    margin: 6px 0;
+    padding: 6px 8px;
+    border: 1px solid #d7a13b;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #e6c37a;
+    background: rgba(215, 161, 59, 0.08);
+}
+
+.ai-blocked[hidden],
+.ai-warn[hidden] {
+    display: none;
+}
+
 .modal-field {
     display: block;
     margin: 10px 0 6px;

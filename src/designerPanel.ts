@@ -10,6 +10,9 @@ import {
     analyzeCodeBehind, applyLocalFix, backupCodeBehind, publishIssues, controlsForCheck, issueSignature,
     CodeIssue, CheckOptions, DataSetContext, DataSetFollowerInfo, DataSetGridInfo, DataSetImageInfo
 } from './codeBehindCheck';
+import { buildProject, compilerIssues, publishBuildDiagnostics, BuildResult, CompilerDiagnostic } from './buildDiagnostics';
+import { repairUntilClean, RepairReport } from './repairLoop';
+import { markCodeEdited, codeEditedSinceBuild, codeEditedReason, clearCodeEdited } from './writeStamp';
 import { withDesignerHeader } from './xamlHeader';
 import { controlInfoFor } from './controlInfo';
 import { asksForEventOnPlace, eventsFor, eventArgsFor, isKnownEvent } from './controlEvents';
@@ -22,7 +25,8 @@ import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTable
 import { readDataSetFiles } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
 import { bundledComponentSpecs, isStaleBundledCopy } from './bundledComponents';
-import { statusLines } from './assistantUi';
+import { statusLines, repairWithAI } from './assistantUi';
+import { hostGate, clearHostGate } from './hostCheck';
 import { learnConventions } from './conventionsUi';
 import { logError } from './logger';
 import {
@@ -1499,8 +1503,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     }
                     return;
                 }
-                // The code-behind of an open form changed in the text editor: with the
-                // 'onType' mode the check re-runs a moment after typing stops (read-only).
+                // The code-behind of an open form changed in the text editor. A DIRTY buffer means the change
+                // came from typing, or from the assistant applying an edit — not from one of the designer's
+                // own writes, which land on disk and leave the buffer clean. The user's rule (2026-09-17): a
+                // hand or AI edit needs a real build before it is trusted, and that build runs when they come
+                // back to the designer tab (`checkOnReturn`).
+                if (e.document.isDirty) this.noteHandEdit(e.document.uri);
+                // With the 'onType' mode the check re-runs a moment after typing stops (read-only).
                 if (this.codeCheckMode() !== 'onType') return;
                 this.scheduleCodeBehindCheck(e.document.uri, 900);
             })
@@ -1516,6 +1525,48 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         );
     }
 
+    /**
+     * The key of the open form a source file belongs to: its own .axaml, or the form whose code-behind it
+     * is. Undefined for anything else in the project (MyDataSet.cs belongs to no form).
+     */
+    private formKeyOf(uri: vscode.Uri): string | undefined {
+        const self = uri.toString();
+        if (this.docs.has(self)) return self;
+        for (const [key, doc] of this.docs) {
+            if (findCodeBehindFile(doc.uri)?.toString() === self) return key;
+        }
+        return undefined;
+    }
+
+    /**
+     * Records that a source file was changed by hand (or by the assistant) — see `writeStamp`. A form's own
+     * file marks that form; any other source of the project marks every open form, because a compile error
+     * anywhere stops the whole project from building, which is what the check is about.
+     */
+    private noteHandEdit(uri: vscode.Uri): void {
+        if (!/\.(cs|vb|axaml)$/i.test(uri.fsPath)) return;
+        if (!findProject(uri) && !this.formKeyOf(uri)) return;      // nothing to build here
+        const own = this.formKeyOf(uri);
+        const keys = own ? [own] : [...this.panels.keys()];
+        for (const key of keys) markCodeEdited(key, 'edited in the editor');
+    }
+
+    /**
+     * The moment the user comes back from the editor (the default `onReturn` mode).
+     *
+     * Always the instant rule check — badges, PROBLEMS, status hint. When the code was edited by hand or
+     * written by the assistant since the last build, the rules alone are a guess, so the repair loop runs
+     * too: build, fix what a fixer understands one error at a time, and list the rest. A change the designer
+     * made itself (a handler it inserted) leaves the buffer clean and stays instant.
+     */
+    private async checkOnReturn(doc: DesignerDocument, panel: vscode.WebviewPanel): Promise<void> {
+        await this.runSilentCheck(doc, panel);
+        const key = doc.uri.toString();
+        if (!this.codeCheckBuild()) return;
+        if (!codeEditedSinceBuild(key)) return;
+        await this.runRepairLoop(doc, panel, codeEditedReason(key));
+    }
+
     /** When the designer re-checks the code-behind by itself (`avaloniaDesigner.codeCheck.mode`). */
     private codeCheckMode(): 'onReturn' | 'onSave' | 'onType' | 'manual' {
         const v = vscode.workspace.getConfiguration('avaloniaDesigner').get<string>('codeCheck.mode', 'onReturn');
@@ -1525,6 +1576,16 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     /** Draw ⚠ badges for controls whose wired handler is missing (`avaloniaDesigner.codeCheck.badges`). */
     private codeCheckBadges(): boolean {
         return vscode.workspace.getConfiguration('avaloniaDesigner').get<boolean>('codeCheck.badges', true);
+    }
+
+    /** Also run the project's build during a Code Fix… run (`avaloniaDesigner.codeCheck.build`). */
+    private codeCheckBuild(): boolean {
+        return vscode.workspace.getConfiguration('avaloniaDesigner').get<boolean>('codeCheck.build', true);
+    }
+
+    /** Let the model repair a build error no rule understands (`avaloniaDesigner.codeCheck.aiRepair`). */
+    private codeCheckAiRepair(): boolean {
+        return vscode.workspace.getConfiguration('avaloniaDesigner').get<boolean>('codeCheck.aiRepair', true);
     }
 
     /**
@@ -1630,7 +1691,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             // may have been edited in the text editor meanwhile. Read-only — the badges, PROBLEMS
             // and the status hint update; nothing is rewritten.
             if (webviewPanel.visible && this.codeCheckMode() === 'onReturn') {
-                void this.runSilentCheck(document, webviewPanel);
+                void this.checkOnReturn(document, webviewPanel);
             }
         });
         webviewPanel.onDidDispose(() => {
@@ -1829,6 +1890,22 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     }
                     return;
                 }
+                case 'aiHostOverride': {
+                    // "Use it anyway" from the host check's explanation. Writing the setting (rather than
+                    // allowing it just this once) is the point: the decision must be visible in Settings, must
+                    // survive the window, and must be in the log — the check itself is honest, it is only the
+                    // machine's numbers that can be wrong (an eGPU, an undetected card).
+                    try {
+                        await vscode.workspace.getConfiguration('avaloniaDesigner')
+                            .update('assistant.ignoreHostCheck', true, vscode.ConfigurationTarget.Global);
+                    } catch { /* read-only in some hosts — the next state simply stays blocked */ }
+                    clearHostGate();
+                    aiLog(this.context, 'Host check overridden by the user: assistant.ignoreHostCheck = true');
+                    const gate = await hostGate(true);
+                    logError(`Host check overridden — AI assist ${gate.aiAllowed ? 'enabled' : 'still blocked'} on this machine.`);
+                    await panel.webview.postMessage({ type: 'aiState', state: await panelState(true) });
+                    return;
+                }
                 case 'aiRemove': {
                     attachPanel(panel);
                     try {
@@ -1959,7 +2036,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 }
                 case 'codeOpen': {
                     const run = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
-                    const file = msg.file === 'axaml' ? doc.uri.fsPath : run.codeFile;
+                    // A compiler finding names its own file; the rules' findings are in the code-behind
+                    // (or the form itself, for an XAML-side one).
+                    const file = msg.path || (msg.file === 'axaml' ? doc.uri.fsPath : run.codeFile);
                     if (!file || !fs.existsSync(file)) return;
                     const td = await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false });
                     const pos = new vscode.Position(Math.max(0, (Number(msg.line) || 1) - 1), 0);
@@ -4771,6 +4850,20 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     /** Code-behind file the checker worked on, so a fix can be applied to the same file. */
     private codeBackups = new Map<string, string>();
 
+    /** The files the last repair-loop fix touched, kept so that fix can be undone when it did not help. */
+    private loopSnapshot: { file: string; text: string }[] = [];
+
+    /**
+     * How many times the model is asked to repair a build error in one run of the loop.
+     *
+     * A local model takes seconds to a minute per answer, so a file with ten un-fixable errors must not turn
+     * into ten model calls: after this many attempts the rest of the errors are simply listed, which is what
+     * the user asked for ("keep fixing what it can and list the rest"). The rules have no such cap — they
+     * cost a build, not a minute.
+     */
+    private static readonly LOOP_AI_TRIES_MAX = 3;
+    private loopAiTries = 0;
+
     /** What `analyzeCodeBehind` needs: the DESIGNER's live XAML plus the project's DataSet facts
      *  (the checker verifies Data-Image / ItemsSource bindings against the .adset specs). */
     private checkOptions(doc: DesignerDocument): CheckOptions {
@@ -4832,8 +4925,193 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private async runCodeCheck(doc: DesignerDocument, panel: vscode.WebviewPanel, fresh = true): Promise<void> {
         if (fresh) this.codeBackups.delete(doc.uri.toString());
         const result = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
-        const issues = this.visibleIssues(doc, result.issues);
-        publishIssues(doc.uri, result, issues);
+        const rules = this.visibleIssues(doc, result.issues);
+        publishIssues(doc.uri, result, rules);
+        await this.postCodeIssues(panel, doc, result, rules, undefined);
+        await this.postStatus(panel, `Code Fix: ${this.countText(rules)}`);
+        // The rules are instant and can be fixed; only the project's own compiler can report a `;` missing
+        // ANYWHERE in a body, a type error, or a missing using (`avaloniaDesigner.codeCheck.build`).
+        if (!this.codeCheckBuild()) return;
+        await this.runRepairLoop(doc, panel);
+    }
+
+    /**
+     * The build half of the check: build the project, repair one error at a time, then list what is left.
+     *
+     * This is the strategy the user asked for on 2026-09-17 — *"check for errors by running a build when it
+     * is done refactoring the code, then Code Fix must check for compile errors and fix each one, one at a
+     * time untill the build is clean"* and *"keep fixing what it can and list the rest"*. The pass logic
+     * (rebuild after every fix, skip what no fixer understands, undo a fix that did not help, stop when the
+     * budget or the user says so) lives in `repairLoop`; this method supplies the project side of it.
+     */
+    private async runRepairLoop(doc: DesignerDocument, panel: vscode.WebviewPanel, why?: string): Promise<void> {
+        const key = doc.uri.toString();
+        const proj = findProject(doc.uri);
+        if (!proj) return;
+        this.loopAiTries = 0;
+        // The build compiles what is on DISK, so a dirty buffer would be checked as it was, not as it looks.
+        try { await vscode.workspace.saveAll(false); } catch { /* the build will say what it sees */ }
+        await this.postStatus(panel, `Code Fix: building the project${why ? ` (${why})` : ''}…`);
+
+        // Errors the compiler reported without a file (`CSC : error CS2001: …`) are kept out of the loop —
+        // no fixer can touch them — but they must still be listed, so they are carried alongside.
+        let projectErrors: { code: string; message: string }[] = [];
+        const report = await repairUntilClean({
+            build: async () => {
+                const build = await buildProject(proj.projectUri.fsPath);
+                projectErrors = build.projectErrors;
+                return {
+                    errors: build.diagnostics.filter((d) => d.severity === 'error'),
+                    warnings: build.diagnostics.filter((d) => d.severity === 'warning'),
+                    failure: build.failure
+                };
+            },
+            fix: (d) => this.fixCompilerError(doc, panel, d),
+            revert: () => this.revertLoopFix(),
+            progress: (text) => void this.postStatus(panel, `Code Fix: ${text}`),
+            cancelled: () => !panel.visible
+        });
+        clearCodeEdited(key);
+        this.loopSnapshot = [];
+
+        // The list is rebuilt from what the project looks like NOW: the loop moved code around, so the
+        // rules' findings have to be re-derived rather than reused.
+        const run = analyzeCodeBehind(doc.uri, this.checkOptions(doc));
+        const rules = this.visibleIssues(doc, run.issues);
+        publishIssues(doc.uri, run, rules);
+        publishBuildDiagnostics(report.remaining.concat(report.warnings));
+        const covered = new Set(rules
+            .filter((i) => i.line && (i.file ?? 'code') === 'code' && run.codeFile)
+            .map((i) => `${path.resolve(run.codeFile as string)}:${i.line}`));
+        const issues = rules.concat(compilerIssues(report.remaining, projectErrors, run.codeFile, covered));
+        await this.postCodeIssues(panel, doc, run, issues, {
+            ok: report.stoppedBecause === 'clean',
+            errors: report.remaining.length,
+            warnings: report.warnings.length,
+            failure: report.failure ?? '',
+            fixed: report.fixed.length
+        });
+        await this.postStatus(panel, this.loopStatus(report, rules));
+    }
+
+    /**
+     * Repairs ONE compiler error, using the rules as the fixers.
+     *
+     * Either one of their own findings sits on that exact line (then the ordinary fix path applies it), or
+     * the compiler named a line for a mistake the rules can *write* but not always *find*: a missing `;`.
+     * The rule can only prove that at the end of a body; the compiler knows the line, so the same fixer is
+     * handed that line instead. Anything else has no fixer and is skipped — which is exactly the honest
+     * answer for a type error or a missing package.
+     */
+    private async fixCompilerError(
+        doc: DesignerDocument,
+        panel: vscode.WebviewPanel,
+        d: CompilerDiagnostic
+    ): Promise<'fixed' | 'no-fix' | 'failed'> {
+        const form = this.formUriOfFile(d.file);
+        if (!form) return 'no-fix';
+        const options = this.checkOptions(doc);
+        const run = analyzeCodeBehind(form, options);
+        const hit = run.issues.find((i) => i.kind !== 'report-only'
+            && (i.file ?? 'code') === 'code' && i.line === d.line);
+        try {
+            if (hit) {
+                this.snapshotForRevert(form, run.codeFile);
+                await this.applyCodeIssue(doc, findProject(doc.uri), panel, hit);
+                return 'fixed';
+            }
+            if (d.code === 'CS1002' && run.codeFile && path.resolve(run.codeFile) === path.resolve(d.file)) {
+                this.snapshotForRevert(form, run.codeFile);
+                const issue: CodeIssue = {
+                    id: `build:CS1002:${d.line}`,
+                    severity: 'error',
+                    kind: 'insert-semicolon',
+                    member: 'CS1002',
+                    line: d.line,
+                    title: 'CS1002: ; expected',
+                    detail: '',
+                    data: { line: String(d.line), method: 'CS1002' }
+                };
+                const what = await applyLocalFix(form, issue, options);
+                return /Added the missing/.test(what) ? 'fixed' : 'no-fix';
+            }
+            // No rule understands this one. The model gets a try when it is ALREADY running — never started
+            // from here (the user's choice, 2026-09-17) — and the loop's rebuild decides whether the answer
+            // was worth keeping: a fix that does not help is undone like any other.
+            if (!this.codeCheckAiRepair()) return 'no-fix';
+            if (this.loopAiTries >= AvaloniaDesignerProvider.LOOP_AI_TRIES_MAX) {
+                logError(`Repair loop: ${AvaloniaDesignerProvider.LOOP_AI_TRIES_MAX} model attempts used — listing the rest.`);
+                return 'no-fix';
+            }
+            this.loopAiTries += 1;
+            this.snapshotForRevert(form, run.codeFile);
+            const ai = await repairWithAI(vscode.Uri.file(d.file), d.line, `${d.code}: ${d.message}`);
+            if (ai) return 'fixed';
+            this.loopSnapshot = [];
+            return 'no-fix';
+        } catch {
+            return 'failed';
+        }
+    }
+
+    /** The .axaml behind a project source file (a form's code-behind), whether or not the form is open. */
+    private formUriOfFile(file: string): vscode.Uri | undefined {
+        for (const doc of this.docs.values()) {
+            const code = findCodeBehindFile(doc.uri);
+            if (code && path.resolve(code) === path.resolve(file)) return doc.uri;
+        }
+        if (!/\.axaml\.(cs|vb)$/i.test(file)) return undefined;
+        const axaml = file.replace(/\.(cs|vb)$/i, '');
+        return fs.existsSync(axaml) ? vscode.Uri.file(axaml) : undefined;
+    }
+
+    /** The files a loop fix touched, so a fix that did not help can be undone (both of them: a rule fix can
+     *  edit the form as well as the code-behind). */
+    private snapshotForRevert(axaml: vscode.Uri, codeFile: string | undefined): void {
+        const files = [axaml.fsPath, codeFile ?? ''].filter((f) => f && fs.existsSync(f));
+        this.loopSnapshot = files.map((f) => ({ file: f, text: fs.readFileSync(f, 'utf8') }));
+    }
+
+    /** Puts the project back exactly as it was before the last loop fix. */
+    private async revertLoopFix(): Promise<void> {
+        for (const snap of this.loopSnapshot) {
+            try { fs.writeFileSync(snap.file, snap.text, 'utf8'); } catch { /* nothing better to do */ }
+        }
+        this.loopSnapshot = [];
+    }
+
+    /** What the loop achieved, in one line: repaired N / still N no rule can fix / the project builds. */
+    private loopStatus(report: RepairReport, rules: CodeIssue[]): string {
+        if (report.failure) return `Code Fix: ${this.countText(rules)} · ${report.failure}`;
+        const fixed = report.fixed.length > 0
+            ? ` — repaired ${report.fixed.length} build error${report.fixed.length === 1 ? '' : 's'}`
+            : '';
+        if (report.stoppedBecause === 'clean') {
+            return `Code Fix: ${this.countText(rules)}${fixed} · the project builds`;
+        }
+        if (report.stoppedBecause === 'cancelled') {
+            return `Code Fix: ${this.countText(rules)}${fixed} · stopped — the project still reports `
+                + `${report.remaining.length} error(s)`;
+        }
+        return `Code Fix: ${this.countText(rules)}${fixed} · ${report.remaining.length} build error(s) left `
+            + 'that no rule can fix — they are in the list';
+    }
+
+    /** Errors/warnings as the Code Fix… status line words them. */
+    private countText(issues: CodeIssue[]): string {
+        if (issues.length === 0) return 'no problems found';
+        const errors = issues.filter((i) => i.severity === 'error').length;
+        return `${errors} error(s), ${issues.length - errors} warning(s)`;
+    }
+
+    /** The Code Fix… list itself: the rules' findings plus the compiler's, in one list. */
+    private async postCodeIssues(
+        panel: vscode.WebviewPanel,
+        doc: DesignerDocument,
+        result: { codeFile?: string },
+        issues: CodeIssue[],
+        build: { ok: boolean; errors: number; warnings: number; failure: string; fixed: number } | undefined
+    ): Promise<void> {
         const errors = issues.filter((i) => i.severity === 'error').length;
         const warnings = issues.length - errors;
         await panel.webview.postMessage({
@@ -4842,6 +5120,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             errors,
             warnings,
             backup: this.codeBackups.get(doc.uri.toString()) ?? '',
+            // The compiler's verdict for the whole project (undefined until a build has run).
+            build,
             issues: issues.map((i) => ({
                 id: i.id,
                 severity: i.severity,
@@ -4849,14 +5129,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 detail: i.detail,
                 line: i.line ?? 0,
                 file: i.file ?? 'code',
+                // A compiler finding can be in any file of the project (MyDataSet.cs, Program.cs…), so
+                // "Go to line" opens the file the compiler named, not just the form's code-behind.
+                path: i.data?.path ?? '',
                 fixable: i.kind !== 'report-only',
                 // Extra buttons for the same finding (e.g. keep a deliberate delete and unwire the form).
                 alternatives: (i.alternatives ?? []).map((a) => ({ label: a.label, detail: a.detail }))
             }))
         });
-        await this.postStatus(panel, issues.length === 0
-            ? 'Code Fix: no problems found'
-            : `Code Fix: ${errors} error(s), ${warnings} warning(s)`);
     }
 
     /** Applies one finding. DataSet-dependent fixes (re-generate a binding) are done here because
@@ -6276,6 +6556,9 @@ ${publishButtons}      <span class="sep"></span>
     </div>
     <div id="settingsModal" class="modal" hidden>
       <div class="modal-box modal-narrow">
+        <p class="experimental-banner">EXPERIMENTAL FEATURE-USE WITH CAUTION</p>
+        <p class="modal-hint" id="experimentalHint">The local <b>AI assist</b> is experimental: it may change, and it
+          depends on this machine's memory. The host check below greys it out and says why when it cannot run.</p>
         <div class="settings-section" data-section="codeCheck">
           <div class="settings-section-head" role="button" aria-expanded="false" title="Click to expand">
             <span class="settings-section-arrow">▸</span>
@@ -6297,6 +6580,9 @@ ${publishButtons}      <span class="sep"></span>
           <div class="settings-section-body">
             <p class="modal-hint">A local model on this machine can write a handler from a sentence, or repair a
               finding a rule cannot express. Nothing is sent anywhere — the address is always <code>127.0.0.1</code>.</p>
+            <p class="ai-blocked" id="aiHostBlocked" hidden></p>
+            <p class="modal-hint"><button id="aiHostOverride" type="button" class="modal-btn" hidden>Use it anyway — I know this machine</button></p>
+            <p class="ai-warn" id="aiHostWarning" hidden></p>
             <label class="modal-check"><input type="checkbox" id="aiEnabled"/> Use a local model for Code Fix and Implement</label>
             <label class="modal-check"><input type="checkbox" id="aiShowDiff"/> Show the proposed code as a diff before it is applied</label>
             <p class="modal-hint" id="aiShowDiffHint">Unchecked, the model's code is written straight into the file — still one undoable edit

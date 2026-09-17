@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox — with an optional local AI assist that writes handlers and repairs code from a sentence, on your own machine.",
-    "version": "0.10.0",
+    "version": "0.10.1",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -350,7 +350,12 @@
                         "Bundle it: the extension builds a small local model server and uses a model it downloads once (no other AI needed)."
                     ],
                     "default": "off",
-                    "markdownDescription": "Where the AI assist gets its model. `bundled` needs nothing installed except the .NET SDK the designer already requires; run **AI: Set Up Local Model…** first."
+                    "markdownDescription": "Where the AI assist gets its model. `bundled` needs nothing installed except the .NET SDK the designer already requires; run **AI: Set Up Local Model…** first. **EXPERIMENTAL FEATURE — USE WITH CAUTION.**"
+                },
+                "avaloniaDesigner.assistant.ignoreHostCheck": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "Run the AI assist on a machine the host check refused (not enough memory available for the smallest supported model, or a CPU without AVX2). The check greys the AI section out and explains why; this is the **Use it anyway** escape, for an eGPU, a card that was not detected, or a machine you know can do it. Every start is written to the log."
                 },
                 "avaloniaDesigner.assistant.modelPath": {
                     "type": "string",
@@ -500,6 +505,16 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Mark controls on the design surface whose wired event handler is missing with a ⚠ badge (hover it to see which handler). Only shown while the re-check is not 'manual'."
+                },
+                "avaloniaDesigner.codeCheck.build": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "When you press Code Fix…, also run the project's own build (dotnet build) and list the compiler's errors and warnings next to the rules' findings — the only way a missing ';' anywhere, a type error or a missing using is ever reported, since the rules are not a compiler. Takes a few seconds (incremental), never runs on the automatic re-checks, and never runs while typing. Switch off if you would rather only see the instant rule-based findings."
+                },
+                "avaloniaDesigner.codeCheck.aiRepair": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "When a build error has no rule that can repair it, ask the local model to fix it — but only while the model is already running: nothing here ever starts a model. Each answer is applied, then verified by rebuilding, and an answer that does not bring the project closer to compiling is undone, so your file is left as it was. Requires the AI assist to be enabled."
                 },
                 "avaloniaDesigner.publish.packageName": {
                     "type": "string",
