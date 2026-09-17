@@ -233,38 +233,42 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.10.9` (2026-09-17) — installed and tested on this machine; THIS is the file to upload.** Supersedes
-> `0.10.8`, `0.10.7`, `0.10.6` and `0.10.5` (the first four were installed and tested but never published — the
-> listing still carries `0.9.4`), so `0.10.9` is the first version from this line to go out and it carries
-> everything: the AI assist, the compiler as the second half of the code check, the build-driven repair loop,
-> the host check, the Start / Stop controls for the user's own `llama-server`, the Remove Model fix, the model
-> list as two entries over one download, the 30B step-up — **plus** this afternoon's five fixes: the picker
-> marks exactly one entry as pinned, `Start server` restarts a unit that is `active` but silent (its weights in
-> swap), the repair loop sends requests to the runtime's own address instead of a stale `assistant.endpoint`,
-> every log line reaches `logs/ai.log` (a failed assist records the address it used), the GPU entry really
-> offloads, ⚙ Settings says `Loading…` while it fills (and asks `lms` with a 3-second patience, cached 15 s),
-> and the DataSet facts describe the generated class as it is — the fix that let the Vulkan-built 7B repair the
-> user's own `CS1061` on the first run. See `NOTES.md` §135.
+> **`0.10.10` (2026-09-17) — installed and tested on this machine; THIS is the file to upload.** Supersedes
+> `0.10.9` (released on GitHub the same evening, **never uploaded**: a `/home/<user>/…` path from a bug-hunt note
+> had reached the package as a compiled comment, so it was rebuilt, audited and then superseded by a new version
+> rather than by replacing a released asset — see `NOTES.md` §135) and everything before it. `0.10.8`…`0.10.0`
+> were installed and tested but never published, and the listing still carries `0.9.4`, so `0.10.10` is the first
+> version from this line to go out. It carries everything: the AI assist, the compiler as the second half of the
+> code check, the build-driven repair loop, the host check, the Start / Stop controls for the user's own
+> `llama-server`, the Remove Model fix, the model list as two entries over one download, the 30B step-up —
+> **plus** this afternoon's fixes: the picker marks exactly one entry as pinned, `Start server` restarts a unit
+> that is `active` but silent (its weights in swap), repair requests go to the runtime's own address instead of a
+> stale `assistant.endpoint`, every log line reaches `logs/ai.log` (and a failed assist records the address it
+> used), the GPU entry really offloads, ⚙ Settings says `Loading…` while it fills (and asks `lms` with a
+> 3-second patience, cached 15 s), and the DataSet facts describe the generated class as it is — the fix that let
+> the Vulkan-built 7B repair the user's own `CS1061` on the first run.
 >
-> Plain VSIX — `avalonia-designer-0.10.9.vsix`, **905,002 bytes**, sha256
-> `9cf2316ffb62f0a41f4c29c9187cecc5bf23f543cdf133c3fba28280d08a8aa1`
-> — built by `npm run package` after a green suite (**4,868 assertions, 0 failed**), and checked inside the
-> package (manifest `Version="0.10.9"`, **no `PreRelease` attribute** — so it goes to the stable channel —
-> `README.md`, `USER_MANUAL.md`, `CHANGELOG.md` and `CONTROLS.md` present, `NOTES.md`/`TEST_PLAN.md`/
-> `PUBLISHING.md` correctly absent). The docs ride **inside** the VSIX, so any later edit to those four changes
-> the hash — this is the final build. Tag `v0.10.9` → commit **`b48d0b5`**.
+> **Dev-machine audit (asked by the user):** the VSIX was extracted and grepped for the user name, the host
+> name, project folders, the server alias and `/home/` — none of them is in it. The only `/home/` left is in
+> generic samples (`/home/x/a.gguf`, `/home/…/models/…gguf`, `/home/.../x.png`), and the one remaining project
+> name is a **verbatim user quote** in `CHANGELOG.md` (*"My test program is OptimisedCSTest."*), left alone
+> because history is quoted rather than edited.
 >
-> **This is the *second* `0.10.9` build, and the one to use.** The first (905,053 bytes,
-> `01ddd09f…`) was released on GitHub and then found to carry dev-machine references in **comments**: `tsc`
-> keeps comments, `.vscodeignore` re-includes `out/**/*.js`, and the host's `.cs` sources ship too — so a
-> `/home/<user>/…` path from a bug-hunt note, `DevHelper.frmTest`, the user's server alias and its build id
-> were all inside the published artefact. The audit that followed is now scriptable: extract the VSIX and
-> `grep -rl` for the user name, the hostname, the project folders and the server alias. The rebuilt file has
-> **none** of them; the only `/home/` left is in generic samples (`/home/x/a.gguf`). The GitHub release asset
-> needs this file (replace it — the tag does not move) or a follow-up version.
+> Plain VSIX — `avalonia-designer-0.10.10.vsix`, **905,176 bytes**, sha256
+> `ec4acc0e376e27b4e18120b8ad3e7bb2ab23befc7b03986efebbf3970bdab9a2` — built by `npm run package` after a green
+> suite (**4,868 assertions, 0 failed**), and checked inside the package (manifest `Version="0.10.10"`, **no
+> `PreRelease` attribute** — so it goes to the stable channel — `README.md`, `USER_MANUAL.md`, `CHANGELOG.md` and
+> `CONTROLS.md` present; `NOTES.md`, `TEST_PLAN.md` and this file correctly absent). The docs ride **inside** the
+> VSIX, so any later edit to those four changes the hash — this is the final build.
 > Leave *Pre-release* **unchecked** in the portal, then confirm with the
-> `flags: 914` query that the version is `0.10.9` and `Microsoft.VisualStudio.Services.VsixSha256` equals the
+> `flags: 914` query that the version is `0.10.10` and `Microsoft.VisualStudio.Services.VsixSha256` equals the
 > hash above.
+
+> **`0.10.9` (2026-09-17) — released on GitHub, NEVER UPLOADED (superseded by `0.10.10`).** Its first build
+> (905,053 bytes, `01ddd09f…`) went out as tag `v0.10.9`, and the cleanup rebuild (905,002 bytes, `9cf2316f…`)
+> was not uploaded either: the user chose a new version over replacing a released asset. Both supersede
+> `0.10.5`, `0.10.4`, `0.10.3`, `0.10.2`, `0.10.1` and `0.10.0` — all tagged and released on GitHub, none ever
+> uploaded.
 
 > **`0.10.5` (2026-09-17) — tagged, released and installed; NEVER UPLOADED (superseded by `0.10.9`).** Supersedes `0.10.4`
 > (tagged the same day, never uploaded) and everything before it: the published listing still carries `0.9.4`,

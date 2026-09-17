@@ -265,7 +265,7 @@ Each step ends with the log green before the next begins.
 
 Each step ends with the log green before the next begins.
 
-### 0.10.9 (2026-09-17) — the picker, the logs, the offload, the loading marker, the facts
+### 0.10.10 (2026-09-17) — the picker, the logs, the offload, the loading marker, the facts
 
 - `tests/t2-logic/aiPanel.test.js` — the pin marker with two entries over one file (exactly one is marked, and
 the one for the configured build; the selection follows it in both directions), the ⚙ dialog's `Loading…` marker

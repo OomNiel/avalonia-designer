@@ -6,17 +6,21 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.10.9` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.10.10` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
-## [0.10.9] - 2026-09-17 · *the picker tells the truth, the logs have the address in them, and the assistant
+## [0.10.10] - 2026-09-17 · *the picker tells the truth, the logs have the address in them, and the assistant
 knows what the generated DataSet actually is*
 
-Supersedes `0.10.6`, `0.10.7` and `0.10.8` — internal builds from the same afternoon, kept out of the
-Marketplace on purpose — and carries everything from `0.10.0` onwards. Most of this section is the answer to a
+Supersedes `0.10.9` (released on GitHub the same evening, never uploaded — it was rebuilt because a
+`/home/<user>/…` path from a bug-hunt note had reached the package as a compiled comment), `0.10.8`, `0.10.7`
+and `0.10.6` — internal builds from the same afternoon, kept out of the Marketplace on purpose — and carries
+everything from `0.10.0` onwards. The package was then audited for it: the VSIX was extracted and grepped for
+the user name, the host name, project folders, the server alias and `/home/`, and nothing of the kind is in it
+(the only `/home/` left is in generic samples such as `/home/x/a.gguf`). Most of this section is the answer to a
 single afternoon of the user testing their own app: *"Chaos! Please look at my test app … The C# server is not
 starting, the llama 30B is not starting"*, and then *"AI assist failed: No server answered"*.
 

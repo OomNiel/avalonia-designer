@@ -3090,7 +3090,7 @@ stops the user's 19 GB server is not a test.
 - **Machine state:** the four dropped models' weights were deleted (22 GB → 4.4 GB) — one file left, and it is
   the one both entries use.
 
-### §135 — an afternoon of "chaos", read out of the logs (2026-09-17, releases 0.10.6–0.10.9)
+### §135 — an afternoon of "chaos", read out of the logs (2026-09-17, releases 0.10.6–0.10.10)
 
 The user's report, in full: *"Chaos! Please look at my test app. The picker is listin both the vulcan and
 non-valcon is pinned. The C# server is not starting, the llama 30B is not starting."* — and then, after the
@@ -3161,5 +3161,18 @@ and the generated code.
   file, the machine's own settings JSON — and the two that were *not* reproducible from the report (the
   endpoint, the offload) were settled by asking the machine. The one thing that made the last two cost an hour
   each was missing evidence, which is why the log now mirrors everything and names addresses.
-- Suite 4829 → **4868**, packaged as `0.10.9` for the Marketplace upload.
+- Suite 4829 → **4868**, packaged as `0.10.10` for the Marketplace upload.
+- **Post-release check the user asked for — comments ship.** *"Double check that the extension codebase not
+  contain hardcoded references to my dev machine"*, and one did, inside the already-released package:
+  `out/settingWrite.js` carried a bug-hunt comment naming an absolute path under the user's home directory.
+  The mechanism is worth remembering: `tsc` keeps comments (there is no `removeComments`), `.vscodeignore`
+  excludes `**/*.ts` but re-includes `out/**/*.js`, and `host/**/*.cs` ships because the host is built on the
+  user's machine — so **a source comment is shipped text**. Also scrubbed: a template comment naming another of
+  the user's projects, the captured `--alias` and `build_info` of their own llama-server, and the same path in
+  the `0.9.33` changelog note. Kept on purpose: the verbatim user quote that names their test app (history is
+  quoted, not edited), the conventional unit name `llama-server.service` (a documented default — the code
+  resolves the real unit), hardware names in comments that are parser evidence, and the generic `/home/x/a.gguf`
+  style samples. **The audit that found it is the artefact, not the repository:** extract the VSIX and `grep -rl`
+  inside it for the user name, host name, project folders, server alias and `/home/`. Cost of doing it after the
+  release: a rebuilt `0.10.10` and a superseded GitHub asset.
 
