@@ -252,7 +252,11 @@ listing when that release is uploaded — a repo-only README edit does not.
 > package (manifest `Version="0.10.9"`, **no `PreRelease` attribute** — so it goes to the stable channel —
 > `README.md`, `USER_MANUAL.md`, `CHANGELOG.md` and `CONTROLS.md` present, `NOTES.md`/`TEST_PLAN.md`/
 > `PUBLISHING.md` correctly absent). The docs ride **inside** the VSIX, so any later edit to those four changes
-> the hash — this is the final build. Leave *Pre-release* **unchecked** in the portal, then confirm with the
+> the hash — this is the final build. Tag `v0.10.9` → commit **`b48d0b5`**, pushed; the GitHub release is
+> ***Latest*** and not a pre-release (`draft=false`, `prerelease=false`), and the asset was verified **three
+> ways** — local build, a fresh `gh release download`, and the API's own `digest` — all
+> `01ddd09ff8440c1c16c56d69d8fdb60a8cdb2079351bf682e40ac8b8d355d5fc`, 905,053 bytes.
+> Leave *Pre-release* **unchecked** in the portal, then confirm with the
 > `flags: 914` query that the version is `0.10.9` and `Microsoft.VisualStudio.Services.VsixSha256` equals the
 > hash above.
 
