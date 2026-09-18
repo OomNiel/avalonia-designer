@@ -57,6 +57,12 @@ export interface ScaffoldOptions {
     followerCs?: string;
     /** Contents of ColumnFollower.vb (bundled resource — see followerCs). Optional. */
     followerVb?: string;
+    /** Contents of TreeBuilder.cs (bundled resource — turns flat rows into the node tree a TreeView
+     *  binds to, for a table bound to a TreeView). Optional: when omitted the file is not written, so
+     *  tests that don't care about tree binding keep generating exactly the old file set. */
+    treeBuilderCs?: string;
+    /** Contents of TreeBuilder.vb (bundled resource — see treeBuilderCs). Optional. */
+    treeBuilderVb?: string;
     /** Absolute path to the VB.NET Companion LanguageServer.dll found on THIS machine (may be
      *  undefined). When set, VB projects get a .vscode/settings.json that wires the language
      *  bridge to it; when absent, no settings.json is written — so a generated project never
@@ -80,6 +86,10 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (grumpyCs) write(projectPath, 'GrumpyPanel.cs', grumpyCs);
         if (pathPickerCs) write(projectPath, 'PathPicker.cs', pathPickerCs);
         if (followerCs) write(projectPath, 'ColumnFollower.cs', followerCs);
+        // TreeBuilder turns flat rows into the node tree a TreeView binds to (SQLite/DataSet binding).
+        // Read off `opts` rather than adding another name to the destructuring above, which is already
+        // long enough to be error-prone.
+        if (opts.treeBuilderCs) write(projectPath, 'TreeBuilder.cs', opts.treeBuilderCs);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.cs', buildCsCodeBehind(formName, 'Window', rootNamespace, tpl.handlers));
     } else {
@@ -92,6 +102,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (grumpyVb) write(projectPath, 'GrumpyPanel.vb', grumpyVb);
         if (pathPickerVb) write(projectPath, 'PathPicker.vb', pathPickerVb);
         if (followerVb) write(projectPath, 'ColumnFollower.vb', followerVb);
+        if (opts.treeBuilderVb) write(projectPath, 'TreeBuilder.vb', opts.treeBuilderVb);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.vb', buildVbCodeBehind(formName, 'Window', tpl.handlers));
         // VB.NET Companion language-server bridge. Written ONLY when the generator located the

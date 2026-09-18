@@ -48,10 +48,13 @@ function generateProject({ language, tplId, name, outDir = OUT_DIR }) {
     const followerVb = readResource('ColumnFollower.vb');
     const pathPickerCs = readResource('PathPicker.cs');
     const pathPickerVb = readResource('PathPicker.vb');
+    const treeBuilderCs = readResource('TreeBuilder.cs');
+    const treeBuilderVb = readResource('TreeBuilder.vb');
     generateProjectScaffold({
         language, tpl, name, projectPath: dir,
         chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, followerCs, followerVb,
-        pathPickerCs, pathPickerVb
+        pathPickerCs, pathPickerVb,
+        treeBuilderCs, treeBuilderVb
     });
     return dir;
 }
