@@ -1032,7 +1032,7 @@ export function resetProgressClock(): void {
  * other end's log, and the Output channel is not something a user can hand over. Best-effort: a broken log
  * must never break a load.
  */
-function aiLogFile(context: vscode.ExtensionContext): string {
+export function aiLogFile(context: vscode.ExtensionContext): string {
     const dir = path.join(context.globalStorageUri.fsPath, 'logs');
     fs.mkdirSync(dir, { recursive: true });
     return path.join(dir, 'ai.log');

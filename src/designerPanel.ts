@@ -36,6 +36,7 @@ import {
     attachPanel,
     confirmAndRemoveModel,
     loadChoice,
+    aiLogFile,
     panelState,
     refreshAiState,
     saveAiSettings,
@@ -47,6 +48,8 @@ import {
     type PanelState
 } from './aiPanel';
 import { startLlamaServerByChoice, stopLlamaServerConfirmed, resolveLlamaUnit, unitIsActive } from './llamaService';
+import { ensureBundledEndpoint, bundledRuntimeRunning } from './modelRuntime';
+import { assistantConfig } from './assistantUi';
 import { updateSetting } from './settingWrite';
 
 /** How long the step-up may take before it reports that it did not make it. A cold 16 GB load is minutes. */
@@ -1785,6 +1788,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                             void vscode.window.showErrorMessage(e.message);
                         }
                     }
+                    return;
+                }
+                case 'viewLog': {
+                    await this.openLogFile();
                     return;
                 }
                 case 'projectBackup': {
@@ -5195,6 +5202,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             await this.postStatus(panel, 'Code Fix: keeping the 7B — the remaining errors are listed in the panel');
             return undefined;
         }
+        // What the step-up is about to take away, so it can be handed back (asked 2026-09-18: *"when the 30B
+        // model was called, the 7B model is not restored when the 30B is done"*). `escalateToBigModel` stops the
+        // built-in runtime and repoints `assistant.backend`/`endpoint`/`model` at the user's own unit — which is
+        // why the picker stayed on the 30B afterwards and the next Code Fix had no local model at all. The
+        // user's settings are theirs: they go back exactly as they were, whatever the big run did.
+        const before = {
+            backend: cfg.get<string>('assistant.backend', 'off'),
+            endpoint: cfg.get<string>('assistant.endpoint', ''),
+            model: cfg.get<string>('assistant.model', '')
+        };
+        const wasRunning = bundledRuntimeRunning().running;
         const step = (message: string): void => {
             // Where the user is looking decides whether the flow looks alive (2026-09-18). This run is answered
             // from the *code editor* — the panel's own status line and the webview's progress line are both out of
@@ -5219,11 +5237,19 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         if (!up.ok) {
             aiLog(this.context, `30B step-up failed: ${up.message}`);
             await this.postStatus(panel, `Code Fix · 30B: ${up.message}`);
+            await this.restoreAssistantAfterStepUp(before, wasRunning, step);
             return undefined;
         }
         step(`${up.unit} is answering — asking it to fix the rest…`);
         // `ignoreVisibility`: the user just said yes to this run in a modal, from wherever they were looking.
-        const done = await once({ ignoreVisibility: true });
+        let done: RepairReport;
+        try {
+            done = await once({ ignoreVisibility: true });
+        } finally {
+            // However the big run ended — clean, cancelled, or with a throw — the assistant goes back the way it
+            // was, because leaving the machine on the 30B is what the user reported as a bug.
+            await this.restoreAssistantAfterStepUp(before, wasRunning, step);
+        }
         // And the outcome is logged too: "did the 30B do anything?" is answerable from the file next time.
         aiLog(this.context, `Code Fix · 30B run finished — ${done.remaining.length} error(s) left, `
             + `${done.fixed.length} fixed, stopped because ${done.stoppedBecause}`);
@@ -5239,6 +5265,83 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      * handed that line instead. Anything else has no fixer and is skipped — which is exactly the honest
      * answer for a type error or a missing package.
      */
+    /**
+     * **View Log** (asked 2026-09-18): open the extension's own log in an editor tab.
+     *
+     * The same lines also go to *View → Output → Avalonia Designer*, but that channel is per-window and dies
+     * with the window, while this file is what a report gets read against — and it is half a megabyte of detail
+     * nobody should have to hunt for in a file manager. The caret is put on the last line, because the newest
+     * lines are the ones being asked about.
+     */
+    private async openLogFile(): Promise<void> {
+        const file = aiLogFile(this.context);
+        try {
+            if (!fs.existsSync(file)) {
+                await vscode.window.showInformationMessage(
+                    `There is no log yet. It is written the first time the designer logs anything: ${file}`);
+                return;
+            }
+            const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+            const editor = await vscode.window.showTextDocument(doc, { preview: false });
+            const last = Math.max(0, doc.lineCount - 1);
+            editor.revealRange(new vscode.Range(last, 0, last, 0));
+            editor.selection = new vscode.Selection(last, 0, last, 0);
+            aiLog(this.context, `View Log: opened ${file} (${doc.lineCount} lines).`);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            aiLog(this.context, `View Log failed: ${message}`);
+            void vscode.window.showErrorMessage(`Could not open the log (${file}): ${message}`);
+        }
+    }
+
+    /**
+     * Hands the assistant back the way the step-up found it (asked 2026-09-18: *"when the 30B model was called,
+     * the 7B model is not restored when the 30B is done"*).
+     *
+     * `escalateToBigModel` stops the built-in runtime and repoints `assistant.backend`/`endpoint`/`model` at the
+     * user's own unit, and until now nothing put them back: after a 30B run the picker still showed the 30B and
+     * the next Code Fix had no local model at all. Only the values the step-up actually changed are rewritten,
+     * and they are written where they already live (`updateSetting`).
+     *
+     * The runtime is loaded again only when the escalation had to unload it: that is undoing our own teardown,
+     * not starting a model to do work — the repair loop still never starts one.
+     */
+    private async restoreAssistantAfterStepUp(
+        before: { backend: string; endpoint: string; model: string },
+        wasRunning: boolean,
+        step: (message: string) => void
+    ): Promise<void> {
+        const cfg = vscode.workspace.getConfiguration('avaloniaDesigner');
+        try {
+            const now = {
+                backend: cfg.get<string>('assistant.backend', 'off'),
+                endpoint: cfg.get<string>('assistant.endpoint', ''),
+                model: cfg.get<string>('assistant.model', '')
+            };
+            const keys = (['backend', 'endpoint', 'model'] as const).filter((k) => now[k] !== before[k]);
+            if (keys.length === 0) {
+                aiLog(this.context, 'Code Fix · 30B: the assistant settings were already back as they were.');
+            } else {
+                step('putting the assistant back the way it was…');
+                for (const key of keys) await updateSetting(cfg, `assistant.${key}`, before[key]);
+                aiLog(this.context, 'Code Fix · 30B: the assistant is back as it was — '
+                    + keys.map((k) => `assistant.${k}=${before[k] || '(empty)'}`).join(', '));
+            }
+            if (wasRunning && before.backend === 'bundled') {
+                step('loading the 7B again…');
+                const endpoint = await ensureBundledEndpoint({ ...assistantConfig(), backend: 'bundled' });
+                aiLog(this.context, `Code Fix · 30B: the 7B is loaded again on ${endpoint}.`);
+                vscode.window.setStatusBarMessage('Avalonia: the 30B step-up is over — the 7B is loaded again', 12000);
+            } else {
+                vscode.window.setStatusBarMessage('Avalonia: the 30B step-up is over — the 7B is selected again', 12000);
+            }
+        } catch (err) {
+            // A half-restored assistant is worth saying out loud: the log says what was left behind.
+            aiLog(this.context, 'Code Fix · 30B: could not put the assistant fully back '
+                + `(${err instanceof Error ? err.message : String(err)}).`);
+        }
+    }
+
     private async fixCompilerError(
         doc: DesignerDocument,
         panel: vscode.WebviewPanel,
@@ -6747,6 +6850,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
       <button id="btnNewForm" title="Create a new Avalonia form">+ New Form</button>
       <button id="btnRefresh" title="Reload the form from disk and re-read the database preview (e.g. rows added while the app was running)">Refresh</button>
       <button id="btnCodeFix" title="Check the code-behind against the form and the DataSet: missing VB accessors, duplicate methods, leftover handlers of deleted controls, broken Data-Image / ItemsSource bindings, missing Imports or bundled helper files — with a one-click fix per problem">🩺 Code Fix…</button>
+      <button id="btnViewLog" title="Open the Avalonia Designer log in an editor tab: every Code Fix step, each model request and why anything was refused">📄 View Log</button>
       <button id="btnBackup" title="Save everything that is unsaved, then copy this whole project into the parent folder as &lt;Project&gt;_&lt;date&gt;_&lt;time&gt; (no bin/obj, caches or .git)">💾 Project Backup</button>
 ${publishButtons}      <span class="sep"></span>
       <button class="tbg-head" data-grp="zoom" data-tip="Zoom: zoom out / in and fit the form to the window" aria-expanded="true">Zoom</button>

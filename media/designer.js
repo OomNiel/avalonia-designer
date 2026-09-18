@@ -30,6 +30,7 @@
         btnRefresh: $('btnRefresh'),
         btnCodeFix: $('btnCodeFix'),
         btnBackup: $('btnBackup'),
+        btnViewLog: $('btnViewLog'),
         // Linux-only (the .deb flow); null elsewhere, hence the guarded listeners below.
         btnPublish: $('btnPublish'),
         btnInstall: $('btnInstall'),
@@ -3302,6 +3303,12 @@
     els.btnRefresh.addEventListener('click', () => {
         els.status.textContent = 'Refreshing\u2026';
         post({ type: 'refresh' });
+    });
+    // View Log: the file every Code Fix step and model request is mirrored to — the extension opens it in an
+    // editor tab, so the reason a fix did or did not happen is readable without hunting for a path.
+    els.btnViewLog.addEventListener('click', () => {
+        els.status.textContent = 'Opening the log\u2026';
+        post({ type: 'viewLog' });
     });
     // Project Backup: the extension saves what is unsaved, then copies the project folder next to
     // itself as <Project>_<date>_<time>.

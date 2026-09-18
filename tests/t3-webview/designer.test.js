@@ -16,7 +16,7 @@ const DESIGNER_CSS = path.join(__dirname, '..', '..', 'media', 'designer.css');
 
 const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomValue', 'canvasWrap',
     'toolbar',
-    'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnBackup', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
+    'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnViewLog', 'btnBackup', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
     // Linux-only in the real webview: the extension omits them elsewhere (see setup's `omit`).
     'btnPublish', 'btnInstall',
     'menuDummies',
@@ -1081,6 +1081,15 @@ module.exports = async (t) => {
     heads().find((h) => h.textContent.includes('Data')).dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
     t.equal(hasRow('Read Only'), true, 'sections', 'un-folding brings the rows back');
     t.equal(!!(vscodeState.collapsed.DataGrid && vscodeState.collapsed.DataGrid.data), false, 'sections', 'the un-fold is persisted too');
+
+    // --- Toolbar: 'View Log' opens the extension's own log in an editor tab (asked 2026-09-18) ---
+    {
+        posted.length = 0;
+        $('btnViewLog').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1], { type: 'viewLog' }, 'toolbar', 'View Log posts viewLog');
+        t.ok(/opening the log/i.test($('status').textContent), 'toolbar',
+            'and the status line says what is happening', $('status').textContent);
+    }
 
     // --- Toolbar: 'Project Backup' asks the extension to save everything and copy the project ---
     {

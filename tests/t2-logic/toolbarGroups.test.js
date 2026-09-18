@@ -41,7 +41,7 @@ function categories(markup) {
 /** What each category must own, in toolbar order. */
 const EXPECTED = [
     { grp: 'edit', label: 'Edit', items: ['btnUndo', 'btnRedo'] },
-    { grp: 'file', label: 'File', items: ['btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnBackup'] },
+    { grp: 'file', label: 'File', items: ['btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnViewLog', 'btnBackup'] },
     { grp: 'zoom', label: 'Zoom', items: ['btnZoomOut', 'zoomValue', 'btnZoomIn', 'btnFit'] },
     { grp: 'guides', label: 'Guides', items: ['btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'btnCrosshair'] },
     {
@@ -82,14 +82,14 @@ module.exports = async (t) => {
     }
     const all = cats.reduce((acc, c) => acc.concat(c.items), []);
     t.equal(all.length, new Set(all).size, 'toolbar-groups', 'no item is owned by two categories');
-    t.equal(all.length, 25, 'toolbar-groups', 'all 25 toolbar items are grouped (13 icons, 11 buttons, the read-out)');
+    t.equal(all.length, 26, 'toolbar-groups', 'all 26 toolbar items are grouped (13 icons, 12 buttons, the read-out)');
     t.ok(!all.includes('btnCodeSettings'), 'toolbar-groups',
         '⚙ Settings stays outside the categories (it never folds away)');
     t.ok(markup.indexOf('data-stop="') < markup.indexOf('id="btnCodeSettings"'), 'toolbar-groups',
         'the data-stop marker sits before the status text and ⚙ Settings');
     const ids = [...markup.matchAll(/id="([A-Za-z0-9_]+)"/g)].map((m) => m[1]);
     t.equal(ids.length, new Set(ids).size, 'toolbar-groups', 'no duplicate id in the toolbar markup');
-    t.equal(ids.filter((i) => i.startsWith('btn')).length, 25, 'toolbar-groups',
+    t.equal(ids.filter((i) => i.startsWith('btn')).length, 26, 'toolbar-groups',
         'the grouping did not drop or duplicate a button');
 
     // ---------- 3) the heading chip: readable, and its caret is a SHAPE (no font to be missing) ----------

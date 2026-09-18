@@ -267,7 +267,7 @@ module.exports = async (t) => {
             'switching away stops the loop by default, and only by default');
         t.ok(/const once = \(opts: \{ ignoreVisibility\?: boolean \} = \{\}\): Promise<RepairReport>/.test(panel), 'trigger',
             'the flag is part of the one entry point');
-        t.ok(/const done = await once\(\{ ignoreVisibility: true \}\);/.test(panel), 'trigger',
+        t.ok(/let done: RepairReport;[\s\S]{0,120}?done = await once\(\{ ignoreVisibility: true \}\);/.test(panel), 'trigger',
             'and the step-up run passes it, because the user just said yes to it in a modal');
         t.ok(/Code Fix · 30B run finished — \$\{done\.remaining\.length\} error\(s\) left/.test(panel), 'trigger',
             'the run\'s outcome is logged, so "did the 30B do anything?" is answerable from the file');
@@ -303,6 +303,26 @@ module.exports = async (t) => {
             'trigger',
             'then the analyser\'s own finding, then the reported line and the three above it — every '
             + 'candidate logged, so a miss can be read instead of guessed at');
+
+        // "the 7B model is not restored when the 30B is done" (reported 2026-09-18): the escalation stops the
+        // built-in runtime and repoints `assistant.backend`/`endpoint`/`model` at the user's own unit, and
+        // nothing put them back — so the picker stayed on the 30B and the next Code Fix had no local model.
+        t.ok(/const before = \{[\s\S]{0,300}?backend: cfg\.get<string>\('assistant\.backend'/.test(panel), 'trigger',
+            'the step-up records what it is about to change, before the escalation touches anything');
+        t.ok(/const wasRunning = bundledRuntimeRunning\(\)\.running;/.test(panel), 'trigger',
+            'and whether the 7B runtime was up — only what we unloaded is loaded again');
+        t.ok(/\} finally \{[\s\S]{0,500}?restoreAssistantAfterStepUp\(before, wasRunning, step\)/.test(panel), 'trigger',
+            'the restore runs however the big run ended: a throw, a cancel, or a clean build');
+        t.ok(/if \(!up\.ok\) \{[\s\S]{0,300}?restoreAssistantAfterStepUp/.test(panel), 'trigger',
+            'and on the failed-escalation path too, which returns before the run even starts');
+        t.ok(/await updateSetting\(cfg, `assistant\.\$\{key\}`, before\[key\]\)/.test(panel), 'trigger',
+            'the values go back where they already live, and only the ones the step-up changed');
+        t.ok(/await ensureBundledEndpoint\(\{ \.\.\.assistantConfig\(\), backend: 'bundled' \}\)/.test(panel), 'trigger',
+            'the 7B the escalation unloaded is loaded again — undoing our own teardown, not starting a model to '
+            + 'do work');
+        t.ok(/case 'viewLog'/.test(panel) && /View Log: opened/.test(panel) && /"btnViewLog"/.test(panel), 'trigger',
+            'and the View Log button opens that same log file in an editor tab');
+        t.ok(/aiLogFile/.test(panel), 'trigger', 'the log path comes from one place, not a second copy of it');
         t.equal(/return \/Added the missing\/\.test\(what\) \? 'fixed' : 'no-fix';/.test(panel), false, 'trigger',
             'and a miss no longer ends the function: the error is not consumed, so the next fixer still gets it '
             + '(§136–§138 again — a guard must not gate the work)');
