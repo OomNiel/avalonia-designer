@@ -545,8 +545,11 @@ module.exports = async (t) => {
             'aiLog points the shared file sink at logs/ai.log');
         t.ok(/export function log\(msg: string\)[\s\S]{0,300}?appendToMirror\(msg\)/.test(loggerSrc), 'silent',
             'and every log line — the AI client uses plain `log` — is mirrored into that file');
-        t.ok(/512 \* 1024/.test(loggerSrc) && /fs\.rmSync\(mirror/.test(loggerSrc), 'silent',
+        t.ok(/MIRROR_LIMITS = \{[\s\S]{0,240}?maxBytes: 512 \* 1024/.test(loggerSrc) && /fs\.renameSync\(tmp, mirror\)/.test(loggerSrc), 'silent',
             'with the same size cap the log file already had');
+        t.equal(/fs\.rmSync\(mirror/.test(loggerSrc), false, 'silent',
+            'and the cap now trims the oldest lines instead of deleting the whole log — that is what it did '
+            + 'until 2026-09-18, when the file was 504 KB of three days of diagnoses and one line from gone');
 
         const js = read('media/designer.js');
         t.ok(/clearTimeout\(aiWatchdog\)/.test(js) && /the extension has not reported back yet/.test(js), 'silent',
