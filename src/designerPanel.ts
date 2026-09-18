@@ -4980,6 +4980,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      */
     private static readonly LOOP_AI_TRIES_MAX = 3;
     private loopAiTries = 0;
+    /** Why the model was not asked during the last run (`undefined` when it was). Names the offer's reason honestly. */
+    private loopNoModel: string | undefined;
 
     /** What `analyzeCodeBehind` needs: the DESIGNER's live XAML plus the project's DataSet facts
      *  (the checker verifies Data-Image / ItemsSource bindings against the .adset specs). */
@@ -5051,6 +5053,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const proj = findProject(doc.uri);
         if (!proj) return;
         this.loopAiTries = 0;
+        this.loopNoModel = undefined;
         // The build compiles what is on DISK, so a dirty buffer would be checked as it was, not as it looks.
         try { await vscode.workspace.saveAll(false); } catch { /* the build will say what it sees */ }
         await this.postStatus(panel, `Code Fix: building the project${why ? ` (${why})` : ''}…`);
@@ -5166,10 +5169,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             aiLog(this.context, `30B step-up not offered: ${offer.why}`);
             return undefined;
         }
-        aiLog(this.context, `30B step-up offered: ${offer.unit} (${offer.sizeGb} GB), ${report.remaining.length} error(s) left`);
+        aiLog(this.context, `30B step-up offered: ${offer.unit} (${offer.sizeGb} GB), ${report.remaining.length} error(s) left`
+            + (this.loopNoModel ? ` — the model was not asked first: ${this.loopNoModel}` : ''));
+        // Say what actually happened. "The 7B model could not fix everything" was a lie whenever no model was
+        // asked at all (2026-09-18) — and it sent the user after the wrong problem.
+        const lead = this.loopNoModel
+            ? `Nothing here can repair the ${report.remaining.length} error(s) left — the 7B was not asked: `
+                + `${this.loopNoModel}.\n\nTry the same errors with your 30B model instead?\n\n`
+            : `The local 7B model could not fix everything — ${report.remaining.length} error(s) are left.\n\n`
+                + `Try once more with your 30B model?\n\n`;
         const pick = await vscode.window.showWarningMessage(
-            `The local 7B model could not fix everything — ${report.remaining.length} error(s) are left.\n\n`
-            + `Try once more with your 30B model?\n\n`
+            lead
             + (running
                 // A unit that is up needs no start and no wait — and saying "about a minute" here would be a
                 // promise the run itself contradicts.
@@ -5247,18 +5257,37 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             }
             if (form && options && run && d.code === 'CS1002' && run.codeFile && path.resolve(run.codeFile) === path.resolve(d.file)) {
                 this.snapshotForRevert(form, run.codeFile);
-                const issue: CodeIssue = {
-                    id: `build:CS1002:${d.line}`,
-                    severity: 'error',
-                    kind: 'insert-semicolon',
-                    member: 'CS1002',
-                    line: d.line,
-                    title: 'CS1002: ; expected',
-                    detail: '',
-                    data: { line: String(d.line), method: 'CS1002' }
-                };
-                const what = await applyLocalFix(form, issue, options);
-                return /Added the missing/.test(what) ? 'fixed' : 'no-fix';
+                // Which line is missing the `;`? Not necessarily the one the compiler names: CS1002 is reported
+                // where the parser EXPECTED the terminator, which for a real missing `;` is the next token's
+                // line — a `}`, or the statement after it. Found on the user's own form (2026-09-18): the rule
+                // took the reported line, `terminateCsharpLine` rightly refused it (`That line already ends
+                // with a ";"`), and the refusal was swallowed — so the loop called the error unfixable, the
+                // offer blamed the 7B for a fix it was never asked for, and the 30B run repeated it in under a
+                // second. The analyser's own finding names the statement, so it goes first; then the reported
+                // line, then a few lines above it. Each candidate is tried in turn: `applyLocalFix` only writes
+                // when it has something to write, so a miss costs nothing.
+                const found = run.issues.find((i) => i.kind === 'insert-semicolon' && (i.file ?? 'code') === 'code');
+                const candidates = [found?.line, d.line, d.line - 1, d.line - 2, d.line - 3]
+                    .filter((n): n is number => typeof n === 'number' && n > 0);
+                for (const line of [...new Set(candidates)]) {
+                    const issue: CodeIssue = {
+                        id: `build:CS1002:${line}`,
+                        severity: 'error',
+                        kind: 'insert-semicolon',
+                        member: found?.member ?? 'CS1002',
+                        line,
+                        title: 'CS1002: ; expected',
+                        detail: '',
+                        data: { line: String(line), method: found?.member ?? 'CS1002' }
+                    };
+                    const what = await applyLocalFix(form, issue, options);
+                    if (/Added the missing/.test(what)) return 'fixed';
+                    aiLog(this.context, `Repair loop: CS1002 at line ${d.line} — line ${line}: ${what}`);
+                }
+                // The rule could not act, so the error is NOT consumed: the model gets its try below. A rule
+                // that fails must not take the next fixer's chance with it (the lesson of §136–§138, again).
+                aiLog(this.context, `Repair loop: no statement to terminate near ${path.basename(d.file)}:${d.line} — `
+                    + 'handing this one to the model.');
             }
             // No rule understands this one. The model gets a try when it is ALREADY running — never started
             // from here (the user's choice, 2026-09-17) — and the loop's rebuild decides whether the answer
@@ -5271,8 +5300,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             // with one error left that no rule could touch. The model needs a file, a line and the compiler's
             // message, all of which exist for any source file; the gate is "is this project source", not "is the
             // designer open".
-            if (!this.codeCheckAiRepair()) return 'no-fix';
+            if (!this.codeCheckAiRepair()) {
+                this.loopNoModel = 'the "repair build errors with AI" setting is off';
+                aiLog(this.context, `Repair loop: the AI repair setting (codeCheck.aiRepair) is off — nothing was `
+                    + `asked of a model for ${d.code}, so the error is listed instead.`);
+                return 'no-fix';
+            }
             if (this.loopAiTries >= AvaloniaDesignerProvider.LOOP_AI_TRIES_MAX) {
+                this.loopNoModel = `${AvaloniaDesignerProvider.LOOP_AI_TRIES_MAX} model attempts are already used in this run`;
                 logError(`Repair loop: ${AvaloniaDesignerProvider.LOOP_AI_TRIES_MAX} model attempts used — listing the rest.`);
                 return 'no-fix';
             }
@@ -5287,9 +5322,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             }
             const ai = await repairWithAI(vscode.Uri.file(d.file), d.line, `${d.code}: ${d.message}`);
             if (ai) return 'fixed';
+            this.loopNoModel = this.loopNoModel
+                ?? `the model was asked for ${d.code} but nothing was applied`;
+            aiLog(this.context, `Repair loop: no edit came back for ${d.code} in ${path.basename(d.file)}:${d.line} — `
+                + 'the error stays in the list.');
             this.loopSnapshot = [];
             return 'no-fix';
-        } catch {
+        } catch (err) {
+            // A throw used to leave no trace at all, which is indistinguishable from "no fixer knows this one".
+            aiLog(this.context, `Repair loop: the fixer for ${d.code} at line ${d.line} threw `
+                + `(${err instanceof Error ? err.message : String(err)}).`);
+            this.loopNoModel = this.loopNoModel ?? `the fixer for ${d.code} failed`;
             return 'failed';
         }
     }

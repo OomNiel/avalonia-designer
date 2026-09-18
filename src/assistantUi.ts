@@ -1571,7 +1571,11 @@ function formFactsFor(file: vscode.Uri): string {
  */
 export async function repairWithAI(uri: vscode.Uri, line: number, message: string): Promise<boolean> {
     const cfg = assistantConfig();
-    if (!assistantEnabled(cfg)) return false;
+    if (!assistantEnabled(cfg)) {
+        // Silent until now, which is why "the model was never asked" was invisible in the log (2026-09-18).
+        log('Repair loop: the AI assist is off (assistant.backend) — nothing was asked of a model.');
+        return false;
+    }
     if (!(await hostGate()).aiAllowed) {
         log('Repair loop: the host check has the AI assist disabled on this machine — listing the error instead.');
         return false;
@@ -1583,9 +1587,16 @@ export async function repairWithAI(uri: vscode.Uri, line: number, message: strin
         return false;
     }
     let document: vscode.TextDocument;
-    try { document = await vscode.workspace.openTextDocument(uri); } catch { return false; }
+    try { document = await vscode.workspace.openTextDocument(uri); } catch (err) {
+        log(`Repair loop: ${uri.fsPath} could not be opened (${err instanceof Error ? err.message : String(err)}) `
+            + '— no model was asked.');
+        return false;
+    }
     const language = languageOf(document);
-    if (!language) return false;
+    if (!language) {
+        log(`Repair loop: ${document.fileName} is not C# or VB — no model is asked to rewrite it.`);
+        return false;
+    }
     const all = methodsIn(document.fileName, document.getText());
     const span = all.find((m) => m.line <= line && line <= m.endLine);
     if (!span) {
@@ -1613,6 +1624,7 @@ export async function repairWithAI(uri: vscode.Uri, line: number, message: strin
             resolved,
             { applyWithoutDiff: true, quiet: true }
         );
+        if (done === undefined) log(`Repair loop: an answer for ${message} was not applied — the error stays listed.`);
         return done !== undefined;
     } catch (err) {
         log(`Repair loop: the model attempt errored (${err instanceof Error ? err.message : String(err)}).`);

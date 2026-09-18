@@ -289,6 +289,32 @@ module.exports = async (t) => {
         t.ok(/this\.loopSnapshot = fs\.existsSync\(d\.file\)/.test(panel)
             && /\? \[\{ file: d\.file, text: fs\.readFileSync\(d\.file, 'utf8'\) \}\]/.test(panel), 'trigger',
             'and the snapshot still exists for a form-less file, so a failed fix can be reverted');
+        // "Why did a rule not fix a missing `;`?" (asked 2026-09-18, with exactly that build error): the CS1002
+        // branch looked at the line the COMPILER named — which for a missing terminator is where the parser
+        // expected it, often the next token's line — got `That line already ends with a ";"` back from the
+        // fixer, and answered 'no-fix' **without logging and without falling through**. So the model was never
+        // asked, the offer blamed the 7B for a fix nobody attempted, and the 30B run repeated it in 0.87 s.
+        const uiSrc = read('src/assistantUi.ts');
+        t.ok(/const candidates = \[found\?\.line, d\.line, d\.line - 1, d\.line - 2, d\.line - 3\]/.test(panel), 'trigger',
+            'the `;` rule tries the analyser\'s own finding first — it names the statement — then walks back '
+            + 'from the line the compiler named');
+        t.equal(/return \/Added the missing\/\.test\(what\) \? 'fixed' : 'no-fix';/.test(panel), false, 'trigger',
+            'and a miss no longer ends the function: the error is not consumed, so the next fixer still gets it '
+            + '(§136–§138 again — a guard must not gate the work)');
+        t.ok(/aiLog\(this\.context, `Repair loop: CS1002 at line \$\{d\.line\} — line \$\{line\}: \$\{what\}`\);/.test(panel), 'trigger',
+            'every candidate that did not apply is logged in the fixer\'s own words');
+        t.ok(/handing this one to the model/.test(panel), 'trigger',
+            'and the fall-through says which fixer was tried and which one is next');
+        t.ok(/loopNoModel/.test(panel) && /the 7B was not asked: /.test(panel), 'trigger',
+            'the step-up offer quotes the real reason instead of claiming the 7B tried and could not');
+        t.ok(/the AI repair setting \(codeCheck\.aiRepair\) is off/.test(panel)
+            && /Repair loop: the fixer for \$\{d\.code\} at line \$\{d\.line\} threw/.test(panel), 'trigger',
+            'the two refusals that used to be silent (the setting, and a fixer that throws) now reach the log');
+        t.ok(/Repair loop: the AI assist is off \(assistant\.backend\)/.test(uiSrc), 'trigger',
+            '`repairWithAI` says why it did not ask (assist off, file not openable, language unknown)');
+        t.ok(/an answer for \$\{message\} was not applied/.test(uiSrc), 'trigger',
+            'and it says so when the model answered but no edit was applied — "asked, nothing came back" is not '
+            + 'the same as "never asked"');
         t.ok(/if \(first\.stoppedBecause === 'cancelled'\) \{[\s\S]{0,200}?Repair loop: cancelled before the first fix/.test(panel),
             'trigger', 'a cancel is written to the log — this run left no trace at all, which is why it read as "nothing happens"');
         t.ok(/await this\.runRepairLoopInner\(doc, panel, why\);/.test(panel) && /private async runRepairLoopInner\(doc: DesignerDocument, panel: vscode\.WebviewPanel, why\?: string\)/.test(panel),
@@ -300,7 +326,9 @@ module.exports = async (t) => {
         t.ok(/attempted === 0 \? 'nothing-fixable' : 'no-progress'/.test(read('src/repairLoop.ts')), 'trigger',
             'the report says whether nothing was fixable or nothing helped — different things to the user');
         t.ok(/kind: 'insert-semicolon'/.test(panel.slice(panel.indexOf('private async fixCompilerError'), panel.indexOf('private formUriOfFile'))),
-            'trigger', 'a CS1002 the compiler located is handed to the semicolon fixer at THAT line');
+            'trigger', 'a CS1002 the compiler located is handed to the semicolon fixer — on the reported line, '
+            + 'the analyser\'s own line, or one just above (2026-09-18: the reported line is often the next '
+            + 'token\'s, and the miss used to end the attempt silently)');
         t.ok(/issues\.find\(\(i\) => i\.kind !== 'report-only'/.test(panel), 'trigger',
             'while a rule finding on the same line is preferred, so one mistake is never repaired twice');
 
@@ -312,8 +340,9 @@ module.exports = async (t) => {
         // already running — and never started from here) ----------
         const ai = ui.slice(ui.indexOf('export async function repairWithAI'), ui.indexOf('export async function addHubModel'));
         t.ok(ai.length > 500, 'ai-repair', 'repairWithAI was found in the assistant module');
-        t.ok(/if \(!assistantEnabled\(cfg\)\) return false;/.test(ai), 'ai-repair',
-            'it does nothing at all unless the AI assist is enabled');
+        t.ok(/if \(!assistantEnabled\(cfg\)\) \{[\s\S]{0,220}?return false;/.test(ai), 'ai-repair',
+            'it does nothing at all unless the AI assist is enabled — and says so in the log (2026-09-18: this '
+            + 'refusal was silent, which is how "the model was never asked" stayed invisible)');
         // The guard moved into `repairRuntime` on 2026-09-17 (it must know all three runtimes), so these
         // assertions name the invariants rather than one code shape: a runtime that is already up is used,
         // and nothing is ever STARTED for a repair — `effectiveConfig` (which does start the built-in runtime)
@@ -350,8 +379,9 @@ module.exports = async (t) => {
         t.equal(/showWarningMessage\(\\`\$\{written\.message\}/.test(ui.slice(ui.indexOf('if (opts.quiet)'), ui.indexOf('if (opts.quiet)') + 400)), false,
             'ai-repair', 'with nothing shown to the user for a repair they did not ask for');
 
-        t.ok(/if \(!this\.codeCheckAiRepair\(\)\) return 'no-fix';/.test(panel), 'ai-repair',
-            'the panel only offers the model when the setting says so');
+        t.ok(/if \(!this\.codeCheckAiRepair\(\)\) \{[\s\S]{0,600}?return 'no-fix';/.test(panel), 'ai-repair',
+            'the panel only offers the model when the setting says so — and records the reason, so the step-up '
+            + 'offer can say "the 7B was not asked" instead of blaming it for a fix nobody attempted');
         t.ok(/const ai = await repairWithAI\(vscode\.Uri\.file\(d\.file\), d\.line, `\$\{d\.code\}: \$\{d\.message\}`\);\s*\n\s*if \(ai\) return 'fixed';/.test(panel),
             'ai-repair', 'and an applied answer counts as a fix, which the loop then verifies by rebuilding');
         t.ok(/"avaloniaDesigner\.codeCheck\.aiRepair":\s*\{\s*"type": "boolean",\s*"default": true/.test(read('package.json')),
