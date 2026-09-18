@@ -385,6 +385,28 @@
         af.querySelector('#col-null').appendChild(checkWrap);
         box.appendChild(af);
 
+        // Tree role: what this column MEANS when the table is bound to a TreeView. It is the only thing a
+        // user has to set by hand to get a tree out of a flat table, so it sits with the column's other
+        // facts rather than behind a dialog of its own.
+        const rf = field('Tree role', 'col-role',
+            'Only used when the table is bound to a TreeView: what this column means. "Node text (Name)" is a '
+            + 'node\'s label; "Id" and "Parent" together make a self-referencing table; "Level or path" is a '
+            + 'depth number (0, 1, 2) or a dotted code like 1.2.3.');
+        const rsel = document.createElement('select');
+        for (const [value, label] of [['', 'Not used'], ['name', 'Node text (Name)'], ['id', 'Id'],
+            ['parent', 'Parent'], ['level', 'Level or path']]) {
+            const o = document.createElement('option');
+            o.value = value;
+            o.textContent = label;
+            rsel.appendChild(o);
+        }
+        rsel.value = c.role || '';
+        rsel.addEventListener('change', () => post({
+            type: 'setColumnProp', table: t.name, column: c.name, prop: 'role', value: rsel.value
+        }));
+        rf.querySelector('#col-role').appendChild(rsel);
+        box.appendChild(rf);
+
         const svf = field('Sample value', 'col-sample', 'Shown in the sample row when this table is bound to a control. Leave blank for an automatic value (e.g. "Sample", 1, True, now).');
         const svInput = document.createElement('input');
         svInput.type = 'text';
