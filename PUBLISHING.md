@@ -254,11 +254,18 @@ listing when that release is uploaded — a repo-only README edit does not.
 > to `logs/ai.log` *and* the status bar, a five-minute deadline reports that the 30B did not make it, and the
 > run's outcome is logged — see §138. The extension removals the same afternoon were **not** the cause (the
 > log's last Code Fix escalation is 12:48; the removals were ~14:00).
+> (5) **Then the Toolbox work:** **TreeView** (five touchpoints, four of them silent when forgotten),
+> the **Tree Items** node editor built on the four decisions asked for up front, and **📄 View Log** in the
+> File group. Plus: the `;` rule places the semicolon at the compiler's own column and falls through to the
+> model when it cannot act; the 30B step-up hands the 7B back; and the log is clamped by trimming the oldest
+> lines instead of deleting the whole file — see `NOTES.md` §139.
 >
-> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **915,372 bytes**, sha256
-> `b462a57b5648cedb7057f7d684de23e612cc830c1374cfbe6ba10fc253ba1e5a` — the **fourth** build of `0.10.11`
-> (the three before it were installed on this machine, never released and are superseded by this one), built by
-> `npm run package` after a green suite (**4,938 assertions, 0 failed**), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
+> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **927,818 bytes**, sha256
+> `b3cc77d0e240281dc2be22da6005531fbd4545a36d2b05686637d874389e9cff` — the **final** build of `0.10.11`
+> (six earlier builds of this version were installed on this machine but never released, and are all
+> superseded by this one), built by `npm run package` after a green suite (**5,059 assertions, 0 failed**;
+> **5,066** with the property-compliance reset forced, which is what verified TreeView's properties against
+> Avalonia 12.1.1), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
 > audited the same way as `0.10.9` (extract the VSIX, grep it for the user name, host name, project folders and
 > server alias — none present). **THIS is the file to upload** once `0.10.10` has gone out; `0.10.10` remains the
 > file for the *imminent* upload, frozen below.

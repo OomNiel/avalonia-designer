@@ -3293,3 +3293,49 @@ flow. Nothing changed at 14:00 because nothing was broken by it.
 - Suite 4,932 → **4,938**. One assertion had pinned `return await once({ ignoreVisibility: true })`; the outcome
   log turned it into `const done = await once(…); … return done;` — the test caught the change, as it should.
 
+### §139 — a Toolbox control is five places, and four of them fail silently (2026-09-18, 0.10.11)
+
+Asked: *"Does Avalonia have WebView and TreeView controls?"* then *"Do the TreeView first"*, then *"Add an editor
+for treeviews nodes — keeping in mind our mission is to keep things simple so novices can get going easily."*
+
+- **TreeView is core; WebView is not, and not on Linux.** `Avalonia.Controls.TreeView` needs nothing added.
+  Avalonia 12's `NativeWebView` lives in a **separate package** and the docs say plainly *"The embeddable
+  `NativeWebView` control is not supported on Linux"* — so on this machine it cannot work at all, and the
+  Linux options are third-party CEF/WebKit wrappers shipping their own browser engine. A WebView also needs a
+  native window handle, so it could never be previewed in a headless host.
+- **The five touchpoints, in the order they fail:** `src/toolboxProvider.ts` (no catalog entry → not in the
+  sidebar), `src/controlInfo.ts` (blank tooltip *and* blank "About this control"), `host/ControlFactory.cs`'s
+  snippet table (a drop that does **nothing** — the XAML a drop inserts is produced by the **C# host** through
+  `host.snippet(tag)`, not by the extension), the host's `TypeMap` (the preview falls back to a blank
+  element), and `src/propertyCatalog.ts` (only the generic fields). Four of the five are silent: nothing
+  throws, nothing logs, and the feature is simply *absent*.
+- **A new control must be a rule, not a habit.** `tests/t2-logic/toolboxCatalog.test.js` pins all five for
+  TreeView, plus one general invariant that will catch the next one: **every catalog entry must have a real
+  description**. The T5 matrix is the end-to-end gate — it inserts every toolbox control into a real VB
+  project and reports `snippet → TreeView — TreeView1`, `place-render`, `place-bounds` and `prop:Width`; with
+  `AVALONIA_COMPLIANCE_RESET=1` the property audit verified 30 TreeView properties against Avalonia 12.1.1 and
+  marked it compliant.
+- **The editor's four decisions, taken before any code:** mirror the existing **Menu Items** editor (one idiom
+  to learn), Header + an *expanded* tick per row, unrepresentable children shown **read-only**, and the five
+  buttons. Nesting is the indentation — no level number, which was the point.
+- **The safety rule is the interesting part.** A `TreeView` can hold an `ItemTemplate`, a `Styles` block or a
+  bound `ItemsSource`; an editor that rebuilt the element would delete them without a word. Save removes and
+  re-appends **only** `<TreeViewItem>` children, read-only rows are never sent back as nodes (the element is
+  still in the file), and the panel's tree is sanitised (structure only, headers trimmed, ≤500 nodes, ≤5
+  levels). Same shape as the Menu editor's `PathPicker` row.
+- **Delete confirms only when something is at stake.** A node with children asks (the extension asks —
+  `window.confirm` is inert in a webview); a leaf does not, because the whole editor is a working copy that
+  Cancel already undoes, and a prompt on every row would make tidying a tree tedious. The answer is matched
+  against the path that was asked about, so a stale modal cannot delete the wrong node.
+- **Two self-inflicted test bugs worth remembering.** (1) A duplicated `const ui` in a test file is a
+  `SyntaxError` that kills the *whole file* — the run drops by ~100 assertions and reports one `uncaught`. Check
+  the total, not just the failure count. (2) Escaped text does not survive the trip: asserting on C#/regex
+  source through a JSON-encoded edit loses the backslashes, twice. **Assert on plain text a human would read**
+  (button titles, question sentences) — it survives escaping *and* pins the meaning.
+- **A cap that deletes the history is not a cap.** The log's 512 KB limit threw the whole file away; at the
+  time it held three days of diagnoses. It now trims the oldest lines, keeps the newest 256 KB, cuts on a line
+  boundary and records how much went — and `tests/t2-logic/loggerFile.test.js` writes a real file through
+  `log()` to prove it.
+- Suite 4,938 → **5,059** (5,066 with the property-compliance reset forced). Commits `04e755f`, `7ee7740`,
+  `4cd3a20`, `fa378de`, `d3b4bee`, `ebfd892`; docs updated in the same request.
+

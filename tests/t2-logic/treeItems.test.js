@@ -95,4 +95,20 @@ module.exports = async (t) => {
         'and the working copy is dropped when the modal closes');
     t.ok(/src\.map\(treeCopy\)/.test(js), 'save',
         'the editor works on a copy, so Cancel cannot leave half an edit behind');
+
+    // --- deleting a node with children asks first (asked 2026-09-18) ------------------------------
+    t.ok(/if \(node\.children && node\.children\.length\) \{[\s\S]{0,220}?confirmDeleteNode/.test(js), 'delete',
+        'the ✕ on a node that has children asks the extension before anything is removed');
+    t.ok(/list\.splice\(idx, 1\);\n                renderTreeRows\(\);\n            \}\)\);/.test(js), 'delete',
+        'a leaf is deleted without a prompt — the editor is a working copy, so Cancel already undoes it, and '
+        + 'a prompt per row would make tidying a tree tedious');
+    t.ok(/case 'confirmDeleteNode'/.test(panel), 'delete', 'the extension handles the question');
+    t.ok(/Delete “\$\{label\}” and the \$\{kids\} node\$\{kids === 1 \? '' : 's'\} inside it\?/.test(panel), 'delete',
+        'the question names the node and counts what goes inside it');
+    t.ok(/\{ modal: true \}, 'Delete', 'Keep'/.test(panel), 'delete',
+        'and it is a real modal with Delete/Keep — window.confirm() does nothing in a webview');
+    t.ok(/type: 'nodeDeleteAnswer', path: String\(msg\.path \?\? ''\), ok: pick === 'Delete'/.test(panel), 'delete',
+        'the answer travels back to the row it was asked about');
+    t.ok(/case 'nodeDeleteAnswer'/.test(js) && /msg\.path === asked && msg\.ok/.test(js), 'delete',
+        'and a stale answer (the tree was re-rendered, or the modal outlived the row) is ignored');
 };

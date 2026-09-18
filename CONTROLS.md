@@ -114,7 +114,7 @@ internal/template parts have no published summary and are described by role inst
 | ItemsControl | `ItemsControl` | Displays a collection of items. | ✅ Toolbox |
 | ListBox | `ListBox` | An items control where individual items can be selected. | ✅ Toolbox |
 | ListBoxItem | `ListBoxItem` | A selectable item inside a `ListBox`. | ✓ |
-| TreeView | `TreeView` | Displays a hierarchical tree of data. | ✓ |
+| TreeView | `TreeView` | Displays a hierarchical tree of data. | ✅ Toolbox |
 | TreeViewItem | `TreeViewItem` | An item in a `TreeView`. | ✓ |
 | SelectingItemsControl | `SelectingItemsControl` | Base `ItemsControl` that maintains a selection (base for `ListBox`). | — (base class) |
 | UniformGrid | `UniformGrid` | A panel with uniform column and row sizes. | ✅ Toolbox |

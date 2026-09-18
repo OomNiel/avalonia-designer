@@ -155,6 +155,8 @@ and `ExifImageLoader`. Each is copied into your project the first time it is nee
 
 ## 8. A property grid that behaves like a real one
 
+**Items editors.** Some controls are defined by their children, and writing those children by hand is where a beginner stops: a menu bar's items and submenus, a TabControl's pages, a ListBox's rows, a status bar's items, and a TreeView's nodes all have a small editor in the Properties panel (**Edit tree nodes…**, **Edit menu items…**, and so on). The **Tree Items** editor is the newest: indented rows where the indentation *is* the nesting, a Header and an *expanded* tick per node, buttons to add, nest, un-nest, reorder and delete, and a confirmation before a delete takes a whole subtree. Anything the editor cannot represent — an `ItemTemplate`, a `Styles` block, a bound `ItemsSource` — appears as a greyed read-only row and is never rewritten, so building a tree by hand can never silently destroy what was already there.
+
 Every control gets the *familiar* editor for each property kind: the full color palette,
 **font pickers populated from your machine's actual font list** (enumerated in the host),
 `ItemsSource` and Browse pickers, Data-Image binding, plus dedicated editors for Tab items, List
@@ -351,7 +353,7 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~4,915 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~5,059 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

@@ -59,6 +59,24 @@
 
 - **WYSIWYG designer** — open any `.axaml` file in a visual designer tab.
 - **Toolbox** — a sidebar full of Avalonia controls; click a tool, then click the canvas to place it.
+
+#### TreeView and the Tree Items editor
+
+**TreeView** is in the Toolbox under **Items controls & lists**. Dropping one gives you a tree with two
+starter nodes (one of them expanded), so you can see what you are getting before you change anything.
+To change the nodes, select the TreeView and press **Edit tree nodes…** in the **Tree Items** section of
+the Properties panel:
+
+- Each row is a node. Its indentation *is* its nesting — a row further right is inside the one above it.
+- **Header** is the text the node shows. The **Expanded** tick decides whether its children are visible
+  when the form opens.
+- The buttons on a row add a child, add a sibling, **nest** it under the row above, **un-nest** it back
+  out, move it up or down, and delete it. Deleting a node that has children asks first.
+- **Cancel** leaves everything as it was — nothing is written to the form until you press **Save**.
+- A greyed row means the tree holds something this editor cannot change (an `ItemTemplate`, a `Styles`
+  block, a bound `ItemsSource`). It is shown so you know it is there, and it is left exactly as it is.
+
+A tree is filled either by nodes like these **or** by setting `ItemsSource` in code — not both at once.
 - **Properties panel** — change a control's size, position, colours, fonts, margins and more,
   with pickers and plain-language descriptions instead of raw XAML.
 - **Code-behind generation** — placing an interactive control automatically wires its default
@@ -196,7 +214,7 @@ The toolbar buttons are grouped into **categories** you can fold away: click a c
 | Category | Buttons |
 |---|---|
 | **Edit** | Undo, Redo |
-| **File** | **+ New Form**, **Refresh**, **🩺 Code Fix…**, **💾 Project Backup** |
+| **File** | **+ New Form**, **Refresh**, **🩺 Code Fix…**, **� View Log**, **�💾 Project Backup** |
 | **Zoom** | **−**, zoom read-out (**100 %**), **+**, **Fit** |
 | **Guides** | **Grid** (dot grid on/off), **Snap** (snap-to-grid), **Grid…** (spacing, colour, dot size), **Crosshair** |
 | **Alignment** | **Align left / centre / right / top / middle / bottom**, **Align text**, **Same width**, **Same height** |

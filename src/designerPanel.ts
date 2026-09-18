@@ -3227,6 +3227,21 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'confirmDeleteNode': {
+                    // Deleting a node with children removes the whole subtree, and the ✕ is one click. A leaf
+                    // is not asked about: the editor is a working copy, so Cancel already undoes it, and a
+                    // prompt per row would make tidying a tree tedious (asked 2026-09-18).
+                    const kids = Number(msg.kids ?? 0);
+                    const label = String(msg.label ?? '').trim() || 'this node';
+                    const pick = await vscode.window.showWarningMessage(
+                        `Delete “${label}” and the ${kids} node${kids === 1 ? '' : 's'} inside it?`,
+                        { modal: true }, 'Delete', 'Keep'
+                    );
+                    await panel.webview.postMessage({
+                        type: 'nodeDeleteAnswer', path: String(msg.path ?? ''), ok: pick === 'Delete'
+                    });
+                    return;
+                }
                 case 'saveMenuItems': {
                     // 'Menu Items' tree editor on a <Menu>: replace its whole item tree with the
                     // structure the user built (kinds map onto MenuItem/ToggleType/Separator and an

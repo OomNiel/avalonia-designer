@@ -3056,6 +3056,20 @@
             case 'frame':
                 applyFrame(msg);
                 break;
+            case 'nodeDeleteAnswer': {
+                // The extension's answer to the ✕ confirmation. A path that is not the row we asked about is
+                // ignored: the modal can outlive the row it was raised from (the tree may have been re-rendered).
+                const asked = pendingNodeDelete;
+                pendingNodeDelete = null;
+                if (asked && msg.path === asked && msg.ok && treeEdit) {
+                    const parent = treeParentOf(asked.split('.').map(Number));
+                    if (parent) {
+                        parent.list.splice(parent.idx, 1);
+                        renderTreeRows();
+                    }
+                }
+                break;
+            }
             case 'dotGrid': {
                 if (msg.dotGrid) state.dotGrid = msg.dotGrid;
                 applyDotGrid();
@@ -3928,6 +3942,7 @@
     // parent and child, not arithmetic. A row the editor cannot represent — an ItemTemplate, a Styles
     // block, a bound ItemsSource — is drawn greyed with no controls, and the extension never rewrites it.
     let treeEdit = null;           // { name, tree } working copy while the modal is open
+    let pendingNodeDelete = null;  // the row path a delete confirmation is out for
     const TREE_MAX_DEPTH_UI = 5;
 
     function treeCopy(n) {
@@ -3937,6 +3952,11 @@
             readOnly: !!(n && n.readOnly),
             children: Array.isArray(n && n.children) ? n.children.map(treeCopy) : []
         };
+    }
+
+    /** How many nodes hang under this one — the number a delete confirmation quotes. */
+    function countNodes(node) {
+        return (node.children || []).reduce((n, c) => n + 1 + countNodes(c), 0);
     }
 
     function treeNodeAt(path) {
@@ -4081,6 +4101,19 @@
                 treeFocus(path.slice(0, -1).concat(idx + 1));
             }, idx >= list.length - 1));
             row.appendChild(treeBtn('\u2715', 'Delete this node and everything inside it', () => {
+                // A node with children takes a whole subtree with it, and ✕ is one click — so the extension
+                // asks first. A leaf goes straight out: the editor is a working copy, so Cancel already
+                // undoes it, and a prompt per row would make tidying a tree tedious (2026-09-18).
+                if (node.children && node.children.length) {
+                    pendingNodeDelete = path.join('.');
+                    post({
+                        type: 'confirmDeleteNode',
+                        path: pendingNodeDelete,
+                        label: node.header,
+                        kids: countNodes(node)
+                    });
+                    return;
+                }
                 list.splice(idx, 1);
                 renderTreeRows();
             }));

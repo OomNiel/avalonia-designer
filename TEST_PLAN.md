@@ -1,6 +1,6 @@
 # Test Script Plan — Avalonia Designer Extension
 
-Date: 2026-09-18 · Status: **full suite green on this machine — 4,938 passed / 0 failed / 0 skipped (~39 s)**
+Date: 2026-09-18 · Status: **full suite green on this machine — 5,059 passed / 0 failed / 0 skipped (~39 s)**
 
 > Update 2026-08-30: user approved **Option (a) — full Avalonia.Headless driver** for T4, and
 > instructed to *prepare the script only* (run at a later stage) and keep it easily extensible.
