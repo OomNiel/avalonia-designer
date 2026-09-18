@@ -366,6 +366,73 @@ public partial class TestForm : Window
             'and only that line is touched');
     }
 
+    // ---------- 7b2) the `;` the compiler placed INSIDE a one-line block (2026-09-18) ----------
+    {
+        const AXAML = `<Window ${NS} x:Class="Proj.TestForm" Width="800" Height="450">
+  <Canvas Name="Body"/>
+</Window>`;
+        // The user's own file, in the shape that beat the rule: a one-line `try { … }`, so the statement that
+        // lost its `;` shares its line with the `}` that closes the block. Every line-end test refuses such a
+        // line (`/[;{}]$/`) — including the blank line and the two comments above it — so the log showed four
+        // refusals and the model was asked for a fix the rules could already write.
+        const p = makeProject('TestForm.axaml.cs', `using Avalonia.Controls;
+namespace Proj;
+public partial class TestForm : Window
+{
+    public TestForm()
+    {
+        InitializeComponent();
+    }
+
+    private void DataImage_Image1_Show()
+    {
+        // EXIF-aware load (bundled ExifImageLoader.cs)
+
+        try { Image1.Source = ExifImageLoader.LoadImageOriented(row.Image) }
+        catch
+        { /* blank */ }
+    }
+}
+`, AXAML);
+        const lines = p.read().split('\n');
+        const at = lines.findIndex((l) => /try \{ Image1/.test(l));
+        const blankAt = lines.findIndex((l, i) => i < at && l.trim() === '');
+        const commentAt = lines.findIndex((l, i) => i < at && /^\s*\/\//.test(l));
+        const line = lines[at];
+        // `CS1002: ; expected` is reported at the position the parser expected the terminator — right after
+        // `row.Image)`, 1-based, the way MSBuild prints it (`file.cs(56,79): error CS1002`).
+        const column = line.indexOf(') }') + 2;
+        const report = await applyLocalFix(p.uri, {
+            id: 'build:CS1002:1:1',
+            severity: 'error',
+            kind: 'insert-semicolon',
+            member: 'CS1002',
+            line: at + 1,
+            title: 'CS1002: ; expected',
+            detail: '',
+            data: { line: String(at + 1), method: 'CS1002', column: String(column) }
+        });
+        t.ok(/Added the missing ";"/.test(report), 'semicolon-column', 'a `;` at the compiler\'s own position is a fix');
+        t.ok(/LoadImageOriented\(row\.Image\); \}/.test(p.read()), 'semicolon-column',
+            'it lands in front of the `}` that closes the block, not at the end of the line');
+        t.equal(p.read().split('\n')[at], line.replace(') }', '); }'), 'semicolon-column',
+            'and only that one character is added to that one line');
+
+        // The same call on a line with nothing to terminate says which kind of nothing it is — the old message
+        // claimed "already ends with a ;" about blank lines and comments too, which is how four refusals in a
+        // row read as "that statement is fine" (2026-09-18).
+        const blank = await applyLocalFix(p.uri, {
+            id: 'x', severity: 'error', kind: 'insert-semicolon', member: 'CS1002',
+            line: blankAt + 1, title: 't', detail: '', data: { line: String(blankAt + 1) }
+        });
+        t.ok(blankAt > 0 && /is blank/.test(blank), 'semicolon-column', 'a blank line is reported as blank');
+        const comment = await applyLocalFix(p.uri, {
+            id: 'y', severity: 'error', kind: 'insert-semicolon', member: 'CS1002',
+            line: commentAt + 1, title: 't', detail: '', data: { line: String(commentAt + 1) }
+        });
+        t.ok(commentAt > 0 && /is a comment/.test(comment), 'semicolon-column', 'and a comment line as a comment');
+    }
+
     // ---------- 7c) a `//` inside a string literal is not a comment ----------
     {
         const AXAML = `<Window ${NS} x:Class="Proj.TestForm" Width="800" Height="450">

@@ -295,14 +295,20 @@ module.exports = async (t) => {
         // fixer, and answered 'no-fix' **without logging and without falling through**. So the model was never
         // asked, the offer blamed the 7B for a fix nobody attempted, and the 30B run repeated it in 0.87 s.
         const uiSrc = read('src/assistantUi.ts');
-        t.ok(/const candidates = \[found\?\.line, d\.line, d\.line - 1, d\.line - 2, d\.line - 3\]/.test(panel), 'trigger',
-            'the `;` rule tries the analyser\'s own finding first — it names the statement — then walks back '
-            + 'from the line the compiler named');
+        t.ok(/attempts\.push\(\{ line: d\.line, column: d\.column \}\)/.test(panel), 'trigger',
+            'the `;` rule asks the position the COMPILER named first — the column is where the `;` goes, which '
+            + 'is inside a one-line block and unreachable for any line-end test');
+        t.ok(/if \(found\?\.line\) attempts\.push\(\{ line: found\.line \}\)/.test(panel)
+            && /for \(const line of \[d\.line, d\.line - 1, d\.line - 2, d\.line - 3\]\) attempts\.push\(\{ line \}\)/.test(panel),
+            'trigger',
+            'then the analyser\'s own finding, then the reported line and the three above it — every '
+            + 'candidate logged, so a miss can be read instead of guessed at');
         t.equal(/return \/Added the missing\/\.test\(what\) \? 'fixed' : 'no-fix';/.test(panel), false, 'trigger',
             'and a miss no longer ends the function: the error is not consumed, so the next fixer still gets it '
             + '(§136–§138 again — a guard must not gate the work)');
-        t.ok(/aiLog\(this\.context, `Repair loop: CS1002 at line \$\{d\.line\} — line \$\{line\}: \$\{what\}`\);/.test(panel), 'trigger',
-            'every candidate that did not apply is logged in the fixer\'s own words');
+        t.ok(/aiLog\(this\.context, `Repair loop: CS1002 at \$\{d\.line\},\$\{d\.column\} — `/.test(panel)
+            && /column \$\{attempt\.column\} of line \$\{attempt\.line\}/.test(panel), 'trigger',
+            'every candidate that did not apply is logged with the position it tried and the fixer\'s own words');
         t.ok(/handing this one to the model/.test(panel), 'trigger',
             'and the fall-through says which fixer was tried and which one is next');
         t.ok(/loopNoModel/.test(panel) && /the 7B was not asked: /.test(panel), 'trigger',
@@ -328,7 +334,7 @@ module.exports = async (t) => {
         t.ok(/kind: 'insert-semicolon'/.test(panel.slice(panel.indexOf('private async fixCompilerError'), panel.indexOf('private formUriOfFile'))),
             'trigger', 'a CS1002 the compiler located is handed to the semicolon fixer — on the reported line, '
             + 'the analyser\'s own line, or one just above (2026-09-18: the reported line is often the next '
-            + 'token\'s, and the miss used to end the attempt silently)');
+        + 'token\'s, and the miss used to end the attempt silently)');
         t.ok(/issues\.find\(\(i\) => i\.kind !== 'report-only'/.test(panel), 'trigger',
             'while a rule finding on the same line is preferred, so one mistake is never repaired twice');
 

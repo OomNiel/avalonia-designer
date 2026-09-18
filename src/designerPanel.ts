@@ -5175,9 +5175,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // asked at all (2026-09-18) — and it sent the user after the wrong problem.
         const lead = this.loopNoModel
             ? `Nothing here can repair the ${report.remaining.length} error(s) left — the 7B was not asked: `
-                + `${this.loopNoModel}.\n\nTry the same errors with your 30B model instead?\n\n`
+            + `${this.loopNoModel}.\n\nTry the same errors with your 30B model instead?\n\n`
             : `The local 7B model could not fix everything — ${report.remaining.length} error(s) are left.\n\n`
-                + `Try once more with your 30B model?\n\n`;
+            + `Try once more with your 30B model?\n\n`;
         const pick = await vscode.window.showWarningMessage(
             lead
             + (running
@@ -5267,22 +5267,40 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 // line, then a few lines above it. Each candidate is tried in turn: `applyLocalFix` only writes
                 // when it has something to write, so a miss costs nothing.
                 const found = run.issues.find((i) => i.kind === 'insert-semicolon' && (i.file ?? 'code') === 'code');
-                const candidates = [found?.line, d.line, d.line - 1, d.line - 2, d.line - 3]
-                    .filter((n): n is number => typeof n === 'number' && n > 0);
-                for (const line of [...new Set(candidates)]) {
+                // The compiler's own column comes first: CS1002 is reported at the position the parser
+                // expected the terminator, which is where the `;` goes — including INSIDE a one-line block.
+                // That is what the user's file turned out to be (2026-09-18): the statement was
+                // `try { …LoadImageOriented(row.Image) }`, so the `;` belonged in front of the `}` and every
+                // line-end test refused the line; the log then showed four refusals in a row (the statement,
+                // a blank line, two comments) and the model was asked for a fix the rules could already see.
+                const attempts: { line: number; column?: number }[] = [];
+                if (Number.isFinite(d.column) && d.column > 0) attempts.push({ line: d.line, column: d.column });
+                if (found?.line) attempts.push({ line: found.line });
+                for (const line of [d.line, d.line - 1, d.line - 2, d.line - 3]) attempts.push({ line });
+                const tried = new Set<string>();
+                for (const attempt of attempts) {
+                    if (!(attempt.line > 0)) continue;
+                    const id = `${attempt.line}:${attempt.column ?? ''}`;
+                    if (tried.has(id)) continue;
+                    tried.add(id);
                     const issue: CodeIssue = {
-                        id: `build:CS1002:${line}`,
+                        id: `build:CS1002:${id}`,
                         severity: 'error',
                         kind: 'insert-semicolon',
                         member: found?.member ?? 'CS1002',
-                        line,
+                        line: attempt.line,
                         title: 'CS1002: ; expected',
                         detail: '',
-                        data: { line: String(line), method: found?.member ?? 'CS1002' }
+                        data: {
+                            line: String(attempt.line),
+                            method: found?.member ?? 'CS1002',
+                            ...(attempt.column ? { column: String(attempt.column) } : {})
+                        }
                     };
                     const what = await applyLocalFix(form, issue, options);
                     if (/Added the missing/.test(what)) return 'fixed';
-                    aiLog(this.context, `Repair loop: CS1002 at line ${d.line} — line ${line}: ${what}`);
+                    aiLog(this.context, `Repair loop: CS1002 at ${d.line},${d.column} — `
+                        + `${attempt.column ? `column ${attempt.column} of line ${attempt.line}` : `line ${attempt.line}`}: ${what}`);
                 }
                 // The rule could not act, so the error is NOT consumed: the model gets its try below. A rule
                 // that fails must not take the next fixer's chance with it (the lesson of §136–§138, again).

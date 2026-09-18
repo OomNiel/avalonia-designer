@@ -1578,6 +1578,35 @@ function terminateCsharpLine(line: string): string | undefined {
     return trimmed + ';' + (rest ? ' ' + rest.replace(/^ +/, '') : '') + eol;
 }
 
+/**
+ * Puts the `;` **where the compiler said it belongs**, instead of at the end of the line.
+ *
+ * `CS1002: ; expected` is reported at the position the parser expected the terminator, and that position is
+ * the position the `;` goes — including *inside* a one-line block. That is the case the user's own file
+ * turned out to be (2026-09-18): the statement was `try { Image1.Source = ExifImageLoader.LoadImageOriented(row.Image) }`,
+ * so the `;` belonged in front of the `}` — the line's last character — and the line-end rule refused it
+ * (`/[;{}]$/`), then refused the blank line and the two comment lines above it, and the model was asked for a
+ * fix the rules had the answer to all along.
+ *
+ * `column` is 1-based, exactly as both compilers print it (`MainWindow.axaml.cs(56,79): error CS1002`).
+ * Undefined when nothing sensible can be done: no code on the line, the position is inside a comment, or the
+ * statement before the position is already terminated.
+ */
+export function terminateCsharpLineAt(line: string, column: number): string | undefined {
+    const comments: number[] = [];
+    blankOutCommentsAndLiterals(line, comments);
+    const commentAt = comments.length > 0 ? comments[0] : line.length;
+    const eol = /\r$/.test(line) ? '\r' : '';
+    const body = eol ? line.slice(0, -1) : line;
+    if (!body.trim()) return undefined;
+    const at = Math.max(0, Math.min(Math.round(column) - 1, body.length));
+    const before = body.slice(0, at);
+    if (!before.trim()) return undefined;                       // nothing of a statement before the position
+    if (at > commentAt) return undefined;                       // the position sits in a trailing comment
+    if (before.trimEnd().endsWith(';')) return undefined;       // already terminated there
+    return body.slice(0, at) + ';' + body.slice(at) + eol;
+}
+
 /** Applies an issue whose fix only needs the code-behind / XAML files. Returns a short report. */
 export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts: CheckOptions = {}): Promise<string> {
     const codeFile = findCodeBehindFile(axamlUri);
@@ -1676,8 +1705,19 @@ export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts
             const line = Number(issue.line ?? '0');
             const lines = facts.body.split('\n');
             if (!line || line > lines.length) return 'That statement is gone.';
-            const fixed = terminateCsharpLine(lines[line - 1]);
-            if (!fixed) return 'That line already ends with a ";".';
+            const column = Number(data.column ?? '0');
+            // The compiler's own answer first: it names the exact position, which for a one-line block is
+            // inside the braces (`try { Foo() }` → `try { Foo(); }`) and unreachable for a line-end rule.
+            const fixed = (column > 0 ? terminateCsharpLineAt(lines[line - 1], column) : undefined)
+                ?? terminateCsharpLine(lines[line - 1]);
+            if (!fixed) {
+                // Name the reason the line was refused: "already ends with a ;" was said about blank lines and
+                // comments too, which is what made the miss look like a statement that was fine (2026-09-18).
+                const text = (lines[line - 1] ?? '').replace(/\r$/, '');
+                if (!text.trim()) return `Line ${line} is blank — the ";" belongs on the statement above it.`;
+                if (/^\s*(\/\/|\*|\/\*)/.test(text)) return `Line ${line} is a comment — the ";" belongs on the code line.`;
+                return 'That line already ends with a ";".';
+            }
             lines[line - 1] = fixed;
             write(lines.join('\n'));
             return `Added the missing ";" in "${data.method ?? 'the method'}".`;
