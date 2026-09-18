@@ -1917,6 +1917,52 @@ function vbDateTimeConverter(): string {
     End Class`;
 }
 
+/**
+ * The shared runtime helpers (`RuntimeStorage`, `DatabaseAdapter`) are namespace-level classes, so two files
+ * declaring them cannot coexist: the second DataSet in a project fails with CS0101 (BC30179 in VB). Hit on
+ * 2026-09-18 with MyDataSet.cs + dsTreeView.cs in OptimisedCSTest.
+ *
+ * They belong to the project rather than to a DataSet, so exactly one generated file keeps them: the
+ * alphabetically first that has them. Files without the helpers are never touched, and a lone copy stays put,
+ * so regenerating a second DataSet does not move them around. This only decides the files' contents — the
+ * caller writes back the ones it changed.
+ */
+export function consolidateRuntimeHelpers(
+    files: { file: string; text: string }[], language: 'cs' | 'vb'
+): { file: string; text: string }[] {
+    const owners = files.filter((f) => runtimeHelperDecl(language).test(f.text)).map((f) => f.file).sort();
+    if (owners.length <= 1) return files;
+    const keep = owners[0];
+    return files.map((f) => (f.file === keep ? f : { file: f.file, text: stripRuntimeHelpers(f.text, language) }));
+}
+
+/** The line that declares the shared helper. Both emitters put it at namespace level (indented in C#). */
+function runtimeHelperDecl(language: 'cs' | 'vb'): RegExp {
+    return language === 'vb'
+        ? /^[ \t]*Public Module RuntimeStorage\b/m
+        : /^[ \t]*public static class RuntimeStorage\b/m;
+}
+
+/**
+ * Drops the shared runtime helpers from a generated file — they are the last members before the namespace
+ * closes. Text without them comes back unchanged, so this is safe to call on any generated file (see
+ * `consolidateRuntimeHelpers` for why one copy per project is the rule).
+ */
+export function stripRuntimeHelpers(text: string, language: 'cs' | 'vb'): string {
+    const m = runtimeHelperDecl(language).exec(text);
+    if (!m) return text;
+    // Take the doc comments (/// or ''') directly above the declaration with it.
+    let at = m.index;
+    while (at > 0) {
+        const lineStart = text.lastIndexOf('\n', at - 2) + 1;
+        const prev = text.slice(lineStart, at);
+        if (!/^[ \t]*(?:\/\/\/|''')/.test(prev) && !/^[ \t]*$/.test(prev)) break;
+        at = lineStart;
+    }
+    const head = text.slice(0, at).replace(/\s+$/, '\n');
+    return head + (language === 'vb' ? 'End Namespace\n' : '}\n');
+}
+
 /** Generates a C# class that builds the DataSet at runtime. */
 export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
     const ns = rootNamespace || spec.name;

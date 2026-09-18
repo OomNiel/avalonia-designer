@@ -5,7 +5,8 @@ const {
   parseDataSet, serializeDataSet, defaultDataSetSpec, newTableSpec, newColumnSpec,
   isValidIdentifier, sanitizeName, csType, vbType, xsType, findTable
 } = require('../../out/dataSetModel.js');
-const { generateCs, generateVb, generateXsd } = require('../../out/dataSetGenerator.js');
+const { generateCs, generateVb, generateXsd, consolidateRuntimeHelpers, stripRuntimeHelpers }
+  = require('../../out/dataSetGenerator.js');
 
 const ADSET = `{
   "version": 1,
@@ -141,6 +142,29 @@ module.exports = async (t) => {
   const plainSpec = '{ "version": 1, "name": "Plain", "tables": [ { "name": "T", "columns": [ { "name": "Id", "type": "Int32", "allowNull": false } ] } ] }';
   t.ok(!generateCs(parseDataSet(plainSpec), 'Proj').includes('RuntimeStorage'), 'storage', 'cs: a DataSet that persists nothing omits the helper');
   t.ok(!generateVb(parseDataSet(plainSpec), 'Proj').includes('RuntimeStorage'), 'storage', 'vb: a DataSet that persists nothing omits the helper');
+
+  // Two DataSets in one project (2026-09-18, OptimisedCSTest: MyDataSet + dsTreeView). The helpers are
+  // namespace-level classes, so a second copy is CS0101 (BC30179 in VB) — exactly one file may keep them.
+  const sqliteSpec = parseDataSet(ADSET);
+  const csText = generateCs(sqliteSpec, 'Proj');
+  const csTwo = consolidateRuntimeHelpers(
+    [{ file: '/p/MyDataSet.cs', text: csText }, { file: '/p/dsTreeView.cs', text: csText }], 'cs');
+  t.ok(csTwo[0].text.includes('public static class RuntimeStorage'), 'helpers', 'cs: the first file keeps the helpers');
+  t.ok(!csTwo[1].text.includes('RuntimeStorage'), 'helpers', 'cs: the second file loses its copy');
+  t.ok(!csTwo[1].text.includes('public static class DatabaseAdapter'), 'helpers', 'cs: the whole helper block goes, not just one class');
+  t.ok(!csTwo[1].text.includes('/// <summary>Small SQLite helper'), 'helpers', 'cs: the helper doc comments go too');
+  t.ok(csTwo[1].text.includes('public class Store'), 'helpers', 'cs: the DataSet class itself is untouched');
+  t.ok(csTwo[1].text.trimEnd().endsWith('}'), 'helpers', 'cs: the stripped file still closes its namespace');
+  t.ok(consolidateRuntimeHelpers(csTwo, 'cs')[0].text === csTwo[0].text, 'helpers', 'cs: a lone copy stays where it is');
+  t.ok(stripRuntimeHelpers(csTwo[0].text, 'cs').length < csTwo[0].text.length, 'helpers', 'cs: stripRuntimeHelpers drops it');
+  t.ok(!stripRuntimeHelpers(csTwo[0].text, 'cs').includes('RuntimeStorage'), 'helpers', 'cs: nothing of the helper is left behind');
+  t.ok(stripRuntimeHelpers('namespace P\n{\n}\n', 'cs') === 'namespace P\n{\n}\n', 'helpers', 'cs: a file without helpers is returned unchanged');
+  const vbText = generateVb(sqliteSpec, 'Proj');
+  const vbTwo = consolidateRuntimeHelpers(
+    [{ file: '/p/A.vb', text: vbText }, { file: '/p/B.vb', text: vbText }], 'vb');
+  t.ok(vbTwo[0].text.includes('Public Module RuntimeStorage'), 'helpers', 'vb: the first file keeps the helpers');
+  t.ok(!vbTwo[1].text.includes('RuntimeStorage'), 'helpers', 'vb: the second file loses its copy');
+  t.ok(vbTwo[1].text.trimEnd().endsWith('End Namespace'), 'helpers', 'vb: the stripped file still closes its namespace');
 
   // --- default spec ---
   const dflt = defaultDataSetSpec('Demo');
