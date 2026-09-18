@@ -89,6 +89,11 @@ const INFO: Record<string, ControlInfo> = {
         desc: 'Organizes content into tabs that the user switches between.',
         use: 'Use to group related sections into one window. Each tab is a TabItem (add, edit or remove them from the Properties panel).'
     },
+    TreeView: {
+        label: 'Tree View',
+        desc: 'Shows a hierarchy of items that the user expands and collapses — like folders in a file tree.',
+        use: 'Use for nested data the user drills into (categories, files, departments). Placed with two starter nodes; a node shows its Header and holds further TreeViewItems as children. Note that setting ItemsSource and giving it literal child nodes are two different ways to fill it — use one or the other.'
+    },
     TabItem: {
         label: 'Tab Item',
         desc: 'A single page inside a TabControl, shown with a tab header.',

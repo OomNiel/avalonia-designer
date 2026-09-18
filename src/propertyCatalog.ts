@@ -275,6 +275,7 @@ export const FONT_PROPS: PropTemplate[] = [
 export const HAS_FONT_PROPS = new Set([
     'Button', 'TextBox', 'TextBlock', 'ComboBox', 'ListBox', 'ListBoxItem', 'CheckBox', 'RadioButton',
     'TabControl', 'TabItem', 'DataGrid', 'Menu', 'StatusBar', 'ScrollViewer', 'UserControl', 'Window',
+    'TreeView',
     // Avalonia 12 text-bearing controls (headers / labels / link text)
     'GroupBox', 'HyperlinkButton', 'CommandBar', 'CommandBarButton', 'CommandBarToggleButton'
 ]);
@@ -537,6 +538,17 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Background', label: 'Background', kind: 'text' },
         { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
         { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' }
+    ],
+    // TreeView (2026-09-18): the styling surface a TemplatedControl exposes, the same shape TabControl
+    // uses. Selection is deliberately absent: `SelectedItem` holds an object the panel cannot edit as
+    // text, and which node is selected is better driven from code than typed into XAML by hand.
+    TreeView: [
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
+        { key: 'Background', label: 'Background', kind: 'text' },
+        { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'text' },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
         { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' }
     ],
     TabItem: [

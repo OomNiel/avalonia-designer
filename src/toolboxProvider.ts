@@ -56,6 +56,12 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'SplitPanel', tag: 'SplitPanel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'Grumpy Panel', tag: 'GrumpyPanel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'TabControl', tag: 'TabControl', group: TOOLBOX_CATEGORY_ITEMS },
+    // TreeView (2026-09-18): a real core control that was already in CONTROLS.md and in the event
+    // catalogue, but had no Toolbox entry. It renders in the headless preview *for real* — no native
+    // handle is involved (unlike a WebView, which cannot be previewed at all) — so what the designer
+    // draws here is what the app shows. The host ships it with two starter nodes: `Header` is what a
+    // TreeViewItem displays, and a node's children are its literal child items.
+    { label: 'TreeView', tag: 'TreeView', group: TOOLBOX_CATEGORY_ITEMS },
     // --- Shapes ---
     { label: 'Line', tag: 'Line', group: TOOLBOX_CATEGORY_SHAPES },
     { label: 'Rectangle', tag: 'Rectangle', group: TOOLBOX_CATEGORY_SHAPES },

@@ -34,6 +34,11 @@ public class ControlFactory
             // ItemsControl: direct children are items (no selection, unlike ListBox). Starter
             // items keep it visible in the preview; the host adds children via Items.Add.
             ["ItemsControl"] = n => $"<ItemsControl x:Name=\"{n}\" Width=\"140\" Height=\"120\">\n    <TextBlock Text=\"Item 1\"/>\n    <TextBlock Text=\"Item 2\"/>\n    <TextBlock Text=\"Item 3\"/>\n</ItemsControl>",
+            // TreeView ships with two starter nodes so the drop is immediately visible and clickable —
+            // an empty one is a blank box. `Header` (not `Content`) is what a TreeViewItem displays, and
+            // a node's children are its literal child items. ItemsSource and literal children are
+            // mutually exclusive, exactly like the ComboBox/ListBox rule the Properties panel enforces.
+            ["TreeView"] = n => $"<TreeView x:Name=\"{n}\" Width=\"180\" Height=\"140\">\n    <TreeViewItem Header=\"Item 1\" IsExpanded=\"True\">\n        <TreeViewItem Header=\"Item 1.1\"/>\n    </TreeViewItem>\n    <TreeViewItem Header=\"Item 2\"/>\n</TreeView>",
             ["UniformGrid"] = n => $"<UniformGrid x:Name=\"{n}\" Width=\"160\" Height=\"120\"/>",
             ["CheckBox"] = n => $"<CheckBox x:Name=\"{n}\" Content=\"CheckBox\"/>",
             ["RadioButton"] = n => $"<RadioButton x:Name=\"{n}\" Content=\"RadioButton\"/>",
@@ -171,6 +176,8 @@ public class ControlFactory
         ["ListBox"] = typeof(ListBox),
         ["ListBoxItem"] = typeof(ListBoxItem),
         ["ItemsControl"] = typeof(ItemsControl),
+        ["TreeView"] = typeof(TreeView),
+        ["TreeViewItem"] = typeof(TreeViewItem),
         ["CheckBox"] = typeof(CheckBox),
         ["RadioButton"] = typeof(RadioButton),
         ["Image"] = typeof(Image),
