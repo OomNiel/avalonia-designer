@@ -254,6 +254,12 @@ listing when that release is uploaded — a repo-only README edit does not.
 > name is a **verbatim user quote** in `CHANGELOG.md` (*"My test program is OptimisedCSTest."*), left alone
 > because history is quoted rather than edited.
 >
+> **FROZEN — do not repackage before uploading.** The release committee of one decided to publish `0.10.10`
+> as it stands, and `USER_MANUAL.md` has since gained a "generated with AI assistance … Work In Progress" note
+> at the top (2026-09-18). That note is **not** in this file: rebuilding now would produce a *different*
+> artefact under a version that is already released. The note, and the new caret-anchored prompt for the AI
+> assist, go out with the next version.
+>
 > Plain VSIX — `avalonia-designer-0.10.10.vsix`, **905,176 bytes**, sha256
 > `ec4acc0e376e27b4e18120b8ad3e7bb2ab23befc7b03986efebbf3970bdab9a2` — built by `npm run package` after a green
 > suite (**4,868 assertions, 0 failed**), and checked inside the package (manifest `Version="0.10.10"`, **no

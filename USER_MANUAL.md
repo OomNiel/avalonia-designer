@@ -1,5 +1,9 @@
 # Avalonia Designer for VS Code — User Manual
 
+> This manual was generated with AI assistance and is curated by the extension owner. The project is a
+> "Work In Progress". Many features will be added, bug fixes and weird events happening will be addressed as
+> time allows.
+
 > The Avalonia Designer lets you **build Avalonia forms visually** — drag controls from a
 > toolbox onto a design surface, set their properties in a friendly panel, and let the extension
 > generate the XAML **and** the code-behind for you.
@@ -8,7 +12,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-17)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-18)
 
 ---
 
