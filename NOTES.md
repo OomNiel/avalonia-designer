@@ -3176,3 +3176,35 @@ and the generated code.
   inside it for the user name, host name, project folders, server alias and `/home/`. Cost of doing it after the
   release: a rebuilt `0.10.10` and a superseded GitHub asset.
 
+### §136 — the prompt goes where the caret is (2026-09-18, release 0.10.11)
+
+Asked the morning after `0.10.10` went up: *"place the prompt input box next to the current cursor position and
+make the prompt entry box a multi-line (at least 5 lines) input area"*. Both halves are impossible with the
+widget the extension used, and proving that was the first half of the work:
+
+- `vscode.window.showInputBox` takes `InputBoxOptions` — `value`, `valueSelection`, `prompt`, `placeHolder`,
+  `validateInput` — **no `multiline`, no `rows`**, and VS Code draws it at the top of the window with no API to
+  anchor it at the caret. Checked in the shipped `node_modules/@types/vscode/index.d.ts`, not from memory.
+- The Comments API looked like the answer — a widget *is* anchored to a line range — but `CommentThread` has
+  `uri`, `range`, `comments`, `collapsibleState`, `canReply`, `contextValue`, `label`, `state`, `dispose()` and
+  **no `input`, no submit event**: a reply typed into one goes nowhere an extension can read.
+- So the **editor itself is the input**: `AI: Implement in Function…` inserts a snippet with the caret inside a
+  marker block (`// ✎ AI: begin … / $0 / // ✎ AI: end`), and the two lenses above it (**▶ Send**, **✕ Cancel**,
+  plus `Ctrl+Alt+Enter` / `Ctrl+Alt+Esc`) hand the text to the same flow the dialog used to feed.
+- **What made it clean:** the flow did not have to be split. `askDescription` keeps its shape and its callers —
+  it inserts the block and then `await`s a promise that the send/cancel commands resolve (`pendingPrompt`), so all
+  the code *after* the prompt (prompt building, planning, the diff, the build offer) is untouched. The only new
+  state is one pending prompt per window.
+- **Two properties the suite pins, because they are the design:** an untouched block is reported as *empty*
+  rather than missing (the user has to know which of the two they have), and **insert → remove is the identity** —
+  the file is compared byte for byte with its state before the block existed. A refusal validates *before*
+  removing, so a too-long request keeps what was typed, which is the one thing a dialog that closes over your
+  words could never do.
+- **The status bar carries what the dialog's chrome said** (room left, what was dropped, the example wording) —
+  and, unlike a dialog, it is not something the user has to dismiss before typing.
+- Suite 4,868 → **4,915** (`tests/t2-logic/aiPrompt.test.js` is new, 47). The doc pass covers `README`,
+  `USER_MANUAL`, `CHANGELOG [0.10.11]`, `TEST_PLAN`.
+- **Also in this version:** `USER_MANUAL.md` opens with the AI-generated / work-in-progress note the user asked
+  for (2026-09-18) — it is *not* in `0.10.10`, which was released before the note existed and deliberately not
+  rebuilt.
+

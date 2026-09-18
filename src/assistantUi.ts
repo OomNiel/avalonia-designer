@@ -74,6 +74,7 @@ import { findRunningLlamaServer, llamaServerBinary, llamaServerStatusLines, ownL
 import { describeOwner, detectServerOwner } from './llamaService';
 import { conventionsFor } from './conventionsUi';
 import { bundledRuntimeRunning, bundledStatusLines, ensureBundledEndpoint, sidecarTail, stopModelServer } from './modelRuntime';
+import { findPromptBlock, promptSnippet, stripPromptBlock, type PromptBlock } from './aiPrompt';
 import {
     addCustomModelSpec,
     customModelSpecs,
@@ -310,6 +311,11 @@ function clearPending(): void {
     void vscode.commands.executeCommand('setContext', 'avaloniaDesigner.proposalPending', false);
 }
 
+/** Is the pending prompt being typed in *this* document? The prompt lens only belongs where the block is. */
+function promptRequestIsIn(document: vscode.TextDocument): boolean {
+    return !!pendingPrompt && pendingPrompt.uri === document.uri.toString();
+}
+
 /**
  * The affordance that cannot be missed: a code lens directly above the method that is waiting.
  *
@@ -323,11 +329,30 @@ class ProposalLensProvider implements vscode.CodeLensProvider {
     readonly onDidChangeCodeLenses = this.emitter.event;
 
     provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+        const lenses: vscode.CodeLens[] = [];
+        // The prompt block a request is being typed into (2026-09-18): same widget, same refresh path, so the
+        // two kinds of decision can never disagree about when they are on screen.
+        if (pendingPrompt && promptRequestIsIn(document)) {
+            const found = findPromptBlock(document.getText());
+            if (found.ok) {
+                const at = new vscode.Range(found.block.begin, 0, found.block.begin, 0);
+                lenses.push(new vscode.CodeLens(at, {
+                    title: '$(check) Send to AI assist',
+                    tooltip: 'Send what you wrote between the markers (Ctrl+Alt+Enter).',
+                    command: 'avaloniaDesigner.assistant.sendPrompt'
+                }));
+                lenses.push(new vscode.CodeLens(at, {
+                    title: '$(close) Cancel',
+                    tooltip: 'Remove the ✎ AI block and send nothing.',
+                    command: 'avaloniaDesigner.assistant.cancelPrompt'
+                }));
+            }
+        }
         const p = pending;
-        if (!p || p.documentUri.toString() !== document.uri.toString()) return [];
+        if (!p || p.documentUri.toString() !== document.uri.toString()) return lenses;
         const line = Math.max(0, p.startLine - 1);
         const range = new vscode.Range(line, 0, line, 0);
-        return [
+        lenses.push(
             new vscode.CodeLens(range, {
                 title: '$(check) Apply AI change',
                 tooltip: `${p.summary}. ${p.kind === 'insert' ? `Adds ${p.name}();` : `Replaces ${p.name}();`} Ctrl+Z undoes it.`,
@@ -338,7 +363,8 @@ class ProposalLensProvider implements vscode.CodeLensProvider {
                 tooltip: p.kind === 'insert' ? `Do not add ${p.name}().` : `Leave ${p.name}() as it is.`,
                 command: 'avaloniaDesigner.assistant.discardProposal'
             })
-        ];
+        );
+        return lenses;
     }
 
     refresh(): void {
@@ -1038,6 +1064,32 @@ function planPrompt(cfg: AssistantConfig, parts: PromptPart[]): { fit: PromptFit
  * user finds out while typing instead of from a request that never fitted (asked 2026-09-16). The estimate
  * is the same characters/4 rule the request itself is planned with, so the two cannot disagree.
  */
+/**
+ * The one description prompt, shared by both paths: same wording, same allowance, same refusal.
+ *
+ * With a limit the status line carries what is left, and the same checks run when the request is *sent* — so a
+ * refusal keeps what was typed instead of closing a dialog over it (asked 2026-09-16). The estimate is the same
+ * characters/4 rule the request itself is planned with, so the two cannot disagree.
+ *
+ * WHERE IT IS TYPED (asked 2026-09-18): in the editor, at the caret, between two marker comments — see
+ * `src/aiPrompt.ts` for why the prompt *widget* could not do it (single-line by design, and pinned to the top of
+ * the window, with no API to anchor it at the caret).
+ */
+
+/**
+ * The request whose prompt is being typed, and how to finish it.
+ *
+ * One at a time, per window. A block that is never sent simply never resolves: nothing is started, nothing is
+ * sent, and the marker can be deleted with `Ctrl+Z` like any other edit.
+ */
+let pendingPrompt: {
+    /** The document the block lives in — the lens only appears there. */
+    uri: string;
+    resolve: (text: string | undefined) => void;
+    /** The dialog's `validateInput`, run once at send time rather than per keystroke. */
+    validate: (text: string) => string | undefined;
+} | undefined;
+
 async function askDescription(input: {
     title: string;
     prompt: string;
@@ -1045,29 +1097,109 @@ async function askDescription(input: {
     allowance: number;
     limited: boolean;
     dropped: string[];
+    /** The editor the caret is in: the marker block goes where the user is already looking. */
+    editor: vscode.TextEditor;
+    /** `csharp` or `vb` — decides the comment prefix of the two markers. */
+    language: string;
 }): Promise<string | undefined> {
     const note = input.limited
         ? `About ${allowanceText(input.allowance)} left for your sentence`
         + (input.dropped.length ? ` — the prompt is full, so ${input.dropped.join(' and ')} was left out` : '')
         + '.'
         : 'This server decides its own context, so there is no length limit here.';
-    const description = await vscode.window.showInputBox({
-        title: input.title,
-        prompt: `${input.prompt} ${note}`,
-        placeHolder: input.placeHolder,
-        ignoreFocusOut: true,
-        validateInput: (v) => {
-            const text = v.trim();
-            if (text.length < 8) return 'Say a little more — at least a few words.';
-            if (input.limited && estimateTokens(text) > input.allowance) {
-                return `That is about ${estimateTokens(text)} tokens, and ${allowanceText(input.allowance)} is left `
-                    + "for your sentence. Shorten it, or raise the model's window "
-                    + '(avaloniaDesigner.assistant.loadContextLength) in the ⚙ Settings panel.';
-            }
-            return undefined;
+    const validate = (value: string): string | undefined => {
+        const text = value.trim();
+        if (text.length < 8) return 'Say a little more — at least a few words.';
+        if (input.limited && estimateTokens(text) > input.allowance) {
+            return `That is about ${estimateTokens(text)} tokens, and ${allowanceText(input.allowance)} is left `
+                + "for your sentence. Shorten it, or raise the model's window "
+                + '(avaloniaDesigner.assistant.loadContextLength) in the ⚙ Settings panel.';
         }
+        return undefined;
+    };
+    const editor = input.editor;
+    const uri = editor.document.uri.toString();
+    try {
+        // `$0` puts the caret between the markers, so typing starts where the caret already was.
+        await editor.insertSnippet(new vscode.SnippetString(promptSnippet(input.language)));
+    } catch (err) {
+        void vscode.window.showWarningMessage(
+            `The prompt could not be placed in this file: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return undefined;
+    }
+    // What the dialog said in its own chrome, said where the typing happens (the status bar clears itself).
+    vscode.window.setStatusBarMessage(
+        `AI assist — ${input.prompt} ${note} ${input.placeHolder}. `
+        + 'Press Ctrl+Alt+Enter (or the ▶ lens above the block) to send.',
+        30000
+    );
+    proposalLenses.refresh();
+    return await new Promise<string | undefined>((resolve) => {
+        pendingPrompt = { uri, resolve, validate };
     });
-    return description === undefined ? undefined : description.trim();
+}
+
+/**
+ * The marker block of the pending prompt, found in the editor it was written in.
+ *
+ * `remove` is separate because the two moments are: a *refused* request must stay readable in the file, and only
+ * a sent or cancelled one may take the block with it. Either way the file ends up exactly as it was before the
+ * block was inserted — a prompt can never quietly become a comment in someone's source.
+ */
+async function takePromptBlock(opts: { remove: boolean }): Promise<{ prompt: string } | { why: string }> {
+    const state = pendingPrompt;
+    const editor = vscode.window.activeTextEditor;
+    if (!state || !editor || editor.document.uri.toString() !== state.uri) {
+        return { why: 'The ✎ AI block is not open in the current editor any more.' };
+    }
+    const found = findPromptBlock(editor.document.getText());
+    if (!found.ok) return { why: found.why };
+    if (opts.remove) {
+        const range = new vscode.Range(found.block.begin, 0, found.block.end + 1, 0);
+        await editor.edit((b) => b.delete(range));
+    }
+    return { prompt: found.block.prompt };
+}
+
+/**
+ * **Send to AI assist** — the ▶ lens above a marker block, or `Ctrl+Alt+Enter`. Exported for `extension.ts`.
+ *
+ * A refusal (empty, too short, too long) leaves the block in place and says why, so nothing typed is lost — which
+ * is the one thing the single-line dialog could not do.
+ */
+export async function sendAiPrompt(): Promise<void> {
+    const state = pendingPrompt;
+    if (!state) {
+        void vscode.window.showWarningMessage(
+            'There is no AI prompt waiting — start one with "AI: Implement in Function…".'
+        );
+        return;
+    }
+    const taken = await takePromptBlock({ remove: false });
+    if ('why' in taken) {
+        void vscode.window.showWarningMessage(taken.why);
+        return;
+    }
+    const complaint = state.validate(taken.prompt);
+    if (complaint) {
+        void vscode.window.showWarningMessage(complaint);
+        return;
+    }
+    // Only now does the block go: a refused request stays readable in the file, ready to be fixed in place.
+    await takePromptBlock({ remove: true });
+    pendingPrompt = undefined;
+    proposalLenses.refresh();
+    state.resolve(taken.prompt);
+}
+
+/** **Cancel** — the ✕ lens above a marker block: the block goes, the flow ends, nothing is sent. */
+export async function cancelAiPrompt(): Promise<void> {
+    const state = pendingPrompt;
+    await takePromptBlock({ remove: true });
+    pendingPrompt = undefined;
+    proposalLenses.refresh();
+    state?.resolve(undefined);
 }
 
 /**
@@ -1145,7 +1277,9 @@ export async function implementInFunction(): Promise<void> {
         placeHolder: 'e.g. read the row the user picked and fill the TextBoxes',
         allowance: fitAllowance.allowance,
         limited: fitAllowance.limited,
-        dropped: fitAllowance.dropped
+        dropped: fitAllowance.dropped,
+        editor,
+        language
     });
     if (!description) return;
 
@@ -1237,7 +1371,9 @@ async function createMemberInClass(
         placeHolder: "e.g. Create a function named 'SortArray' that sorts the contents of a passed array",
         allowance: fitAllowance.allowance,
         limited: fitAllowance.limited,
-        dropped: fitAllowance.dropped
+        dropped: fitAllowance.dropped,
+        editor,
+        language
     });
     if (!description) return;
 

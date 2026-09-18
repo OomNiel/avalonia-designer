@@ -1,6 +1,6 @@
 # Test Script Plan — Avalonia Designer Extension
 
-Date: 2026-09-17 · Status: **full suite green on this machine — 4,868 passed / 0 failed / 0 skipped (~39 s)**
+Date: 2026-09-18 · Status: **full suite green on this machine — 4,915 passed / 0 failed / 0 skipped (~39 s)**
 
 > Update 2026-08-30: user approved **Option (a) — full Avalonia.Headless driver** for T4, and
 > instructed to *prepare the script only* (run at a later stage) and keep it easily extensible.
@@ -262,6 +262,21 @@ Each step ends with the log green before the next begins.
   bundled entries come first and `"let the server decide"` leads the rest; `hubModels.test.js` asserts the fold
   (every non-bundled choice carries `group: 'Advanced…'`, and the optional `backend` field is the one shape
   difference an added model does not have).
+
+Each step ends with the log green before the next begins.
+
+### 0.10.11 (2026-09-18) — the prompt typed in the editor, at the caret
+
+- `tests/t2-logic/aiPrompt.test.js` (new, **47** assertions) — the marker block. The snippet places the caret
+between the two markers (`$0`), C# and VB get their own comment prefix, a block is found whether or not its
+prompt lines carry that prefix (pasted code survives verbatim), the two "no" answers stay distinct (no block at
+all vs. a block whose closing marker was deleted), an untouched block is reported as *empty* rather than missing,
+and **what was inserted comes out exactly**: the file is compared byte for byte with its state *before* the
+block existed, with VS Code's own re-indentation emulated in the fixture.
+- The wiring is asserted against the source: `showInputBox` is gone from the prompt path, the block is inserted
+as a snippet, sending **validates before removing** (so a refused request stays readable in the file),
+cancelling resolves with nothing, the lens is only offered in the document the block is in, and the manifest
+carries both commands, the `Ctrl+Alt+Enter` binding and the palette hiding.
 
 Each step ends with the log green before the next begins.
 

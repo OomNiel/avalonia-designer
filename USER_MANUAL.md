@@ -127,7 +127,7 @@ search for *Avalonia Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.10`**, so the command above installs it; add `--force` to
+The current version is **`0.10.11`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -139,7 +139,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.10.10` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.10.11` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -998,7 +998,7 @@ and says why instead of pretending.
 **Two ways to use it:**
 
 - **AI: Implement in Function…** — **the caret decides which of two things happens.** *Inside a method*:  the model returns the **complete method** and the name, signature and indentation stay as they were.
-  *Outside every method*: it writes a **new** member at that line — describe it in a sentence,
+  *Outside every method*: it writes a **new** member at that line — describe it in as many lines as you like,
   *"Create a function named 'SortArray' that sorts the contents of a passed array"*, and the model chooses
   the name, the signature and the body. New members are always **private**, and `static`/`Shared` only
   when the body needs no instance state or form control (so a handler never becomes static). If the line
@@ -1020,12 +1020,27 @@ pane of the diff is a read-only preview, so nothing ever asks you to save it. Th
 **Build to verify**, which saves your unsaved files first (that is what a build compiles) and runs your
 project's `build` task, reporting the exit code — the check that actually matters for generated code.
 
-**The dialog tells you how much room your sentence has.** A local model's speed depends on how much text it
-has to read before it starts writing, so the prompt is measured before the dialog opens: the model's window,
-minus the answer budget, minus the code the model has to see. What is left is yours, and it is shown while you
-type — *"About ~315 tokens (~1260 characters) left for your sentence"*. Type more than that and the dialog
-refuses to accept it (rather than quietly cutting your words or sending a request that cannot fit); the message
-says how much is left. When the prompt is nearly full the extension drops the *optional* context first — the
+**Where you write it: in the file, at the caret (`0.10.11`).** There is no box to hunt for at the top of the
+window. The command inserts two marker comments where the caret is:
+
+```csharp
+// ✎ AI: begin — write what you want below, as many lines as you like
+
+// ✎ AI: end
+```
+
+with the caret already between them, so you start typing. Write one line or twenty — the editor *is* the input,
+so there is no limit to hit and nothing to enlarge. A code lens appears above the block: **▶ Send to AI assist**
+(or **Ctrl+Alt+Enter**) and **✕ Cancel** (or **Ctrl+Alt+Esc**). Whatever happens next — sent, cancelled, or
+refused for being too long — the two marker lines and everything between them are **removed**, so the file ends
+up exactly as it was before. `Ctrl+Z` also works: the block is an ordinary edit.
+
+**The prompt is still planned against the model, not guessed.** A local model's speed depends on how much text it
+has to read before it starts writing, so the prompt is measured before anything is sent: the model's window,
+minus the answer budget, minus the code the model has to see. What is left is yours, and it is said in the
+**status bar** as you start typing — *"About ~315 tokens (~1260 characters) left for your sentence"*. Send more
+than that and the request is refused **with your text left in the file** to shorten, which is what a dialog that
+closes over your words could never do. When the prompt is nearly full the extension drops the *optional* context first — the
 style sample, then the list of existing members — and names what it dropped in **View → Output → "Avalonia
 Designer"**. If even the required parts (the method, or the class context) cannot fit, nothing is sent and the
 message says so with the numbers, so you can raise the context window or split the method. Two notes: a longer

@@ -9,7 +9,7 @@ import { DataSetEditorProvider, newDataSet, openDataSet } from './dataSetEditor'
 import { disposeIssues } from './codeBehindCheck';
 import { disposeBuildDiagnostics } from './buildDiagnostics';
 import { hostGate } from './hostCheck';
-import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, chooseBundledBackend, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, refreshPanels, removeHubModel, showStatus } from './assistantUi';
+import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, cancelAiPrompt, chooseBundledBackend, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, refreshPanels, removeHubModel, sendAiPrompt, showStatus } from './assistantUi';
 import { initModelRuntime, stopModelServer } from './modelRuntime';
 import { initLlamaServer, startMyLlamaServerFlow, stopOwnLlamaServer } from './llamaServer';
 import { startLlamaServerByChoice, startTarget, stopLlamaServerConfirmed } from './llamaService';
@@ -160,6 +160,11 @@ export function activate(context: vscode.ExtensionContext): void {
         // Local AI assist — opt-in, one explicit command per flow, no background traffic.
         context.subscriptions.push(
             vscode.commands.registerCommand('avaloniaDesigner.assistant.implement', () => implementInFunction()),
+            // The prompt the user types in the editor is sent (or thrown away) by the two lenses above the
+            // ✎ block — and by Ctrl+Alt+Enter. Nothing here is in the palette: there is nothing to send until
+            // a block exists, and a command that can only say "no" is worse than one that is not offered.
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.sendPrompt', () => sendAiPrompt()),
+            vscode.commands.registerCommand('avaloniaDesigner.assistant.cancelPrompt', () => cancelAiPrompt()),
             // Models the user brings themselves: the Hub's own numbers (size, SHA-256) through the same
             // verified download the pinned models use (asked 2026-09-16).
             vscode.commands.registerCommand('avaloniaDesigner.assistant.addHubModel', () => addHubModel()),

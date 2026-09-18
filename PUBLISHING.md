@@ -233,6 +233,20 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
+> **`0.10.11` (2026-09-18) — built, installed and audited; ready for its own release when the user says so.**
+> The prompt for the AI assist is now typed **in the editor, at the caret**, between two marker comments, sent by
+> a code lens (`Ctrl+Alt+Enter`) or cancelled by the other one — see `NOTES.md` §136. Neither half of the request
+> was possible with `showInputBox` (single-line, pinned to the top of the window) and the Comments API has no
+> readable reply input, so the editor *is* the input. `USER_MANUAL.md` also opens with the AI-generated /
+> work-in-progress note asked for the same morning.
+>
+> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **911,261 bytes**, sha256
+> `630eced9c8479d22286dd2a3173338e907c817d41a2d18b947dd05e935c022b1` — built by `npm run package` after a green
+> suite (**4,915 assertions, 0 failed**), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
+> audited the same way as `0.10.9` (extract the VSIX, grep it for the user name, host name, project folders and
+> server alias — none present). **THIS is the file to upload** once `0.10.10` has gone out; `0.10.10` remains the
+> file for the *imminent* upload, frozen below.
+>
 > **`0.10.10` (2026-09-17) — installed and tested on this machine; THIS is the file to upload.** Supersedes
 > `0.10.9` (released on GitHub the same evening, **never uploaded**: a `/home/<user>/…` path from a bug-hunt note
 > had reached the package as a compiled comment, so it was rebuilt, audited and then superseded by a new version

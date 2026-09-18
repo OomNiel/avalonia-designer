@@ -12,6 +12,42 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
+## [0.10.11] - 2026-09-18 · *the prompt is written where you are, not at the top of the window*
+
+Asked the morning after `0.10.10` was released: *"when writing the prompt for ai assist, place the prompt input
+box next to the current cursor position and make the prompt entry box a multi-line (at least 5 lines) input
+area."* Neither half was possible with the prompt widget the extension used: `showInputBox` is single-line by
+design (`InputBoxOptions` has no `multiline`, no `rows`) and VS Code always draws it at the top of the window,
+with no API to anchor it at the caret. The Comments API is not an alternative either — a `CommentThread` has
+`canReply` and a `label`, but **no `input` and no submit event**, so a reply typed into one goes nowhere an
+extension can read.
+
+### Changed
+
+- **The prompt is typed in the editor, at the caret.** `AI: Implement in Function…` now inserts a marker block
+  where the caret is — `// ✎ AI: begin — write what you want below, as many lines as you like` … `// ✎ AI: end`
+  (VB gets `'`), with the caret already between the two lines (`$0` in the snippet), so typing starts where the
+  user is looking. One line or twenty: the editor *is* the input, so the request gets what the dialog could not —
+  the caret's own position, unlimited lines, and no length to guess before typing.
+- **Two lenses above the block, and two key bindings.** *▶ Send to AI assist* (`Ctrl+Alt+Enter`) and *✕ Cancel*
+  (`Ctrl+Alt+Esc`); both are hidden from the command palette on purpose, because with no block there is nothing
+  to send and a command that can only say "no" is worse than one that is not offered.
+- **What is inserted is removed exactly.** Sent, cancelled or refused, the marker lines and everything between
+  them are deleted, so the file ends up byte-identical to how it was — a prompt can never quietly become a
+  comment in someone's source. `Ctrl+Z` works too: the block is an ordinary edit.
+- **A refusal keeps what you wrote.** The dialog's `validateInput` ran per keystroke and closed over the text;
+  the same checks (at least a few words, within the model's allowance) now run when the request is *sent*, and a
+  refusal leaves the block in place with the reason in a message — so nothing typed is ever lost.
+- **The instructions moved to the status bar.** What the dialog said in its own chrome — how much room the
+  request has, what had to be dropped to fit, and the example wording — is shown where the typing happens, and
+  cleared by itself.
+- Suite **4,868 → 4,915** assertions (`tests/t2-logic/aiPrompt.test.js` is new with **47**).
+
+### Notes
+
+- Nothing else about the flow changed: same prompts, same planning against the model, same diff review, same
+  rules first.
+
 ## [0.10.10] - 2026-09-17 · *the picker tells the truth, the logs have the address in them, and the assistant
 knows what the generated DataSet actually is*
 

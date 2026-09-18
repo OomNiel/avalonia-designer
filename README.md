@@ -30,7 +30,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.10`**, so the command above installs it (add `--force` to reinstall, or to
+The current version is **`0.10.11`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -39,11 +39,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.10.10.vsix --force
+code --install-extension avalonia-designer-0.10.11.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.10.10` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.10.11` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -212,8 +212,8 @@ asks it first and says what it found:
 
 *AI: Status & hardware check* prints the same verdict with the numbers behind it.
 
-**The caret decides what your sentence means.** *Inside a method* (*AI: Implement in Function…*) the model
-returns the **complete method** — same name, signature and indentation — from one sentence ("read the row the
+**The caret is where you write the request.** *Inside a method* (*AI: Implement in Function…*) the model
+returns the **complete method** — same name, signature and indentation — from what you type ("read the row the
 user picked and fill the TextBoxes"). *Outside every method* the same command writes a **new** member where the
 caret is: *"create a function named `SortArray` that sorts a passed array"* gives you
 `private static void SortArray(int[] values)` — `private` always, `static`/`Shared` only when the body needs no
@@ -229,12 +229,15 @@ project's build, because generated code is not taken on trust. Prefer no review 
 Show the proposed code as a diff** and the code is written straight in — still one undoable edit, still the same
 rules first (the duplicate refusal, the visibility correction), with **Undo** offered by name afterwards.
 
-**The prompt is planned against the model, not guessed.** A local model's speed is linear in the text it has to
-read, so the dialog shows how much room your sentence has — *"About ~315 tokens (~1260 characters) left for your
-sentence"* — and refuses to accept more rather than quietly cutting your words or sending a request that cannot
-fit. When the prompt is nearly full the optional context goes first (the style sample, then the list of existing
-members), and what was dropped is named in **View → Output → "Avalonia Designer"**. If even the required parts
-(the method, or the class context) cannot fit, nothing is sent and the message carries the numbers.
+**The prompt is written in the editor, at the caret (`0.10.11`).** There is no dialog to find at the top of the
+window: the command inserts two marker comments where the caret is —
+`// ✎ AI: begin — write what you want below, as many lines as you like` … `// ✎ AI: end` — puts the caret between
+them, and a code lens above the block offers **▶ Send to AI assist** and **✕ Cancel** (`Ctrl+Alt+Enter` sends).
+Write as many lines as the request needs; the two marker lines and everything between them are **removed** when
+the request is sent, cancelled or refused, so the file ends up exactly as it was. The prompt is still planned
+against the model before anything goes out — what is left for your words, and what had to be dropped to fit, are
+said in the status bar while you type, and a request that is too long is refused **without deleting what you
+wrote**, which is the one thing a dialog that closes over your words could never do.
 
 **The answer is checked before and after it lands.** A model that wraps its reply in a `namespace`/`class` of
 its own is unwrapped (that failure once produced `CS1513` in a user's file), an answer that declared several
@@ -348,7 +351,7 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~4,870 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~4,915 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

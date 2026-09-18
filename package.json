@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Avalonia Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox — with an optional local AI assist that writes handlers and repairs code from a sentence, on your own machine.",
-    "version": "0.10.10",
+    "version": "0.10.11",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -60,6 +60,20 @@
                 "priority": "option"
             }
         ],
+        "keybindings": [
+            {
+                "command": "avaloniaDesigner.assistant.sendPrompt",
+                "key": "ctrl+alt+enter",
+                "mac": "cmd+alt+enter",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.cancelPrompt",
+                "key": "ctrl+alt+escape",
+                "mac": "cmd+alt+escape",
+                "when": "editorTextFocus"
+            }
+        ],
         "commands": [
             {
                 "command": "avaloniaDesigner.newForm",
@@ -112,6 +126,18 @@
                 "title": "AI: Implement in Function…",
                 "category": "Avalonia",
                 "icon": "$(sparkle)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.sendPrompt",
+                "title": "AI: Send the Prompt in the ✎ AI Block",
+                "category": "Avalonia",
+                "icon": "$(check)"
+            },
+            {
+                "command": "avaloniaDesigner.assistant.cancelPrompt",
+                "title": "AI: Discard the ✎ AI Block",
+                "category": "Avalonia",
+                "icon": "$(close)"
             },
             {
                 "command": "avaloniaDesigner.assistant.addHubModel",
@@ -252,6 +278,14 @@
                 }
             ],
             "commandPalette": [
+                {
+                    "command": "avaloniaDesigner.assistant.sendPrompt",
+                    "when": "false"
+                },
+                {
+                    "command": "avaloniaDesigner.assistant.cancelPrompt",
+                    "when": "false"
+                },
                 {
                     "command": "avaloniaDesigner.newForm"
                 },
