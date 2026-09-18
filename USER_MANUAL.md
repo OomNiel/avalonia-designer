@@ -862,6 +862,15 @@ button at the far right of the designer toolbar decides when:
 | **onType** | while you edit the code-behind (shortly after you stop typing) |
 | **manual** | only when you press **🩺 Code Fix…** |
 
+**The two editor modes work while the designer is behind the file (`0.10.11`).** They have to: `onSave` and
+`onType` fire while you are in the `.cs`/`.vb` editor, which is also where the designer tab *isn't* the visible
+one. Until this version the check quietly did nothing in that situation — the report was *"the 'When the
+code-behind is saved' option does not seem to work"* — and the ⚠ badges were never recomputed either. Now the
+check runs from the editor, the findings appear in **PROBLEMS**, and a **save** also says the result in the
+status bar (*"Avalonia: ⚠ 2 error(s), 0 warning(s) in the code-behind — 🩺 Code Fix…"*), so the option is
+visible without switching tabs. The form does have to be **open in the designer** — that is what the code-behind
+is compared against — and *when I come back to the designer* still re-checks on the way in, whatever the mode.
+
 The same dialog carries the **badges** switch (`avaloniaDesigner.codeCheck.badges`): with it on, a
 control with a missing or broken handler gets a **⚠ badge** on the canvas and the toolbar shows a
 hint — so the problem is visible where you are working, not only inside the Code Fix list. Findings

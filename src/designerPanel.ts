@@ -47,6 +47,7 @@ import {
     type PanelState
 } from './aiPanel';
 import { startLlamaServerByChoice, stopLlamaServerConfirmed, resolveLlamaUnit, unitIsActive } from './llamaService';
+import { updateSetting } from './settingWrite';
 
 const DEFAULT_SIZE = { width: 800, height: 450 };
 
@@ -1541,7 +1542,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             vscode.workspace.onDidSaveTextDocument((e) => {
                 const mode = this.codeCheckMode();
                 if (mode !== 'onSave' && mode !== 'onType') return;
-                this.scheduleCodeBehindCheck(e.uri, 0);
+                // `announce`: saving happens in the *code editor*, where the designer is not on screen — so the
+                // result is said in the status bar as well (see `runSilentCheck`), or the check would be
+                // indistinguishable from one that never ran. Typing does not announce: it would be a line per
+                // pause.
+                this.scheduleCodeBehindCheck(e.uri, 0, true);
             })
         );
     }
@@ -1611,9 +1616,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
 
     /**
      * Finds the open designer whose code-behind is `uri` and schedules a silent re-check.
-     * `delay` debounces the typing case; 0 runs on the next tick (so the save has settled).
+     * `delay` debounces the typing case; 0 runs on the next tick (so the save has settled). `announce` adds the
+     * status-bar line for triggers that fire while the designer is not the visible editor.
      */
-    private scheduleCodeBehindCheck(uri: vscode.Uri, delay: number): void {
+    private scheduleCodeBehindCheck(uri: vscode.Uri, delay: number, announce = false): void {
         const target = uri.toString();
         for (const [key, panel] of this.panels) {
             const doc = this.docs.get(key);
@@ -1623,7 +1629,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             if (pending) clearTimeout(pending);
             const timer = setTimeout(() => {
                 this.codeCheckTimers.delete(key);
-                void this.runSilentCheck(doc, panel);
+                void this.runSilentCheck(doc, panel, { announce });
             }, delay);
             this.codeCheckTimers.set(key, timer);
         }
@@ -1633,9 +1639,22 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      * Re-checks the code-behind WITHOUT showing the Code Fix list and without ever writing: it
      * refreshes the PROBLEMS entries, the ⚠ badges on the canvas and the status hint. Used by the
      * automatic triggers (returning to the designer, saving/typing in the code-behind).
+     *
+     * **IT RUNS EVEN WHEN THE DESIGNER IS NOT ON SCREEN** (fixed 2026-09-18). The two editor-based modes were
+     * unreachable by construction: the designer opens as a webview **in the same tab group as the code-behind**,
+     * so while the user is in the `.cs`/`.vb` file — the only place `onSave` and `onType` can fire — the panel is
+     * not visible, and the old first line (`if (!panel.visible) return;`) threw the whole check away. The report
+     * was precise: *"The 'When the code-behind is saved' option … does not seem to work"*, and it was true of
+     * *when typing* as well; only *when I come back to the designer* could ever fire, because that is the one
+     * moment the panel is visible by definition. The findings reach the user from the editor through PROBLEMS
+     * either way, and the status bar says so when the trigger is the save (`announce`) — a check with no visible
+     * effect is indistinguishable from one that did not run.
      */
-    private async runSilentCheck(doc: DesignerDocument, panel: vscode.WebviewPanel): Promise<void> {
-        if (!panel.visible) return; // nothing to show it on — the panel re-checks when it comes back
+    private async runSilentCheck(
+        doc: DesignerDocument,
+        panel: vscode.WebviewPanel,
+        opts: { announce?: boolean } = {}
+    ): Promise<void> {
         let result;
         try { result = analyzeCodeBehind(doc.uri, this.checkOptions(doc)); }
         catch { return; }
@@ -1654,9 +1673,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         await this.postCodeMarkers(panel, markers);
         const errors = issues.filter((i) => i.severity === 'error').length;
         const warnings = issues.length - errors;
-        await this.postStatus(panel, issues.length === 0
+        const line = issues.length === 0
             ? 'Code-behind check: no problems'
-            : `⚠ ${errors} error(s), ${warnings} warning(s) in the code-behind — 🩺 Code Fix…`);
+            : `⚠ ${errors} error(s), ${warnings} warning(s) in the code-behind — 🩺 Code Fix…`;
+        await this.postStatus(panel, line);
+        // The designer's own status line is inside the webview, which is behind the file the user just saved.
+        // One line in the status bar is the difference between "the option works" and "the option does nothing".
+        if (opts.announce && !panel.visible) vscode.window.setStatusBarMessage(`Avalonia: ${line}`, 8000);
     }
 
     /** Drops the findings the user dismissed with "Leave it — keep my code" (session-scoped). */
@@ -2040,8 +2063,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         ? msg.mode : 'onReturn';
                     const cfg = vscode.workspace.getConfiguration('avaloniaDesigner');
                     try {
-                        await cfg.update('codeCheck.mode', mode, vscode.ConfigurationTarget.Global);
-                        await cfg.update('codeCheck.badges', msg.badges !== false, vscode.ConfigurationTarget.Global);
+                        // Written where the value already lives, not always to Global (2026-09-18): a project
+                        // that pins `codeCheck.mode` would otherwise shadow every save, and the dialog would
+                        // look broken in exactly the way the AI settings did before 0.9.33.
+                        await updateSetting(cfg, 'codeCheck.mode', mode);
+                        await updateSetting(cfg, 'codeCheck.badges', msg.badges !== false);
                     } catch { /* read-only in some hosts — the choice then lasts for this session only */ }
                     // The AI choices are saved through their own module: switching off has a side effect
                     // (the model is unloaded) and that belongs with the model code, not here.

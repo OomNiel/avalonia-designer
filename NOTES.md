@@ -3207,4 +3207,20 @@ widget the extension used, and proving that was the first half of the work:
 - **Also in this version:** `USER_MANUAL.md` opens with the AI-generated / work-in-progress note the user asked
   for (2026-09-18) — it is *not* in `0.10.10`, which was released before the note existed and deliberately not
   rebuilt.
+- **A trigger that could not fire (reported minutes later):** *"The 'When the code-behind is saved' option in the
+  Settings dialog does not seem to work."* It was unreachable **by construction**: the designer is a webview in
+  the **same tab group** as the code-behind, so while the user is in the `.cs`/`.vb` file — the only place
+  `onSave`/`onType` can fire — `panel.visible` is false, and `runSilentCheck` opened with
+  `if (!panel.visible) return;`. Only `onReturn` could ever run, because that is the one trigger where the panel
+  is visible by definition. **The generalisable lesson: a guard that protects a side effect must not gate the
+  work itself.** The fix runs the analysis wherever the trigger came from, publishes to PROBLEMS (visible from
+  the editor), and adds one status-bar line when the trigger is a save and the panel is hidden — a check with no
+  visible effect is indistinguishable from one that did not run. The ⚠ badges, recomputed inside the same
+  function, were silently stale too.
+- **Why the suite did not catch it:** `codeFix.test.js` pinned the **enum** (`onReturn,onSave,onType,manual`) and
+  nothing else — a schema is not a behaviour. The four triggers are now asserted against the source, including
+  the absence of the guard and the `announce` flag being on the save path only.
+- **Also fixed in the same pass:** `codeCheck.mode` and `codeCheck.badges` were written straight to `Global`, so a
+  project that pinned either would have shadowed every save — the `0.9.33` bug class, closed for the last two
+  settings that still had it.
 

@@ -238,11 +238,15 @@ listing when that release is uploaded — a repo-only README edit does not.
 > a code lens (`Ctrl+Alt+Enter`) or cancelled by the other one — see `NOTES.md` §136. Neither half of the request
 > was possible with `showInputBox` (single-line, pinned to the top of the window) and the Comments API has no
 > readable reply input, so the editor *is* the input. `USER_MANUAL.md` also opens with the AI-generated /
-> work-in-progress note asked for the same morning.
+> work-in-progress note asked for the same morning. A third fix rode along, reported minutes after it was built:
+> **"When the code-behind is saved"** (and *while typing*) could never fire, because the check required the
+> designer panel to be visible while you are in the code editor — the same tab group — so its first line threw the
+> work away; the check now runs from wherever the trigger came from, publishes to PROBLEMS and announces a save
+> in the status bar. `codeCheck.mode`/`codeCheck.badges` are also written where the value already lives.
 >
-> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **911,261 bytes**, sha256
-> `630eced9c8479d22286dd2a3173338e907c817d41a2d18b947dd05e935c022b1` — built by `npm run package` after a green
-> suite (**4,915 assertions, 0 failed**), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
+> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **912,838 bytes**, sha256
+> `e44adf7e655f42ae5c9b8906547e53685091485bcf4ff1eb80db1acf1c5e8c50` — built by `npm run package` after a green
+> suite (**4,926 assertions, 0 failed**), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
 > audited the same way as `0.10.9` (extract the VSIX, grep it for the user name, host name, project folders and
 > server alias — none present). **THIS is the file to upload** once `0.10.10` has gone out; `0.10.10` remains the
 > file for the *imminent* upload, frozen below.

@@ -440,6 +440,47 @@ End Class
         t.equal(props['avaloniaDesigner.codeCheck.badges'].default, true, 'settings-schema', 'badges default to on');
     }
 
+    // ---------- the four triggers actually fire (2026-09-18) ----------
+    {
+        // Reported: *"The 'When the code-behind is saved' option in the Settings dialog does not seem to work."*
+        // It never could. The designer opens as a webview **in the same tab group as the code-behind**, so while
+        // the user is in the `.cs`/`.vb` file — the only place `onSave` and `onType` can fire — the panel is not
+        // visible, and `runSilentCheck` began with `if (!panel.visible) return;`. Only *when I come back to the
+        // designer* could fire, because that is the one moment the panel is visible by definition. The badges
+        // were lost with it: they are recomputed inside the same function.
+        const panel = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'designerPanel.ts'), 'utf8');
+        const silent = panel.slice(
+            panel.indexOf('private async runSilentCheck'),
+            panel.indexOf('/** Drops the findings the user dismissed')
+        );
+        t.ok(silent.length > 400, 'triggers', 'runSilentCheck was found');
+        t.equal(/if \(!panel\.visible\) return;/.test(silent), false, 'triggers',
+            'the visibility guard is gone from the check itself — it made two of the four modes unreachable');
+        t.ok(/analyzeCodeBehind\(doc\.uri, this\.checkOptions\(doc\)\)/.test(silent), 'triggers',
+            'the analysis runs wherever the trigger came from');
+        t.ok(/publishIssues\(/.test(silent), 'triggers',
+            'and PROBLEMS is updated, which is what the user can see from the editor');
+        t.ok(/if \(opts\.announce && !panel\.visible\) vscode\.window\.setStatusBarMessage\(/.test(silent), 'triggers',
+            'while saving announces the result in the status bar when the designer is not on screen — a check ' +
+            'with no visible effect is indistinguishable from one that did not run');
+
+        t.ok(/if \(mode !== 'onSave' && mode !== 'onType'\) return;[\s\S]{0,600}?this\.scheduleCodeBehindCheck\(e\.uri, 0, true\);/.test(panel),
+            'triggers', 'onSave re-checks on the next tick and announces');
+        t.ok(/this\.scheduleCodeBehindCheck\(e\.document\.uri, 900\);/.test(panel), 'triggers',
+            'onType re-checks after a pause in typing, without announcing (that would be a line per pause)');
+        t.ok(/if \(webviewPanel\.visible && this\.codeCheckMode\(\) === 'onReturn'\)/.test(panel), 'triggers',
+            'onReturn is the one trigger that is visible by definition, and it is unchanged');
+        t.ok(/private scheduleCodeBehindCheck\(uri: vscode\.Uri, delay: number, announce = false\)/.test(panel), 'triggers',
+            'the two scheduler arguments are explicit in the signature');
+
+        // The other half of "it does not work": a project that pins the setting would shadow a Global write.
+        // Both keys now go through `updateSetting`, which writes where the value already lives (the 0.9.33 rule).
+        t.ok(/await updateSetting\(cfg, 'codeCheck\.mode', mode\);/.test(panel) && /await updateSetting\(cfg, 'codeCheck\.badges', msg\.badges !== false\);/.test(panel),
+            'triggers', 'the dialog writes codeCheck.mode and codeCheck.badges where the value already lives');
+        t.equal(/cfg\.update\('codeCheck\./.test(panel), false, 'triggers',
+            'and no codeCheck setting is written straight to Global any more');
+    }
+
     // ---------- 10) every toolbar button has the SAME height (emoji labels used to be taller) ----------
     {
         const css = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'designer.css'), 'utf8');

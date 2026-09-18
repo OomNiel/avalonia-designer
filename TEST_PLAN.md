@@ -1,6 +1,6 @@
 # Test Script Plan — Avalonia Designer Extension
 
-Date: 2026-09-18 · Status: **full suite green on this machine — 4,915 passed / 0 failed / 0 skipped (~39 s)**
+Date: 2026-09-18 · Status: **full suite green on this machine — 4,926 passed / 0 failed / 0 skipped (~39 s)**
 
 > Update 2026-08-30: user approved **Option (a) — full Avalonia.Headless driver** for T4, and
 > instructed to *prepare the script only* (run at a later stage) and keep it easily extensible.
@@ -277,10 +277,12 @@ block existed, with VS Code's own re-indentation emulated in the fixture.
 as a snippet, sending **validates before removing** (so a refused request stays readable in the file),
 cancelling resolves with nothing, the lens is only offered in the document the block is in, and the manifest
 carries both commands, the `Ctrl+Alt+Enter` binding and the palette hiding.
-
-Each step ends with the log green before the next begins.
-
-### 0.10.10 (2026-09-17) — the picker, the logs, the offload, the loading marker, the facts
+- `tests/t2-logic/codeFix.test.js` — **the four check triggers**, added after the user reported that *"when the
+  code-behind is saved"* did not work: the visibility guard is asserted to be **gone** from `runSilentCheck`,
+  the analysis and `publishIssues` are asserted to come before any visibility question, the save trigger carries
+  `announce` (and the typing one does not), and both code-check settings are asserted to be written through
+  `updateSetting` rather than straight to `Global`. The behaviour had never been pinned — only the enum was,
+  which is exactly how a check that could not fire survived three releases.
 
 - `tests/t2-logic/aiPanel.test.js` — the pin marker with two entries over one file (exactly one is marked, and
 the one for the configured build; the selection follows it in both directions), the ⚙ dialog's `Loading…` marker

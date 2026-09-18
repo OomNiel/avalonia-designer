@@ -22,6 +22,23 @@ with no API to anchor it at the caret. The Comments API is not an alternative ei
 `canReply` and a `label`, but **no `input` and no submit event**, so a reply typed into one goes nowhere an
 extension can read.
 
+### Fixed
+
+- **"When the code-behind is saved" did nothing — and neither did "while typing".** Reported right after
+  `0.10.10` went up: *"The 'When the code-behind is saved' option in the Settings dialog does not seem to work."*
+  It never could. The designer opens as a webview **in the same tab group as the code-behind**, so while the
+  user is in the `.cs`/`.vb` file — the only place those two triggers can fire — the panel is not visible, and
+  the check began with `if (!panel.visible) return;`. Only *when I come back to the designer* could ever run,
+  because that is the one trigger where the panel is visible by definition. The ⚠ badges were lost with it,
+  since they are recomputed inside the same function. The check now runs wherever the trigger came from,
+  updates **PROBLEMS** (which is what you can see from the editor) and, when the trigger is a save and the
+  designer is behind the file, says so in the **status bar** — a check with no visible effect is
+  indistinguishable from one that did not run. Saving and typing still need the form to be **open in the
+  designer**, because that is what the code is compared against.
+- **The dialog's two code-check settings are now written where the value already lives.** `codeCheck.mode` and
+  `codeCheck.badges` were written straight to `Global`, so a project that pinned either one would have shadowed
+  every save and made the dialog look broken — the same class of bug the AI settings had before `0.9.33`.
+
 ### Changed
 
 - **The prompt is typed in the editor, at the caret.** `AI: Implement in Function…` now inserts a marker block
