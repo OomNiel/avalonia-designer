@@ -24,6 +24,15 @@ extension can read.
 
 ### Fixed
 
+- **The 30B step-up did nothing at all.** Reported after `0.10.10`: *"When I return to the designer a message
+  saying that the 7B model could not fix and to try the 30B, but nothing happens."* The offer was made, the
+  escalation ran — the 7B was unloaded, the unit was found already answering, the settings were repointed — and
+  then the repair loop **cancelled itself before its first build**, because the run is passed
+  `cancelled: () => !panel.visible` and the modal gets answered from wherever the user is looking (usually the
+  code they were just told to look at). Switching away is a sensible "stop" for a run nobody asked for; it is
+  the wrong signal for a run the user just said yes to. The step-up run now ignores visibility, a cancel is
+  written to the log, the result is also announced in the status bar when the designer is behind the file, and a
+  failure anywhere in the loop can no longer be silent: it is caught, logged and shown.
 - **"When the code-behind is saved" did nothing — and neither did "while typing".** Reported right after
   `0.10.10` went up: *"The 'When the code-behind is saved' option in the Settings dialog does not seem to work."*
   It never could. The designer opens as a webview **in the same tab group as the code-behind**, so while the

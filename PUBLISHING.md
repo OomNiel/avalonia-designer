@@ -234,19 +234,21 @@ listing when that release is uploaded — a repo-only README edit does not.
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
 > **`0.10.11` (2026-09-18) — built, installed and audited; ready for its own release when the user says so.**
-> The prompt for the AI assist is now typed **in the editor, at the caret**, between two marker comments, sent by
-> a code lens (`Ctrl+Alt+Enter`) or cancelled by the other one — see `NOTES.md` §136. Neither half of the request
-> was possible with `showInputBox` (single-line, pinned to the top of the window) and the Comments API has no
-> readable reply input, so the editor *is* the input. `USER_MANUAL.md` also opens with the AI-generated /
-> work-in-progress note asked for the same morning. A third fix rode along, reported minutes after it was built:
-> **"When the code-behind is saved"** (and *while typing*) could never fire, because the check required the
-> designer panel to be visible while you are in the code editor — the same tab group — so its first line threw the
-> work away; the check now runs from wherever the trigger came from, publishes to PROBLEMS and announces a save
-> in the status bar. `codeCheck.mode`/`codeCheck.badges` are also written where the value already lives.
+> Three fixes, all from the same day's reports. (1) The prompt for the AI assist is now typed **in the editor, at
+> the caret**, between two marker comments, sent by a code lens (`Ctrl+Alt+Enter`) or cancelled by the other one —
+> see `NOTES.md` §136; neither half of the request was possible with `showInputBox` (single-line, pinned to the top
+> of the window) and the Comments API has no readable reply input, so the editor *is* the input. `USER_MANUAL.md`
+> also opens with the AI-generated / work-in-progress note asked for that morning. (2) **"When the code-behind is
+> saved"** (and *while typing*) could never fire — the check required the designer panel to be visible while you
+> are in the code editor — so it now runs from wherever the trigger came from, publishes to PROBLEMS and announces
+> a save in the status bar; `codeCheck.mode`/`codeCheck.badges` are written where the value already lives.
+> (3) **The 30B step-up did nothing**: the escalation worked and then the repair loop cancelled itself on
+> `!panel.visible`, because the modal is answered from wherever the user is looking. That run now ignores
+> visibility, a cancel is logged, a throw is caught *and* shown, and the result reaches the status bar — see §137.
 >
-> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **912,838 bytes**, sha256
-> `e44adf7e655f42ae5c9b8906547e53685091485bcf4ff1eb80db1acf1c5e8c50` — built by `npm run package` after a green
-> suite (**4,926 assertions, 0 failed**), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
+> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **913,773 bytes**, sha256
+> `657bd5e6c6ed86ad64615332586da64d2c13342828fc35d589bf5f96cda5890a` — built by `npm run package` after a green
+> suite (**4,932 assertions, 0 failed**), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
 > audited the same way as `0.10.9` (extract the VSIX, grep it for the user name, host name, project folders and
 > server alias — none present). **THIS is the file to upload** once `0.10.10` has gone out; `0.10.10` remains the
 > file for the *imminent* upload, frozen below.

@@ -1,6 +1,6 @@
 # Test Script Plan — Avalonia Designer Extension
 
-Date: 2026-09-18 · Status: **full suite green on this machine — 4,926 passed / 0 failed / 0 skipped (~39 s)**
+Date: 2026-09-18 · Status: **full suite green on this machine — 4,932 passed / 0 failed / 0 skipped (~39 s)**
 
 > Update 2026-08-30: user approved **Option (a) — full Avalonia.Headless driver** for T4, and
 > instructed to *prepare the script only* (run at a later stage) and keep it easily extensible.
@@ -283,6 +283,11 @@ carries both commands, the `Ctrl+Alt+Enter` binding and the palette hiding.
   `announce` (and the typing one does not), and both code-check settings are asserted to be written through
   `updateSetting` rather than straight to `Global`. The behaviour had never been pinned — only the enum was,
   which is exactly how a check that could not fire survived three releases.
+- `tests/t2-logic/repairLoop.test.js` — the cancel rule is now **two** rules, and the test says why: switching
+  away stops a run nobody asked for, and must not stop the step-up run the user just approved in a modal. The
+  assertion that pinned the old single shape is what caught the change, which is what it was for. It also pins the
+  wrapper that makes a throw impossible to ignore (logged **and** shown) and the status-bar line that carries the
+  result when the designer is behind the file.
 
 - `tests/t2-logic/aiPanel.test.js` — the pin marker with two entries over one file (exactly one is marked, and
 the one for the configured build; the selection follows it in both directions), the ⚙ dialog's `Loading…` marker

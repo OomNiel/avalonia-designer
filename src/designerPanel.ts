@@ -5031,6 +5031,19 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      * budget or the user says so) lives in `repairLoop`; this method supplies the project side of it.
      */
     private async runRepairLoop(doc: DesignerDocument, panel: vscode.WebviewPanel, why?: string): Promise<void> {
+        // A failure in here used to leave NO trace at all — no log line, no message, nothing on screen — which is
+        // how a broken run reads as "nothing happens" (reported 2026-09-18). Everything the loop does now goes
+        // through a wrapper that says so, in the log and on screen.
+        try {
+            await this.runRepairLoopInner(doc, panel, why);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            aiLog(this.context, `Code Fix failed: ${message}`);
+            void vscode.window.showErrorMessage(`Code Fix failed: ${message}`);
+        }
+    }
+
+    private async runRepairLoopInner(doc: DesignerDocument, panel: vscode.WebviewPanel, why?: string): Promise<void> {
         const key = doc.uri.toString();
         const proj = findProject(doc.uri);
         if (!proj) return;
@@ -5042,7 +5055,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // Errors the compiler reported without a file (`CSC : error CS2001: …`) are kept out of the loop —
         // no fixer can touch them — but they must still be listed, so they are carried alongside.
         let projectErrors: { code: string; message: string }[] = [];
-        const once = (): Promise<RepairReport> => repairUntilClean({
+        const once = (opts: { ignoreVisibility?: boolean } = {}): Promise<RepairReport> => repairUntilClean({
             build: async () => {
                 const build = await buildProject(proj.projectUri.fsPath);
                 projectErrors = build.projectErrors;
@@ -5055,7 +5068,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             fix: (d) => this.fixCompilerError(doc, panel, d),
             revert: () => this.revertLoopFix(),
             progress: (text) => void this.postStatus(panel, `Code Fix: ${text}`),
-            cancelled: () => !panel.visible
+            // "Switched away" means cancel for a run the user did not ask for, and must NOT mean cancel for the
+            // step-up below: that run exists because the user answered a modal with "Use the 30B", and the modal
+            // is answered from wherever they are — usually the code they were just told to look at. Cancelling it
+            // by visibility is what made the step-up do nothing at all (reported 2026-09-18: the offer appeared,
+            // the escalation ran, and then the very first check the loop makes threw the run away).
+            cancelled: () => (opts.ignoreVisibility ? false : !panel.visible)
         });
 
         // What the run leaves behind, published the same way however many runs there are: a run ends with the
@@ -5080,9 +5098,16 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 fixed: report.fixed.length
             });
             await this.postStatus(panel, this.loopStatus(report, rules));
+            // The panel's own status line is inside the webview, which may be behind the code the user is reading.
+            // Same rule as the code check (2026-09-18): a result nobody can see is indistinguishable from a run
+            // that did nothing.
+            if (!panel.visible) vscode.window.setStatusBarMessage(`Avalonia: ${this.loopStatus(report, rules)}`, 12000);
         };
 
         const first = await once();
+        if (first.stoppedBecause === 'cancelled') {
+            aiLog(this.context, 'Repair loop: cancelled before the first fix — the designer is not the visible tab.');
+        }
         await publish(first);
         if (first.stoppedBecause === 'clean' || !panel.visible) return;
 
@@ -5107,7 +5132,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private async offerBigModelRetry(
         panel: vscode.WebviewPanel,
         report: RepairReport,
-        once: () => Promise<RepairReport>
+        once: (opts?: { ignoreVisibility?: boolean }) => Promise<RepairReport>
     ): Promise<RepairReport | undefined> {
         const cfg = vscode.workspace.getConfiguration('avaloniaDesigner');
         // Only when the *small* local model is the thing that just failed. If a 30 B is already answering,
@@ -5168,7 +5193,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             return undefined;
         }
         step(`${up.unit} is answering — asking it to fix the rest…`);
-        return await once();
+        // `ignoreVisibility`: the user just said yes to this run in a modal, from wherever they were looking.
+        return await once({ ignoreVisibility: true });
     }
 
     /**

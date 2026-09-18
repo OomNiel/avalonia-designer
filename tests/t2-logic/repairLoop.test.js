@@ -257,8 +257,26 @@ module.exports = async (t) => {
             'the loop has exactly one entry point');
         t.ok(/revert: \(\) => this\.revertLoopFix\(\)/.test(panel), 'trigger',
             'a fix that did not help is undone through the undo it snapshotted');
-        t.ok(/cancelled: \(\) => !panel\.visible/.test(panel), 'trigger',
-            'and closing the panel stops the loop');
+        // The cancel rule is *two* rules (2026-09-18), and the difference is the whole point:
+        //  - a run the user did not ask for (the automatic check) stops when they switch away, which is what
+        //    `cancelled` was written for;
+        //  - the step-up run was asked for in a modal — answered from wherever the user is looking, usually the
+        //    code they were just told to look at — so visibility must not cancel it. That is what made the offer
+        //    do *nothing at all*: the escalation ran, and the loop's first check threw the run away.
+        t.ok(/cancelled: \(\) => \(opts\.ignoreVisibility \? false : !panel\.visible\)/.test(panel), 'trigger',
+            'switching away stops the loop by default, and only by default');
+        t.ok(/const once = \(opts: \{ ignoreVisibility\?: boolean \} = \{\}\): Promise<RepairReport>/.test(panel), 'trigger',
+            'the flag is part of the one entry point');
+        t.ok(/return await once\(\{ ignoreVisibility: true \}\);/.test(panel), 'trigger',
+            'and the step-up run passes it, because the user just said yes to it in a modal');
+        t.ok(/if \(first\.stoppedBecause === 'cancelled'\) \{[\s\S]{0,200}?Repair loop: cancelled before the first fix/.test(panel),
+            'trigger', 'a cancel is written to the log — this run left no trace at all, which is why it read as "nothing happens"');
+        t.ok(/await this\.runRepairLoopInner\(doc, panel, why\);/.test(panel) && /private async runRepairLoopInner\(doc: DesignerDocument, panel: vscode\.WebviewPanel, why\?: string\)/.test(panel),
+            'trigger', 'the loop is wrapped: the original body is now `runRepairLoopInner`');
+        t.ok(/catch \(err\) \{[\s\S]{0,300}?aiLog\(this\.context, `Code Fix failed: \$\{message\}`\);[\s\S]{0,200}?showErrorMessage\(`Code Fix failed: \$\{message\}`\)/.test(panel),
+            'trigger', 'and a throw can no longer be silent: logged AND shown, which is what "nothing happens" was');
+        t.ok(/if \(!panel\.visible\) vscode\.window\.setStatusBarMessage\(`Avalonia: \$\{this\.loopStatus\(report, rules\)\}`/.test(panel),
+            'trigger', 'the result also reaches the status bar when the designer is behind the file the user is reading');
         t.ok(/attempted === 0 \? 'nothing-fixable' : 'no-progress'/.test(read('src/repairLoop.ts')), 'trigger',
             'the report says whether nothing was fixable or nothing helped — different things to the user');
         t.ok(/kind: 'insert-semicolon'/.test(panel.slice(panel.indexOf('private async fixCompilerError'), panel.indexOf('private formUriOfFile'))),

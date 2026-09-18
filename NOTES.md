@@ -3223,4 +3223,37 @@ widget the extension used, and proving that was the first half of the work:
 - **Also fixed in the same pass:** `codeCheck.mode` and `codeCheck.badges` were written straight to `Global`, so a
   project that pinned either would have shadowed every save — the `0.9.33` bug class, closed for the last two
   settings that still had it.
+- **The third instance of the same trap, hours later (§137):** the 30B step-up ran and then cancelled itself on
+  `!panel.visible`. See §137 — the pattern is now written down as a pattern, not three coincidences.
+
+### §137 — "switched away" is not a cancel, and a failure must leave a trace (2026-09-18, release 0.10.11)
+
+Reported: *"The Code Fix feature broke. When I return to the designer a message saying that the 7B model could not
+fix and to try the 30B, but nothing happens."* The log told the whole story in four lines, and then stopped:
+
+```
+12:24:15  30B step-up offered: llama-server.service (16.3 GB), 1 error(s) left
+12:25:15  bigModel: escalating to llama-server.service (…Qwen3-Coder-30B…)
+12:25:15  ModelHost: stopped                              ← the 7B unloaded, as designed
+12:25:16  llama-server: using the one already running on 8080 (qwen3-coder-local)
+          …nothing. No AI request, no build, no error line.
+```
+
+- **The escalation worked; the run it was for cancelled itself.** `runRepairLoop` passes
+  `cancelled: () => !panel.visible` — documented as *"True when the user asked to stop (switched away, pressed
+  Cancel, closed the panel)"* — and a modal is answered from wherever the user is looking, which here was the code
+  they had just been told still had an error in it. So the loop's **first** check threw the run away before the
+  first build, and `publish` sent the outcome to a webview that was not on screen.
+- **The rule, now explicit and tested:** visibility-cancel belongs to runs nobody asked for; a run the user
+  approved in a modal passes `{ ignoreVisibility: true }`. Same shape as the morning's check fix (§136) — *a
+  guard that protects a side effect must not gate the work* — and now the third time that lesson has cost a
+  release (`runSilentCheck`, the step-up, and the repair loop's own cancel). The pattern is worth recognising:
+  **any `!panel.visible` in a decision path is suspect.**
+- **Two things that made it invisible, both fixed:** a cancel produced no log line at all, and a *throw* in the
+  loop escaped as an unhandled rejection with no message anywhere. The loop is now a thin wrapper around
+  `runRepairLoopInner` that catches, logs (`Code Fix failed: …`) and shows the failure, the cancel is logged
+  (`Repair loop: cancelled before the first fix — the designer is not the visible tab.`), and the outcome reaches
+  the **status bar** when the designer is behind the file — the same rule the code-check got that morning.
+- Suite 4,926 → **4,932**. One existing assertion had pinned the *old* cancel shape, which is exactly what it was
+  there for; it now pins both halves of the rule.
 
