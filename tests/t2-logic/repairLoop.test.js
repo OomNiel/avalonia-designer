@@ -267,8 +267,28 @@ module.exports = async (t) => {
             'switching away stops the loop by default, and only by default');
         t.ok(/const once = \(opts: \{ ignoreVisibility\?: boolean \} = \{\}\): Promise<RepairReport>/.test(panel), 'trigger',
             'the flag is part of the one entry point');
-        t.ok(/return await once\(\{ ignoreVisibility: true \}\);/.test(panel), 'trigger',
+        t.ok(/const done = await once\(\{ ignoreVisibility: true \}\);/.test(panel), 'trigger',
             'and the step-up run passes it, because the user just said yes to it in a modal');
+        t.ok(/Code Fix · 30B run finished — \$\{done\.remaining\.length\} error\(s\) left/.test(panel), 'trigger',
+            'the run\'s outcome is logged, so "did the 30B do anything?" is answerable from the file');
+        t.ok(/aiLog\(this\.context, `Code Fix · 30B: \$\{message\}`\);/.test(panel)
+            && /setStatusBarMessage\(`Avalonia: 30B — \$\{message\}`/.test(panel), 'trigger',
+            'every step of the escalation reaches the log AND the status bar — the panel and the webview are both '
+            + 'behind the code editor this run is answered from, which is what "the 30B does nothing" looked like');
+        t.ok(/const up = await Promise\.race\(\[[\s\S]{0,400}?ESCALATION_DEADLINE_MS/.test(panel)
+            && /const ESCALATION_DEADLINE_MS = 5 \* 60 \* 1000;/.test(panel), 'trigger',
+            'and a deadline, so waiting can never look like doing nothing');
+        // The AI never got asked, for weeks, and it was this: only a file that IS an open form's code-behind
+        // produced a `form`, and everything after that early return did. The designer's Code Fix is offered on
+        // every C#/VB file in the project, so the gate has to be gone. (2026-09-18)
+        t.equal(/if \(!form\) return 'no-fix';/.test(panel), false, 'trigger',
+            'a file that is not an open form\'s code-behind still reaches the AI — the analyser rules are a '
+            + 'bonus, not a toll gate');
+        t.ok(/const run = form && options \? analyzeCodeBehind\(form, options\) : undefined;/.test(panel), 'trigger',
+            'the rules only run when there is a form to analyse');
+        t.ok(/this\.loopSnapshot = fs\.existsSync\(d\.file\)/.test(panel)
+            && /\? \[\{ file: d\.file, text: fs\.readFileSync\(d\.file, 'utf8'\) \}\]/.test(panel), 'trigger',
+            'and the snapshot still exists for a form-less file, so a failed fix can be reverted');
         t.ok(/if \(first\.stoppedBecause === 'cancelled'\) \{[\s\S]{0,200}?Repair loop: cancelled before the first fix/.test(panel),
             'trigger', 'a cancel is written to the log — this run left no trace at all, which is why it read as "nothing happens"');
         t.ok(/await this\.runRepairLoopInner\(doc, panel, why\);/.test(panel) && /private async runRepairLoopInner\(doc: DesignerDocument, panel: vscode\.WebviewPanel, why\?: string\)/.test(panel),

@@ -3257,3 +3257,39 @@ fix and to try the 30B, but nothing happens."* The log told the whole story in f
 - Suite 4,926 → **4,932**. One existing assertion had pinned the *old* cancel shape, which is exactly what it was
   there for; it now pins both halves of the rule.
 
+### §138 — the AI was never asked, and the step-up never spoke (2026-09-18, 0.10.11 follow-up)
+
+Reported an hour after §137's fix was installed: *"No change. The Code Fix does not start the ai train, and the
+30B does nothing. The ai assist is working if i prompt it to add features to a function, or create new
+functions."* The user also offered a theory — *"This started happening after we removed some extensions"* — and
+the log says otherwise: the last Code Fix escalation is timestamped **12:48**, the extension removals happened
+around **14:00**, and today's only successful AI requests (11:39, 11:48, 12:50) are all the *prompted* bundled
+flow. Nothing changed at 14:00 because nothing was broken by it.
+
+- **The clue was in the sentence.** *"The ai assist is working if I prompt it"* rules out the model, the server,
+  the client, the endpoint and the settings in one go — the same request path that a Code Fix uses works fine
+  when a human writes it. So the request was never made. And it wasn't: `fixCompilerError` did its snapshot,
+  ran the analyser, and then asked whether the file belongs to an **open form** — with everything after that
+  question, the `repairWithAI` fallback included, behind `if (!form) return 'no-fix';`. The designer offers
+  Code Fix on every C#/VB file in the project. For any file that is not a form's own code-behind, the answer was
+  "no fix" without a single byte leaving the process.
+- **What the user actually saw, reconstructed:** the analyser declined (correctly — the rules only speak about
+  forms) → the extension offered the 30B → `escalateToBigModel` unloaded the 7B and started the unit → **and
+  that is the end of the log**. No failure, no cancel, no request. The step-up was *working* — silently, and
+  with no end: a cold 16 GB load that never becomes ready waited forever, and nothing anywhere said so.
+- **The rule, third time in two days (§136, §137, §138):** *a guard must not gate the work it protects.* The
+  analyser's "is there a form?" question belongs around the analyser — it is a bonus when a form exists, not a
+  precondition for asking the model. Fixed by scoping: `const run = form && options ? … : undefined;` and the
+  AI call sits outside it.
+- **The second rule, new:** *feedback must reach where the user is looking.* This run is answered from the code
+  editor, so the panel's status line and the webview's progress line are both behind the file. The 30B's steps
+  now go to the status bar and to `logs/ai.log`, a **five-minute deadline** reports *"the 30B did not become
+  ready"* with a pointer to the log instead of waiting, and the run's outcome is logged. "Nothing happens" has
+  to be impossible to say about something that is working.
+- **Why prior fixes missed it:** §137 fixed the *cancel* on the step-up and §136 the *gate* on the code-check,
+  but nobody asked whether the first run ever reached the model — the offer was read as proof that it had. The
+  offer is made on the strength of an `issues` list, and the analyser can produce issues while the AI path is
+  unreachable. A test now pins that the gate is gone.
+- Suite 4,932 → **4,938**. One assertion had pinned `return await once({ ignoreVisibility: true })`; the outcome
+  log turned it into `const done = await once(…); … return done;` — the test caught the change, as it should.
+

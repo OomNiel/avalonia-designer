@@ -13,7 +13,7 @@ import {
 import { buildProject, compilerIssues, publishBuildDiagnostics, BuildResult, CompilerDiagnostic } from './buildDiagnostics';
 import { dataSetContextFor } from './dataSetFacts';
 import { repairUntilClean, RepairReport } from './repairLoop';
-import { bigModelOffer, escalateToBigModel, llamaUnitText } from './bigModel';
+import { bigModelOffer, escalateToBigModel, llamaUnitText, type EscalationResult } from './bigModel';
 import { markCodeEdited, codeEditedSinceBuild, codeEditedReason, clearCodeEdited } from './writeStamp';
 import { withDesignerHeader } from './xamlHeader';
 import { controlInfoFor } from './controlInfo';
@@ -48,6 +48,9 @@ import {
 } from './aiPanel';
 import { startLlamaServerByChoice, stopLlamaServerConfirmed, resolveLlamaUnit, unitIsActive } from './llamaService';
 import { updateSetting } from './settingWrite';
+
+/** How long the step-up may take before it reports that it did not make it. A cold 16 GB load is minutes. */
+const ESCALATION_DEADLINE_MS = 5 * 60 * 1000;
 
 const DEFAULT_SIZE = { width: 800, height: 450 };
 
@@ -5183,10 +5186,26 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             return undefined;
         }
         const step = (message: string): void => {
+            // Where the user is looking decides whether the flow looks alive (2026-09-18). This run is answered
+            // from the *code editor* — the panel's own status line and the webview's progress line are both out of
+            // sight there — so every step also goes to the status bar and to the log. "The 30B does nothing" was
+            // this: a run that was working, silently, for minutes.
             void this.postStatus(panel, `Code Fix · 30B: ${message}`);
             void panel.webview.postMessage({ type: 'aiProgress', message });
+            aiLog(this.context, `Code Fix · 30B: ${message}`);
+            vscode.window.setStatusBarMessage(`Avalonia: 30B — ${message}`, 20000);
         };
-        const up = await escalateToBigModel({ onStep: step });
+        // `ignoreVisibility`: the user just said yes to this run in a modal, from wherever they were looking.
+        // A deadline on top, so "nothing happens" can never again mean "still waiting": a cold 16 GB load is
+        // minutes, and a wait with no end is a bug report.
+        const up = await Promise.race([
+            escalateToBigModel({ onStep: step }),
+            new Promise<EscalationResult>((resolve) => setTimeout(() => resolve({
+                ok: false,
+                message: 'the 30B did not become ready within 5 minutes — the log has every step it reported '
+                    + '(View → Output → Avalonia Designer)'
+            }), ESCALATION_DEADLINE_MS))
+        ]);
         if (!up.ok) {
             aiLog(this.context, `30B step-up failed: ${up.message}`);
             await this.postStatus(panel, `Code Fix · 30B: ${up.message}`);
@@ -5194,7 +5213,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         }
         step(`${up.unit} is answering — asking it to fix the rest…`);
         // `ignoreVisibility`: the user just said yes to this run in a modal, from wherever they were looking.
-        return await once({ ignoreVisibility: true });
+        const done = await once({ ignoreVisibility: true });
+        // And the outcome is logged too: "did the 30B do anything?" is answerable from the file next time.
+        aiLog(this.context, `Code Fix · 30B run finished — ${done.remaining.length} error(s) left, `
+            + `${done.fixed.length} fixed, stopped because ${done.stoppedBecause}`);
+        return done;
     }
 
     /**
@@ -5212,18 +5235,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         d: CompilerDiagnostic
     ): Promise<'fixed' | 'no-fix' | 'failed'> {
         const form = this.formUriOfFile(d.file);
-        if (!form) return 'no-fix';
-        const options = this.checkOptions(doc);
-        const run = analyzeCodeBehind(form, options);
-        const hit = run.issues.find((i) => i.kind !== 'report-only'
+        const options = form ? this.checkOptions(doc) : undefined;
+        const run = form && options ? analyzeCodeBehind(form, options) : undefined;
+        const hit = run?.issues.find((i) => i.kind !== 'report-only'
             && (i.file ?? 'code') === 'code' && i.line === d.line);
         try {
-            if (hit) {
+            if (form && run && hit) {
                 this.snapshotForRevert(form, run.codeFile);
                 await this.applyCodeIssue(doc, findProject(doc.uri), panel, hit);
                 return 'fixed';
             }
-            if (d.code === 'CS1002' && run.codeFile && path.resolve(run.codeFile) === path.resolve(d.file)) {
+            if (form && options && run && d.code === 'CS1002' && run.codeFile && path.resolve(run.codeFile) === path.resolve(d.file)) {
                 this.snapshotForRevert(form, run.codeFile);
                 const issue: CodeIssue = {
                     id: `build:CS1002:${d.line}`,
@@ -5241,13 +5263,28 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             // No rule understands this one. The model gets a try when it is ALREADY running — never started
             // from here (the user's choice, 2026-09-17) — and the loop's rebuild decides whether the answer
             // was worth keeping: a fix that does not help is undone like any other.
+            //
+            // **Any project file, not just an open form's code-behind** (fixed 2026-09-18). This block used to be
+            // unreachable for everything else: `if (!form) return 'no-fix'` at the top of the function threw the
+            // model's only chance away for a linked `resources/*.cs`, `MyDataSet.cs`, or a form whose designer is
+            // not open — and the user's report was exactly that: *"the Code Fix does not start the ai train"*,
+            // with one error left that no rule could touch. The model needs a file, a line and the compiler's
+            // message, all of which exist for any source file; the gate is "is this project source", not "is the
+            // designer open".
             if (!this.codeCheckAiRepair()) return 'no-fix';
             if (this.loopAiTries >= AvaloniaDesignerProvider.LOOP_AI_TRIES_MAX) {
                 logError(`Repair loop: ${AvaloniaDesignerProvider.LOOP_AI_TRIES_MAX} model attempts used — listing the rest.`);
                 return 'no-fix';
             }
             this.loopAiTries += 1;
-            this.snapshotForRevert(form, run.codeFile);
+            if (form && run) {
+                this.snapshotForRevert(form, run.codeFile);
+            } else {
+                // No form to snapshot: the file's own text is the undo, which is all `revertLoopFix` needs.
+                this.loopSnapshot = fs.existsSync(d.file)
+                    ? [{ file: d.file, text: fs.readFileSync(d.file, 'utf8') }]
+                    : [];
+            }
             const ai = await repairWithAI(vscode.Uri.file(d.file), d.line, `${d.code}: ${d.message}`);
             if (ai) return 'fixed';
             this.loopSnapshot = [];

@@ -6,7 +6,7 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.10.10` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.10.11` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
@@ -24,6 +24,23 @@ extension can read.
 
 ### Fixed
 
+- **The AI was never asked to fix anything that is not an open form's code-behind.** Reported the same
+  afternoon: *"No change. The Code Fix does not start the ai train, and the 30B does nothing. The ai assist is
+  working if i prompt it to add features to a function, or create new functions."* That last sentence is the
+  clue — the model, the server and the client were all fine, because a prompted request worked. The Code Fix
+  itself never reached the model: `fixCompilerError` built a snapshot, ran the analyser and only then asked
+  whether the file belonged to an *open form*, and every path after that question — the AI fallback included —
+  sat behind `if (!form) return 'no-fix';`. The designer offers **Code Fix** on every C#/VB file in the project,
+  so for anything but a form's own code-behind the answer was "no fix" without a single request being sent; the
+  user saw the *analyser* decline and then watched the step-up start a 30B for a fix that had never been
+  attempted. The rules are a bonus when there is a form to analyse, not a toll gate: a file outside a form now
+  goes straight to the AI, and its text is still snapshotted so a failed fix can be reverted.
+- **And the step-up looked dead while it was working.** The escalation logged nothing between *"starting it as a
+  systemd unit"* and its own end, and it had no end — a cold 16 GB load that never becomes ready simply waited
+  forever. Every step now goes to `logs/ai.log` **and** the status bar (this run is answered from the code
+  editor, where the panel's status line and the webview's progress line are both out of sight), the five-minute
+  mark reports that the 30B did not make it instead of waiting, and the run's outcome — errors left, fixes
+  applied, why it stopped — is written to the log.
 - **The 30B step-up did nothing at all.** Reported after `0.10.10`: *"When I return to the designer a message
   saying that the 7B model could not fix and to try the 30B, but nothing happens."* The offer was made, the
   escalation ran — the 7B was unloaded, the unit was found already answering, the settings were repointed — and

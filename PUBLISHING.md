@@ -245,10 +245,20 @@ listing when that release is uploaded — a repo-only README edit does not.
 > (3) **The 30B step-up did nothing**: the escalation worked and then the repair loop cancelled itself on
 > `!panel.visible`, because the modal is answered from wherever the user is looking. That run now ignores
 > visibility, a cancel is logged, a throw is caught *and* shown, and the result reaches the status bar — see §137.
+> (4) **That report came back — *"No change. The Code Fix does not start the ai train, and the 30B does
+> nothing."*** — because the offer was made from the *analyser* while the AI fallback sat behind
+> `if (!form) return 'no-fix';` in `fixCompilerError`: a file that is not an open form's code-behind was never
+> sent to the model at all (the user's own clue — *"the ai assist is working if i prompt it"* — ruled out the
+> model, server and client). The gate is gone, so the rules are a bonus when a form is found rather than a
+> precondition for asking. The step-up was meanwhile working **silently** and without end: every step now goes
+> to `logs/ai.log` *and* the status bar, a five-minute deadline reports that the 30B did not make it, and the
+> run's outcome is logged — see §138. The extension removals the same afternoon were **not** the cause (the
+> log's last Code Fix escalation is 12:48; the removals were ~14:00).
 >
-> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **913,773 bytes**, sha256
-> `657bd5e6c6ed86ad64615332586da64d2c13342828fc35d589bf5f96cda5890a` — built by `npm run package` after a green
-> suite (**4,932 assertions, 0 failed**), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
+> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **915,372 bytes**, sha256
+> `b462a57b5648cedb7057f7d684de23e612cc830c1374cfbe6ba10fc253ba1e5a` — the **fourth** build of `0.10.11`
+> (the three before it were installed on this machine, never released and are superseded by this one), built by
+> `npm run package` after a green suite (**4,938 assertions, 0 failed**), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
 > audited the same way as `0.10.9` (extract the VSIX, grep it for the user name, host name, project folders and
 > server alias — none present). **THIS is the file to upload** once `0.10.10` has gone out; `0.10.10` remains the
 > file for the *imminent* upload, frozen below.

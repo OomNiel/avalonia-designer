@@ -1,6 +1,6 @@
 # Test Script Plan — Avalonia Designer Extension
 
-Date: 2026-09-18 · Status: **full suite green on this machine — 4,932 passed / 0 failed / 0 skipped (~39 s)**
+Date: 2026-09-18 · Status: **full suite green on this machine — 4,938 passed / 0 failed / 0 skipped (~39 s)**
 
 > Update 2026-08-30: user approved **Option (a) — full Avalonia.Headless driver** for T4, and
 > instructed to *prepare the script only* (run at a later stage) and keep it easily extensible.
@@ -266,6 +266,14 @@ Each step ends with the log green before the next begins.
 Each step ends with the log green before the next begins.
 
 ### 0.10.11 (2026-09-18) — the prompt typed in the editor, at the caret
+
+- `tests/t2-logic/repairLoop.test.js` — the second round of the same afternoon's report (*"No change. The Code
+  Fix does not start the ai train…"*). The AI fallback is asserted to be **ungated**: `if (!form) return
+  'no-fix';` must be gone from `fixCompilerError`, the analyser must be reached only when a form was found, and
+  a file outside a form must still be snapshotted before the request. The escalation is asserted to leave a
+  trace where the user is looking (a log line **and** a status-bar line per step), to run under a five-minute
+  deadline, and to log the second run's outcome. One existing assertion had pinned the *old*
+  `return await once(…)` shape — the same "the test caught the change it was written for" pattern as above.
 
 - `tests/t2-logic/aiPrompt.test.js` (new, **47** assertions) — the marker block. The snippet places the caret
 between the two markers (`$0`), C# and VB get their own comment prefix, a block is found whether or not its
