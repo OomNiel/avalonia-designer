@@ -2,7 +2,7 @@
  * Code generation for the DataSet designer: a runtime-construction class
  * (C# or VB.NET) that builds the DataSet, plus a standard .xsd schema file.
  */
-import { DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, csType, vbType, xsType, isSqliteTable, keyColumnOf, sqliteTableName } from './dataSetModel';
+import { DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, csType, vbType, xsType, isSqliteTable, keyColumnOf, sqliteTableName, canBindToTree, treeRoles } from './dataSetModel';
 
 function escCs(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
 function escVb(s: string): string { return s.replace(/"/g, '""'); }
@@ -246,6 +246,25 @@ function isGridBound(t: DataTableSpec): boolean {
     return t.boundToType === 'DataGrid' && !!t.boundTo;
 }
 const anyGridBound = (spec: DataSetSpec) => spec.tables.some(isGridBound);
+
+/** true when the table is bound to a TreeView (its `role` columns describe the hierarchy). */
+function isTreeBound(t: DataTableSpec): boolean {
+    return t.boundToType === 'TreeView' && !!t.boundTo && canBindToTree(t);
+}
+
+/**
+ * The C#/VB expression that yields a node's display text from a row.
+ *
+ * A String column is passed through with `?? ""`: with nullable enabled in the user's project, a plain
+ * `r => r.Name` for a nullable column is CS8603 (a warning in their build), and the helper already turns
+ * an empty string into "?". A non-String column is converted, because the helper takes a string.
+ */
+function nameSelector(t: DataTableSpec, column: string, cs: boolean): string {
+    const col = t.columns.find((c) => c.name === column);
+    const isString = !col || col.type === 'String';
+    if (cs) return isString ? `r => r.${column} ?? ""` : `r => r.${column}.ToString()`;
+    return isString ? `Function(r) If(r.${column}, "")` : `Function(r) r.${column}.ToString()`;
+}
 
 /** Lower-camel field name used for a column's input control (e.g. Name -> _nameInput). */
 function fieldName(c: DataColumnSpec): string {
@@ -674,6 +693,23 @@ function csPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     }
     lines.push('        }');
     lines.push('');
+    // A TreeView bound to this table: the same rows, shaped into a tree by the bundled
+    // AvaloniaChrome.TreeBuilder (see resources/TreeBuilder.cs). Fully qualified so the generated file
+    // needs no extra using/Imports.
+    if (isTreeBound(t)) {
+        const roles = treeRoles(t);
+        lines.push(`        public static void Wire${t.name}Tree(TreeView tree, ${L} rows)`);
+        lines.push('        {');
+        if (roles.parent && roles.id) {
+            lines.push('            tree.ItemsSource = AvaloniaChrome.TreeBuilder.Build(rows, '
+                + `r => r.${roles.id}, r => r.${roles.parent}, ${nameSelector(t, roles.name as string, true)});`);
+        } else {
+            lines.push(`            tree.ItemsSource = AvaloniaChrome.TreeBuilder.BuildByHierarchy(rows, `
+                + `r => r.${roles.level}, ${nameSelector(t, roles.name as string, true)});`);
+        }
+        lines.push('        }');
+        lines.push('');
+    }
     lines.push(`        public static void Wire${t.name}Grid(DataGrid grid, ${L} rows)`);
     lines.push('        {');
     lines.push('            grid.AutoGenerateColumns = false; // typed columns built below; XAML True only for the designer preview');
@@ -1445,6 +1481,20 @@ function vbPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     }
     lines.push('        End Sub');
     lines.push('');
+    // The VB twin of Wire…Tree (see the C# emitter above).
+    if (isTreeBound(t)) {
+        const roles = treeRoles(t);
+        lines.push(`        Public Shared Sub Wire${t.name}Tree(tree As TreeView, rows As ${OC})`);
+        if (roles.parent && roles.id) {
+            lines.push('            tree.ItemsSource = AvaloniaChrome.TreeBuilder.Build(rows, '
+                + `Function(r) r.${roles.id}, Function(r) r.${roles.parent}, ${nameSelector(t, roles.name as string, false)})`);
+        } else {
+            lines.push('            tree.ItemsSource = AvaloniaChrome.TreeBuilder.BuildByHierarchy(rows, '
+                + `Function(r) r.${roles.level}, ${nameSelector(t, roles.name as string, false)})`);
+        }
+        lines.push('        End Sub');
+        lines.push('');
+    }
     lines.push(`        Public Shared Sub Wire${t.name}Grid(grid As DataGrid, rows As ${OC})`);
     lines.push('');
     lines.push('            grid.AutoGenerateColumns = False \' typed columns built below; XAML True only for the designer preview');

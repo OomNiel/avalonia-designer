@@ -217,7 +217,11 @@ export function treeRoles(t: DataTableSpec): Partial<Record<TreeColumnRole, stri
  */
 export function canBindToTree(t: DataTableSpec): boolean {
     const roles = treeRoles(t);
-    return !!roles.name && (!!roles.parent || !!roles.level);
+    // A parent column needs an id column to look the parent up by; without one, only a level/path
+    // column can describe the shape. Stated here so the editor, the generator and the preview all
+    // refuse the same tables rather than each inventing its own rule.
+    if (roles.level) return !!roles.name;
+    return !!roles.name && !!roles.id && !!roles.parent;
 }
 
 export function sqliteTableName(t: DataTableSpec): string {
