@@ -40,6 +40,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'itemsModal', 'itemsText', 'itemsSave', 'itemsCancel',
     'gridModal', 'gridRows', 'gridCols', 'gridAddRow', 'gridAddCol', 'gridSave', 'gridCancel',
     'menuModal', 'menuTitle', 'menuBody', 'menuAddTop', 'menuSave', 'menuCancel',
+    'treeModal', 'treeTitle', 'treeBody', 'treeAdd', 'treeCancel', 'treeSave',
     'statusModal', 'statusTitle', 'statusBody', 'statusAdd', 'statusSave', 'statusCancel',
     'splitModal', 'splitTitle', 'splitZones', 'splitCols', 'splitRows', 'splitPanesRow', 'splitPanesLabel', 'splitCount', 'splitMinus', 'splitPlus', 'splitSave', 'splitCancel',
     'splitterModal', 'splitterTitle', 'splitterBody', 'splitterSave', 'splitterCancel',

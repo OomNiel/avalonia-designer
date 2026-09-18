@@ -431,6 +431,22 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     border-bottom: none;
 }
 
+/* 'Tree Items' rows (they reuse the .mn-* row styles above): a read-only row stands for something
+   the tree holds that this editor must not change, and the Expanded tick sits at the row's end. */
+.mn-readonly {
+    flex: 1;
+    color: #8b98a8;
+    font-style: italic;
+    cursor: default;
+}
+.mn-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: #c9d4e4;
+    white-space: nowrap;
+}
 .mn-caret {
     width: 20px;
     flex: 0 0 20px;

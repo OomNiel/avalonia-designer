@@ -731,6 +731,95 @@ function menuNodeOf(el: Element): MenuTreeNode | null {
  * ------------------------------------------------------------------------------------------- */
 
 /** The design-time tree (top-level items) of a Menu element. */
+/**
+ * The design-time node tree of a `<TreeView>`, for the Properties panel's **Tree Items** editor
+ * (2026-09-18). The sibling of `MenuTreeNode`, and deliberately much smaller: a `TreeViewItem` has
+ * a Header and an expanded state, and nothing else a novice would set.
+ *
+ * A child that is **not** a `TreeViewItem` — a bound `ItemsSource`, a `TreeView.ItemTemplate`, a
+ * Styles block — is reported as a **read-only row** and is never removed or rewritten: the editor
+ * must not destroy what it cannot edit, which is the same rule the Menu editor follows for a
+ * bundled `<chrome:PathPicker>` row. Read-only rows stay exactly where they are in the file.
+ */
+export interface TreeItemNode {
+    /** The text the node shows (its `Header`). */
+    header: string;
+    /** `IsExpanded` — whether its children are visible when the form opens. */
+    expanded: boolean;
+    children: TreeItemNode[];
+    /** True for a child the editor can show but must not rewrite. */
+    readOnly?: boolean;
+}
+
+/** How deep the editor and its sanitiser allow a tree to go. */
+const TREE_MAX_DEPTH = 5;
+
+/** The `<TreeViewItem>` children of a TreeView (or of another TreeViewItem). */
+function treeItemEls(el: Element): Element[] {
+    return elementChildren(el).filter((k) => localName(k.tagName) === 'TreeViewItem');
+}
+
+/** Every element child that is not a node — shown read-only, so the user knows it is there. */
+function treeOtherEls(el: Element): Element[] {
+    return elementChildren(el).filter((k) => localName(k.tagName) !== 'TreeViewItem');
+}
+
+/** One `<TreeViewItem>`, with its children, as a design-time node. */
+function treeNodeOf(el: Element): TreeItemNode {
+    return {
+        header: (el.getAttribute('Header') || '').trim(),
+        expanded: /^(true|1)$/i.test((el.getAttribute('IsExpanded') || '').trim()),
+        children: treeItemEls(el).map(treeNodeOf)
+    };
+}
+
+/** The node tree of a TreeView: its nodes, then a read-only row for anything else it holds. */
+export function treeNodesOf(el: Element): TreeItemNode[] {
+    return [
+        ...treeItemEls(el).map(treeNodeOf),
+        ...treeOtherEls(el).map((k): TreeItemNode => ({
+            header: `<${localName(k.tagName)}>`,
+            expanded: false,
+            children: [],
+            readOnly: true
+        }))
+    ];
+}
+
+/** The `<TreeViewItem>` element for one node, with its children. */
+export function treeItemElementFor(model: XamlModel, node: TreeItemNode, depth: number): Element {
+    const el = model.createElement('<TreeViewItem/>');
+    const header = (node.header || '').trim();
+    // An empty Header is left off rather than written as `Header=""`, the same way the menu does it.
+    if (header !== '') el.setAttribute('Header', header);
+    if (node.expanded) el.setAttribute('IsExpanded', 'True');
+    if (depth < TREE_MAX_DEPTH) {
+        for (const c of node.children || []) el.appendChild(treeItemElementFor(model, c, depth + 1));
+    }
+    return el;
+}
+
+/** Validates a tree that came back from the webview (structure only; never trusts its input). */
+export function sanitizeTreeNodes(raw: unknown): TreeItemNode[] {
+    const clean = (n: unknown, depth: number): TreeItemNode | null => {
+        if (!n || typeof n !== 'object' || depth > TREE_MAX_DEPTH) return null;
+        const o = n as Partial<TreeItemNode>;
+        // A read-only row is never reinstated from the panel: the element it stands for is still in
+        // the file, untouched, which is what "survives Apply" means.
+        if (o.readOnly) return null;
+        const text = typeof o.header === 'string' ? o.header.trim() : '';
+        return {
+            header: (text || 'Item').slice(0, 160),
+            expanded: o.expanded === true,
+            children: Array.isArray(o.children)
+                ? o.children.map((c) => clean(c, depth + 1)).filter((x): x is TreeItemNode => x !== null)
+                : []
+        };
+    };
+    if (!Array.isArray(raw)) return [];
+    return raw.slice(0, 500).map((r) => clean(r, 1)).filter((x): x is TreeItemNode => x !== null);
+}
+
 export function menuTreeOf(el: Element): MenuTreeNode[] {
     return menuItemEls(el).map(menuNodeOf).filter((x): x is MenuTreeNode => x !== null);
 }
@@ -3122,6 +3211,22 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'saveTreeItems': {
+                    // 'Tree Items' editor on a <TreeView>: replace its node tree with the structure the
+                    // user built. Only <TreeViewItem> children are replaced — anything else the TreeView
+                    // holds (a bound ItemsSource, an ItemTemplate, a Styles block) is left exactly where
+                    // it is, because the editor never showed those as editable in the first place.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || localName(el.tagName) !== 'TreeView') return;
+                    const nodes = sanitizeTreeNodes(msg.items);
+                    const before = doc.model.serialize(true);
+                    for (const kid of treeItemEls(el)) el.removeChild(kid);
+                    for (const n of nodes) el.appendChild(treeItemElementFor(doc.model, n, 1));
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
+                    return;
+                }
                 case 'saveMenuItems': {
                     // 'Menu Items' tree editor on a <Menu>: replace its whole item tree with the
                     // structure the user built (kinds map onto MenuItem/ToggleType/Separator and an
@@ -3930,8 +4035,16 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             const nm = el.getAttribute('x:Name') || el.getAttribute('Name');
             if (nm) menus[nm] = menuTreeOf(el);
         }
+        // The design-time node tree of every named <TreeView>, for the Properties panel's 'Tree
+        // Items' editor (2026-09-18). Sent the same way as the menu trees: one payload per frame.
+        const trees: Record<string, TreeItemNode[]> = {};
+        for (const el of doc.model.controlElements()) {
+            if (localName(el.tagName) !== 'TreeView') continue;
+            const nm = el.getAttribute('x:Name') || el.getAttribute('Name');
+            if (nm) trees[nm] = treeNodesOf(el);
+        }
         await panel.webview.postMessage({
-            type: 'frame', ...frame, controls, menus, previewTheme, formTitle,
+            type: 'frame', ...frame, controls, menus, trees, previewTheme, formTitle,
             // Every SplitPanel divider (as a draggable bar in design coords) so the webview can hit
             // it and drag it to resize the panes at design time.
             splitBars: splitBarsOf(controls),
@@ -7100,6 +7213,20 @@ ${publishButtons}      <span class="sep"></span>
         <div class="modal-buttons">
           <button id="menuCancel" type="button" class="modal-btn">Cancel</button>
           <button id="menuSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="treeModal" class="modal" hidden>
+      <div class="modal-box modal-wide">
+        <h3 id="treeTitle">Tree Items</h3>
+        <p class="modal-hint">Build the tree top-down: a node nested under another becomes its child. Each row carries the node's <b>Header</b> (the text it shows), an <b>Expanded</b> tick for whether its children are visible when the form opens, and the buttons to add a child, add a sibling, nest, un-nest, move or delete it. Up to 5 levels deep. A greyed row is something the tree holds that this editor cannot change — it is left exactly as it is.</p>
+        <div id="treeBody" class="menu-tree"></div>
+        <div class="modal-buttons">
+          <button id="treeAdd" type="button" class="modal-btn">+ Add node</button>
+        </div>
+        <div class="modal-buttons">
+          <button id="treeCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="treeSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

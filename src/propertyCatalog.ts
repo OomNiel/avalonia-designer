@@ -1157,7 +1157,7 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
         // Everything the designer edits through a popup editor (`kind: 'button'`) — whether it is
         // pushed as a "top action" (DataGrid Rows/Columns, SplitPanel Split Layout/Splitters) or
         // lives in the control's own list (Items, Grid.Defs, MenuItems, StatusItems).
-        keys: ['Rows', 'Columns', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems']
+        keys: ['Rows', 'Columns', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
     },
     {
         id: 'layout', label: 'Layout & size',
@@ -1491,6 +1491,23 @@ export function propertyDefsFor(
     }
     // 'Menu Items' — a Menu bar is empty until it has top-level items. Opens the menu tree editor
     // where the bar's items are added/removed and each item's submenu is built (up to 5 levels).
+    // 'Tree Items' — a TreeView's nodes ARE its content, and hand-writing nested <TreeViewItem>
+    // elements is exactly where a novice gives up (2026-09-18). Opens the node editor: add child /
+    // add sibling / delete / move in and out of nesting, with a Header and an "expanded" tick per
+    // node. Anything the TreeView holds that the editor cannot represent is shown read-only and is
+    // never rewritten — the element stays in the file, untouched.
+    if (tag === 'TreeView') {
+        props.push({
+            key: 'TreeItems',
+            label: 'Tree Items',
+            kind: 'button',
+            value: 'Edit tree nodes…',
+            desc: 'Adds and removes the nodes of the tree and sets how they nest (up to 5 levels). '
+                + 'Each node shows its Header; the tick sets whether it starts expanded. Everything else '
+                + 'the TreeView holds — an ItemTemplate, a bound ItemsSource, a Styles block — appears as '
+                + 'a read-only row and is left exactly as it is.'
+        });
+    }
     if (tag === 'Menu') {
         props.push({
             key: 'MenuItems',

@@ -155,6 +155,12 @@
         menuTitle: $('menuTitle'),
         menuBody: $('menuBody'),
         menuAddTop: $('menuAddTop'),
+        treeModal: $('treeModal'),
+        treeTitle: $('treeTitle'),
+        treeBody: $('treeBody'),
+        treeAdd: $('treeAdd'),
+        treeCancel: $('treeCancel'),
+        treeSave: $('treeSave'),
         menuSave: $('menuSave'),
         menuCancel: $('menuCancel'),
         statusModal: $('statusModal'),
@@ -2778,6 +2784,7 @@
                     }
                     // 'Menu Items' opens the menu tree editor for the selected Menu bar.
                     if (p.key === 'MenuItems') openMenuEditor(msg.name);
+                    if (p.key === 'TreeItems') openTreeEditor(msg.name);
                     // 'Status Items' opens the flat item editor for the selected Status Bar.
                     if (p.key === 'StatusItems') openStatusEditor(msg.name, msg.statusItems || []);
                     // 'Split Layout' opens the split editor for the selected Split Panel.
@@ -3915,6 +3922,194 @@
         menuFocus([menuEdit.tree.length - 1]);
     }
     /** Opens the tree editor. A `topIdx` (from clicking a bar dummy) expands that item. */
+    // ---------------- 'Tree Items' node editor (the TreeView sibling of the Menu editor) ----------------
+    // Rows are indented by depth and carry the node's Header, an Expanded tick and six actions. Nesting
+    // is expressed by the list itself (nest / un-nest) rather than a "level" number: a novice should see
+    // parent and child, not arithmetic. A row the editor cannot represent — an ItemTemplate, a Styles
+    // block, a bound ItemsSource — is drawn greyed with no controls, and the extension never rewrites it.
+    let treeEdit = null;           // { name, tree } working copy while the modal is open
+    const TREE_MAX_DEPTH_UI = 5;
+
+    function treeCopy(n) {
+        return {
+            header: (n && n.header != null) ? String(n.header) : '',
+            expanded: !!(n && n.expanded),
+            readOnly: !!(n && n.readOnly),
+            children: Array.isArray(n && n.children) ? n.children.map(treeCopy) : []
+        };
+    }
+
+    function treeNodeAt(path) {
+        if (!treeEdit) return null;
+        let list = treeEdit.tree;
+        let node = null;
+        for (const i of path) {
+            if (!list) return null;
+            node = list[i];
+            if (!node) return null;
+            list = node.children;
+        }
+        return node;
+    }
+
+    /** Where a node sits: the array that holds it and its index in it. */
+    function treeParentOf(path) {
+        if (!treeEdit) return null;
+        if (path.length === 1) return { list: treeEdit.tree, idx: path[0] };
+        const p = treeNodeAt(path.slice(0, -1));
+        return p ? { list: p.children, idx: path[path.length - 1] } : null;
+    }
+
+    function treeFocus(path) {
+        const inp = els.treeBody.querySelector('.mn-row[data-path="' + cssEscape(path.join('.')) + '"] .mn-header');
+        if (inp) { inp.focus(); try { inp.select(); } catch (err) { /* ignore */ } }
+    }
+
+    function treeBtn(label, title, fn, disabled) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'mn-act';
+        b.textContent = label;
+        b.title = title;
+        if (disabled) b.disabled = true;
+        else b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+        return b;
+    }
+
+    /** Depth-first walk carrying each node's path, so an action can address the row it came from. */
+    function treeEach(list, depth, path, fn) {
+        list.forEach((node, i) => {
+            const here = path.concat(i);
+            fn(node, depth, here, i, list);
+            if (node.children && node.children.length) treeEach(node.children, depth + 1, here, fn);
+        });
+    }
+
+    function renderTreeRows() {
+        const body = els.treeBody;
+        body.innerHTML = '';
+        if (!treeEdit) return;
+        if (!treeEdit.tree.length) {
+            const empty = document.createElement('p');
+            empty.className = 'modal-hint';
+            empty.textContent = 'No nodes yet — “+ Add node” starts the tree.';
+            body.appendChild(empty);
+            return;
+        }
+        treeEach(treeEdit.tree, 1, [], (node, depth, path, idx, list) => {
+            const row = document.createElement('div');
+            row.className = 'mn-row';
+            row.dataset.depth = String(depth);
+            row.dataset.path = path.join('.');
+            row.style.paddingLeft = (10 + (depth - 1) * 24) + 'px';
+            if (node.readOnly) {
+                const dot = document.createElement('span');
+                dot.className = 'mn-caret';
+                dot.textContent = '·';
+                row.appendChild(dot);
+                const label = document.createElement('span');
+                label.className = 'mn-header mn-readonly';
+                label.textContent = node.header;
+                label.title = 'The tree holds this and the editor leaves it exactly as it is — edit it in the XAML.';
+                row.appendChild(label);
+                body.appendChild(row);
+                return;
+            }
+            const caret = document.createElement('span');
+            caret.className = 'mn-caret';
+            caret.textContent = (depth < TREE_MAX_DEPTH_UI && node.children.length) ? '▾' : '·';
+            row.appendChild(caret);
+            const header = document.createElement('input');
+            header.type = 'text';
+            header.className = 'mn-header';
+            header.value = node.header;
+            header.placeholder = 'Node text (Header)';
+            header.title = 'The text this node shows';
+            header.addEventListener('input', () => { node.header = header.value; });
+            row.appendChild(header);
+            const tick = document.createElement('label');
+            tick.className = 'mn-check';
+            tick.title = 'Visible expanded when the form opens (IsExpanded)';
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.checked = !!node.expanded;
+            box.addEventListener('change', () => { node.expanded = box.checked; });
+            tick.appendChild(box);
+            tick.appendChild(document.createTextNode('Expanded'));
+            row.appendChild(tick);
+            // Grow, nest, un-nest, reorder, remove — in the order a novice needs them.
+            row.appendChild(treeBtn('+ child', 'Add a node inside this one', () => {
+                node.children.push({ header: 'Item', expanded: false, children: [] });
+                renderTreeRows();
+                treeFocus(path.concat(node.children.length - 1));
+            }, depth >= TREE_MAX_DEPTH_UI));
+            row.appendChild(treeBtn('+ sibling', 'Add a node next to this one', () => {
+                list.splice(idx + 1, 0, { header: 'Item', expanded: false, children: [] });
+                renderTreeRows();
+                treeFocus(path.slice(0, -1).concat(idx + 1));
+            }));
+            row.appendChild(treeBtn('\u21e5', 'Nest: make this a child of the node above it', () => {
+                if (idx === 0) return;
+                const prev = list[idx - 1];
+                if (!prev || prev.readOnly) return;
+                list.splice(idx, 1);
+                prev.children.push(node);
+                prev.expanded = true;
+                renderTreeRows();
+                treeFocus(path.slice(0, -1).concat(idx - 1, prev.children.length - 1));
+            }, idx === 0 || depth >= TREE_MAX_DEPTH_UI || !!(list[idx - 1] && list[idx - 1].readOnly)));
+            row.appendChild(treeBtn('\u21e4', 'Un-nest: move this out to the level above', () => {
+                if (path.length === 1) return;
+                const parent = treeParentOf(path);
+                const grand = treeParentOf(path.slice(0, -1));
+                if (!parent || !grand) return;
+                grand.list.splice(grand.idx + 1, 0, node);
+                parent.list.splice(parent.idx, 1);
+                renderTreeRows();
+                treeFocus(path.slice(0, -2).concat(grand.idx + 1));
+            }, path.length === 1));
+            row.appendChild(treeBtn('\u2191', 'Move this node up among its siblings', () => {
+                if (idx === 0) return;
+                list.splice(idx - 1, 0, list.splice(idx, 1)[0]);
+                renderTreeRows();
+                treeFocus(path.slice(0, -1).concat(idx - 1));
+            }, idx === 0));
+            row.appendChild(treeBtn('\u2193', 'Move this node down among its siblings', () => {
+                if (idx >= list.length - 1) return;
+                list.splice(idx + 1, 0, list.splice(idx, 1)[0]);
+                renderTreeRows();
+                treeFocus(path.slice(0, -1).concat(idx + 1));
+            }, idx >= list.length - 1));
+            row.appendChild(treeBtn('\u2715', 'Delete this node and everything inside it', () => {
+                list.splice(idx, 1);
+                renderTreeRows();
+            }));
+            body.appendChild(row);
+        });
+    }
+
+    function openTreeEditor(name) {
+        const src = (state.frame && state.frame.trees && name) ? (state.frame.trees[name] || []) : [];
+        treeEdit = { name: name || null, tree: src.map(treeCopy) };
+        els.treeTitle.textContent = 'Tree Items' + (treeEdit.name ? ' — ' + treeEdit.name : '');
+        els.treeModal.hidden = false;
+        renderTreeRows();
+    }
+
+    function closeTreeEditor() { els.treeModal.hidden = true; treeEdit = null; }
+
+    els.treeAdd.addEventListener('click', () => {
+        if (!treeEdit) return;
+        treeEdit.tree.push({ header: 'Item', expanded: false, children: [] });
+        renderTreeRows();
+        treeFocus([treeEdit.tree.length - 1]);
+    });
+    els.treeCancel.addEventListener('click', closeTreeEditor);
+    els.treeSave.addEventListener('click', () => {
+        if (treeEdit) post({ type: 'saveTreeItems', name: treeEdit.name, items: treeEdit.tree });
+        closeTreeEditor();
+    });
+
     function openMenuEditor(name, topIdx) {
         const src = (state.frame && state.frame.menus && name) ? (state.frame.menus[name] || []) : [];
         menuEdit = { name: name || null, tree: src.map(menuCopy) };
