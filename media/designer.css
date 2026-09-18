@@ -439,6 +439,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     font-style: italic;
     cursor: default;
 }
+
 .mn-check {
     display: inline-flex;
     align-items: center;
@@ -447,6 +448,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     color: #c9d4e4;
     white-space: nowrap;
 }
+
 .mn-caret {
     width: 20px;
     flex: 0 0 20px;
