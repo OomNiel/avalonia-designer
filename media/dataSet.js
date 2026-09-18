@@ -394,7 +394,7 @@
             + 'depth number (0, 1, 2) or a dotted code like 1.2.3.');
         const rsel = document.createElement('select');
         for (const [value, label] of [['', 'Not used'], ['name', 'Node text (Name)'], ['id', 'Id'],
-            ['parent', 'Parent'], ['level', 'Level or path']]) {
+        ['parent', 'Parent'], ['level', 'Level or path']]) {
             const o = document.createElement('option');
             o.value = value;
             o.textContent = label;

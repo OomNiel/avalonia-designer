@@ -12,8 +12,10 @@ import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
 import { findProject, ProjectInfo } from './projectParser';
 import { PreviewerHostManager } from './hostClient';
 
-/** Control types that can display a DataSet table (they take an ItemsSource). */
-const BINDABLE_TAGS = new Set(['DataGrid', 'ListBox', 'ComboBox', 'ItemsControl']);
+/** Control types that can display a DataSet table (they take an ItemsSource).
+ *  TreeView is here for hierarchy tables: it needs `role` columns to build the nodes (see
+ *  `canBindToTree`), which is why binding one is checked at bind time rather than by omission. */
+const BINDABLE_TAGS = new Set(['DataGrid', 'ListBox', 'ComboBox', 'ItemsControl', 'TreeView']);
 
 /** Recursively lists files under `dir` (skipping build/ignore folders). */
 function walkProject(dir: string, out: string[]): void {
@@ -151,7 +153,7 @@ export function ensureTreeItemTemplate(axamlPath: string, controlName: string): 
     const template = /<TreeView\.ItemTemplate\b/.test(inner)
         ? ''
         : '\n  <TreeView.ItemTemplate>\n    <TreeDataTemplate ItemsSource="{Binding Children}">\n'
-            + '      <TextBlock Text="{Binding Header}"/>\n    </TreeDataTemplate>\n  </TreeView.ItemTemplate>';
+        + '      <TextBlock Text="{Binding Header}"/>\n    </TreeDataTemplate>\n  </TreeView.ItemTemplate>';
     let cleared = false;
     // Nested nodes make this a loop: the pattern is non-greedy, so one pass removes a leaf, the next its parent.
     while (/<TreeViewItem\b/.test(inner)) {
@@ -571,7 +573,8 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                             if (!hasDataSetBinding(vscode.Uri.file(axaml), b)) {
                                 await bindControlToDataSet(vscode.Uri.file(axaml), b);
                                 if (ctrl.type === 'DataGrid') ensureDataGridAutoGenerateColumns(axaml, control);
-                                await this.postStatus(panel, `Re-wrote the binding to ${control} (the code-behind line was missing).`);
+                                const treeNote = ctrl.type === 'TreeView' ? this.prepareTree(axaml, control) : '';
+                                await this.postStatus(panel, `Re-wrote the binding to ${control} (the code-behind line was missing).${treeNote}`);
                             } else {
                                 await this.postStatus(panel, `Already bound to ${control}.`);
                             }
@@ -606,11 +609,13 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                                     // DataGrid: AutoGenerateColumns defaults to False in Avalonia, so make
                                     // sure the XAML carries it, or the bound grid shows no columns/rows.
                                     if (ctrl.type === 'DataGrid') ensureDataGridAutoGenerateColumns(axaml, control);
-                                    if (ctrl.type === 'TreeView') await this.applyTreeTemplate(axaml, control, panel);
+                                    // A TreeView also needs a template and no inline nodes; the note rides the
+                                    // status line below rather than being posted here (see prepareTree).
+                                    const treeNote = ctrl.type === 'TreeView' ? this.prepareTree(axaml, control) : '';
                                     // Regenerate the DataSet class so the newly bound table gets its sample row.
                                     const gen = await this.writeGeneratedFiles(doc);
                                     this.notifyEdit(doc, panel, before);
-                                    await this.postStatus(panel, `Bound ${t.name} to ${control} (${path.basename(filePath)})${gen ? `; regenerated ${gen}.` : ''}`);
+                                    await this.postStatus(panel, `Bound ${t.name} to ${control} (${path.basename(filePath)})${gen ? `; regenerated ${gen}.` : ''}${treeNote}`);
                                 } else {
                                     await this.postStatus(panel, `Couldn't write the code-behind for ${control}.`);
                                 }
@@ -860,20 +865,16 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
 
     /**
      * After binding a table to a TreeView (2026-09-18): make sure the form can show a tree at all — see
-     * `ensureTreeItemTemplate` — and say so when the nodes that were in the form had to go. Nothing is said
-     * when it was already right, so the caller's own "Bound to X" line stays the only message.
+     * `ensureTreeItemTemplate`. Returns a fragment for the caller's status line, or '' when nothing had to
+     * change: this must NOT post a status of its own, because the caller's "Bound …" line is posted right
+     * after and would replace it (the inline-node removal is exactly the note the user has to see).
      */
-    private async applyTreeTemplate(axaml: string, control: string, panel: vscode.WebviewPanel): Promise<void> {
+    private prepareTree(axaml: string, control: string): string {
         const what = ensureTreeItemTemplate(axaml, control);
-        if (what === 'template' || what === 'both') {
-            await this.postStatus(panel, `"${control}" can show the tree now.` + (what === 'both'
-                ? ' The nodes that were in the form were removed, because a bound TreeView cannot also hold'
-                    + ' inline nodes — the table supplies them now.'
-                : ''));
-        } else if (what === 'cleared') {
-            await this.postStatus(panel,
-                `Removed the inline nodes from "${control}" — a bound TreeView cannot also hold inline nodes.`);
-        }
+        if (what === 'template') return ' Added the tree template.';
+        if (what === 'both') return ' Added the tree template and removed the inline nodes (a bound TreeView can\'t hold both).';
+        if (what === 'cleared') return ' Removed the inline nodes (a bound TreeView can\'t hold both).';
+        return '';
     }
 
     private async postStatus(panel: vscode.WebviewPanel, message: string): Promise<void> {
