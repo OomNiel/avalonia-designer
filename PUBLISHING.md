@@ -245,6 +245,12 @@ listing when that release is uploaded — a repo-only README edit does not.
 > (3) **The 30B step-up did nothing**: the escalation worked and then the repair loop cancelled itself on
 > `!panel.visible`, because the modal is answered from wherever the user is looking. That run now ignores
 > visibility, a cancel is logged, a throw is caught *and* shown, and the result reaches the status bar — see §137.
+> (4) Added the same day: **nine Toolbox controls** (`ProgressBar`, `Slider`, `Separator`, `MaskedTextBox`,
+> `NumericUpDown`, `PathIcon`, `ToggleSwitch`, `Polyline`, `Polygon`, each with its Properties rows); a check
+> rule for an **unguarded directory listing** — the exception a build cannot see (§140); and one copy of the
+> shared DataSet runtime helpers per project (two DataSets in one namespace used to break the build with
+> CS0101). The dataset→TreeView binding was built, judged impractical and **removed before release** — it
+> never shipped, and the TreeView control itself is untouched.
 > (4) **That report came back — *"No change. The Code Fix does not start the ai train, and the 30B does
 > nothing."*** — because the offer was made from the *analyser* while the AI fallback sat behind
 > `if (!form) return 'no-fix';` in `fixCompilerError`: a file that is not an open form's code-behind was never
@@ -260,12 +266,12 @@ listing when that release is uploaded — a repo-only README edit does not.
 > model when it cannot act; the 30B step-up hands the 7B back; and the log is clamped by trimming the oldest
 > lines instead of deleting the whole file — see `NOTES.md` §139.
 >
-> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **927,818 bytes**, sha256
-> `b3cc77d0e240281dc2be22da6005531fbd4545a36d2b05686637d874389e9cff` — the **final** build of `0.10.11`
-> (six earlier builds of this version were installed on this machine but never released, and are all
-> superseded by this one), built by `npm run package` after a green suite (**5,059 assertions, 0 failed**;
-> **5,066** with the property-compliance reset forced, which is what verified TreeView's properties against
-> Avalonia 12.1.1), manifest `Version="0.10.11"` with **no `PreRelease` attribute**, and
+> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **935,035 bytes**, sha256
+> `c1d8edd0cc396fdc0d143da2ac006f962630c574e98a8828d1299a6f5f95c841` — the **final** build of `0.10.11`
+> (the earlier builds of this version were installed on this machine but never released, and are all
+> superseded by this one), built by `npm run package` after a green suite (**5,364 assertions, 0 failed**;
+> the property-compliance reset run is what verifies every catalog property against Avalonia 12.1.1), manifest
+> `Version="0.10.11"` with **no `PreRelease` attribute**, and
 > audited the same way as `0.10.9` (extract the VSIX, grep it for the user name, host name, project folders and
 > server alias — none present). **THIS is the file to upload** once `0.10.10` has gone out; `0.10.10` remains the
 > file for the *imminent* upload, frozen below.
