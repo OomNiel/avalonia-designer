@@ -642,7 +642,12 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'IsChecked', label: 'On', kind: 'dropdown', options: BOOL },
         { key: 'OnContent', label: 'Text when On', kind: 'text' },
         { key: 'OffContent', label: 'Text when Off', kind: 'text' },
-        { key: 'Content', label: 'Label', kind: 'text' }
+        { key: 'Content', label: 'Label', kind: 'text' },
+        // A LOCAL Background wins over the Fluent ControlTheme's own setter, so this paints the
+        // control's back plate behind the label + switch (the toggle pill itself keeps its theme
+        // brush — ToggleSwitchFillOff/On — and is NOT recoloured by this). Setting it makes the
+        // Theme row read 'Custom'; Theme = System clears it again (THEME_COLOR_KEYS).
+        { key: 'Background', label: 'Background', kind: 'color', options: COLORS }
     ],
     MaskedTextBox: [
         { key: 'Text', label: 'Text', kind: 'text' },
@@ -656,7 +661,10 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Maximum', label: 'Maximum', kind: 'number' },
         { key: 'Increment', label: 'Step', kind: 'number' },
         { key: 'FormatString', label: 'Format', kind: 'text' },
-        { key: 'ShowButtonSpinner', label: 'Show Arrows', kind: 'dropdown', options: BOOL }
+        { key: 'ShowButtonSpinner', label: 'Show Arrows', kind: 'dropdown', options: BOOL },
+        // The template's ButtonSpinner binds Background, so this fills the number field itself.
+        // Setting it makes the Theme row read 'Custom'; Theme = System clears it again.
+        { key: 'Background', label: 'Background', kind: 'color', options: COLORS }
     ],
     Polyline: [
         { key: 'Points', label: 'Points', kind: 'text' },

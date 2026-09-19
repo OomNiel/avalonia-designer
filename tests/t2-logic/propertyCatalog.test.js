@@ -7,7 +7,7 @@
 const { DOMParser } = require('@xmldom/xmldom');
 const {
     propertyDefsFor, PROP_SECTIONS, CONTROL_PROPS, COMMON_PROPS, FONT_PROPS, ANCHOR_PROPS,
-    GRUMPY_ANCHOR_PROPS, CHROME_WINDOW_PROPS
+    GRUMPY_ANCHOR_PROPS, CHROME_WINDOW_PROPS, hasCustomColors, THEME_COLOR_KEYS
 } = require('../../out/propertyCatalog.js');
 
 const NS = 'xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:chrome="using:AvaloniaChrome"';
@@ -288,6 +288,32 @@ module.exports = async (t) => {
             const p = propertyDefsFor(target);
             const unsectioned = p.filter((r) => !r.section && r.key !== '__name__' && r.key !== '__type__').map((r) => r.key);
             t.equal(unsectioned, [], 'sections', `${target.tagName}: every row is pinned or sectioned`);
+        }
+    }
+
+    // --- Background picker on NumericUpDown / ToggleSwitch, and the Theme (System/Custom) rule.
+    //     Asking for a colour must flip the derived Theme row to Custom, and Theme = System must
+    //     drop it again (that is how 'ignored on System' is implemented: the attribute is removed
+    //     from the element, so nothing is left to apply). --------------------------------------
+    {
+        t.ok(THEME_COLOR_KEYS.indexOf('Background') >= 0, 'theme', 'Background is a theme colour key');
+        for (const tag of ['NumericUpDown', 'ToggleSwitch']) {
+            t.ok(CONTROL_PROPS[tag].some((r) => r.key === 'Background'), 'theme', `${tag} lists Background`);
+            const el = elFrom(`<${tag} x:Name="c1"/>`);
+            const bg = keyOf(propertyDefsFor(el), 'Background');
+            t.equal(bg && bg.kind, 'color', 'theme', `${tag} Background is a colour picker`);
+            t.equal(bg && bg.sectionId, 'appearance', 'theme', `${tag} Background is in Appearance`);
+            // Unset: the control follows the OS theme, so the Theme row reads System.
+            t.equal(keyOf(propertyDefsFor(el), '__theme__').value, 'System', 'theme', `${tag} starts on System`);
+            t.equal(hasCustomColors(el), false, 'theme', `${tag} has no custom colour until one is set`);
+            // Set it: Theme is DERIVED from the set colours, so it must now read Custom.
+            el.setAttribute('Background', '#336699');
+            t.equal(keyOf(propertyDefsFor(el), '__theme__').value, 'Custom', 'theme', `${tag} Background makes Theme Custom`);
+            t.equal(hasCustomColors(el), true, 'theme', `${tag} Background counts as a custom colour`);
+            // Theme = System: every theme colour is removed, so the backcolor cannot apply.
+            for (const k of THEME_COLOR_KEYS) el.removeAttribute(k);
+            t.ok(!el.getAttribute('Background'), 'theme', `${tag} Background is gone on System`);
+            t.equal(keyOf(propertyDefsFor(el), '__theme__').value, 'System', 'theme', `${tag} is back on System`);
         }
     }
 };
