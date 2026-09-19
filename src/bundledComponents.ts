@@ -19,7 +19,7 @@
  * current version ships. A genuinely customised file (header changed/removed) is left alone.
  */
 
-export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker';
+export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'GrumpyCharts';
 
 export interface BundledSpec {
     kind: BundledKind;
@@ -60,6 +60,15 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // ShowIcon switch); older copies are a bare path row, so a File Selector and a Folder
             // Selector look identical on the form.
             marker: 'ShowIcon'
+        },
+        {
+            kind: 'GrumpyCharts',
+            file: vb ? 'GrumpyCharts.vb' : 'GrumpyCharts.cs',
+            bundled: /BUNDLED RESOURCE/,
+            // The current chart set can draw the runtime "…" file picker (and grew the
+            // PlotBackOpacity property); older copies have neither, so chart colour/opacity rows
+            // would not take effect on a form whose copy predates them.
+            marker: 'PlotBackOpacityProperty'
         }
     ];
 }

@@ -202,6 +202,8 @@ function generateProject(opts: GenerateOptions): void {
         grumpyVb: readResource(context, 'resources/GrumpyPanel.vb'),
         pathPickerCs: readResource(context, 'resources/PathPicker.cs'),
         pathPickerVb: readResource(context, 'resources/PathPicker.vb'),
+        chartsCs: readResource(context, 'resources/GrumpyCharts.cs'),
+        chartsVb: readResource(context, 'resources/GrumpyCharts.vb'),
         followerCs: readResource(context, 'resources/ColumnFollower.cs'),
         followerVb: readResource(context, 'resources/ColumnFollower.vb'),
         vbBridgeDll: vbBridgeDllPath()

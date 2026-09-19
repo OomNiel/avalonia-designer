@@ -21,6 +21,8 @@ const TOOLBOX_CATEGORY_SHAPES = 'Shapes';
 const TOOLBOX_CATEGORY_DATA = 'Data & grid';
 const TOOLBOX_CATEGORY_PROGRESS = 'Progress, status & misc';
 const TOOLBOX_CATEGORY_BARS = 'Bars';
+// GrumpyCharts — the bundled AvaloniaCharts control set (a line plot and an X,Y plot).
+const TOOLBOX_CATEGORY_CHARTS = 'Charts';
 const TOOLBOX_CATEGORY_DEV = 'Dev Helpers';
 
 /**
@@ -56,6 +58,11 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     // Properties panel for a save-as dialog.
     { label: 'File Selector', tag: 'PathPicker', group: TOOLBOX_CATEGORY_INPUT },
     { label: 'Folder Selector', tag: 'PathPickerFolder', group: TOOLBOX_CATEGORY_INPUT },
+    // GrumpyCharts (the bundled AvaloniaCharts set: dependency-free, self-drawing charts). The line
+    // plot takes Y values in sample order (X runs 0…N-1); the X,Y plot takes (x,y) pairs and can be
+    // markers only, joined, or both. Both can read an .xlsx workbook instead of an inline array.
+    { label: 'Line Plot', tag: 'GrumpyLinePlot', group: TOOLBOX_CATEGORY_CHARTS },
+    { label: 'X, Y Plot', tag: 'GrumpyXYPlot', group: TOOLBOX_CATEGORY_CHARTS },
     { label: 'Panel', tag: 'Panel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'Grid', tag: 'Grid', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'StackPanel', tag: 'StackPanel', group: TOOLBOX_CATEGORY_LAYOUT },
@@ -111,6 +118,7 @@ export const TOOLBOX_CATEGORIES: { label: string; group: string }[] = [
     { label: TOOLBOX_CATEGORY_DATA, group: TOOLBOX_CATEGORY_DATA },
     { label: TOOLBOX_CATEGORY_PROGRESS, group: TOOLBOX_CATEGORY_PROGRESS },
     { label: TOOLBOX_CATEGORY_BARS, group: TOOLBOX_CATEGORY_BARS },
+    { label: TOOLBOX_CATEGORY_CHARTS, group: TOOLBOX_CATEGORY_CHARTS },
     { label: TOOLBOX_CATEGORY_DEV, group: TOOLBOX_CATEGORY_DEV }
 ];
 

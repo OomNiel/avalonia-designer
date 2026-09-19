@@ -795,12 +795,12 @@ public class XamlRenderer
         var prop = target.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
         if (prop is null || !prop.CanWrite) return;
 
-        var converted = ConvertValue(value, prop.PropertyType);
+        var converted = ConvertValue(value, prop.PropertyType, prop);
         try { prop.SetValue(target, converted); }
         catch { /* ignore individual property failures */ }
     }
 
-    private static object? ConvertValue(string value, Type targetType)
+    private static object? ConvertValue(string value, Type targetType, System.Reflection.PropertyInfo? info = null)
     {
         if (targetType == typeof(string)) return value;
         if (targetType == typeof(double) || targetType == typeof(double?))
@@ -837,6 +837,34 @@ public class XamlRenderer
         if (tn == "Avalonia.Media.FontFamily")
         {
             try { return FontFamily.Parse(value); } catch { return null; }
+        }
+        if (tn == "Avalonia.Media.Color")
+        {
+            // The chart controls (AvaloniaCharts) expose Color-typed properties rather than
+            // brushes, so the programmatic builder must parse those too — otherwise BorderBrush,
+            // LineColor and the rest would silently keep their defaults in the preview.
+            var text = value.Trim();
+            if (!text.StartsWith("#")) text = "#" + text;
+            try { return Color.Parse(text); } catch { return Colors.Transparent; }
+        }
+        // Anything carrying a TypeConverter that reads a string — the chart controls' data arrays
+        // (double[] / double[,]) and CornerRadius among them. Avalonia's Geometry parser is picked up
+        // here too, so a <PathIcon Data="…"> finally draws on the designer canvas as well.
+        if (info is not null)
+        {
+            try
+            {
+                var descriptor = System.ComponentModel.TypeDescriptor.GetProperties(info.DeclaringType!)[info.Name];
+                var converter = descriptor?.Converter;
+                if (converter is not null && converter.CanConvertFrom(typeof(string)))
+                {
+                    return converter.ConvertFromInvariantString(value);
+                }
+            }
+            catch
+            {
+                // No converter, or it refused the text — fall through to the raw string.
+            }
         }
         return value;
     }

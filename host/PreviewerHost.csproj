@@ -40,6 +40,10 @@
     <!-- PathPicker (a UserControl subclass, also bundled into generated projects) is linked so the
          builder can realise <chrome:PathPicker> elements — the file/folder selection row. -->
     <Compile Include="../resources/PathPicker.cs" Link="PathPicker.cs" />
+    <!-- GrumpyCharts (the bundled AvaloniaCharts chart controls, also copied into generated
+         projects) is linked so the builder can realise <charts:GrumpyLinePlot> / <charts:GrumpyXYPlot>
+         and draw the real chart in the designer canvas. -->
+    <Compile Include="../resources/GrumpyCharts.cs" Link="GrumpyCharts.cs" />
   </ItemGroup>
 
 </Project>

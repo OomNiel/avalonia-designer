@@ -53,6 +53,12 @@ const FONT_STYLES = ['Normal', 'Italic', 'Oblique'];
 const STRETCH = ['None', 'Fill', 'Uniform', 'UniformToFill'];
 const STRETCH_DIR = ['UpOnly', 'DownOnly', 'Both'];
 const ORIENTATION = ['Vertical', 'Horizontal'];
+
+/** GrumpyCharts: how a plot line or the gridlines are dashed, the X,Y plot's marker symbols, the
+ *  chart title's position, and which sheet columns/rows hold the data. */
+const CHART_LINE_STYLES = ['Solid', 'Dash', 'Dot', 'DashDot'];
+const CHART_MARKERS = ['None', 'Dot', 'Cross', 'Square', 'Diamond'];
+const CHART_TITLE_POSITIONS = ['Top', 'Bottom', 'Left', 'Right'];
 const DOCK_OPTIONS = ['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom'];
 // PathPicker.PathType — which platform dialog the Browse button opens. SaveFile need not exist yet
 // (it is the “choose where to save” variant).
@@ -681,6 +687,98 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Data', label: 'Path Data', kind: 'text' },
         { key: 'Foreground', label: 'Icon Colour', kind: 'color', options: COLORS }
     ],
+    // --- GrumpyCharts (the bundled AvaloniaCharts control set, 2026-09-19) ---
+    // The two charts share every styling row; they differ in the data row (Values for a line plot,
+    // Points for an X,Y plot) and in the marker rows, which only the X,Y plot draws.
+    GrumpyLinePlot: [
+        { key: 'Values', label: 'Values', kind: 'text' },
+        { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
+        { key: 'ShowBrowse', label: 'Browse Button', kind: 'dropdown', options: BOOL },
+        { key: 'XColumn', label: 'X Column', kind: 'text' },
+        { key: 'YColumn', label: 'Y Column', kind: 'text' },
+        { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
+        { key: 'FirstDataRow', label: 'First Data Row', kind: 'number' },
+        { key: 'LiveUpdate', label: 'Live Update', kind: 'dropdown', options: BOOL },
+        { key: 'Title', label: 'Title', kind: 'text' },
+        { key: 'ShowTitle', label: 'Show Title', kind: 'dropdown', options: BOOL },
+        { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
+        { key: 'TitleColor', label: 'Title Colour', kind: 'color', options: COLORS },
+        { key: 'TitleFontSize', label: 'Title Size', kind: 'number' },
+        { key: 'LineColor', label: 'Line Colour', kind: 'color', options: COLORS },
+        { key: 'LineThickness', label: 'Line Thickness', kind: 'number' },
+        { key: 'LineStyle', label: 'Line Style', kind: 'dropdown', options: CHART_LINE_STYLES },
+        { key: 'PlotBackColor', label: 'Plot Backcolour', kind: 'color', options: COLORS },
+        { key: 'PlotBackOpacity', label: 'Plot Opacity', kind: 'number' },
+        { key: 'ShowBorder', label: 'Border', kind: 'dropdown', options: BOOL },
+        { key: 'BorderBrush', label: 'Border Colour', kind: 'color', options: COLORS },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'number' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'ShowGrid', label: 'Gridlines', kind: 'dropdown', options: BOOL },
+        { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS },
+        { key: 'GridThickness', label: 'Grid Thickness', kind: 'number' },
+        { key: 'GridStyle', label: 'Grid Style', kind: 'dropdown', options: CHART_LINE_STYLES },
+        { key: 'ShowAxes', label: 'Axes', kind: 'dropdown', options: BOOL },
+        { key: 'AxisColor', label: 'Axis Colour', kind: 'color', options: COLORS },
+        { key: 'ShowMajorTicks', label: 'Major Ticks', kind: 'dropdown', options: BOOL },
+        { key: 'MajorTickLength', label: 'Major Tick Size', kind: 'number' },
+        { key: 'ShowMinorTicks', label: 'Minor Ticks', kind: 'dropdown', options: BOOL },
+        { key: 'MinorTickLength', label: 'Minor Tick Size', kind: 'number' },
+        { key: 'ShowTickLabels', label: 'Tick Labels', kind: 'dropdown', options: BOOL },
+        { key: 'TickLabelFontSize', label: 'Label Size', kind: 'number' },
+        { key: 'ShowAxisTitles', label: 'Axis Names', kind: 'dropdown', options: BOOL },
+        { key: 'XAxisTitle', label: 'X Axis Name', kind: 'text' },
+        { key: 'YAxisTitle', label: 'Y Axis Name', kind: 'text' },
+        { key: 'MinX', label: 'X Min', kind: 'number' },
+        { key: 'MaxX', label: 'X Max', kind: 'number' },
+        { key: 'MinY', label: 'Y Min', kind: 'number' },
+        { key: 'MaxY', label: 'Y Max', kind: 'number' }
+    ],
+    GrumpyXYPlot: [
+        { key: 'Points', label: 'Points (x,y)', kind: 'text' },
+        { key: 'MarkerStyle', label: 'Marker', kind: 'dropdown', options: CHART_MARKERS },
+        { key: 'MarkerSize', label: 'Marker Size', kind: 'number' },
+        { key: 'Connected', label: 'Join Points', kind: 'dropdown', options: BOOL },
+        { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
+        { key: 'ShowBrowse', label: 'Browse Button', kind: 'dropdown', options: BOOL },
+        { key: 'XColumn', label: 'X Column', kind: 'text' },
+        { key: 'YColumn', label: 'Y Column', kind: 'text' },
+        { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
+        { key: 'FirstDataRow', label: 'First Data Row', kind: 'number' },
+        { key: 'LiveUpdate', label: 'Live Update', kind: 'dropdown', options: BOOL },
+        { key: 'Title', label: 'Title', kind: 'text' },
+        { key: 'ShowTitle', label: 'Show Title', kind: 'dropdown', options: BOOL },
+        { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
+        { key: 'TitleColor', label: 'Title Colour', kind: 'color', options: COLORS },
+        { key: 'TitleFontSize', label: 'Title Size', kind: 'number' },
+        { key: 'LineColor', label: 'Line Colour', kind: 'color', options: COLORS },
+        { key: 'LineThickness', label: 'Line Thickness', kind: 'number' },
+        { key: 'LineStyle', label: 'Line Style', kind: 'dropdown', options: CHART_LINE_STYLES },
+        { key: 'PlotBackColor', label: 'Plot Backcolour', kind: 'color', options: COLORS },
+        { key: 'PlotBackOpacity', label: 'Plot Opacity', kind: 'number' },
+        { key: 'ShowBorder', label: 'Border', kind: 'dropdown', options: BOOL },
+        { key: 'BorderBrush', label: 'Border Colour', kind: 'color', options: COLORS },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'number' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'ShowGrid', label: 'Gridlines', kind: 'dropdown', options: BOOL },
+        { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS },
+        { key: 'GridThickness', label: 'Grid Thickness', kind: 'number' },
+        { key: 'GridStyle', label: 'Grid Style', kind: 'dropdown', options: CHART_LINE_STYLES },
+        { key: 'ShowAxes', label: 'Axes', kind: 'dropdown', options: BOOL },
+        { key: 'AxisColor', label: 'Axis Colour', kind: 'color', options: COLORS },
+        { key: 'ShowMajorTicks', label: 'Major Ticks', kind: 'dropdown', options: BOOL },
+        { key: 'MajorTickLength', label: 'Major Tick Size', kind: 'number' },
+        { key: 'ShowMinorTicks', label: 'Minor Ticks', kind: 'dropdown', options: BOOL },
+        { key: 'MinorTickLength', label: 'Minor Tick Size', kind: 'number' },
+        { key: 'ShowTickLabels', label: 'Tick Labels', kind: 'dropdown', options: BOOL },
+        { key: 'TickLabelFontSize', label: 'Label Size', kind: 'number' },
+        { key: 'ShowAxisTitles', label: 'Axis Names', kind: 'dropdown', options: BOOL },
+        { key: 'XAxisTitle', label: 'X Axis Name', kind: 'text' },
+        { key: 'YAxisTitle', label: 'Y Axis Name', kind: 'text' },
+        { key: 'MinX', label: 'X Min', kind: 'number' },
+        { key: 'MaxX', label: 'X Max', kind: 'number' },
+        { key: 'MinY', label: 'Y Min', kind: 'number' },
+        { key: 'MaxY', label: 'Y Max', kind: 'number' }
+    ],
     Line: [
         { key: 'Stroke', label: 'Line Colour', kind: 'color', options: COLORS },
         { key: 'StrokeThickness', label: 'Line Thickness', kind: 'number' },
@@ -815,6 +913,49 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     OnContent: { desc: 'What the switch shows when it is ON.' },
     OffContent: { desc: 'What the switch shows when it is OFF.' },
 
+    // --- GrumpyCharts (the bundled chart control set, 2026-09-19) ---
+    Values: { desc: 'The Y values to plot, separated by commas (e.g. "4,9,6,12"). X is the sample number: 0, 1, 2…' },
+    SourceFile: { desc: 'An .xlsx workbook to read the values from. Empty = use the inline data instead.' },
+    ShowBrowse: { desc: 'Draw a "…" button in the chart corner that opens the file dialog to pick the workbook at runtime.' },
+    XColumn: { desc: 'Which spreadsheet column holds the X values (A, B, C…). Default B.' },
+    YColumn: { desc: 'Which spreadsheet column holds the Y values. Default C (a line plot falls back to the X column when this one is empty).' },
+    HeaderRow: { desc: 'The spreadsheet row holding the axis names. Default 1 (the top row).' },
+    FirstDataRow: { desc: 'The spreadsheet row where the values start. Default 2 (everything below the names row).' },
+    LiveUpdate: { desc: 'Re-read the spreadsheet when it changes on disk. Save the sheet and the chart redraws.' },
+    ShowTitle: { desc: 'Draw the chart title.' },
+    TitlePosition: { desc: 'Which side of the plot the title sits on: Top, Bottom, Left (rotated) or Right (rotated).' },
+    TitleColor: { desc: 'Colour of the chart title.' },
+    TitleFontSize: { unit: 'px', desc: 'Font size of the chart title.' },
+    LineColor: { kind: 'color', options: COLORS, desc: 'Colour of the plotted line and its markers.' },
+    LineThickness: { kind: 'number', unit: 'px', desc: 'Thickness of the plotted line.' },
+    LineStyle: { desc: 'How the plotted line is drawn: Solid, Dash, Dot or DashDot.' },
+    MarkerStyle: { desc: 'The symbol drawn at each X,Y point: None, Dot, Cross, Square or Diamond.' },
+    MarkerSize: { kind: 'number', unit: 'px', desc: 'Size of the marker symbol.' },
+    Connected: { desc: 'Join the points with a line. False = markers only (a scatter plot).' },
+    PlotBackColor: { kind: 'color', options: COLORS, desc: 'Fill colour of the plot area (the region inside the axes).' },
+    PlotBackOpacity: { kind: 'number', unit: '%', desc: 'Plot-area opacity in percent: 0 = invisible (the form shows through), 100 = solid.' },
+    ShowBorder: { desc: 'Draw the border around the chart control.' },
+    // BorderBrush / BorderThickness are documented once, above, for every control that has them.
+    ShowGrid: { desc: 'Draw gridlines at the major ticks.' },
+    GridColor: { kind: 'color', options: COLORS, desc: 'Colour of the gridlines.' },
+    GridThickness: { kind: 'number', unit: 'px', desc: 'Thickness of the gridlines.' },
+    GridStyle: { desc: 'How the gridlines are drawn: Solid, Dash, Dot or DashDot.' },
+    ShowAxes: { desc: 'Draw the two axis lines along the left and bottom of the plot area.' },
+    AxisColor: { kind: 'color', options: COLORS, desc: 'Colour of the axes, the ticks, the tick labels and the axis names.' },
+    ShowMajorTicks: { desc: 'Draw the longer ticks at every labelled value.' },
+    MajorTickLength: { kind: 'number', unit: 'px', desc: 'Length of the major ticks.' },
+    ShowMinorTicks: { desc: 'Draw the shorter ticks between the labelled values (four per interval).' },
+    MinorTickLength: { kind: 'number', unit: 'px', desc: 'Length of the minor ticks.' },
+    ShowTickLabels: { desc: 'Draw the numbers along the axes.' },
+    TickLabelFontSize: { kind: 'number', unit: 'px', desc: 'Font size of the tick numbers and the axis names.' },
+    ShowAxisTitles: { desc: 'Draw the axis names — from your X/Y Axis Name, or the spreadsheet\'s column headers.' },
+    XAxisTitle: { desc: 'Name shown along the bottom axis. Empty = use the spreadsheet\'s column header.' },
+    YAxisTitle: { desc: 'Name shown beside the left axis. Empty = use the spreadsheet\'s column header.' },
+    MinX: { desc: 'Lowest X shown. Empty = auto-fit to the data.' },
+    MaxX: { desc: 'Highest X shown. Empty = auto-fit to the data.' },
+    MinY: { desc: 'Lowest Y shown. Empty = auto-fit to the data.' },
+    MaxY: { desc: 'Highest Y shown. Empty = auto-fit to the data.' },
+
     // booleans / common state
     IsVisible: { desc: 'Whether the control is shown. (Avalonia uses IsVisible, not Visibility.)' },
     IsEnabled: { desc: 'Whether the control is interactive (enabled).' },
@@ -933,7 +1074,12 @@ const ADVANCED_KEYS = new Set([
     'MaxDropDownHeight', 'WrapSelection', 'IsTextSearchEnabled',
     'AutoGenerateColumns', 'CanUserReorderColumns', 'CanUserResizeColumns', 'CanUserSortColumns',
     'FrozenColumnCount', 'HeadersVisibility', 'GridLinesVisibility', 'ColumnWidth', 'RowHeight', 'RowHeaderWidth',
-    'ShowActivated', 'Topmost', 'SizeToContent', 'ExtendClientAreaToDecorationsHint'
+    'ShowActivated', 'Topmost', 'SizeToContent', 'ExtendClientAreaToDecorationsHint',
+    // GrumpyCharts: the spreadsheet plumbing and the scale overrides are for the times you need
+    // them — a beginner only ever touches Values/Points, the title, the colours and the markers.
+    'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow', 'ShowBrowse',
+    'TitleFontSize', 'TickLabelFontSize', 'MajorTickLength', 'MinorTickLength', 'GridThickness',
+    'MarkerSize', 'MinX', 'MaxX', 'MinY', 'MaxY'
 ]);
 
 /**
@@ -1114,6 +1260,51 @@ export const DEFAULTS: Record<string, string> = {
     FormatString: '',
     Mask: '0000-0000',
     Watermark: '',
+    // --- GrumpyCharts: the control's own defaults, so the panel shows a real value and setting one
+    // back to its default strips the attribute again. 'Values'/'Points' start empty on purpose: the
+    // toolbox snippet fills them, so a dropped chart draws immediately. ---
+    Values: '',
+    SourceFile: '',
+    ShowBrowse: 'False',
+    XColumn: 'B',
+    YColumn: 'C',
+    HeaderRow: '1',
+    FirstDataRow: '2',
+    LiveUpdate: 'True',
+    ShowTitle: 'False',
+    TitlePosition: 'Top',
+    TitleColor: '#303030',
+    TitleFontSize: '14',
+    LineColor: '#2D7DD2',
+    LineThickness: '2',
+    LineStyle: 'Solid',
+    MarkerStyle: 'Dot',
+    MarkerSize: '8',
+    Connected: 'True',
+    PlotBackColor: '#FFFFFF',
+    PlotBackOpacity: '100',
+    ShowBorder: 'True',
+    // BorderBrush / BorderThickness already have their generic (unset) defaults above; a chart that
+    // leaves them unset simply draws its own built-in border colour and width.
+    ShowGrid: 'True',
+    GridColor: '#E8E8E8',
+    GridThickness: '1',
+    GridStyle: 'Solid',
+    ShowAxes: 'True',
+    AxisColor: '#666666',
+    ShowMajorTicks: 'True',
+    MajorTickLength: '6',
+    ShowMinorTicks: 'True',
+    MinorTickLength: '3',
+    ShowTickLabels: 'True',
+    TickLabelFontSize: '11',
+    ShowAxisTitles: 'True',
+    XAxisTitle: '',
+    YAxisTitle: '',
+    MinX: '',
+    MaxX: '',
+    MinY: '',
+    MaxY: '',
     OnContent: 'On',
     OffContent: 'Off',
     Radius: '',
@@ -1283,7 +1474,18 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'Source', 'Stretch', 'StretchDirection', 'Icon', 'TitleBarIcon', 'ShowIcon',
             'TitleBarBackground', 'TitleBarForeground',
             // Point-defined shapes and path icons (2026-09-19)
-            'Points', 'Data'
+            'Points', 'Data',
+            // GrumpyCharts (the bundled chart control set, 2026-09-19): the frame, the plot area and
+            // its opacity, the plot line, the markers, the gridlines, the axes with their ticks and
+            // labels, and the title are all style rows, so they live in Appearance.
+            'ShowBorder', 'PlotBackColor', 'PlotBackOpacity',
+            'LineColor', 'LineThickness', 'LineStyle',
+            'MarkerStyle', 'MarkerSize',
+            'ShowGrid', 'GridColor', 'GridThickness', 'GridStyle',
+            'ShowAxes', 'AxisColor',
+            'ShowMajorTicks', 'MajorTickLength', 'ShowMinorTicks', 'MinorTickLength',
+            'ShowTickLabels', 'TickLabelFontSize', 'ShowAxisTitles',
+            'ShowTitle', 'TitleColor', 'TitlePosition', 'TitleFontSize', 'ShowBrowse'
         ]
     },
     {
@@ -1301,7 +1503,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'WrapSelection', 'SelectionStart', 'SelectionEnd',
             'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview',
             // The 2026-09-19 controls: switch state text, the masked box's mask and hint, number format
-            'OnContent', 'OffContent', 'Mask', 'Watermark', 'FormatString'
+            'OnContent', 'OffContent', 'Mask', 'Watermark', 'FormatString',
+            // GrumpyCharts: the axis names (the spreadsheet's row-1 column headers by default)
+            'XAxisTitle', 'YAxisTitle'
         ]
     },
     {
@@ -1315,7 +1519,12 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'CanUserSortColumns', 'CanUserReorderColumns', 'CanUserResizeColumns',
             'FirstRow', 'FirstColumn', 'IsUndoEnabled', 'UndoRedoDepth',
             // Numeric payload of the 2026-09-19 controls (progress bar, slider, number box)
-            'Value', 'Minimum', 'Maximum', 'Increment', 'TickFrequency'
+            'Value', 'Minimum', 'Maximum', 'Increment', 'TickFrequency',
+            // GrumpyCharts data: the inline array, the spreadsheet link with its columns and rows,
+            // and the optional fixed axis bounds (empty = auto-fit to the data). 'Points' is listed
+            // under Appearance, where the point-defined shapes already keep it.
+            'Values', 'SourceFile', 'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow',
+            'MinX', 'MaxX', 'MinY', 'MaxY'
         ]
     },
     {
@@ -1333,7 +1542,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'Topmost', 'ShowInTaskbar', 'ShowActivated', 'SystemDecorations',
             'ExtendClientAreaToDecorationsHint',
             // State flags of the 2026-09-19 controls
-            'IsIndeterminate', 'IsSnapToTickEnabled', 'ShowButtonSpinner'
+            'IsIndeterminate', 'IsSnapToTickEnabled', 'ShowButtonSpinner',
+            // GrumpyCharts: join the X,Y points with a line, and re-read the spreadsheet on change
+            'Connected', 'LiveUpdate'
         ]
     }
 ];

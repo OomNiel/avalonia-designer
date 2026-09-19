@@ -1193,6 +1193,9 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
     needsHelper('ChromeWindow', usesChrome && (ax.rootLocal === 'ChromeWindow' || /ChromeWindow/.test(code.baseType)));
     needsHelper('GrumpyPanel', /\bGrumpyPanel\b/.test(code.body) || /\bchrome:GrumpyPanel\b/.test(ax.text));
     needsHelper('PathPicker', /\bPathPicker\b/.test(code.body) || /\bchrome:PathPicker\b/.test(ax.text));
+    // GrumpyCharts: the chart controls live in the bundled AvaloniaCharts file, so a form that uses
+    // one needs GrumpyCharts.cs (or .vb) beside ChromeWindow.cs.
+    needsHelper('GrumpyCharts', /\bGrumpy(?:Line|XY)Plot\b/.test(code.body) || /\bcharts:Grumpy(?:Line|XY)Plot\b/.test(ax.text));
     needsHelper('AnchorHelper', /\bAnchorHelper\b/.test(code.body) || /\bchrome:AnchorHelper\b/.test(ax.text));
     needsHelper('ColumnFollower', /\bColumnFollower\b/.test(code.body));
 

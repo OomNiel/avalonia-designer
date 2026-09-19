@@ -353,6 +353,11 @@ export class XamlModel {
         if (localName(el.tagName) === 'GrumpyPanel' || localName(el.tagName) === 'PathPicker') {
             this.ensureChromeNamespace();
         }
+        // GrumpyCharts is a second bundled control set (AvaloniaCharts) — its snippets use the
+        // `charts` prefix, so the root must declare xmlns:charts for the XAML to compile.
+        if (localName(el.tagName) === 'GrumpyLinePlot' || localName(el.tagName) === 'GrumpyXYPlot') {
+            this.ensureXmlns('charts', 'using:AvaloniaCharts');
+        }
 
         const parentTag = localName(parent.tagName);
         const windowLike = parentTag === 'Window' || /window$/i.test(parentTag);

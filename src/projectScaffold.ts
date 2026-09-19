@@ -51,6 +51,11 @@ export interface ScaffoldOptions {
     pathPickerCs?: string;
     /** Contents of PathPicker.vb (bundled resource — see pathPickerCs). Optional. */
     pathPickerVb?: string;
+    /** Contents of GrumpyCharts.cs (bundled resource — the chart control set behind the Charts
+     *  tools: a line plot and an X,Y plot). Optional, like the other bundled files. */
+    chartsCs?: string;
+    /** Contents of GrumpyCharts.vb (bundled resource — see chartsCs). Optional. */
+    chartsVb?: string;
     /** Contents of ColumnFollower.cs (bundled resource — the live one-column view a read-only
      *  control follows a bound DataGrid with). Optional: when omitted the file is not written, so
      *  tests that don't care about followers keep generating exactly the old file set. */
@@ -66,7 +71,7 @@ export interface ScaffoldOptions {
 
 /** Writes a complete, ready-to-run Avalonia project into projectPath. */
 export function generateProjectScaffold(opts: ScaffoldOptions): void {
-    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, followerCs, followerVb, vbBridgeDll } = opts;
+    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, chartsCs, chartsVb, followerCs, followerVb, vbBridgeDll } = opts;
     const rootNamespace = sanitize(name);
     const formName = MAIN_FORM_NAME;
 
@@ -79,6 +84,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (exifCs) write(projectPath, 'ExifImageLoader.cs', exifCs);
         if (grumpyCs) write(projectPath, 'GrumpyPanel.cs', grumpyCs);
         if (pathPickerCs) write(projectPath, 'PathPicker.cs', pathPickerCs);
+        if (chartsCs) write(projectPath, 'GrumpyCharts.cs', chartsCs);
         if (followerCs) write(projectPath, 'ColumnFollower.cs', followerCs);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.cs', buildCsCodeBehind(formName, 'Window', rootNamespace, tpl.handlers));
@@ -91,6 +97,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (exifVb) write(projectPath, 'ExifImageLoader.vb', exifVb);
         if (grumpyVb) write(projectPath, 'GrumpyPanel.vb', grumpyVb);
         if (pathPickerVb) write(projectPath, 'PathPicker.vb', pathPickerVb);
+        if (chartsVb) write(projectPath, 'GrumpyCharts.vb', chartsVb);
         if (followerVb) write(projectPath, 'ColumnFollower.vb', followerVb);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.vb', buildVbCodeBehind(formName, 'Window', tpl.handlers));

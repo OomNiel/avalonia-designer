@@ -2705,6 +2705,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     if (msg.tag === 'PathPicker' || msg.tag === 'PathPickerFolder') {
                         this.ensurePathPickerHelper(doc);
                     }
+                    // Charts: same story — a project created before GrumpyCharts existed needs
+                    // GrumpyCharts.cs/.vb next to ChromeWindow, or the saved <charts:…> won't compile.
+                    if (msg.tag === 'GrumpyLinePlot' || msg.tag === 'GrumpyXYPlot') {
+                        this.ensureGrumpyChartsHelper(doc);
+                    }
                     if (msg.tag === 'GrumpyStatus' && name) {
                         try { await insertStatusDateClock(doc.uri, `${name}Date`); }
                         catch { /* best-effort — the status clock must not fail the placement */ }
@@ -4486,6 +4491,41 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         } catch { return false; }
     }
 
+    /** GrumpyCharts (the bundled AvaloniaCharts chart control set behind the Charts tools) ships
+     *  with every NEW project, like GrumpyPanel. A project created before it existed needs the file
+     *  next to ChromeWindow — otherwise the saved <charts:GrumpyLinePlot> won't compile. */
+    private ensureGrumpyChartsHelper(doc: DesignerDocument): boolean {
+        try {
+            const proj = findProject(doc.uri);
+            if (!proj) return false;
+            const vb = proj.language === 'vb';
+            const file = vb ? 'GrumpyCharts.vb' : 'GrumpyCharts.cs';
+            const p = path.join(path.dirname(proj.projectUri.fsPath), file);
+            const src = path.join(this.context.extensionUri.fsPath, 'resources', file);
+            if (!fs.existsSync(src)) return false;
+            if (fs.existsSync(p)) {
+                // A copy older than the current bundled version (e.g. one without the plot-area
+                // opacity or the runtime “…” file picker) is refreshed; a customised copy is left
+                // alone, since isStaleBundledCopy only refreshes provable bundled boilerplate.
+                try {
+                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'GrumpyCharts')) {
+                        fs.copyFileSync(src, p);
+                        void vscode.window.showInformationMessage(
+                            `Updated ${file} to the current bundled version (the charts gained the plot-area opacity and the file picker).`
+                        );
+                        return true;
+                    }
+                } catch { /* unreadable — leave the file alone */ }
+                return false;
+            }
+            fs.copyFileSync(src, p);
+            void vscode.window.showInformationMessage(
+                `Added ${file} (the chart controls are bundled with new projects — copied it in so this one compiles).`
+            );
+            return true;
+        } catch { return false; }
+    }
+
     /** Removes an Image's Data-Image binding: code-behind handlers + the .adset boundImages entry. */
     private async unbindDataImage(
         doc: DesignerDocument,
@@ -5707,6 +5747,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 else if (helper === 'GrumpyPanel') this.ensureGrumpyPanelHelpers(doc);
                 else if (helper === 'ColumnFollower') this.ensureColumnFollowerHelper(proj);
                 else if (helper === 'PathPicker') this.ensurePathPickerHelper(doc);
+                else if (helper === 'GrumpyCharts') this.ensureGrumpyChartsHelper(doc);
                 else this.ensureBundledComponentsCurrent(doc);
                 return `${helper} copied into the project.`;
             }

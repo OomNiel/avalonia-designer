@@ -168,7 +168,15 @@ public class ControlFactory
             ["Polyline"] = n => $"<Polyline x:Name=\"{n}\" Width=\"120\" Height=\"80\" Stretch=\"Fill\" Points=\"0,80 30,10 60,60 90,0\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>",
             ["Polygon"] = n => $"<Polygon x:Name=\"{n}\" Width=\"120\" Height=\"80\" Stretch=\"Fill\" Points=\"0,80 20,0 60,0 80,80\" Fill=\"Transparent\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>",
             // PathIcon draws an icon from path data - no image file, no Assets entry.
-            ["PathIcon"] = n => $"<PathIcon x:Name=\"{n}\" Width=\"24\" Height=\"24\" Data=\"M0,8 L8,16 L16,0\"/>"
+            ["PathIcon"] = n => $"<PathIcon x:Name=\"{n}\" Width=\"24\" Height=\"24\" Data=\"M0,8 L8,16 L16,0\"/>",
+            // --- GrumpyCharts (the bundled AvaloniaCharts control set, 2026-09-19) ---
+            // Two self-drawing charts: no package, no template, no assets. Each ships sample data in
+            // the snippet so a freshly dropped chart immediately looks like a chart instead of an
+            // empty box (Values/Points are the inline data route; SourceFile points at an .xlsx).
+            // The `charts:` prefix (xmlns:charts="using:AvaloniaCharts") is declared by the extension
+            // when placing it (GrumpyCharts.cs/.vb are bundled into every generated project).
+            ["GrumpyLinePlot"] = n => $"<charts:GrumpyLinePlot x:Name=\"{n}\" Width=\"300\" Height=\"180\" Values=\"4,9,6,12,8,15,11,16\" Title=\"Line plot\" ShowTitle=\"True\"/>",
+            ["GrumpyXYPlot"] = n => $"<charts:GrumpyXYPlot x:Name=\"{n}\" Width=\"300\" Height=\"180\" Points=\"0,2 1,5 2,3 3,8 4,6 5,11\" Title=\"X,Y plot\" ShowTitle=\"True\" MarkerStyle=\"Cross\"/>"
         };
     }
 
@@ -245,7 +253,11 @@ public class ControlFactory
         ["NumericUpDown"] = typeof(NumericUpDown),
         ["PathIcon"] = typeof(PathIcon),
         ["Polyline"] = typeof(Polyline),
-        ["Polygon"] = typeof(Polygon)
+        ["Polygon"] = typeof(Polygon),
+        // The bundled GrumpyCharts controls (AvaloniaCharts.GrumpyLinePlot / .GrumpyXYPlot) — linked
+        // into the host from resources/GrumpyCharts.cs so the builder draws the real chart.
+        ["GrumpyLinePlot"] = typeof(AvaloniaCharts.GrumpyLinePlot),
+        ["GrumpyXYPlot"] = typeof(AvaloniaCharts.GrumpyXYPlot)
     };
 
     public static Type? GetTypeForName(string name)

@@ -194,6 +194,16 @@ const INFO: Record<string, ControlInfo> = {
         desc: 'A path row pre-set to Folder: a box showing the chosen folder plus a "…" button that opens the platform\'s own folder dialog.',
         use: 'Same control as File Selector, with Path Type = Folder, so the Browse button opens a folder picker (like the WinForms FolderBrowserDialog). The picked folder lands in Selected Path; Title is the dialog caption and Initial Folder is where it opens first.'
     },
+    GrumpyLinePlot: {
+        label: 'Line Plot',
+        desc: 'A line chart: your Y values drawn in sample order, with axes, gridlines, ticks and a title — no package, no image file.',
+        use: 'Type the Y values into Values (comma separated: 4,9,6,12) or point Spreadsheet at an .xlsx workbook. The X axis runs 0,1,2… across the samples. Style it from Properties: Line Colour/Thickness/Style, the plot backcolour and its opacity, the gridlines, the axes with their ticks and labels, and the chart title (with its position). The axis range fits the data automatically — set X/Y Min/Max only when you want a fixed scale.'
+    },
+    GrumpyXYPlot: {
+        label: 'X, Y Plot',
+        desc: 'An X,Y chart: (x,y) pairs drawn as points, as a joined line, or both — with the same axes, gridlines and title as the line plot.',
+        use: 'Type the pairs into Points ("0,0 1,4 2,9") or point Spreadsheet at an .xlsx workbook where column B holds X and column C holds Y (row 1 names the axes, values start at row 2). Choose Marker (Dot, Cross, Square, Diamond or None) and Join Points: on = a line through the points, off = a scatter of markers.'
+    },
     XYTracker: {
         label: 'XY-Tracker',
         desc: 'A live read-out of the current Width × Height in pixels.',
