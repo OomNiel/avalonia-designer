@@ -923,7 +923,7 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     // --- GrumpyCharts (the bundled chart control set, 2026-09-19) ---
     Values: { desc: 'The Y values to plot, separated by commas (e.g. "4,9,6,12"). X is the sample number: 0, 1, 2…' },
     SourceFile: { desc: 'An .xlsx workbook to read the values from. Empty = use the inline data instead.' },
-    ShowBrowse: { desc: 'Draw a "…" button in the chart corner that opens the file dialog to pick the workbook at runtime.' },
+    ShowBrowse: { desc: 'Draw a "…" button in the chart corner that opens the file dialog to pick the workbook at runtime. It is drawn automatically while the chart has no data, so an empty chart always offers the picker.' },
     XColumn: { desc: 'Which spreadsheet column holds the X values (A, B, C…). Default B.' },
     YColumn: { desc: 'Which spreadsheet column holds the Y values. Default C (a line plot falls back to the X column when this one is empty).' },
     HeaderRow: { desc: 'The spreadsheet row holding the axis names. Default 1 (the top row).' },
@@ -1084,7 +1084,7 @@ const ADVANCED_KEYS = new Set([
     'ShowActivated', 'Topmost', 'SizeToContent', 'ExtendClientAreaToDecorationsHint',
     // GrumpyCharts: the spreadsheet plumbing and the scale overrides are for the times you need
     // them — a beginner only ever touches Values/Points, the title, the colours and the markers.
-    'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow', 'ShowBrowse',
+    'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow',
     'TitleFontSize', 'TickLabelFontSize', 'MajorTickLength', 'MinorTickLength', 'GridThickness',
     'MarkerSize', 'MinX', 'MaxX', 'MinY', 'MaxY'
 ]);

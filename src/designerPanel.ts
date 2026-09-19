@@ -3525,18 +3525,42 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     return;
                 }
                 case 'browseFile': {
-                    // File-path property (Image Source, Window Icon, Title Bar Icon): open the
-                    // system file picker, bundle the file into the project's Assets\ folder and
-                    // set the property to its avares:// URI (portable at runtime).
+                    // File-path property:
+                    //   Image Source / Window Icon / Title Bar Icon — open the system picker, bundle
+                    //     the file into the project's Assets\ folder and point the property at its
+                    //     avares:// URI (portable at runtime).
+                    //   GrumpyCharts SourceFile (a spreadsheet) — set the ABSOLUTE path instead. The
+                    //     chart reads the workbook from disk (ZipFile.OpenRead) and Live Update
+                    //     re-reads it whenever you save the sheet, so bundling a copy into Assets
+                    //     would both break the read and freeze the data.
                     const el = msg.name ? doc.model.findByName(msg.name) : doc.model.root;
                     if (!el) return;
                     const key = String(msg.key ?? '');
-                    if (key !== 'Source' && key !== 'Icon' && key !== 'TitleBarIcon') return;
+                    const isWorkbook = key === 'SourceFile';
+                    if (key !== 'Source' && key !== 'Icon' && key !== 'TitleBarIcon' && !isWorkbook) return;
                     const filters: { [name: string]: string[] } = key === 'Source'
                         ? { Images: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'] }
-                        : { Icons: ['ico', 'png'] };
-                    const picked = await vscode.window.showOpenDialog({ canSelectMany: false, filters, title: 'Select a file' });
+                        : isWorkbook
+                            ? { 'Excel workbooks': ['xlsx'], 'All files': ['*'] }
+                            : { Icons: ['ico', 'png'] };
+                    const picked = await vscode.window.showOpenDialog({
+                        canSelectMany: false, filters,
+                        title: isWorkbook ? 'Select a spreadsheet' : 'Select a file'
+                    });
                     if (!picked || picked.length === 0) return;
+                    // Named differently from the bundling path's `before` below: both live in this
+                    // one case block, so a second `const before` would not compile.
+                    const beforeWorkbook = doc.model.serialize(true);
+                    if (isWorkbook) {
+                        // Straight absolute path — no Assets copy, no avares:// rewrite.
+                        doc.model.setProperty(el, key, picked[0].fsPath);
+                        this.notifyEdit(doc, panel, beforeWorkbook);
+                        await this.render(doc, panel);
+                        await this.sendProperties(doc, panel, msg.name ?? null);
+                        void vscode.window.showInformationMessage(
+                            `Chart now reads "${path.basename(picked[0].fsPath)}". Save that sheet and the chart re-reads it (Live Update).`);
+                        return;
+                    }
                     const proj = findProject(doc.uri);
                     if (!proj) {
                         void vscode.window.showWarningMessage('No .csproj/.vbproj found near this form, so the file can\'t be bundled. Type a path or avares:// URI manually instead.');

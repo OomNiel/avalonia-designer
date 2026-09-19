@@ -1045,10 +1045,20 @@ Namespace Global.AvaloniaCharts
             End Try
         End Function
 
+        ''' <summary>
+        ''' True when the "…" file picker should be drawn: when ShowBrowse asks for it, or when the
+        ''' chart has no data — an empty chart is exactly where you want to pick the workbook.
+        ''' </summary>
+        Private ReadOnly Property BrowseVisible As Boolean
+            Get
+                Return ShowBrowse OrElse Not GetSeries().HasData
+            End Get
+        End Property
+
         ''' <summary>Clicking the drawn "…" button loads a file.</summary>
         Protected Overrides Sub OnPointerPressed(e As PointerPressedEventArgs)
             MyBase.OnPointerPressed(e)
-            If ShowBrowse AndAlso _browseRect.Contains(e.GetPosition(Me)) Then
+            If BrowseVisible AndAlso _browseRect.Contains(e.GetPosition(Me)) Then
 #Disable Warning BC42358 ' deliberately fire-and-forget: a pointer event cannot await the dialog
                 BrowseForFile()
 #Enable Warning BC42358
@@ -1207,6 +1217,9 @@ Namespace Global.AvaloniaCharts
                 DrawFrame(context, frame, radius, frameWidth)
                 DrawTitle(context, titleText, plot, frame)
                 DrawMessage(context, plot, chartData.Error)
+                ' An empty chart is exactly when you want the file picker, so the "…" button is
+                ' drawn here even when ShowBrowse is off (see BrowseVisible).
+                DrawBrowseButton(context, frame)
                 Return
             End If
 
@@ -1365,15 +1378,29 @@ Namespace Global.AvaloniaCharts
 
         Private Sub DrawMessage(context As DrawingContext, plot As Rect, message As String)
             Dim text = If(String.IsNullOrWhiteSpace(message), "No data — set Values, or point SourceFile at an .xlsx", message)
-            Dim formatted = MakeText(text, 12, Color.Parse("#909090"))
-            If formatted.Width > plot.Width Then Return   ' too small to say anything readable
+            Dim brush = Color.Parse("#909090")
+            Dim formatted = MakeText(text, 12, brush)
+            If formatted.Width > plot.Width Then
+                ' A long explanation (a full path, a reader exception) would otherwise be dropped
+                ' whole and leave the chart looking broken — trim it to fit instead.
+                Dim perChar = formatted.Width / Math.Max(1, text.Length)
+                Dim maxChars = Math.Max(0, CInt(Math.Floor(plot.Width / perChar)) - 1)
+                If maxChars < 8 Then Return   ' no room for anything readable
+                Dim cut = text.Substring(0, Math.Min(text.Length, maxChars)).TrimEnd() & "…"
+                formatted = MakeText(cut, 12, brush)
+                While formatted.Width > plot.Width AndAlso cut.Length > 9
+                    cut = cut.Substring(0, cut.Length - 2).TrimEnd() & "…"
+                    formatted = MakeText(cut, 12, brush)
+                End While
+                If formatted.Width > plot.Width Then Return
+            End If
             context.DrawText(formatted, New Point(plot.X + (plot.Width - formatted.Width) / 2,
                                                   plot.Y + (plot.Height - formatted.Height) / 2))
         End Sub
 
         Private Sub DrawBrowseButton(context As DrawingContext, frame As Rect)
             _browseRect = Nothing
-            If Not ShowBrowse Then Return
+            If Not BrowseVisible Then Return
             Dim size As Double = 18
             Dim rect As New Rect(frame.Right - size - 4, frame.Y + 4, size, size)
             _browseRect = rect

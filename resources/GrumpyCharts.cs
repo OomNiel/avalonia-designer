@@ -826,11 +826,17 @@ public abstract class ChartBase : Control
         }
     }
 
+    /// <summary>
+    /// True when the "…" file picker should be drawn: when <see cref="ShowBrowse"/> asks for it, or
+    /// when the chart has no data — an empty chart is exactly where you want to pick the workbook.
+    /// </summary>
+    private bool BrowseVisible => ShowBrowse || !Series().HasData;
+
     /// <summary>Clicking the drawn "…" button loads a file.</summary>
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (ShowBrowse && _browseRect.Contains(e.GetPosition(this)))
+        if (BrowseVisible && _browseRect.Contains(e.GetPosition(this)))
         {
             _ = BrowseForFile();
             e.Handled = true;
@@ -995,6 +1001,9 @@ public abstract class ChartBase : Control
             DrawFrame(context, frame, radius, borderThickness);
             DrawTitle(context, titleText, plot, frame);
             DrawMessage(context, plot, series.Error);
+            // An empty chart is exactly when you want the file picker, so the "…" button is
+            // drawn here even when ShowBrowse is off (see BrowseVisible).
+            DrawBrowseButton(context, frame);
             return;
         }
 
@@ -1189,8 +1198,24 @@ public abstract class ChartBase : Control
         var text = string.IsNullOrWhiteSpace(message)
             ? "No data — set Values, or point SourceFile at an .xlsx"
             : message!;
-        var formatted = MakeText(text, 12, Color.Parse("#909090"));
-        if (formatted.Width > plot.Width) return;   // too small to say anything readable
+        var brush = Color.Parse("#909090");
+        var formatted = MakeText(text, 12, brush);
+        if (formatted.Width > plot.Width)
+        {
+            // A long explanation (a full path, a reader exception) would otherwise be dropped
+            // whole and leave the chart looking broken — trim it to fit instead.
+            var perChar = formatted.Width / Math.Max(1, text.Length);
+            var maxChars = Math.Max(0, (int)Math.Floor(plot.Width / perChar) - 1);
+            if (maxChars < 8) return;   // no room for anything readable
+            var cut = text.Substring(0, Math.Min(text.Length, maxChars)).TrimEnd() + "…";
+            formatted = MakeText(cut, 12, brush);
+            while (formatted.Width > plot.Width && cut.Length > 9)
+            {
+                cut = cut.Substring(0, cut.Length - 2).TrimEnd() + "…";
+                formatted = MakeText(cut, 12, brush);
+            }
+            if (formatted.Width > plot.Width) return;
+        }
         context.DrawText(formatted, new Point(
             plot.X + (plot.Width - formatted.Width) / 2,
             plot.Y + (plot.Height - formatted.Height) / 2));
@@ -1199,7 +1224,7 @@ public abstract class ChartBase : Control
     private void DrawBrowseButton(DrawingContext context, Rect frame)
     {
         _browseRect = default;
-        if (!ShowBrowse) return;
+        if (!BrowseVisible) return;
         var size = 18d;
         var rect = new Rect(frame.Right - size - 4, frame.Y + 4, size, size);
         _browseRect = rect;
