@@ -167,10 +167,19 @@ export function compilerIssues(
         if (covered.has(key)) continue;
         const inForm = codeFile !== undefined && path.resolve(d.file) === path.resolve(codeFile);
         const fixable = inForm && d.code === 'CS1002';
+        // A missing NAME is usually a control that was removed (or renamed) in the designer: both compilers
+        // say so as `CS0103: The name 'Slider1' does not exist in the current context` / `BC30451: 'Slider1'
+        // is not declared`, and the name carries the designer's own `Button1` shape. Offer to comment the
+        // statement out with a TODO marker. A missing TYPE stays report-only — commenting out a line of a
+        // type error would only hide it.
+        const missing = d.code === 'CS0103' || d.code === 'BC30451'
+            ? /'([^']+)'/.exec(d.message)?.[1]
+            : undefined;
+        const missingControl = inForm && missing && /^[A-Z][A-Za-z0-9_]*\d+$/.test(missing) ? missing : undefined;
         out.push({
             id: `build:${key}:${d.code}`,
             severity: d.severity,
-            kind: fixable ? 'insert-semicolon' : 'report-only',
+            kind: fixable ? 'insert-semicolon' : (missingControl ? 'comment-out-control-code' : 'report-only'),
             member: d.code,
             line: d.line,
             file: 'code',
@@ -178,9 +187,13 @@ export function compilerIssues(
             detail: fixable
                 ? 'The project\'s own build stops here: the statement before this position is not terminated. '
                 + 'Fix: add the missing `;` at the end of that line.'
-                : `Reported by the project's own build (\`dotnet build\`), not by a rule — which is why it comes `
-                + `with no automatic fix. Open the file, read the compiler's message above and change the code.`,
-            data: { path: d.file, line: String(d.line), column: String(d.column) }
+                : (missingControl
+                    ? `The build stops here because \`${missingControl}\` is not declared — a control that was `
+                    + 'removed (or renamed) in the designer. Fix: comment the statement out, marked TODO, or '
+                    + 'put the control back on the form.'
+                    : `Reported by the project's own build (\`dotnet build\`), not by a rule — which is why it comes `
+                    + `with no automatic fix. Open the file, read the compiler's message above and change the code.`),
+            data: { path: d.file, line: String(d.line), column: String(d.column), ...(missingControl ? { control: missingControl } : {}) }
         });
     }
     for (const e of projectErrors) {

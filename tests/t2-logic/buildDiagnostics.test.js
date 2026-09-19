@@ -129,6 +129,34 @@ module.exports = async (t) => {
         t.equal(noFile[0].line, undefined, 'entries', 'and no line to jump to, which the dialog handles');
     }
 
+    // ---------- 4b) a removed control arrives as a one-click comment-out (2026-09-19) ----------
+    {
+        const diag = (message, code = 'CS0103', file = FORM) => ({ file, line: 40, column: 9, severity: 'error', code, message });
+        const removed = bd.compilerIssues([diag("The name 'Slider1' does not exist in the current context")], [], FORM, new Set());
+        t.equal(removed[0].kind, 'comment-out-control-code', 'removed-control',
+            'a missing control name is fixable: the fix comments the statement out, marked TODO');
+        t.equal(removed[0].data.control, 'Slider1', 'removed-control', 'and it knows WHICH name to comment out');
+        t.ok(/removed \(or renamed\) in the designer/.test(removed[0].detail), 'removed-control',
+            'the detail says why the name is missing');
+
+        const vb = bd.compilerIssues(
+            [diag("'NumericUpDown1' is not declared. It may be inaccessible due to its protection level.", 'BC30451')],
+            [], FORM, new Set());
+        t.equal(vb[0].kind, 'comment-out-control-code', 'removed-control',
+            'the VB spelling (BC30451) gets the same offer');
+
+        // A missing TYPE is not a removed control — guessing there would comment out code that is fine.
+        const typeError = bd.compilerIssues([diag("The type or namespace name 'Widget' could not be found")], [], FORM, new Set());
+        t.equal(typeError[0].kind, 'report-only', 'removed-control', 'a missing type stays report-only');
+
+        // And the same name in a file that is not the form's own code-behind.
+        const elsewhere = bd.compilerIssues(
+            [diag("The name 'Slider1' does not exist in the current context", 'CS0103', '/home/niel/app/Other.cs')],
+            [], FORM, new Set());
+        t.equal(elsewhere[0].kind, 'report-only', 'removed-control',
+            "the offer is only made for the form's own code-behind");
+    }
+
     // ---------- 5) the PROBLEMS pane ----------
     {
         const diagnostics = [

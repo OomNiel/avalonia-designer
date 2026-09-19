@@ -59,6 +59,8 @@ export type LocalFixKind =
     | 'wire-unwired-handler'     // handler exists, nothing wires it (the reverse of insert-handler)
     | 'repair-structure'         // a nested namespace/class, or braces the model never closed
     | 'insert-semicolon'         // a C# statement nothing terminated (CS1002) — the sibling of the brace repair
+    | 'comment-out-control-code' // code still uses a control the form no longer has (CS0103/BC30451): the
+                                 // statement is commented out with a TODO marker, never deleted silently
     | 'insert-initialize'        // InitializeComponent() missing
     | 'add-binding-call'         // Data-Image block present, ctor call missing
     | 'restamp-marker'           // Data-Image block present, `' DataImage:` marker lost
@@ -773,7 +775,7 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
             if (controlNames.has(a.name)) continue;
             const count = usesOutside(code.body, a.name, a.start, a.end);
             add({
-                severity: 'warning', kind: count === 0 ? 'rebuild-accessors' : 'report-only',
+                severity: 'warning', kind: count === 0 ? 'rebuild-accessors' : 'comment-out-control-code',
                 member: a.name, line: lineAt(code.body, a.start),
                 title: count === 0
                     ? `Accessor for deleted control "${a.name}" is left over`
@@ -781,11 +783,43 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
                 detail: count === 0
                     ? 'The control no longer exists in the form. Fix: drop the accessor.'
                     : `The control no longer exists in the form, but the code-behind still uses ` +
-                    `"${a.name}" ${count} time(s) — update or delete those references first, then re-run the check ` +
-                    '(deleting the accessor now would only move the error).',
+                    `"${a.name}" ${count} time(s), which is a build error (BC30451). Fix: comment those ` +
+                    'statements out, marked TODO — the accessor can be dropped once they are gone.',
                 data: { control: a.name }
             });
         }
+    }
+
+    // ---- 1b) code that references a control the form no longer has (2026-09-19) ----
+    // The accessor branch above always knew about these references ("update or delete those references
+    // first") but offered nothing to do about them, so deleting a control left the build broken until
+    // every use was found by hand. This offers to comment them out with a TODO marker: deleting a user's
+    // line outright is worse than leaving it visible and inert.
+    //
+    // Only "control-shaped" names (the `Button1`/`Slider1` naming the designer gives a placed control) are
+    // considered, and only those the form does NOT have. A name the form still has is the ordinary case;
+    // a missing *type* is the compiler's business (CS0103/BC30451 → compilerIssues()).
+    const usedLikeControls = new Map<string, { count: number; at: number }>();
+    const useRe = /\b([A-Z][A-Za-z0-9_]*\d+)\s*\./g;
+    let use: RegExpExecArray | null;
+    while ((use = useRe.exec(code.body))) {
+        if (controlNames.has(use[1])) continue;
+        const seen = usedLikeControls.get(use[1]);
+        usedLikeControls.set(use[1], { count: (seen?.count ?? 0) + 1, at: seen?.at ?? use.index });
+    }
+    for (const [name, hits] of usedLikeControls) {
+        // A VB accessor of that name is the designer's own declaration — section 1 handles it.
+        if (code.accessors.some((a) => a.name === name)) continue;
+        add({
+            severity: 'warning', kind: 'comment-out-control-code', member: name,
+            line: lineAt(code.body, hits.at),
+            title: `"${name}" is used here, but the form has no control of that name`,
+            detail: `The control was removed (or renamed) in the designer and the code-behind still uses ` +
+                `"${name}" ${hits.count} time(s) — a build error (CS0103/BC30451). Fix: comment those ` +
+                'statements out, marked TODO, so you can see what was there and put it back if the control ' +
+                `returns. If "${name}" is one of your own types, dismiss this finding.`,
+            data: { control: name }
+        });
     }
 
     // ---- 2) duplicate method definitions (BC30269 / CS0111) ----
@@ -1771,6 +1805,55 @@ export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts
             lines[line - 1] = fixed;
             write(lines.join('\n'));
             return `Added the missing ";" in "${data.method ?? 'the method'}".`;
+        }
+        case 'comment-out-control-code': {
+            // Comments out the statements that use a control the form no longer has, each marked TODO.
+            // The marker is the point: "why is this line grey?" has to be answerable from the line itself,
+            // and nothing of the user's code disappears — deleting it silently would be worse than leaving
+            // it visible and inert.
+            const facts = parseCode(codeFile, read());
+            const name = String(data.control ?? '');
+            if (!name) return 'Nothing to comment out.';
+            const lines = facts.body.split('\n');
+            const prefix = language === 'vb' ? "'" : '//';
+            const isComment = language === 'vb' ? /^\s*'/ : /^\s*\/\//;
+            const use = new RegExp(`\\b${escapeRe(name)}\\s*\\.`);
+            const indentOf = (s: string): string => /^\s*/.exec(s)?.[0] ?? '';
+            // A statement can span lines: keep going while the line clearly continues (C# ending in an
+            // operator or an open bracket, VB ending in a `_` continuation), so the WHOLE statement goes
+            // inert rather than its first half (which would leave a syntax error behind).
+            const continues = (s: string): boolean => language === 'vb'
+                ? /_\s*(?:'.*)?$/.test(s.trimEnd())
+                : /[=(,+*/|&?:-]\s*(?:\/\/.*)?$/.test(s.trimEnd());
+            let done = 0;
+            let inAccessor = false;
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (language === 'vb') {
+                    // A VB accessor of that name is the designer's own declaration (syncVbAccessors drops
+                    // it once these references are gone) — never comment the designer's own code.
+                    if (/^\s*(?:Private|Public|Friend|Protected)?\s*ReadOnly\s+Property\b/.test(line)) {
+                        inAccessor = new RegExp(`\\b${escapeRe(name)}\\b`).test(line);
+                    }
+                    if (inAccessor) {
+                        if (/^\s*End\s+Property\b/.test(line)) inAccessor = false;
+                        continue;
+                    }
+                }
+                if (isComment.test(line) || !use.test(line)) continue;
+                let end = i;
+                while (end + 1 < lines.length && continues(lines[end])) end++;
+                const todo = `${indentOf(line)}${prefix} TODO: "${name}" is no longer on the form — `
+                    + 'delete this line, or put the control back.';
+                const block = lines.slice(i, end + 1).map((l) => `${indentOf(l)}${prefix} ${l.slice(indentOf(l).length)}`);
+                lines.splice(i, end - i + 1, todo, ...block);
+                done++;
+                i += block.length; // step over what was just written
+            }
+            if (done === 0) return `No statements using "${name}" were found to comment out.`;
+            const body = lines.join('\n');
+            write(facts.hadBom ? '\uFEFF' + body : body);
+            return `Commented out ${done} statement${done === 1 ? '' : 's'} that use "${name}" (marked TODO).`;
         }
         case 'fix-handler-signature': {
             const facts = parseCode(codeFile, read());

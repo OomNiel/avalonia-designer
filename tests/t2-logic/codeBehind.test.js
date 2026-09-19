@@ -282,6 +282,68 @@ End Namespace
             'vb: the always-needed Controls import stays');
     }
 
+    // --- Code Fix: comment out code that uses a control the form no longer has (2026-09-19) ---
+    // Asked for as a rule of its own. The point is that nothing of the user's code disappears: the
+    // statement stays visible, commented, with a TODO marker saying why — because "why is this line
+    // grey?" has to be answerable from the line itself.
+    {
+        const os = require('os');
+        const { applyLocalFix } = require('../../out/codeBehindCheck.js');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'removed-control-'));
+        const form = '<Window xmlns="https://github.com/avaloniaui" x:Class="Proj.Form"><Canvas Name="Body"><Button x:Name="Button1"/></Canvas></Window>';
+        const axamlPath = path.join(dir, 'Form.axaml');
+        fs.writeFileSync(axamlPath, form, 'utf8');
+        const uri = { fsPath: axamlPath, path: axamlPath, toString: () => `file://${axamlPath}` };
+        const csPath = path.join(dir, 'Form.axaml.cs');
+        const lines = (...body) => ['namespace Proj {', '    public partial class Form {', '        void Go() {',
+            ...body, '        }', '    }', '}', ''].join('\n');
+
+        fs.writeFileSync(csPath, lines('            Slider1.Value = 5;', '            Button1.Content = "ok";'), 'utf8');
+        const report = await applyLocalFix(uri, { kind: 'comment-out-control-code', data: { control: 'Slider1' } });
+        const after = fs.readFileSync(csPath, 'utf8');
+        t.ok(/\/\/ TODO: "Slider1" is no longer on the form/.test(after), 'comment-out',
+            'the marker on the line says why it went grey');
+        t.ok(/\/\/\s+Slider1\.Value = 5;/.test(after), 'comment-out', 'the statement is still there, commented out');
+        t.equal(/^\s*Slider1\.Value/m.test(after), false, 'comment-out', 'so the build no longer sees it');
+        t.ok(/^\s*Button1\.Content/m.test(after), 'comment-out', 'a control the form still has is untouched');
+        t.ok(/Commented out 1 statement/.test(report), 'comment-out', 'and the fix reports what it did');
+
+        // The repair loop retries until the build is clean, so a second run must change nothing.
+        const again = await applyLocalFix(uri, { kind: 'comment-out-control-code', data: { control: 'Slider1' } });
+        t.equal(again, 'No statements using "Slider1" were found to comment out.', 'comment-out',
+            'a second run finds nothing left to do');
+        t.equal(fs.readFileSync(csPath, 'utf8'), after, 'comment-out', 'and leaves the file byte-identical');
+
+        // A statement split over two lines has to go inert whole — half of it would be a syntax error.
+        fs.writeFileSync(csPath, lines('            Slider1.Value =', '                5;', '            Button1.Content = "ok";'), 'utf8');
+        await applyLocalFix(uri, { kind: 'comment-out-control-code', data: { control: 'Slider1' } });
+        const multi = fs.readFileSync(csPath, 'utf8');
+        t.equal(/^\s*5;/m.test(multi), false, 'comment-out', 'a two-line statement is commented out as a whole');
+        t.ok(/^\s*Button1\.Content/m.test(multi), 'comment-out', 'and the statement after it is still live');
+
+        // VB: the designer's own FindControl accessor is never commented (syncVbAccessors drops it once
+        // the references are gone) — but the statement that uses Slider1 is.
+        const vbAxaml = path.join(dir, 'VbForm.axaml');
+        fs.writeFileSync(vbAxaml, form.replace('Proj.Form', 'Proj.VbForm'), 'utf8');
+        const vbUri = { fsPath: vbAxaml, path: vbAxaml, toString: () => `file://${vbAxaml}` };
+        const vbPath = path.join(dir, 'VbForm.axaml.vb');
+        fs.writeFileSync(vbPath, [
+            'Imports Avalonia.Controls', 'Namespace Proj', '    Public Class VbForm', '        Inherits Window',
+            '        Private ReadOnly Property Slider1 As Slider', '            Get',
+            '                Return Me.FindControl(Of Slider)("Slider1")', '            End Get',
+            '        End Property', '        Public Sub New()', '            InitializeComponent()',
+            '            Slider1.Value = 5', '        End Sub', '    End Class', 'End Namespace', ''
+        ].join('\n'), 'utf8');
+        const vbReport = await applyLocalFix(vbUri, { kind: 'comment-out-control-code', data: { control: 'Slider1' } });
+        const vbAfter = fs.readFileSync(vbPath, 'utf8');
+        t.ok(/' TODO: "Slider1" is no longer on the form/.test(vbAfter), 'comment-out',
+            'VB spells the marker with an apostrophe');
+        t.ok(/'\s+Slider1\.Value = 5/.test(vbAfter), 'comment-out', 'and comments the VB statement');
+        t.ok(/Private ReadOnly Property Slider1 As Slider/.test(vbAfter), 'comment-out',
+            "the designer's own accessor is left for syncVbAccessors to drop");
+        t.ok(/Commented out 1 statement/.test(vbReport), 'comment-out', 'with the same one-line report');
+    }
+
     // --- handler insertion (C# + VB) ---
     {
         const p = tmpProject('cs');
