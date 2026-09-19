@@ -225,6 +225,63 @@ module.exports = async (t) => {
         t.ok(!p.read().includes('Store.GetCustomers()'), 'dataset-bind', 'vb property removed');
     }
 
+    // --- deleting one of the nine Toolbox controls added 2026-09-19 leaves nothing behind ---
+    // Asked for directly: "check that all the added controls remove its code behind when deleted".
+    // The delete path sweeps the handlers the XAML wired (removeHandlersFromCodeBehind) and any
+    // orphaned `<Name>_<Event>` method (removeOrphanedHandlersForControls), and — through
+    // notifyEdit's named-control signature check — the VB accessors, whose rebuild also re-syncs the
+    // Shapes/AvaloniaChrome imports. None of it is per control, which is why these nine needed no
+    // delete-path code of their own; this pins that for each of them.
+    {
+        const { applyAccessors, removeOrphanedHandlersForControls } = require('../../out/codeBehind.js');
+        const NEW_CONTROLS = ['ProgressBar', 'Slider', 'Separator', 'Polyline', 'Polygon', 'PathIcon',
+            'ToggleSwitch', 'MaskedTextBox', 'NumericUpDown'];
+
+        for (const tag of NEW_CONTROLS) {
+            // C#: there are no accessors to remove (the XAML compiler generates the fields), so the
+            // only code a placed control creates is the handler the designer wires for it.
+            const p = tmpProject('cs');
+            await insertHandlerIntoCodeBehind(p.uri, `${tag}1_ValueChanged`, 'ValueChanged');
+            t.ok(p.read().includes(`${tag}1_ValueChanged`), 'delete-cleanup',
+                `cs ${tag}: wiring an event creates its handler`);
+            await removeOrphanedHandlersForControls(p.uri, [`${tag}1`], new Set());
+            t.ok(!p.read().includes(`${tag}1_ValueChanged`), 'delete-cleanup',
+                `cs ${tag}: deleting the control removes that handler`);
+        }
+
+        // VB: a named control gets a FindControl accessor, and Shapes/AvaloniaChrome imports when the
+        // type needs them — all of which must go with the control.
+        const vbBase = `Imports Avalonia.Controls
+Namespace Proj
+    Public Class TestForm
+        Inherits Window
+        Public Sub New()
+            InitializeComponent()
+        End Sub
+    End Class
+End Namespace
+`;
+        const placed = applyAccessors(vbBase,
+            NEW_CONTROLS.map((tag) => ({ name: `${tag}1`, type: tag })).concat([{ name: 'Button1', type: 'Button' }]));
+        for (const tag of NEW_CONTROLS) {
+            t.ok(placed.includes(`Property ${tag}1 As ${tag}`), 'delete-cleanup',
+                `vb ${tag}: placing it adds a FindControl accessor`);
+        }
+        t.ok(/^Imports Avalonia\.Controls\.Shapes$/m.test(placed), 'delete-cleanup',
+            'vb: a Polyline/Polygon pulls in the Shapes import');
+
+        // The nine are deleted; Button1 stays (a form always has other named controls, which is also
+        // what keeps the import rebuild running).
+        const after = applyAccessors(placed, [{ name: 'Button1', type: 'Button' }]);
+        for (const tag of NEW_CONTROLS) {
+            t.ok(!after.includes(`${tag}1`), 'delete-cleanup', `vb ${tag}: deleting it removes the accessor`);
+        }
+        t.ok(!/Avalonia\.Controls\.Shapes/.test(after), 'delete-cleanup',
+            'vb: and the Shapes import goes with the last shape');
+        t.ok(/^Imports Avalonia\.Controls$/m.test(after), 'delete-cleanup',
+            'vb: the always-needed Controls import stays');
+    }
+
     // --- handler insertion (C# + VB) ---
     {
         const p = tmpProject('cs');
