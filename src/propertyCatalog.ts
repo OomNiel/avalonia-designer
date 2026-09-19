@@ -691,6 +691,11 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
     // The two charts share every styling row; they differ in the data row (Values for a line plot,
     // Points for an X,Y plot) and in the marker rows, which only the X,Y plot draws.
     GrumpyLinePlot: [
+        // Dockable like any panel child: DockPanel.Dock. Choosing a real dock makes the designer wrap
+        // the chart in a DockPanel (when it isn't in one) and clear the free-axis size, so the chart
+        // stretches to that edge; 'None' just removes the attribute. The chart redraws at its new
+        // size because everything it draws is proportional.
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
         { key: 'Values', label: 'Values', kind: 'text' },
         { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
         { key: 'ShowBrowse', label: 'Browse Button', kind: 'dropdown', options: BOOL },
@@ -734,6 +739,8 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'MaxY', label: 'Y Max', kind: 'number' }
     ],
     GrumpyXYPlot: [
+        // See GrumpyLinePlot: the same Dock row, so either chart can be pinned to a DockPanel edge.
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
         { key: 'Points', label: 'Points (x,y)', kind: 'text' },
         { key: 'MarkerStyle', label: 'Marker', kind: 'dropdown', options: CHART_MARKERS },
         { key: 'MarkerSize', label: 'Marker Size', kind: 'number' },
