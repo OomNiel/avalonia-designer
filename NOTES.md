@@ -3339,3 +3339,38 @@ for treeviews nodes — keeping in mind our mission is to keep things simple so 
 - Suite 4,938 → **5,059** (5,066 with the property-compliance reset forced). Commits `04e755f`, `7ee7740`,
   `4cd3a20`, `fa378de`, `d3b4bee`, `ebfd892`; docs updated in the same request.
 
+### §140 — twelve asked for, nine shipped, and the harness earned its keep (2026-09-19, 0.10.11)
+
+Asked for twelve Toolbox controls. Nine were placeable; three are not, and that distinction is the whole
+section.
+
+- **ToolTip, ContextMenu and Popup are not children.** They are attached properties and primitives — a bare
+  `<Popup>` stays invisible until `IsOpen` is set — so a toolbox entry would look broken the first time it
+  was dropped. They need the designer-*action* treatment (the precedent is *Custom Title Bar*) or a
+  per-control row (`ToolTip.Tip` is the obvious first one). Reported as not shipped with the reason, rather
+  than shipped as a broken-looking tool.
+- **Nine shipped, each across five places.** Catalog, host snippet, host `TypeMap` (the silent one — without
+  it the preview draws a stand-in instead of the real control), `controlInfo`, and the property catalog. The
+  events were already wired for six of them. The property rows then needed four registrations per new key
+  (row + help text + default + `PROP_SECTIONS`), which the “no unassigned rows” invariant enforces.
+- **Two real defects came out of the T5 matrix, not out of review.** `Separator` rendered 12 px right and
+  4 px down of where it was dropped, because the Fluent theme gives a `Separator` its own margin; and the
+  harness's generic text sample (`"Hello"`) is neither a `Points` list nor a `Geometry`, so the XAML
+  compiler rejected `Polyline`/`Polygon` with AVLN2005. Both were fixed in the *snippets/harness*, which is
+  the point: a placement or syntax mistake in a new control cannot hide behind a green suite.
+- **A check rule for the crash that compiles.** `DriveInfo.GetDrives()` on Linux returns every mount and
+  `/sys/fs/pstore` is unreadable, so an unguarded `Directory.GetDirectories` threw as the window loaded —
+  in the user's own app, from an AI-written repair. Neither the build nor the repair loop (which verifies by
+  rebuilding) can see that, so it is now a `report-only` warning, with “inside a try” worked out by brace
+  nesting (C#) and `Try … End Try` (VB) — a listing after a *closed* `try` is flagged again.
+- **The dataset→TreeView binding was built, judged impractical and removed** (same day, before release):
+  spec roles, `treeRoles`/`canBindToTree`, the `Wire<T>Tree` emitters, the bind/unbind shapes and
+  `resources/TreeBuilder.cs|.vb` are all gone. What survived is the *generic* lesson it exposed: two DataSets
+  in one namespace each declared `RuntimeStorage`/`DatabaseAdapter` (CS0101/BC30179), so the shared runtime
+  helpers now live in exactly one generated file and *Generate Code* repairs a duplicate. The TreeView
+  control keeps its toolbox entry, properties, node editor and events.
+- **Suite 5,059 → 5,364** (5,089 before the nine controls). The docs pass in the same request flipped the
+  nine CONTROLS.md markers to ✅ Toolbox, recorded the work in CHANGELOG 0.10.11 and added the
+  *“What Code Fix and the AI cannot do”* section to USER_MANUAL §17 — the limitations the last three days
+  kept proving, written down where a user will find them.
+

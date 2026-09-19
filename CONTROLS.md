@@ -69,7 +69,7 @@ internal/template parts have no published summary and are described by role inst
 | SplitButton | `SplitButton` | A button with a primary part and a secondary part that opens a flyout. | ✓ |
 | ToggleButton | `ToggleButton` | A control the user can check/uncheck (base for `CheckBox`/`RadioButton`). | — (base class) |
 | ToggleSplitButton | `ToggleSplitButton` | A split button whose primary part is toggleable; the secondary part opens a flyout. | ✓ |
-| ToggleSwitch | `ToggleSwitch` | A Toggle Switch control. | ✓ |
+| ToggleSwitch | `ToggleSwitch` | A Toggle Switch control. | ✅ Toolbox |
 | ButtonSpinner | `ButtonSpinner` | A spinner control that includes two Buttons (used by date/time pickers). | — (template part) |
 
 ---
@@ -79,8 +79,8 @@ internal/template parts have no published summary and are described by role inst
 | Control | XAML tag | What it does | Designer |
 |---------|----------|--------------|----------|
 | TextBox | `TextBox` | Represents a control to display or edit unformatted text. | ✅ Toolbox |
-| MaskedTextBox | `MaskedTextBox` | A `TextBox` that constrains input using a mask (e.g. phone numbers). | ✓ |
-| NumericUpDown | `NumericUpDown` | A TextBox with spinners that increment/decrement numeric values. | ✓ |
+| MaskedTextBox | `MaskedTextBox` | A `TextBox` that constrains input using a mask (e.g. phone numbers). | ✅ Toolbox |
+| NumericUpDown | `NumericUpDown` | A TextBox with spinners that increment/decrement numeric values. | ✅ Toolbox |
 | AutoCompleteBox | `AutoCompleteBox` | Provides a text box for input plus a drop-down of possible matches. | ✓ |
 | TimePicker | `TimePicker` | A control that lets the user select a time. | ✓ |
 | SelectableTextBlock | `SelectableTextBlock` | A text block whose text can be selected by the user. | ✓ |
@@ -89,7 +89,7 @@ internal/template parts have no published summary and are described by role inst
 | AccessText | `AccessText` | A text block that underlines a character (prefixed with `_`) as a keyboard access key. | ✓ |
 | Image | `Image` | Displays a picture (`Source` = file path or `avares://` URI). | ✅ Toolbox |
 | PathPicker | `chrome:PathPicker` | A path row (box + “…” button) that opens the platform's file / folder dialog and stores the result in `SelectedPath`. The **File Selector** / **Folder Selector** tools. | ✅ Toolbox |
-| PathIcon | `PathIcon` | An icon drawn from a `Geometry`/path data. | ✓ |
+| PathIcon | `PathIcon` | An icon drawn from a `Geometry`/path data. | ✅ Toolbox |
 | IconElement | `IconElement` | Base class for icon elements drawn in XAML. | — (base class) |
 
 > **File-path properties have a "Browse…" button.** The three properties that take a file — **Image →
@@ -251,7 +251,7 @@ Drawing shapes that render as vector graphics on the design surface.
 | Ellipse | `Ellipse` | An oval (equal width/height = a perfect circle). **Backcolor** fill + **Line Colour** outline. | ✅ Toolbox |
 | Arc | `Arc` | A stroked curve swept from a **Start Angle** to a **Sweep Angle** (degrees) inside its box. Stroked only — no fill. | ✅ Toolbox |
 | Sector | `Sector` | A filled pie slice (Start/Sweep angles + fill). | ✓ (rendered) |
-| Path / Polyline / Polygon | `Path`, `Polyline`, `Polygon` | Free-form / multi-point shapes. | ✓ (rendered) |
+| Path / Polyline / Polygon | `Path`, `Polyline`, `Polygon` | Free-form / multi-point shapes. | ✅ Toolbox (Polyline, Polygon) · ✓ Path |
 
 > **Placed shapes** default to a **transparent fill + black 1px outline**, and render **behind
 > other controls by default** (Send to Back — they carry `ZIndex="-1"`). Bring one to the front by
@@ -360,13 +360,13 @@ Drawing shapes that render as vector graphics on the design surface.
 
 | Control | XAML tag | What it does | Designer |
 |---------|----------|--------------|----------|
-| ProgressBar | `ProgressBar` | Indicates the progress of an operation. | ✓ |
+| ProgressBar | `ProgressBar` | Indicates the progress of an operation. | ✅ Toolbox |
 | TickBar | `TickBar` | Used to draw a control's tick marks (used by `Slider`). | — |
-| Slider | `Slider` | Lets the user select a value from a range by dragging a Thumb. | ✓ |
+| Slider | `Slider` | Lets the user select a value from a range by dragging a Thumb. | ✅ Toolbox |
 | RangeBase | `RangeBase` | Base class for controls that display a value within a range (`Slider`/`ProgressBar`). | — (base class) |
 | Track | `Track` | A track along which a `Thumb` slides (used by `Slider`/`ProgressBar`). | — (template part) |
 | Thumb | `Thumb` | A draggable element used in sliders and resize handles. | — (template part) |
-| Separator | `Separator` | A separator line between groups of items. | ✓ |
+| Separator | `Separator` | A separator line between groups of items. | ✅ Toolbox |
 | ToolTip | `ToolTip` | Pops up a hint when a control is hovered. | ✓ |
 | ContextMenu | `ContextMenu` | A contextual (right-click) menu. | — |
 | NativeControlHost | `NativeControlHost` | Hosts a native platform control inside Avalonia. | — |

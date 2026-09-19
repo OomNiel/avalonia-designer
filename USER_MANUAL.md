@@ -1554,6 +1554,33 @@ as at runtime). Code-behind is discovered correctly even when the class lives in
 
 ## 17. Known issues & tips
 
+### What Code Fix and the AI cannot do
+
+Worth knowing before you trust a green build. These are the limits of the feature, stated plainly:
+
+- **It verifies by building, never by running.** A fix counts as fixed when `dotnet build` is clean, so code
+  that compiles and misbehaves at runtime passes every gate. A real example from this project: an AI-written
+  method listed every mount with `Directory.GetDirectories`, `/sys/fs/pstore` is unreadable for a normal
+  user, and the window died on load — with 0 warnings and 0 errors. (The check now warns about that shape of
+  code before you run it.)
+- **Syntax the rules do not know is left to the build.** The rule fixer covers a fixed catalogue of shapes. A
+  missing `;` inside a body, an unusual construct or a brace tangle may get no offer at all.
+- **XAML event handlers are resolved at runtime.** A handler named in the XAML with no method behind it
+  compiles and throws when the window loads. The check badges it (⚠) and Code Fix offers *insert the missing
+  handler* / *unwire the event*, but nothing blocks it.
+- **The model writes plausible code, not correct code.** The bundled 7B will invent a working-looking
+  implementation; the 30B step-up exists for when that is not enough. Both can be wrong in ways the build
+  cannot see.
+- **Loop-driven AI fixes skip the diff review by design.** The repair loop rebuilds a second later and reverts
+  a change that did not help, so a dialog per error would be noise. `assistant.showDiff` governs the AI *you*
+  ask for, not the loop.
+- **One file, one edit at a time.** It edits the code-behind or `.axaml` that holds the error. It will not
+  restructure a project, add packages, or fix design-level problems.
+- **Windows-first assumptions.** AI-written file and drive code tends to assume `\` and drive letters; on
+  Linux the path handling needs a human look.
+- **Time and determinism.** A cold 16 GB model load is minutes, and the 30B step-up gives up after five; the
+  same error can get different answers from one run to the next.
+
 - **Changes need a reload** — after installing/updating the extension, reload the window.
 - **The designer does not reload itself when the file changes on disk** (e.g. you edited the XAML
   in a text tab) — press **Refresh** in the designer toolbar to pull the file in again.

@@ -1,6 +1,13 @@
 # Test Script Plan — Avalonia Designer Extension
 
-Date: 2026-09-18 · Status: **full suite green on this machine — 5,059 passed / 0 failed / 0 skipped (~39 s)**
+Date: 2026-09-19 · Status: **full suite green on this machine — 5,364 passed / 0 failed / 0 skipped (~39 s)**
+
+> 2026-09-19: the T5 matrix now places, renders, bounds-checks, property-tests and VB-compiles **45**
+> placeable controls (the nine added that day included), which is where most of the growth from 5,059 to
+> 5,364 assertions comes from. Two defects it caught on the way: `Separator` sat 12 px off the drop point
+> (the Fluent theme's own margin — the snippet now pins `Margin="0"`), and a generic text sample was not a
+> valid `Points` list or `Geometry`, so `Polyline`/`Polygon`/`PathIcon` failed to compile until the harness
+> learned real samples for `Points` and `Data`.
 
 > Update 2026-08-30: user approved **Option (a) — full Avalonia.Headless driver** for T4, and
 > instructed to *prepare the script only* (run at a later stage) and keep it easily extensible.

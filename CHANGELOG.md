@@ -22,6 +22,30 @@ with no API to anchor it at the caret. The Comments API is not an alternative ei
 `canReply` and a `label`, but **no `input` and no submit event**, so a reply typed into one goes nowhere an
 extension can read.
 
+### Added — nine Toolbox controls, and a rule for a crash that compiles (2026-09-19)
+
+- **Nine more Toolbox controls.** `ProgressBar`, `Slider` and `Separator` (a new *Progress, status & misc*
+  category, mirroring CONTROLS.md), plus `Masked Text Box`, `Numeric Up-Down`, `Path Icon`, `Toggle Switch`,
+  `Polyline` and `Polygon`. Each has a plain-language tooltip/help text, a starter snippet and the property
+  rows it needs (`Value`/`Minimum`/`Maximum`, `Points`, `Mask`, `Path Data`, …). Two details that would
+  otherwise read as bugs: a dropped progress bar ships at **40%** so it is visible, and `Polyline`/`Polygon`
+  carry `Stretch="Fill"` so the resize box actually scales them.
+- **A check rule for the exception a build cannot see.** An unguarded directory listing — `Directory.*`, or a
+  directory-only call on a `DirectoryInfo` — is now a warning. On Linux `DriveInfo.GetDrives()` returns every
+  mount, and one of them (`/sys/fs/pstore`) is unreadable for a normal user, so a loop that reads like *over
+  my disks* threw `UnauthorizedAccessException` as the window loaded. It compiles, which is exactly why it has
+  to be a rule: neither the build nor the repair loop (which verifies by rebuilding) can see it.
+- **One copy of the shared DataSet runtime helpers per project.** Two DataSets in one namespace each declared
+  `RuntimeStorage`/`DatabaseAdapter`, so the second broke the build with CS0101 (BC30179 in VB). The helpers
+  now live in exactly one generated file — and a single *Generate Code* repairs a project that already has
+  the duplicate.
+
+### Removed
+
+- **The dataset-to-TreeView binding never shipped.** It was built, judged impractical and removed before this
+  release: no `role` columns, no `Wire<T>Tree`, no `TreeBuilder` helper. The **TreeView control itself**
+  (toolbox entry, properties, node editor, events) is untouched.
+
 ### Added
 
 - **TreeView is in the Toolbox.** It was already a core Avalonia control and already listed in
