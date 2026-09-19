@@ -605,8 +605,8 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                                 if (ctrl.type === 'TreeView' && !canBindToTree(t)) {
                                     await this.postStatus(panel,
                                         `"${control}" is a TreeView: give the table a shape first — set a column's `
-                                        + 'Tree role to "Node text (Name)", plus either "Id" and "Parent", or a '
-                                        + '"Level or path" column.');
+                                        + 'Tree role to "Node text (Name)". Add "Id" and "Parent" (or a "Level or '
+                                        + 'path" column) only if the rows nest.');
                                     return;
                                 }
                                 const filePath = await bindControlToDataSet(vscode.Uri.file(axaml), {

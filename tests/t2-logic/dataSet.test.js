@@ -3,7 +3,7 @@
 'use strict';
 const {
   parseDataSet, serializeDataSet, defaultDataSetSpec, newTableSpec, newColumnSpec,
-  isValidIdentifier, sanitizeName, csType, vbType, xsType, findTable
+  isValidIdentifier, sanitizeName, csType, vbType, xsType, findTable, canBindToTree
 } = require('../../out/dataSetModel.js');
 const { generateCs, generateVb, generateXsd, consolidateRuntimeHelpers, stripRuntimeHelpers }
   = require('../../out/dataSetGenerator.js');
@@ -165,6 +165,45 @@ module.exports = async (t) => {
   t.ok(vbTwo[0].text.includes('Public Module RuntimeStorage'), 'helpers', 'vb: the first file keeps the helpers');
   t.ok(!vbTwo[1].text.includes('RuntimeStorage'), 'helpers', 'vb: the second file loses its copy');
   t.ok(vbTwo[1].text.trimEnd().endsWith('End Namespace'), 'helpers', 'vb: the stripped file still closes its namespace');
+
+  // The tree roles decide the shape a bound TreeView gets, so they have to survive the round-trip: reading
+  // them but never writing them (2026-09-19) meant a role picked in the editor was gone by the next load, so
+  // canBindToTree said "no shape yet" and the bind was refused — the report was "I can't get it to bind".
+  const roleSpec = parseDataSet(ADSET);
+  roleSpec.tables[0].columns[1].role = 'name';
+  t.ok(serializeDataSet(roleSpec).includes('"role": "name"'), 'tree', 'a tree role is written to the .adset');
+  t.equal(parseDataSet(serializeDataSet(roleSpec)).tables[0].columns[1].role, 'name', 'tree',
+      'and read back, so the editor and the generator agree on the shape');
+  t.ok(!serializeDataSet(parseDataSet(ADSET)).includes('"role"'), 'tree',
+      'a dataset without roles gains no role keys — the file is unchanged');
+
+  // ADSET's Customers is Id / Name / Balance. One role alone is enough: the rows become root nodes, which is
+  // the truth for a flat table (the report that produced this: Id/Name/Image with no parent or level column).
+  const treeSpec = (roles) => {
+    const s = parseDataSet(ADSET);
+    const t = s.tables[0];
+    t.boundTo = 'TreeView1';
+    t.boundToType = 'TreeView';
+    for (const c of t.columns) c.role = roles[c.name] || null;
+    return s;
+  };
+  t.ok(canBindToTree(treeSpec({ Name: 'name' }).tables[0]), 'tree',
+      'node text alone can bind: a flat table is a tree of root nodes');
+  t.ok(!canBindToTree(treeSpec({}).tables[0]), 'tree', 'no name role means no tree at all');
+  t.ok(generateCs(treeSpec({ Name: 'name' }), 'Proj')
+      .includes('TreeBuilder.BuildFlat(rows, r => r.Name ?? "")'), 'tree',
+      'cs: a flat table calls BuildFlat');
+  const vbFlat = generateVb(treeSpec({ Name: 'name' }), 'Proj');
+  t.ok(vbFlat.includes('TreeBuilder.BuildFlat(rows,') && vbFlat.includes('If(r.Name'), 'tree',
+      'vb: the same shape, through the VB name selector');
+  t.ok(generateCs(treeSpec({ Name: 'name', Id: 'id', Balance: 'parent' }), 'Proj')
+      .includes('TreeBuilder.Build(rows, r => r.Id, r => r.Balance, r => r.Name ?? "")'), 'tree',
+      'cs: id + parent still walks up');
+  t.ok(generateCs(treeSpec({ Name: 'name', Balance: 'level' }), 'Proj')
+      .includes('TreeBuilder.BuildByHierarchy(rows, r => r.Balance, r => r.Name ?? "")'), 'tree',
+      'cs: a level column still reads the depth');
+  t.ok(generateVb(treeSpec({ Name: 'name', Id: 'id', Balance: 'parent' }), 'Proj')
+      .includes('TreeBuilder.Build(rows, Function(r) r.Id'), 'tree', 'vb: id + parent walks up as well');
 
   // --- default spec ---
   const dflt = defaultDataSetSpec('Demo');

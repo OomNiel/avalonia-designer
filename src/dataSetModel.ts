@@ -216,12 +216,12 @@ export function treeRoles(t: DataTableSpec): Partial<Record<TreeColumnRole, stri
  * again by the generator, so a hand-edited `.adset` cannot produce code that cannot compile.
  */
 export function canBindToTree(t: DataTableSpec): boolean {
-    const roles = treeRoles(t);
-    // A parent column needs an id column to look the parent up by; without one, only a level/path
-    // column can describe the shape. Stated here so the editor, the generator and the preview all
-    // refuse the same tables rather than each inventing its own rule.
-    if (roles.level) return !!roles.name;
-    return !!roles.name && !!roles.id && !!roles.parent;
+    // A TreeView only needs node text. A parent column needs an id to look the parent up by, and a
+    // level/path column describes the depth — with neither, the rows are still worth showing as a flat list
+    // of root nodes, which is the ordinary case for a table like Id/Name/Image (2026-09-19: a user with
+    // exactly that table could not bind at all). Declared once here so the editor, the generator and the
+    // preview cannot each invent their own rule.
+    return !!treeRoles(t).name;
 }
 
 export function sqliteTableName(t: DataTableSpec): string {
@@ -387,7 +387,11 @@ export function serializeDataSet(spec: DataSetSpec): string {
                 type: c.type,
                 caption: c.caption,
                 allowNull: c.allowNull,
-                ...(c.sampleValue ? { sampleValue: c.sampleValue } : {})
+                ...(c.sampleValue ? { sampleValue: c.sampleValue } : {}),
+                // The tree role decides how a bound TreeView is shaped, so it has to survive the round-trip
+                // like every other column fact (2026-09-19: it was read but never written, so a role set in
+                // the editor was gone by the next load and the bind was refused as "no shape yet").
+                ...(c.role ? { role: c.role } : {})
             })),
             ...(t.boundTo ? { boundTo: t.boundTo } : {}),
             ...(t.boundTo && t.boundToType ? { boundToType: t.boundToType } : {}),

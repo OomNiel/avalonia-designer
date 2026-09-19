@@ -67,6 +67,23 @@ Namespace AvaloniaChrome
     ''' <summary>Turns flat rows into the node tree a TreeView binds to.</summary>
     Public Class TreeBuilder
 
+        ''' <summary>
+        ''' A flat list of root nodes: a table with no hierarchy still shows its rows, one node each.
+        ''' </summary>
+        Public Shared Function BuildFlat(Of TRow)(
+            rows As IEnumerable(Of TRow),
+            name As Func(Of TRow, String)) As ObservableCollection(Of TreeNode)
+
+            Dim nodes As New ObservableCollection(Of TreeNode)()
+            If rows IsNot Nothing Then
+                For Each row As TRow In rows
+                    nodes.Add(New TreeNode(Text(name(row))))
+                Next
+            End If
+
+            Return nodes
+        End Function
+
         ''' <summary>Builds a tree from a self-referencing table: an id column and a parent column.</summary>
         Public Shared Function Build(Of TRow)(
             rows As IEnumerable(Of TRow),
