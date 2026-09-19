@@ -60,7 +60,7 @@ export type LocalFixKind =
     | 'repair-structure'         // a nested namespace/class, or braces the model never closed
     | 'insert-semicolon'         // a C# statement nothing terminated (CS1002) — the sibling of the brace repair
     | 'comment-out-control-code' // code still uses a control the form no longer has (CS0103/BC30451): the
-                                 // statement is commented out with a TODO marker, never deleted silently
+    // statement is commented out with a TODO marker, never deleted silently
     | 'insert-initialize'        // InitializeComponent() missing
     | 'add-binding-call'         // Data-Image block present, ctor call missing
     | 'restamp-marker'           // Data-Image block present, `' DataImage:` marker lost
@@ -756,6 +756,11 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
 
     const controls = unionNamedControls(opts.controls ?? [], ax.names);
     const controlNames = new Set(controls.map((c) => c.name));
+    // Comments blanked out, character-for-character, so a **commented-out** reference stays invisible to
+    // the rules below (the offsets are shared with `code.body`). Without it, the fix for a removed control
+    // becomes its own next finding: the `// TODO: "Slider1" …` line still contains `Slider1.` — reported
+    // 2026-09-19 as "that works but still raises a PROBLEM entry".
+    const cleanCode = blankOutCommentsAndLiterals(code.body);
 
     // ---- 1) VB named-control accessors (missing → BC30451, stale → dead code) ----
     if (language === 'vb') {
@@ -773,7 +778,7 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
         }
         for (const a of code.accessors) {
             if (controlNames.has(a.name)) continue;
-            const count = usesOutside(code.body, a.name, a.start, a.end);
+            const count = usesOutside(cleanCode, a.name, a.start, a.end);
             add({
                 severity: 'warning', kind: count === 0 ? 'rebuild-accessors' : 'comment-out-control-code',
                 member: a.name, line: lineAt(code.body, a.start),
@@ -798,11 +803,12 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
     //
     // Only "control-shaped" names (the `Button1`/`Slider1` naming the designer gives a placed control) are
     // considered, and only those the form does NOT have. A name the form still has is the ordinary case;
-    // a missing *type* is the compiler's business (CS0103/BC30451 → compilerIssues()).
+    // a missing *type* is the compiler's business (CS0103/BC30451 → compilerIssues()). Commented-out code
+    // is not counted at all — that is what makes the fix clear its own finding (see `cleanCode`).
     const usedLikeControls = new Map<string, { count: number; at: number }>();
     const useRe = /\b([A-Z][A-Za-z0-9_]*\d+)\s*\./g;
     let use: RegExpExecArray | null;
-    while ((use = useRe.exec(code.body))) {
+    while ((use = useRe.exec(cleanCode))) {
         if (controlNames.has(use[1])) continue;
         const seen = usedLikeControls.get(use[1]);
         usedLikeControls.set(use[1], { count: (seen?.count ?? 0) + 1, at: seen?.at ?? use.index });

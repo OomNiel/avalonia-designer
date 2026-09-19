@@ -344,6 +344,36 @@ End Namespace
         t.ok(/Commented out 1 statement/.test(vbReport), 'comment-out', 'with the same one-line report');
     }
 
+    // --- and the fix clears its OWN finding (reported 2026-09-19) ---
+    // "That works but still raises a PROBLEM entry" — the commented-out line still said `ProgressBar1.`,
+    // so the rule re-reported exactly what it had just fixed, and no amount of re-running cleared it.
+    // The rule now scans a comment-blanked copy of the file (same offsets), which is what makes the
+    // round trip end quiet.
+    {
+        const os = require('os');
+        const { applyLocalFix, analyzeCodeBehind } = require('../../out/codeBehindCheck.js');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'removed-control-recheck-'));
+        const axamlPath = path.join(dir, 'Form.axaml');
+        fs.writeFileSync(axamlPath,
+            '<Window xmlns="https://github.com/avaloniaui" x:Class="Proj.Form"><Canvas Name="Body"><Button x:Name="Button1"/></Canvas></Window>',
+            'utf8');
+        const uri = { fsPath: axamlPath, path: axamlPath, toString: () => `file://${axamlPath}` };
+        const csPath = path.join(dir, 'Form.axaml.cs');
+        fs.writeFileSync(csPath, ['namespace Proj {', '    public partial class Form {', '        void Go() {',
+            '            ProgressBar1.Value = 5;', '        }', '    }', '}', ''].join('\n'), 'utf8');
+
+        const found = (r) => r.issues.filter((i) => i.kind === 'comment-out-control-code');
+        t.equal(found(analyzeCodeBehind(uri, {})).length, 1, 'comment-out-recheck',
+            'a use of a control the form does not have is reported');
+        await applyLocalFix(uri, { kind: 'comment-out-control-code', data: { control: 'ProgressBar1' } });
+        t.ok(/TODO: "ProgressBar1"/.test(fs.readFileSync(csPath, 'utf8')), 'comment-out-recheck',
+            'the fix comments the statement out');
+        t.equal(found(analyzeCodeBehind(uri, {})).length, 0, 'comment-out-recheck',
+            'and the finding is GONE afterwards — a commented-out reference is not a problem');
+        t.ok(/ProgressBar1/.test(fs.readFileSync(csPath, 'utf8')), 'comment-out-recheck',
+            'while the code itself is still there to read');
+    }
+
     // --- handler insertion (C# + VB) ---
     {
         const p = tmpProject('cs');
