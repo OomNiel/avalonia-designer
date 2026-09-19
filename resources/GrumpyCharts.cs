@@ -937,9 +937,16 @@ public abstract class ChartBase : Control
         var borderThickness = ShowBorder ? Math.Max(0, BorderThickness) : 0;
         var frame = new Rect(size).Deflate(borderThickness / 2);
 
-        // 1. Frame background + plot-area fill come first, so everything else lands on top.
+        // 1. The chart's OWN plate comes first, filling the whole interior - not just the plot area.
+        //    Everything drawn outside the plot (the title, the axis labels, the ticks) then sits on
+        //    the chart's colour instead of on whatever is behind the control. Without this a chart
+        //    tuned for a dark form (white TitleColor, dark PlotBackColor) is invisible in the
+        //    Designer - whose preview is always the light theme - while looking right at runtime,
+        //    because the surround used to take the form's background.
         var radius = CornerRadius;
-        context.DrawRectangle(null, null, new RoundedRect(frame, radius));
+        var opacity = Math.Clamp(PlotBackOpacity, 0, 100) / 100d;
+        var plate = new SolidColorBrush(PlotBackColor, opacity);
+        context.DrawRectangle(plate, null, new RoundedRect(frame, radius));
 
         var series = Series();
         var showTitle = ShowTitle && !string.IsNullOrWhiteSpace(Title);
@@ -992,9 +999,9 @@ public abstract class ChartBase : Control
         plot = Chop(plot, leftGutter, 0, 0, bottomGutter);
         if (plot.Width <= 4 || plot.Height <= 4) return;
 
-        // 3. Plot-area fill (with its own opacity).
-        var opacity = Math.Clamp(PlotBackOpacity, 0, 100) / 100d;
-        context.DrawRectangle(new SolidColorBrush(PlotBackColor, opacity), null, plot);
+        // 3. Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry
+        //    its own tint without touching the rest of the chart).
+        context.DrawRectangle(plate, null, plot);
 
         if (!series.HasData)
         {

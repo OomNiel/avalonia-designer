@@ -939,8 +939,8 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     MarkerStyle: { desc: 'The symbol drawn at each X,Y point: None, Dot, Cross, Square or Diamond.' },
     MarkerSize: { kind: 'number', unit: 'px', desc: 'Size of the marker symbol.' },
     Connected: { desc: 'Join the points with a line. False = markers only (a scatter plot).' },
-    PlotBackColor: { kind: 'color', options: COLORS, desc: 'Fill colour of the plot area (the region inside the axes).' },
-    PlotBackOpacity: { kind: 'number', unit: '%', desc: 'Plot-area opacity in percent: 0 = invisible (the form shows through), 100 = solid.' },
+    PlotBackColor: { kind: 'color', options: COLORS, desc: 'The chart\'s backcolour: fills the whole chart - the plot area AND the margin around it where the title and axis labels are drawn. Setting it makes the chart readable on any form, whatever colour the form is.' },
+    PlotBackOpacity: { kind: 'number', unit: '%', desc: 'How solid the chart\'s backcolour is: 0 = invisible (the form shows through, so the title and labels take the form\'s colour), 100 = solid.' },
     ShowBorder: { desc: 'Draw the border around the chart control.' },
     // BorderBrush / BorderThickness are documented once, above, for every control that has them.
     ShowGrid: { desc: 'Draw gridlines at the major ticks.' },

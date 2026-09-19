@@ -1150,7 +1150,15 @@ Namespace Global.AvaloniaCharts
             ' GetSeries method) makes the compiler infer the local instead of the member.
             Dim frameWidth = If(ShowBorder, Math.Max(0, BorderThickness), 0)
             Dim frame = New Rect(size).Deflate(frameWidth / 2)
+            ' The chart's OWN plate comes first, filling the whole interior - not just the plot area.
+            ' Everything drawn outside the plot (the title, the axis labels, the ticks) then sits on the
+            ' chart's colour instead of on whatever is behind the control: a chart tuned for a dark form
+            ' (white TitleColor, dark PlotBackColor) used to be invisible in the Designer, whose preview
+            ' is always the light theme, while looking right at runtime.
             Dim radius = CornerRadius
+            Dim opacity = Math.Clamp(PlotBackOpacity, 0, 100) / 100.0
+            Dim plate As New SolidColorBrush(PlotBackColor, opacity)
+            context.DrawRectangle(plate, Nothing, New RoundedRect(frame, radius))
 
             Dim chartData = GetSeries()
             Dim wantTitle = ShowTitle AndAlso Not String.IsNullOrWhiteSpace(Title)
@@ -1209,9 +1217,9 @@ Namespace Global.AvaloniaCharts
             plot = Chop(plot, leftGutter, 0, 0, bottomGutter)
             If plot.Width <= 4 OrElse plot.Height <= 4 Then Return
 
-            ' Plot-area fill (with its own opacity).
-            Dim opacity = Math.Clamp(PlotBackOpacity, 0, 100) / 100.0
-            context.DrawRectangle(New SolidColorBrush(PlotBackColor, opacity), Nothing, plot)
+            ' Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry its
+            ' own tint without touching the rest of the chart).
+            context.DrawRectangle(plate, Nothing, plot)
 
             If Not chartData.HasData Then
                 DrawFrame(context, frame, radius, frameWidth)

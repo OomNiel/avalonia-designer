@@ -843,9 +843,17 @@ public class XamlRenderer
             // The chart controls (AvaloniaCharts) expose Color-typed properties rather than
             // brushes, so the programmatic builder must parse those too — otherwise BorderBrush,
             // LineColor and the rest would silently keep their defaults in the preview.
+            //
+            // Try the value AS WRITTEN first: a named colour ("White", "Black") parses fine, and
+            // blindly prefixing '#' turns it into "#White", which throws — and the fallback made
+            // that an invisible Transparent title/labels in the preview while runtime (which uses
+            // the real XAML loader) showed them correctly. Bare hex ("413e3e") still wants the '#'.
             var text = value.Trim();
-            if (!text.StartsWith("#")) text = "#" + text;
-            try { return Color.Parse(text); } catch { return Colors.Transparent; }
+            try { return Color.Parse(text); }
+            catch
+            {
+                try { return Color.Parse("#" + text); } catch { return Colors.Transparent; }
+            }
         }
         // Anything carrying a TypeConverter that reads a string — the chart controls' data arrays
         // (double[] / double[,]) and CornerRadius among them. Avalonia's Geometry parser is picked up
