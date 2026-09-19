@@ -698,7 +698,7 @@ function csPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     // needs no extra using/Imports.
     if (isTreeBound(t)) {
         const roles = treeRoles(t);
-        lines.push(`        public static void Wire${t.name}Tree(TreeView tree, ${L} rows)`);
+        lines.push(`        public static void Wire${t.name}Tree(TreeView tree, System.Collections.Generic.IEnumerable<${R}> rows)`);
         lines.push('        {');
         // Which shape the roles describe (see canBindToTree): id+parent walks up, a level/path column reads
         // the depth, and with neither the rows are root nodes.
@@ -1489,7 +1489,7 @@ function vbPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     // The VB twin of Wire…Tree (see the C# emitter above).
     if (isTreeBound(t)) {
         const roles = treeRoles(t);
-        lines.push(`        Public Shared Sub Wire${t.name}Tree(tree As TreeView, rows As ${OC})`);
+        lines.push(`        Public Shared Sub Wire${t.name}Tree(tree As TreeView, rows As System.Collections.Generic.IEnumerable(Of ${R}))`);
         if (roles.parent && roles.id) {
             lines.push('            tree.ItemsSource = AvaloniaChrome.TreeBuilder.Build(rows, '
                 + `Function(r) r.${roles.id}, Function(r) r.${roles.parent}, ${nameSelector(t, roles.name as string, false)})`);

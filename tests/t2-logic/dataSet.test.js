@@ -173,9 +173,9 @@ module.exports = async (t) => {
   roleSpec.tables[0].columns[1].role = 'name';
   t.ok(serializeDataSet(roleSpec).includes('"role": "name"'), 'tree', 'a tree role is written to the .adset');
   t.equal(parseDataSet(serializeDataSet(roleSpec)).tables[0].columns[1].role, 'name', 'tree',
-      'and read back, so the editor and the generator agree on the shape');
+    'and read back, so the editor and the generator agree on the shape');
   t.ok(!serializeDataSet(parseDataSet(ADSET)).includes('"role"'), 'tree',
-      'a dataset without roles gains no role keys — the file is unchanged');
+    'a dataset without roles gains no role keys — the file is unchanged');
 
   // ADSET's Customers is Id / Name / Balance. One role alone is enough: the rows become root nodes, which is
   // the truth for a flat table (the report that produced this: Id/Name/Image with no parent or level column).
@@ -188,22 +188,22 @@ module.exports = async (t) => {
     return s;
   };
   t.ok(canBindToTree(treeSpec({ Name: 'name' }).tables[0]), 'tree',
-      'node text alone can bind: a flat table is a tree of root nodes');
+    'node text alone can bind: a flat table is a tree of root nodes');
   t.ok(!canBindToTree(treeSpec({}).tables[0]), 'tree', 'no name role means no tree at all');
   t.ok(generateCs(treeSpec({ Name: 'name' }), 'Proj')
-      .includes('TreeBuilder.BuildFlat(rows, r => r.Name ?? "")'), 'tree',
-      'cs: a flat table calls BuildFlat');
+    .includes('TreeBuilder.BuildFlat(rows, r => r.Name ?? "")'), 'tree',
+    'cs: a flat table calls BuildFlat');
   const vbFlat = generateVb(treeSpec({ Name: 'name' }), 'Proj');
   t.ok(vbFlat.includes('TreeBuilder.BuildFlat(rows,') && vbFlat.includes('If(r.Name'), 'tree',
-      'vb: the same shape, through the VB name selector');
+    'vb: the same shape, through the VB name selector');
   t.ok(generateCs(treeSpec({ Name: 'name', Id: 'id', Balance: 'parent' }), 'Proj')
-      .includes('TreeBuilder.Build(rows, r => r.Id, r => r.Balance, r => r.Name ?? "")'), 'tree',
-      'cs: id + parent still walks up');
+    .includes('TreeBuilder.Build(rows, r => r.Id, r => r.Balance, r => r.Name ?? "")'), 'tree',
+    'cs: id + parent still walks up');
   t.ok(generateCs(treeSpec({ Name: 'name', Balance: 'level' }), 'Proj')
-      .includes('TreeBuilder.BuildByHierarchy(rows, r => r.Balance, r => r.Name ?? "")'), 'tree',
-      'cs: a level column still reads the depth');
+    .includes('TreeBuilder.BuildByHierarchy(rows, r => r.Balance, r => r.Name ?? "")'), 'tree',
+    'cs: a level column still reads the depth');
   t.ok(generateVb(treeSpec({ Name: 'name', Id: 'id', Balance: 'parent' }), 'Proj')
-      .includes('TreeBuilder.Build(rows, Function(r) r.Id'), 'tree', 'vb: id + parent walks up as well');
+    .includes('TreeBuilder.Build(rows, Function(r) r.Id'), 'tree', 'vb: id + parent walks up as well');
 
   // --- default spec ---
   const dflt = defaultDataSetSpec('Demo');

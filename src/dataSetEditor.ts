@@ -163,10 +163,18 @@ export function ensureTreeItemTemplate(axamlPath: string, controlName: string): 
     const selfClosed = open[2] === '/';
     const closeAt = selfClosed ? -1 : text.indexOf('</TreeView>', open.index + open[0].length);
     let inner = selfClosed ? '' : (closeAt > 0 ? text.slice(open.index + open[0].length, closeAt) : '');
+    // Compiled bindings need a DataType: without one the XAML compiler has no idea what {Binding Children}
+    // and {Binding Header} are bound to and the build fails with AVLN2000 (hit on 2026-09-19 in a project
+    // with AvaloniaUseCompiledBindingsByDefault). The prefix for the helper's CLR namespace is usually
+    // declared already (chrome:AnchorHelper.Anchor); if it is not, declare it on the TreeView itself.
+    const declared = /xmlns:([A-Za-z_][\w.-]*)\s*=\s*["'](?:clr-namespace|using):AvaloniaChrome["']/.exec(text);
+    const prefix = declared ? declared[1] : 'chrome';
+    const extraNs = declared ? '' : ` xmlns:${prefix}="using:AvaloniaChrome"`;
     const template = /<TreeView\.ItemTemplate\b/.test(inner)
         ? ''
-        : '\n  <TreeView.ItemTemplate>\n    <TreeDataTemplate ItemsSource="{Binding Children}">\n'
-        + '      <TextBlock Text="{Binding Header}"/>\n    </TreeDataTemplate>\n  </TreeView.ItemTemplate>';
+        : `\n  <TreeView.ItemTemplate>\n    <TreeDataTemplate x:DataType="${prefix}:TreeNode" `
+            + 'ItemsSource="{Binding Children}">\n      <TextBlock Text="{Binding Header}"/>\n'
+            + '    </TreeDataTemplate>\n  </TreeView.ItemTemplate>';
     let cleared = false;
     // Nested nodes make this a loop: the pattern is non-greedy, so one pass removes a leaf, the next its parent.
     while (/<TreeViewItem\b/.test(inner)) {
@@ -180,9 +188,11 @@ export function ensureTreeItemTemplate(axamlPath: string, controlName: string): 
         }
     }
     if (!template && !cleared) return 'none';
+    // The open tag is rewritten either way, which is where a missing xmlns: prefix gets added.
+    const head = text.slice(0, open.index) + `<TreeView${attrs}${extraNs}>` + template + inner;
     const updated = selfClosed
-        ? text.slice(0, open.index) + `<TreeView${attrs}>${template}${inner}\n</TreeView>` + text.slice(open.index + open[0].length)
-        : text.slice(0, open.index + open[0].length) + template + inner + text.slice(closeAt);
+        ? head + '\n</TreeView>' + text.slice(open.index + open[0].length)
+        : head + text.slice(closeAt);
     fs.writeFileSync(axamlPath, updated, 'utf8');
     return template && cleared ? 'both' : (template ? 'template' : 'cleared');
 }
@@ -890,6 +900,27 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
         return '';
     }
 
+    /**
+     * Copies the bundled TreeBuilder into the project when a table is bound to a TreeView (2026-09-19: the
+     * generated class called `AvaloniaChrome.TreeBuilder` in a project that never had the file, so the build
+     * failed with CS0234 — binding a tree was enough to write the call, but nothing copied the class).
+     */
+    private ensureTreeBuilder(doc: DataSetDocument, folder: string, language: string): void {
+        const needs = doc.spec.tables.some(
+            (t) => t.boundToType === 'TreeView' && !!t.boundTo && canBindToTree(t));
+        if (!needs) return;
+        const file = language === 'vb' ? 'TreeBuilder.vb' : 'TreeBuilder.cs';
+        const proj = findProject(doc.uri);
+        // The component lives next to the project file (where New Project writes it); an older layout may have
+        // put it next to the .axaml. Present in either place means it is there — leave it alone.
+        const dirs = [proj ? path.dirname(proj.projectUri.fsPath) : '', folder].filter((d) => !!d);
+        if (dirs.some((d) => fs.existsSync(path.join(d, file)))) return;
+        try {
+            fs.copyFileSync(path.join(this.context.extensionUri.fsPath, 'resources', file),
+                path.join(dirs[0], file));
+        } catch { /* best effort — the build error names the missing type */ }
+    }
+
     private async postStatus(panel: vscode.WebviewPanel, message: string): Promise<void> {
         await panel.webview.postMessage({ type: 'status', message });
     }
@@ -903,6 +934,8 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
         const rootNamespace = proj?.rootNamespace || doc.spec.name;
         const folder = path.dirname(doc.uri.fsPath);
         const base = doc.spec.name;
+        // A tree-bound table's generated class needs the bundled TreeBuilder beside it.
+        this.ensureTreeBuilder(doc, folder, language);
         const codeUri = vscode.Uri.file(path.join(folder, language === 'vb' ? `${base}.vb` : `${base}.cs`));
         const xsdUri = vscode.Uri.file(path.join(folder, `${base}.xsd`));
         const code = language === 'vb' ? generateVb(doc.spec, rootNamespace) : generateCs(doc.spec, rootNamespace);
