@@ -1664,6 +1664,13 @@ export function propertyDefsFor(
     const parentIsTopLayout = parentTag === 'DockPanel' && !!parentEl
         && parentEl.parentNode && (parentEl.parentNode as Node).nodeType === 1
         && /window|usercontrol|chrome/i.test(localName((parentEl.parentNode as Element).tagName));
+    // TODO(anchor-everywhere): the user wants Anchor offered on EVERY control, not only Canvas /
+    // non-structural-DockPanel children (asked 2026-09-19, deliberately deferred). Doing it properly
+    // means (1) teaching resources/AnchorHelper.cs + .vb to track children of Grid/StackPanel/… too
+    // (today they only handle `GetVisualParent() is Canvas` and `… is DockPanel`), and only then
+    // (2) widening this gate — probably `!isRoot` like the dedicated GrumpyPanel anchor, minus the
+    // top-level layout DockPanel whose children carry Dock instead. Do NOT just widen the row first:
+    // an Anchor that compiles but does nothing is worse than no row.
     const anchorable = parentTag === 'Canvas' || (parentTag === 'DockPanel' && !parentIsTopLayout);
 
     const templates: PropTemplate[] = [
