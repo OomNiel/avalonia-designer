@@ -73,19 +73,6 @@ export function xsType(t: ColumnType): string {
     }
 }
 
-/** What a column MEANS when its table is bound to a TreeView (asked 2026-09-18). */
-export type TreeColumnRole =
-    /** The node's text (what the tree shows). One per table. */
-    | 'name'
-    /** The node's identity, referenced by `parent`. Optional: without it, rows are matched by
-     *  array order... which is what `parent` uses when there is no id column. */
-    | 'id'
-    /** A self-referencing column: this row's parent's `id` (a classic parent/child table). */
-    | 'parent'
-    /** A level or path column (`Level` = 0,1,2 … or `Path` = `1.2.3`), for tables that describe a
-     *  hierarchy by depth or by a coded path instead of by parent references. */
-    | 'level';
-
 export interface DataColumnSpec {
     name: string;        // column field name (identifier)
     type: ColumnType;
@@ -94,10 +81,6 @@ export interface DataColumnSpec {
     /** Sample value the user typed (null = use an automatic value). Used in the sample row
      *  that's added to the generated DataSet when the table is bound to a control. */
     sampleValue: string | null;
-    /** Role this column plays when the table is bound to a **TreeView** (null/absent = an ordinary
-     *  data column). A tree needs a `name` column plus either a `parent` column (self-referencing
-     *  table) or a `level` column (depth / dotted path). */
-    role?: TreeColumnRole | null;
 }
 
 /** A form Image control that shows the image file stored in one of this table's TEXT columns for the
@@ -116,9 +99,8 @@ export interface DataTableSpec {
     columns: DataColumnSpec[];
     /** Name of the bindable control this table is bound to (null = unbound). */
     boundTo: string | null;
-    /** Kind of the bound control ('DataGrid' enables live add/edit/delete grid support;
-     *  'TreeView' binds it to a hierarchy built from this table's `role` columns). */
-    boundToType?: 'DataGrid' | 'ListBox' | 'ComboBox' | 'ItemsControl' | 'TreeView' | null;
+    /** Kind of the bound control ('DataGrid' enables live add/edit/delete grid support). */
+    boundToType?: 'DataGrid' | 'ListBox' | 'ComboBox' | 'ItemsControl' | null;
     /** Undo/redo depth for the bound grid's live editing (default 5; 0 disables undo). */
     undoRedoDepth?: number;
     /** Name of the column used as the table's primary key (single-key identity; null = none,
@@ -198,32 +180,6 @@ export function isSqliteTable(t: DataTableSpec): boolean {
 
 /** The name of the table INSIDE the SQLite file (an import may have renamed the .adset table to
  *  avoid a clash, but the database table keeps its original name). Defaults to the spec name. */
-/** Every role a TreeView-bound column may have, in the order the editor offers them. */
-export const TREE_COLUMN_ROLES: TreeColumnRole[] = ['name', 'id', 'parent', 'level'];
-
-/** The columns of `t` that carry a tree role, by role (a missing role is simply absent). */
-export function treeRoles(t: DataTableSpec): Partial<Record<TreeColumnRole, string>> {
-    const out: Partial<Record<TreeColumnRole, string>> = {};
-    for (const c of t.columns) {
-        if (c.role && !out[c.role]) out[c.role] = c.name;
-    }
-    return out;
-}
-
-/**
- * Whether a table can be bound to a TreeView: it needs a node text and a shape — a parent column
- * (self-referencing) or a level/path column. Checked in the editor before an offer is made, and
- * again by the generator, so a hand-edited `.adset` cannot produce code that cannot compile.
- */
-export function canBindToTree(t: DataTableSpec): boolean {
-    // A TreeView only needs node text. A parent column needs an id to look the parent up by, and a
-    // level/path column describes the depth — with neither, the rows are still worth showing as a flat list
-    // of root nodes, which is the ordinary case for a table like Id/Name/Image (2026-09-19: a user with
-    // exactly that table could not bind at all). Declared once here so the editor, the generator and the
-    // preview cannot each invent their own rule.
-    return !!treeRoles(t).name;
-}
-
 export function sqliteTableName(t: DataTableSpec): string {
     return (t.sqlite && t.sqlite.tableName) || t.name;
 }
@@ -317,8 +273,7 @@ function buildSpec(raw: any): DataSetSpec {
                         type,
                         caption: typeof c.caption === 'string' ? c.caption : cName,
                         allowNull: c.allowNull !== false,
-                        sampleValue: typeof c.sampleValue === 'string' && c.sampleValue ? c.sampleValue : null,
-                        role: TREE_COLUMN_ROLES.includes(c.role) ? c.role as TreeColumnRole : null
+                        sampleValue: typeof c.sampleValue === 'string' && c.sampleValue ? c.sampleValue : null
                     });
                 }
             }
@@ -387,11 +342,7 @@ export function serializeDataSet(spec: DataSetSpec): string {
                 type: c.type,
                 caption: c.caption,
                 allowNull: c.allowNull,
-                ...(c.sampleValue ? { sampleValue: c.sampleValue } : {}),
-                // The tree role decides how a bound TreeView is shaped, so it has to survive the round-trip
-                // like every other column fact (2026-09-19: it was read but never written, so a role set in
-                // the editor was gone by the next load and the bind was refused as "no shape yet").
-                ...(c.role ? { role: c.role } : {})
+                ...(c.sampleValue ? { sampleValue: c.sampleValue } : {})
             })),
             ...(t.boundTo ? { boundTo: t.boundTo } : {}),
             ...(t.boundTo && t.boundToType ? { boundToType: t.boundToType } : {}),

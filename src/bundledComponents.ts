@@ -19,7 +19,7 @@
  * current version ships. A genuinely customised file (header changed/removed) is left alone.
  */
 
-export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'TreeBuilder';
+export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker';
 
 export interface BundledSpec {
     kind: BundledKind;
@@ -60,15 +60,6 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // ShowIcon switch); older copies are a bare path row, so a File Selector and a Folder
             // Selector look identical on the form.
             marker: 'ShowIcon'
-        },
-        {
-            kind: 'TreeBuilder',
-            file: vb ? 'TreeBuilder.vb' : 'TreeBuilder.cs',
-            bundled: /BUNDLED RESOURCE/,
-            // The class that turns flat rows into the node tree a TreeView binds to. A copy without
-            // BuildByHierarchy predates the level/path support, so a table described by a Level or Path
-            // column would bind to nothing.
-            marker: 'BuildByHierarchy'
         }
     ];
 }

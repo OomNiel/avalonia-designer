@@ -12,10 +12,8 @@ import { generateCs, generateVb, generateXsd, consolidateRuntimeHelpers } from '
 import { findProject, ProjectInfo } from './projectParser';
 import { PreviewerHostManager } from './hostClient';
 
-/** Control types that can display a DataSet table (they take an ItemsSource).
- *  TreeView is here for hierarchy tables: it needs `role` columns to build the nodes (see
- *  `canBindToTree`), which is why binding one is checked at bind time rather than by omission. */
-const BINDABLE_TAGS = new Set(['DataGrid', 'ListBox', 'ComboBox', 'ItemsControl', 'TreeView']);
+/** Control types that can display a DataSet table (they take an ItemsSource). */
+const BINDABLE_TAGS = new Set(['DataGrid', 'ListBox', 'ComboBox', 'ItemsControl']);
 
 /** Reads a file, returning '' when it cannot be read. */
 function readText(file: string): string {
@@ -140,63 +138,6 @@ function resolveDbPath(projectDir: string | undefined, file: string): string {
  * columns/headers/rows. When binding to a DataGrid, make sure the XAML element carries
  * AutoGenerateColumns="True" (idempotent; respects an explicit False). Edits the .axaml in place.
  */
-import { TREE_COLUMN_ROLES, canBindToTree } from './dataSetModel';
-
-/**
- * Binds a TreeView to a table (2026-09-18): the one thing the FORM needs for a tree that a grid does not is
- * an **ItemTemplate** — a TreeView shows its `ItemsSource`, and without a `TreeDataTemplate` every node
- * renders as its type name.
- *
- * It also clears inline `<TreeViewItem>` nodes, because Avalonia throws "Items collection must be empty
- * before using ItemsSource" — the same rule the ComboBox/ListBox items editors enforce. Those nodes were the
- * user's static tree, so the caller reports it on the status line rather than removing them silently.
- *
- * Returns what it did, for that message.
- */
-export function ensureTreeItemTemplate(axamlPath: string, controlName: string): 'template' | 'cleared' | 'both' | 'none' {
-    let text = '';
-    try { text = fs.readFileSync(axamlPath, 'utf8'); } catch { return 'none'; }
-    const esc = controlName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const open = new RegExp(`<TreeView\\b(?=[^>]*x:Name\\s*=\\s*["']${esc}["'])([^>]*?)(/?)(>)`).exec(text);
-    if (!open) return 'none';
-    const attrs = open[1];
-    const selfClosed = open[2] === '/';
-    const closeAt = selfClosed ? -1 : text.indexOf('</TreeView>', open.index + open[0].length);
-    let inner = selfClosed ? '' : (closeAt > 0 ? text.slice(open.index + open[0].length, closeAt) : '');
-    // Compiled bindings need a DataType: without one the XAML compiler has no idea what {Binding Children}
-    // and {Binding Header} are bound to and the build fails with AVLN2000 (hit on 2026-09-19 in a project
-    // with AvaloniaUseCompiledBindingsByDefault). The prefix for the helper's CLR namespace is usually
-    // declared already (chrome:AnchorHelper.Anchor); if it is not, declare it on the TreeView itself.
-    const declared = /xmlns:([A-Za-z_][\w.-]*)\s*=\s*["'](?:clr-namespace|using):AvaloniaChrome["']/.exec(text);
-    const prefix = declared ? declared[1] : 'chrome';
-    const extraNs = declared ? '' : ` xmlns:${prefix}="using:AvaloniaChrome"`;
-    const template = /<TreeView\.ItemTemplate\b/.test(inner)
-        ? ''
-        : `\n  <TreeView.ItemTemplate>\n    <TreeDataTemplate x:DataType="${prefix}:TreeNode" `
-        + 'ItemsSource="{Binding Children}">\n      <TextBlock Text="{Binding Header}"/>\n'
-        + '    </TreeDataTemplate>\n  </TreeView.ItemTemplate>';
-    let cleared = false;
-    // Nested nodes make this a loop: the pattern is non-greedy, so one pass removes a leaf, the next its parent.
-    while (/<TreeViewItem\b/.test(inner)) {
-        const before = inner;
-        inner = inner.replace(/[ \t]*<TreeViewItem\b[\s\S]*?<\/TreeViewItem>[ \t]*\r?\n?/g, '')
-            .replace(/[ \t]*<TreeViewItem\b[^>]*\/>[ \t]*\r?\n?/g, '');
-        cleared = true;
-        if (inner === before) {
-            inner = inner.replace(/<\/?TreeViewItem\b[^>]*>/g, '');
-            break;
-        }
-    }
-    if (!template && !cleared) return 'none';
-    // The open tag is rewritten either way, which is where a missing xmlns: prefix gets added.
-    const head = text.slice(0, open.index) + `<TreeView${attrs}${extraNs}>` + template + inner;
-    const updated = selfClosed
-        ? head + '\n</TreeView>' + text.slice(open.index + open[0].length)
-        : head + text.slice(closeAt);
-    fs.writeFileSync(axamlPath, updated, 'utf8');
-    return template && cleared ? 'both' : (template ? 'template' : 'cleared');
-}
-
 export function ensureDataGridAutoGenerateColumns(axamlPath: string, controlName: string): boolean {
     let text = '';
     try { text = fs.readFileSync(axamlPath, 'utf8'); } catch { return false; }
@@ -497,14 +438,6 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                         } else if (prop === 'allowNull') {
                             c.allowNull = msg.value !== false;
                             this.notifyEdit(doc, panel, before);
-                        } else if (prop === 'role') {
-                            // What this column MEANS when the table is bound to a TreeView ('' clears it). The
-                            // list is the spec's own, so the editor and the generator cannot disagree about roles.
-                            const v = String(msg.value ?? '');
-                            c.role = (TREE_COLUMN_ROLES as string[]).includes(v)
-                                ? (v as NonNullable<typeof c.role>)
-                                : null;
-                            this.notifyEdit(doc, panel, before);
                         } else if (prop === 'sampleValue') {
                             const v = String(msg.value ?? '');
                             c.sampleValue = v ? v : null;
@@ -596,8 +529,7 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                             if (!hasDataSetBinding(vscode.Uri.file(axaml), b)) {
                                 await bindControlToDataSet(vscode.Uri.file(axaml), b);
                                 if (ctrl.type === 'DataGrid') ensureDataGridAutoGenerateColumns(axaml, control);
-                                const treeNote = ctrl.type === 'TreeView' ? this.prepareTree(axaml, control) : '';
-                                await this.postStatus(panel, `Re-wrote the binding to ${control} (the code-behind line was missing).${treeNote}`);
+                                await this.postStatus(panel, `Re-wrote the binding to ${control} (the code-behind line was missing).`);
                             } else {
                                 await this.postStatus(panel, `Already bound to ${control}.`);
                             }
@@ -609,16 +541,6 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                             if (claimedElsewhere) {
                                 await this.postStatus(panel, `"${control}" is already bound to another table — un-bind it there first.`);
                             } else {
-                                // A TreeView needs a shape before it can be bound: node text plus either an
-                                // Id + Parent pair or a Level/Path column. Said here, at the moment of binding,
-                                // because it is the only place a novice will look for it.
-                                if (ctrl.type === 'TreeView' && !canBindToTree(t)) {
-                                    await this.postStatus(panel,
-                                        `"${control}" is a TreeView: give the table a shape first — set a column's `
-                                        + 'Tree role to "Node text (Name)". Add "Id" and "Parent" (or a "Level or '
-                                        + 'path" column) only if the rows nest.');
-                                    return;
-                                }
                                 const filePath = await bindControlToDataSet(vscode.Uri.file(axaml), {
                                     datasetName: doc.spec.name, tableName: t.name, controlName: control, controlType: ctrl.type as DataSetBindingRef['controlType']
                                 });
@@ -632,13 +554,10 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                                     // DataGrid: AutoGenerateColumns defaults to False in Avalonia, so make
                                     // sure the XAML carries it, or the bound grid shows no columns/rows.
                                     if (ctrl.type === 'DataGrid') ensureDataGridAutoGenerateColumns(axaml, control);
-                                    // A TreeView also needs a template and no inline nodes; the note rides the
-                                    // status line below rather than being posted here (see prepareTree).
-                                    const treeNote = ctrl.type === 'TreeView' ? this.prepareTree(axaml, control) : '';
                                     // Regenerate the DataSet class so the newly bound table gets its sample row.
                                     const gen = await this.writeGeneratedFiles(doc);
                                     this.notifyEdit(doc, panel, before);
-                                    await this.postStatus(panel, `Bound ${t.name} to ${control} (${path.basename(filePath)})${gen ? `; regenerated ${gen}.` : ''}${treeNote}`);
+                                    await this.postStatus(panel, `Bound ${t.name} to ${control} (${path.basename(filePath)})${gen ? `; regenerated ${gen}.` : ''}`);
                                 } else {
                                     await this.postStatus(panel, `Couldn't write the code-behind for ${control}.`);
                                 }
@@ -886,41 +805,6 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
         await panel.webview.postMessage({ type: 'state', spec: doc.spec, controls: this.controlsList(doc) });
     }
 
-    /**
-     * After binding a table to a TreeView (2026-09-18): make sure the form can show a tree at all — see
-     * `ensureTreeItemTemplate`. Returns a fragment for the caller's status line, or '' when nothing had to
-     * change: this must NOT post a status of its own, because the caller's "Bound …" line is posted right
-     * after and would replace it (the inline-node removal is exactly the note the user has to see).
-     */
-    private prepareTree(axaml: string, control: string): string {
-        const what = ensureTreeItemTemplate(axaml, control);
-        if (what === 'template') return ' Added the tree template.';
-        if (what === 'both') return ' Added the tree template and removed the inline nodes (a bound TreeView can\'t hold both).';
-        if (what === 'cleared') return ' Removed the inline nodes (a bound TreeView can\'t hold both).';
-        return '';
-    }
-
-    /**
-     * Copies the bundled TreeBuilder into the project when a table is bound to a TreeView (2026-09-19: the
-     * generated class called `AvaloniaChrome.TreeBuilder` in a project that never had the file, so the build
-     * failed with CS0234 — binding a tree was enough to write the call, but nothing copied the class).
-     */
-    private ensureTreeBuilder(doc: DataSetDocument, folder: string, language: string): void {
-        const needs = doc.spec.tables.some(
-            (t) => t.boundToType === 'TreeView' && !!t.boundTo && canBindToTree(t));
-        if (!needs) return;
-        const file = language === 'vb' ? 'TreeBuilder.vb' : 'TreeBuilder.cs';
-        const proj = findProject(doc.uri);
-        // The component lives next to the project file (where New Project writes it); an older layout may have
-        // put it next to the .axaml. Present in either place means it is there — leave it alone.
-        const dirs = [proj ? path.dirname(proj.projectUri.fsPath) : '', folder].filter((d) => !!d);
-        if (dirs.some((d) => fs.existsSync(path.join(d, file)))) return;
-        try {
-            fs.copyFileSync(path.join(this.context.extensionUri.fsPath, 'resources', file),
-                path.join(dirs[0], file));
-        } catch { /* best effort — the build error names the missing type */ }
-    }
-
     private async postStatus(panel: vscode.WebviewPanel, message: string): Promise<void> {
         await panel.webview.postMessage({ type: 'status', message });
     }
@@ -934,8 +818,6 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
         const rootNamespace = proj?.rootNamespace || doc.spec.name;
         const folder = path.dirname(doc.uri.fsPath);
         const base = doc.spec.name;
-        // A tree-bound table's generated class needs the bundled TreeBuilder beside it.
-        this.ensureTreeBuilder(doc, folder, language);
         const codeUri = vscode.Uri.file(path.join(folder, language === 'vb' ? `${base}.vb` : `${base}.cs`));
         const xsdUri = vscode.Uri.file(path.join(folder, `${base}.xsd`));
         const code = language === 'vb' ? generateVb(doc.spec, rootNamespace) : generateCs(doc.spec, rootNamespace);

@@ -2,7 +2,7 @@
  * Code generation for the DataSet designer: a runtime-construction class
  * (C# or VB.NET) that builds the DataSet, plus a standard .xsd schema file.
  */
-import { DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, csType, vbType, xsType, isSqliteTable, keyColumnOf, sqliteTableName, canBindToTree, treeRoles } from './dataSetModel';
+import { DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, csType, vbType, xsType, isSqliteTable, keyColumnOf, sqliteTableName } from './dataSetModel';
 
 function escCs(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
 function escVb(s: string): string { return s.replace(/"/g, '""'); }
@@ -245,26 +245,7 @@ const ADD_ROW_HINT = '+ Add row\u2026'; // ellipsis
 function isGridBound(t: DataTableSpec): boolean {
     return t.boundToType === 'DataGrid' && !!t.boundTo;
 }
-const anyGridBound = (spec: DataSetSpec) => spec.tables.some(isGridBound) || spec.tables.some(isTreeBound);
-
-/** true when the table is bound to a TreeView (its `role` columns describe the hierarchy). */
-function isTreeBound(t: DataTableSpec): boolean {
-    return t.boundToType === 'TreeView' && !!t.boundTo && canBindToTree(t);
-}
-
-/**
- * The C#/VB expression that yields a node's display text from a row.
- *
- * A String column is passed through with `?? ""`: with nullable enabled in the user's project, a plain
- * `r => r.Name` for a nullable column is CS8603 (a warning in their build), and the helper already turns
- * an empty string into "?". A non-String column is converted, because the helper takes a string.
- */
-function nameSelector(t: DataTableSpec, column: string, cs: boolean): string {
-    const col = t.columns.find((c) => c.name === column);
-    const isString = !col || col.type === 'String';
-    if (cs) return isString ? `r => r.${column} ?? ""` : `r => r.${column}.ToString()`;
-    return isString ? `Function(r) If(r.${column}, "")` : `Function(r) r.${column}.ToString()`;
-}
+const anyGridBound = (spec: DataSetSpec) => spec.tables.some(isGridBound);
 
 /** Lower-camel field name used for a column's input control (e.g. Name -> _nameInput). */
 function fieldName(c: DataColumnSpec): string {
@@ -693,28 +674,6 @@ function csPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     }
     lines.push('        }');
     lines.push('');
-    // A TreeView bound to this table: the same rows, shaped into a tree by the bundled
-    // AvaloniaChrome.TreeBuilder (see resources/TreeBuilder.cs). Fully qualified so the generated file
-    // needs no extra using/Imports.
-    if (isTreeBound(t)) {
-        const roles = treeRoles(t);
-        lines.push(`        public static void Wire${t.name}Tree(TreeView tree, System.Collections.Generic.IEnumerable<${R}> rows)`);
-        lines.push('        {');
-        // Which shape the roles describe (see canBindToTree): id+parent walks up, a level/path column reads
-        // the depth, and with neither the rows are root nodes.
-        if (roles.parent && roles.id) {
-            lines.push('            tree.ItemsSource = AvaloniaChrome.TreeBuilder.Build(rows, '
-                + `r => r.${roles.id}, r => r.${roles.parent}, ${nameSelector(t, roles.name as string, true)});`);
-        } else if (roles.level) {
-            lines.push(`            tree.ItemsSource = AvaloniaChrome.TreeBuilder.BuildByHierarchy(rows, `
-                + `r => r.${roles.level}, ${nameSelector(t, roles.name as string, true)});`);
-        } else {
-            lines.push('            tree.ItemsSource = AvaloniaChrome.TreeBuilder.BuildFlat(rows, '
-                + `${nameSelector(t, roles.name as string, true)});`);
-        }
-        lines.push('        }');
-        lines.push('');
-    }
     lines.push(`        public static void Wire${t.name}Grid(DataGrid grid, ${L} rows)`);
     lines.push('        {');
     lines.push('            grid.AutoGenerateColumns = false; // typed columns built below; XAML True only for the designer preview');
@@ -1486,23 +1445,6 @@ function vbPersistMethods(spec: DataSetSpec, t: DataTableSpec): string[] {
     }
     lines.push('        End Sub');
     lines.push('');
-    // The VB twin of Wire…Tree (see the C# emitter above).
-    if (isTreeBound(t)) {
-        const roles = treeRoles(t);
-        lines.push(`        Public Shared Sub Wire${t.name}Tree(tree As TreeView, rows As System.Collections.Generic.IEnumerable(Of ${R}))`);
-        if (roles.parent && roles.id) {
-            lines.push('            tree.ItemsSource = AvaloniaChrome.TreeBuilder.Build(rows, '
-                + `Function(r) r.${roles.id}, Function(r) r.${roles.parent}, ${nameSelector(t, roles.name as string, false)})`);
-        } else if (roles.level) {
-            lines.push('            tree.ItemsSource = AvaloniaChrome.TreeBuilder.BuildByHierarchy(rows, '
-                + `Function(r) r.${roles.level}, ${nameSelector(t, roles.name as string, false)})`);
-        } else {
-            lines.push('            tree.ItemsSource = AvaloniaChrome.TreeBuilder.BuildFlat(rows, '
-                + `${nameSelector(t, roles.name as string, false)})`);
-        }
-        lines.push('        End Sub');
-        lines.push('');
-    }
     lines.push(`        Public Shared Sub Wire${t.name}Grid(grid As DataGrid, rows As ${OC})`);
     lines.push('');
     lines.push('            grid.AutoGenerateColumns = False \' typed columns built below; XAML True only for the designer preview');
@@ -1978,7 +1920,7 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
     const sqlite = spec.tables.some((x) => isSqliteTable(x) || !!x.boundTo);
     // Every persisted table resolves its files through RuntimeStorage: the .db of a bound table and
     // the XML store the grid persistence code can emit. Extend this when a new emitter is added.
-    const needsStorage = sqlite || spec.tables.some((t) => isGridBound(t) || isTreeBound(t));
+    const needsStorage = sqlite || spec.tables.some((t) => isGridBound(t));
     const lines: string[] = [];
     lines.push('// Generated by the Avalonia Designer — DataSet designer. Do not edit by hand.');
     lines.push(`// Edit ${spec.name}.adset in the designer and re-generate. (${stamp()})`);
@@ -2034,10 +1976,9 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
             for (const l of csGetMethod(spec, t)) lines.push(l);
         }
     }
-    // Bound-table support: the Wire methods (grid and/or tree) live here, so a table bound to a TreeView
-    // has to come through as well — a tree-only table used to get no Wire…Tree at all (2026-09-19).
+    // Live editable-grid support for DataGrid-bound tables.
     for (const t of spec.tables) {
-        if (isGridBound(t) || isTreeBound(t)) {
+        if (isGridBound(t)) {
             for (const l of csPersistMethods(spec, t)) lines.push(l);
         }
     }
@@ -2185,7 +2126,7 @@ export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
     const sqlite = spec.tables.some((x) => isSqliteTable(x) || !!x.boundTo);
     // Every persisted table resolves its files through RuntimeStorage: the .db of a bound table and
     // the XML store the grid persistence code can emit. Extend this when a new emitter is added.
-    const needsStorage = sqlite || spec.tables.some((t) => isGridBound(t) || isTreeBound(t));
+    const needsStorage = sqlite || spec.tables.some((t) => isGridBound(t));
     const lines: string[] = [];
     lines.push("' Generated by the Avalonia Designer — DataSet designer. Do not edit by hand.");
     lines.push(`' Edit ${spec.name}.adset in the designer and re-generate. (${stamp()})`);
@@ -2239,9 +2180,9 @@ export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
             for (const l of vbGetMethod(spec, t)) lines.push(l);
         }
     }
-    // The VB twin of the above: a TreeView-bound table comes through here too.
+    // Live editable-grid support for DataGrid-bound tables.
     for (const t of spec.tables) {
-        if (isGridBound(t) || isTreeBound(t)) {
+        if (isGridBound(t)) {
             for (const l of vbPersistMethods(spec, t)) lines.push(l);
         }
     }

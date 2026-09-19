@@ -105,6 +105,6 @@ public class PathPicker : UserControl { public bool ShowIcon { get; set; } }`;
     // --- The language picks the right file names ---
     const vb = bundledComponentSpecs(true).map((s) => s.file).sort();
     const cs = bundledComponentSpecs(false).map((s) => s.file).sort();
-    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","PathPicker.vb","TreeBuilder.vb"]', 'spec', 'VB spec file names');
-    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","PathPicker.cs","TreeBuilder.cs"]', 'spec', 'C# spec file names');
+    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","PathPicker.vb"]', 'spec', 'VB spec file names');
+    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","PathPicker.cs"]', 'spec', 'C# spec file names');
 };

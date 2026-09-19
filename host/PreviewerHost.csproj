@@ -40,10 +40,6 @@
     <!-- PathPicker (a UserControl subclass, also bundled into generated projects) is linked so the
          builder can realise <chrome:PathPicker> elements — the file/folder selection row. -->
     <Compile Include="../resources/PathPicker.cs" Link="PathPicker.cs" />
-    <!-- TreeBuilder (also bundled into generated projects) turns flat rows into the node tree a
-         TreeView binds to. Shared with the host so the design-time preview builds the SAME tree the
-         app will show, from the same SQLite rows — otherwise a bound TreeView is blank on the canvas. -->
-    <Compile Include="../resources/TreeBuilder.cs" Link="TreeBuilder.cs" />
   </ItemGroup>
 
 </Project>

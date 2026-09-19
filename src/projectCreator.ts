@@ -198,8 +198,6 @@ function generateProject(opts: GenerateOptions): void {
         anchorVb: readResource(context, 'resources/AnchorHelper.vb'),
         exifCs: readResource(context, 'resources/ExifImageLoader.cs'),
         exifVb: readResource(context, 'resources/ExifImageLoader.vb'),
-        treeBuilderCs: readResource(context, 'resources/TreeBuilder.cs'),
-        treeBuilderVb: readResource(context, 'resources/TreeBuilder.vb'),
         grumpyCs: readResource(context, 'resources/GrumpyPanel.cs'),
         grumpyVb: readResource(context, 'resources/GrumpyPanel.vb'),
         pathPickerCs: readResource(context, 'resources/PathPicker.cs'),
