@@ -34,6 +34,51 @@ const INFO: Record<string, ControlInfo> = {
         desc: 'Shows static text (a label or heading).',
         use: 'Use for titles, captions and instructions. The user cannot edit it.'
     },
+    ToggleSwitch: {
+        label: 'Toggle Switch',
+        desc: 'An on/off switch — the sliding style of a tick box.',
+        use: 'Use for settings that take effect immediately (Wi-Fi on/off). Give it On/Off text, or a label via Content.'
+    },
+    MaskedTextBox: {
+        label: 'Masked Text Box',
+        desc: 'A text box that only accepts input matching a mask.',
+        use: 'Use for phone numbers, postcodes, IDs: the mask says which digits/letters are allowed.'
+    },
+    NumericUpDown: {
+        label: 'Numeric Up-Down',
+        desc: 'A number box with small up/down arrows.',
+        use: 'Use for quantities and amounts: the user types a number or steps it. Set Minimum/Maximum to bound it.'
+    },
+    ProgressBar: {
+        label: 'Progress Bar',
+        desc: 'Shows how far a task has got (a filled strip).',
+        use: 'Use while loading or saving. Set Value (0-100) from code, or tick Indeterminate for a moving bar.'
+    },
+    Slider: {
+        label: 'Slider',
+        desc: 'Lets the user pick a number by dragging a handle.',
+        use: 'Use for volumes, brightness, zoom: anything where a rough value is enough.'
+    },
+    Separator: {
+        label: 'Separator',
+        desc: 'A thin dividing line between groups.',
+        use: 'Use to split up a form or a menu visually.'
+    },
+    Polyline: {
+        label: 'Polyline',
+        desc: 'An open multi-point line (a chart line, a run of connected segments).',
+        use: 'Use for simple graphs and diagrams. Edit the Points list to shape it.'
+    },
+    Polygon: {
+        label: 'Polygon',
+        desc: 'A closed shape from a list of points (triangle, arrow, star).',
+        use: 'Use for custom outlines. Edit the Points list; set Backcolor to fill it.'
+    },
+    PathIcon: {
+        label: 'Path Icon',
+        desc: 'A small icon drawn from path data — no image file needed.',
+        use: 'Use for toolbar/status icons. Edit the Data path, or set Foreground for its colour.'
+    },
     ComboBox: {
         label: 'Combo Box',
         desc: 'A drop-down list: click it to choose one option from a list.',

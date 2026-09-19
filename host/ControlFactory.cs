@@ -146,7 +146,29 @@ public class ControlFactory
             // CommandBar command items (real Button/ToggleButton subclasses in 12).
             ["CommandBarButton"] = n => $"<CommandBarButton x:Name=\"{n}\" Content=\"{n}\" Width=\"120\" Height=\"32\"/>",
             ["CommandBarToggleButton"] = n => $"<CommandBarToggleButton x:Name=\"{n}\" Content=\"{n}\" Width=\"120\" Height=\"32\"/>",
-            ["CommandBarSeparator"] = n => $"<CommandBarSeparator x:Name=\"{n}\" Width=\"8\" Height=\"24\" Margin=\"4,0\"/>"
+            ["CommandBarSeparator"] = n => $"<CommandBarSeparator x:Name=\"{n}\" Width=\"8\" Height=\"24\" Margin=\"4,0\"/>",
+            // --- Progress, status & misc + the remaining input/button/shape gaps (2026-09-19) ---
+            // A placed progress bar shows 40% out of the box so it is visible in the preview (an empty one
+            // is a blank strip); Slider mirrors that with a movable thumb.
+            ["ProgressBar"] = n => $"<ProgressBar x:Name=\"{n}\" Width=\"220\" Height=\"12\" Minimum=\"0\" Maximum=\"100\" Value=\"40\"/>",
+            ["Slider"] = n => $"<Slider x:Name=\"{n}\" Width=\"220\" Height=\"24\" Minimum=\"0\" Maximum=\"100\" Value=\"40\" TickFrequency=\"10\"/>",
+            // Margin="0": the Fluent theme's own Separator margin shifts it a few pixels right/down, so a
+            // dropped separator would not sit exactly where it was dropped (the T5 placement check, ±8px).
+            ["Separator"] = n => $"<Separator x:Name=\"{n}\" Width=\"200\" Height=\"1\" Margin=\"0\" Background=\"#808080\"/>",
+            // ToggleSwitch: Content is the label; OnContent/OffContent are what the switch shows in each
+            // state (both set, so a drop looks like a switch rather than an empty track).
+            ["ToggleSwitch"] = n => $"<ToggleSwitch x:Name=\"{n}\" Content=\"Toggle Switch\" OnContent=\"On\" OffContent=\"Off\"/>",
+            // MaskedTextBox: the mask is a starter, not a law — 0000-0000 reads as a phone/ID shape and is
+            // edited in the Properties panel.
+            ["MaskedTextBox"] = n => $"<MaskedTextBox x:Name=\"{n}\" Width=\"140\" Height=\"24\" Mask=\"0000-0000\"/>",
+            ["NumericUpDown"] = n => $"<NumericUpDown x:Name=\"{n}\" Width=\"120\" Height=\"24\" Minimum=\"0\" Maximum=\"100\" Value=\"10\"/>",
+            // Polyline/Polygon are point-defined: their Points list IS the shape. Stretch="Fill" makes the
+            // designer's resize box actually scale them (a Shape has Width/Height, and Fill maps the
+            // geometry into it) — without it a resize would change nothing on screen.
+            ["Polyline"] = n => $"<Polyline x:Name=\"{n}\" Width=\"120\" Height=\"80\" Stretch=\"Fill\" Points=\"0,80 30,10 60,60 90,0\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>",
+            ["Polygon"] = n => $"<Polygon x:Name=\"{n}\" Width=\"120\" Height=\"80\" Stretch=\"Fill\" Points=\"0,80 20,0 60,0 80,80\" Fill=\"Transparent\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>",
+            // PathIcon draws an icon from path data - no image file, no Assets entry.
+            ["PathIcon"] = n => $"<PathIcon x:Name=\"{n}\" Width=\"24\" Height=\"24\" Data=\"M0,8 L8,16 L16,0\"/>"
         };
     }
 
@@ -214,7 +236,16 @@ public class ControlFactory
         ["CommandBar"] = typeof(CommandBar),
         ["CommandBarButton"] = typeof(CommandBarButton),
         ["CommandBarToggleButton"] = typeof(CommandBarToggleButton),
-        ["CommandBarSeparator"] = typeof(CommandBarSeparator)
+        ["CommandBarSeparator"] = typeof(CommandBarSeparator),
+        ["ProgressBar"] = typeof(ProgressBar),
+        ["Slider"] = typeof(Slider),
+        ["Separator"] = typeof(Separator),
+        ["ToggleSwitch"] = typeof(ToggleSwitch),
+        ["MaskedTextBox"] = typeof(MaskedTextBox),
+        ["NumericUpDown"] = typeof(NumericUpDown),
+        ["PathIcon"] = typeof(PathIcon),
+        ["Polyline"] = typeof(Polyline),
+        ["Polygon"] = typeof(Polygon)
     };
 
     public static Type? GetTypeForName(string name)

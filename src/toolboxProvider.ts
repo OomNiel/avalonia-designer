@@ -19,6 +19,7 @@ const TOOLBOX_CATEGORY_ITEMS = 'Items controls & lists';
 const TOOLBOX_CATEGORY_LAYOUT = 'Layout panels';
 const TOOLBOX_CATEGORY_SHAPES = 'Shapes';
 const TOOLBOX_CATEGORY_DATA = 'Data & grid';
+const TOOLBOX_CATEGORY_PROGRESS = 'Progress, status & misc';
 const TOOLBOX_CATEGORY_BARS = 'Bars';
 const TOOLBOX_CATEGORY_DEV = 'Dev Helpers';
 
@@ -34,6 +35,9 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'ComboBox', tag: 'ComboBox', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'ListBox', tag: 'ListBox', group: TOOLBOX_CATEGORY_ITEMS }, { label: 'ItemsControl', tag: 'ItemsControl', group: TOOLBOX_CATEGORY_ITEMS }, { label: 'CheckBox', tag: 'CheckBox', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'RadioButton', tag: 'RadioButton', group: TOOLBOX_CATEGORY_BUTTONS },
+    // ToggleSwitch: the on/off switch idiom (a CheckBox with a sliding track). Content is the label;
+    // On/OffContent are what it shows in each state.
+    { label: 'Toggle Switch', tag: 'ToggleSwitch', group: TOOLBOX_CATEGORY_BUTTONS },
     // --- Avalonia 12 controls (real tags saved; the 11 preview host draws approximations) ---
     { label: 'Hyperlink Button', tag: 'HyperlinkButton', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'Command Bar', tag: 'CommandBar', group: TOOLBOX_CATEGORY_BUTTONS },
@@ -41,6 +45,11 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'Command Bar Toggle Button', tag: 'CommandBarToggleButton', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'Command Bar Separator', tag: 'CommandBarSeparator', group: TOOLBOX_CATEGORY_BUTTONS },
     { label: 'Image', tag: 'Image', group: TOOLBOX_CATEGORY_INPUT },
+    // MaskedTextBox constrains typing to a mask (e.g. a phone number); NumericUpDown is a number box
+    // with spinners; PathIcon draws an icon from path data (no image file needed).
+    { label: 'Masked Text Box', tag: 'MaskedTextBox', group: TOOLBOX_CATEGORY_INPUT },
+    { label: 'Numeric Up-Down', tag: 'NumericUpDown', group: TOOLBOX_CATEGORY_INPUT },
+    { label: 'Path Icon', tag: 'PathIcon', group: TOOLBOX_CATEGORY_INPUT },
     // File / folder selection dialogs, as droppable controls (the bundled AvaloniaChrome.PathPicker:
     // a path row + a “…” Browse button that opens the platform's own dialog). Both tools insert the
     // same <chrome:PathPicker> element and differ only in PathType; set Path Type to SaveFile in the
@@ -67,8 +76,16 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'Rectangle', tag: 'Rectangle', group: TOOLBOX_CATEGORY_SHAPES },
     { label: 'Ellipse', tag: 'Ellipse', group: TOOLBOX_CATEGORY_SHAPES },
     { label: 'Arc', tag: 'Arc', group: TOOLBOX_CATEGORY_SHAPES },
+    // Polyline / Polygon are point-defined shapes (like Line): the Points list IS the shape. They ship
+    // with Stretch="Fill" so the designer's resize box scales them.
+    { label: 'Polyline', tag: 'Polyline', group: TOOLBOX_CATEGORY_SHAPES },
+    { label: 'Polygon', tag: 'Polygon', group: TOOLBOX_CATEGORY_SHAPES },
     { label: 'DataGrid', tag: 'DataGrid', group: TOOLBOX_CATEGORY_DATA },
     { label: 'DataSet', tag: 'DataSet', group: TOOLBOX_CATEGORY_DATA },
+    // --- Progress, status & misc (CONTROLS.md category) ---
+    { label: 'ProgressBar', tag: 'ProgressBar', group: TOOLBOX_CATEGORY_PROGRESS },
+    { label: 'Slider', tag: 'Slider', group: TOOLBOX_CATEGORY_PROGRESS },
+    { label: 'Separator', tag: 'Separator', group: TOOLBOX_CATEGORY_PROGRESS },
     { label: 'Menu', tag: 'Menu', group: TOOLBOX_CATEGORY_BARS },
     { label: 'StatusBar', tag: 'StatusBar', group: TOOLBOX_CATEGORY_BARS },
     { label: 'StatusDate', tag: 'StatusDate', group: TOOLBOX_CATEGORY_BARS },
@@ -92,6 +109,7 @@ export const TOOLBOX_CATEGORIES: { label: string; group: string }[] = [
     { label: TOOLBOX_CATEGORY_LAYOUT, group: TOOLBOX_CATEGORY_LAYOUT },
     { label: TOOLBOX_CATEGORY_SHAPES, group: TOOLBOX_CATEGORY_SHAPES },
     { label: TOOLBOX_CATEGORY_DATA, group: TOOLBOX_CATEGORY_DATA },
+    { label: TOOLBOX_CATEGORY_PROGRESS, group: TOOLBOX_CATEGORY_PROGRESS },
     { label: TOOLBOX_CATEGORY_BARS, group: TOOLBOX_CATEGORY_BARS },
     { label: TOOLBOX_CATEGORY_DEV, group: TOOLBOX_CATEGORY_DEV }
 ];
