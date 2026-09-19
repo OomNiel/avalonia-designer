@@ -173,8 +173,8 @@ export function ensureTreeItemTemplate(axamlPath: string, controlName: string): 
     const template = /<TreeView\.ItemTemplate\b/.test(inner)
         ? ''
         : `\n  <TreeView.ItemTemplate>\n    <TreeDataTemplate x:DataType="${prefix}:TreeNode" `
-            + 'ItemsSource="{Binding Children}">\n      <TextBlock Text="{Binding Header}"/>\n'
-            + '    </TreeDataTemplate>\n  </TreeView.ItemTemplate>';
+        + 'ItemsSource="{Binding Children}">\n      <TextBlock Text="{Binding Header}"/>\n'
+        + '    </TreeDataTemplate>\n  </TreeView.ItemTemplate>';
     let cleared = false;
     // Nested nodes make this a loop: the pattern is non-greedy, so one pass removes a leaf, the next its parent.
     while (/<TreeViewItem\b/.test(inner)) {

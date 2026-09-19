@@ -225,6 +225,34 @@ module.exports = async (t) => {
         t.ok(!p.read().includes('Store.GetCustomers()'), 'dataset-bind', 'vb property removed');
     }
 
+    // --- TreeView DataSet binding + unbind ---
+    // Reported 2026-09-19: unbinding a tree left the Wire<T>Tree call in the constructor, so the form still
+    // touched a dataset it is no longer bound to. A tree's binding marker is that call — not an ItemsSource
+    // line — so detection, insertion and removal all had to learn the shape.
+    {
+        const p = tmpProject('cs');
+        const b = { controlName: 'treeTest', controlType: 'TreeView', tableName: 'Customers', datasetName: 'Store' };
+        await bindControlToDataSet(p.uri, b);
+        t.ok(p.read().includes('Store.WireCustomersTree(treeTest, Store.GetCustomers());'), 'dataset-tree',
+            'cs: a TreeView gets the Wire<T>Tree call');
+        t.ok(!p.read().includes('treeTest.ItemsSource = Customers'), 'dataset-tree',
+            'cs: and no raw-rows ItemsSource line (a tree binds to nodes, not rows)');
+        t.ok(hasDataSetBinding(p.uri, b), 'dataset-tree', 'cs: hasDataSetBinding recognises the tree call');
+        await unbindControlFromDataSet(p.uri, b);
+        t.ok(!p.read().includes('WireCustomersTree'), 'dataset-tree', 'cs: unbind removes the Wire<T>Tree call');
+        t.ok(!p.read().includes('Store.GetCustomers()'), 'dataset-tree', 'cs: and the row property with it');
+    }
+    {
+        const p = tmpProject('vb');
+        const b = { controlName: 'treeTest', controlType: 'TreeView', tableName: 'Customers', datasetName: 'Store' };
+        await bindControlToDataSet(p.uri, b);
+        t.ok(p.read().includes('Store.WireCustomersTree(treeTest, Store.GetCustomers())'), 'dataset-tree',
+            'vb: a TreeView gets the Wire<T>Tree call');
+        t.ok(hasDataSetBinding(p.uri, b), 'dataset-tree', 'vb: hasDataSetBinding recognises the tree call');
+        await unbindControlFromDataSet(p.uri, b);
+        t.ok(!p.read().includes('WireCustomersTree'), 'dataset-tree', 'vb: unbind removes the Wire<T>Tree call');
+    }
+
     // --- handler insertion (C# + VB) ---
     {
         const p = tmpProject('cs');

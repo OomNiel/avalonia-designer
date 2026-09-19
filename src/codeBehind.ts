@@ -778,8 +778,9 @@ export interface DataSetBindingRef {
     datasetName: string;
     tableName: string;
     controlName: string;
-    /** Kind of the bound control ('DataGrid' emits the persistent live-editable grid pattern). */
-    controlType?: 'DataGrid' | 'ListBox' | 'ComboBox' | 'ItemsControl';
+    /** Kind of the bound control: 'DataGrid' emits the persistent live-editable grid pattern, 'TreeView'
+     *  the `Wire<T>Tree` call that shapes the rows into nodes (see TreeBuilder). */
+    controlType?: 'DataGrid' | 'ListBox' | 'ComboBox' | 'ItemsControl' | 'TreeView';
 }
 
 /** Lower-camel field name for the grid's row collection (Customers -> _customers). */
@@ -824,8 +825,10 @@ export function hasDataSetBinding(axamlUri: vscode.Uri, b: DataSetBindingRef): b
     if (!filePath) return false;
     try {
         const t = fs.readFileSync(filePath, 'utf8');
-        // DataGrid binding marker is the Wire<T>Grid line; list controls use the ItemsSource line.
+        // DataGrid binding marker is the Wire<T>Grid line, a TreeView's is Wire<T>Tree, and list controls
+        // use the ItemsSource line.
         return t.includes(`${b.datasetName}.Wire${b.tableName}Grid(`)
+            || t.includes(`${b.datasetName}.Wire${b.tableName}Tree(`)
             || t.includes(`${b.controlName}.ItemsSource = ${b.tableName}`);
     } catch { return false; }
 }
@@ -897,8 +900,11 @@ function insertCsDataSetBinding(text: string, b: DataSetBindingRef, className?: 
         t = t.slice(0, brace + 1) + '\n' + property + t.slice(brace + 1);
     }
 
-    // Constructor one-liner right after InitializeComponent();
-    const stmt = `${b.controlName}.ItemsSource = ${b.tableName};`;
+    // Constructor one-liner right after InitializeComponent(); a TreeView binds to the node tree the
+    // generated Wire<T>Tree builds, not to the rows, so it gets that call instead.
+    const stmt = b.controlType === 'TreeView'
+        ? `${b.datasetName}.Wire${b.tableName}Tree(${b.controlName}, ${b.datasetName}.Get${b.tableName}());`
+        : `${b.controlName}.ItemsSource = ${b.tableName};`;
     const ic = /InitializeComponent\s*\(\)\s*;/.exec(t);
     if (ic) {
         const lineEnd = t.indexOf('\n', ic.index);
@@ -975,7 +981,9 @@ function insertVbDataSetBinding(text: string, b: DataSetBindingRef, className?: 
     }
 
     // Constructor one-liner right after InitializeComponent()
-    const stmt = `${b.controlName}.ItemsSource = ${b.tableName}`;
+    const stmt = b.controlType === 'TreeView'
+        ? `${b.datasetName}.Wire${b.tableName}Tree(${b.controlName}, ${b.datasetName}.Get${b.tableName}())`
+        : `${b.controlName}.ItemsSource = ${b.tableName}`;
     const ic = /InitializeComponent\s*\(\)/i.exec(t);
     if (ic) {
         const lineEnd = t.indexOf('\n', ic.index);
@@ -1015,6 +1023,9 @@ function removeDataSetBinding(text: string, language: 'cs' | 'vb', b: DataSetBin
     t = t.replace(loadRe, '');
     const wireRe = new RegExp(`^[ \\t]*${escapeRe(b.datasetName)}\\.Wire${escapeRe(b.tableName)}Grid\\([^\\r\\n]*\\r?\\n`, 'gm');
     t = t.replace(wireRe, '');
+    // Tree shape: one Wire<T>Tree call. The rows go in as they are, so there is no collection field.
+    const treeRe = new RegExp(`^[ \\t]*${escapeRe(b.datasetName)}\\.Wire${escapeRe(b.tableName)}Tree\\([^\\r\\n]*\\r?\\n`, 'gm');
+    t = t.replace(treeRe, '');
     if (language === 'cs') {
         const fieldRe = new RegExp(`^[ \\t]*private\\s+System\\.Collections\\.ObjectModel\\.ObservableCollection<${escapeRe(b.tableName)}Row>\\s+_${escapeRe(lc)}\\s*;\\r?\\n`, 'gm');
         t = t.replace(fieldRe, '');
