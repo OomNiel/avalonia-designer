@@ -746,4 +746,75 @@ End Namespace
         t.equal(vb.length, 1, 'app-folder', 'the VB form of the write is reported as well');
         t.equal(vb[0].line, 7, 'app-folder', 'pointing at the VB line');
     }
+
+    // ---- a directory listing with no guard (2026-09-19) ----
+    // From a runtime exception in the user's own app: DriveInfo.GetDrives() lists every mount on Linux,
+    // /sys/fs/pstore is unreadable, and the unguarded GetDirectories threw as the window loaded. It compiles.
+    {
+        const found = (r) => r.issues.filter((i) => /may not be readable/.test(i.title));
+        const cs = (body) => makeProject('TestForm.axaml.cs', `using Avalonia.Controls;
+using System.IO;
+using System.Linq;
+
+namespace Proj
+{
+    public partial class TestForm : Window
+    {
+        public TestForm()
+        {
+            InitializeComponent();
+${body}
+        }
+
+        private void Button1_Click(object sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+        }
+    }
+}
+`).analysis();
+
+        const plain = found(cs('            var drives = DriveInfo.GetDrives().Where(d => d.IsReady).ToList();\n            foreach (var d in drives) { var dirs = Directory.GetDirectories(d.RootDirectory.FullName); }'));
+        t.equal(plain.length, 1, 'dir-list', 'an unguarded directory listing is reported');
+        t.equal(plain[0].severity, 'warning', 'dir-list', 'as a warning — it compiles and throws later');
+        t.equal(plain[0].kind, 'report-only', 'dir-list', 'with no automatic fix');
+        t.equal(plain[0].line, 13, 'dir-list', 'pointing at the listing line');
+        t.ok(plain[0].detail.includes('UnauthorizedAccessException'), 'dir-list',
+            'the detail names the exception the user will see');
+
+        const guarded = found(cs('            try { var dirs = Directory.GetDirectories("/sys/fs/pstore"); } catch { }'));
+        t.equal(guarded.length, 0, 'dir-list', 'a listing inside try/catch is left alone');
+
+        const after = found(cs('            try { var a = 1; } catch { }\n            var dirs = Directory.GetDirectories("/");'));
+        t.equal(after.length, 1, 'dir-list', 'a listing after a CLOSED try block is reported again');
+
+        const vb = found(makeProject('TestForm.axaml.vb', `Imports Avalonia.Controls
+Namespace Proj
+    Public Class TestForm
+        Inherits Window
+        Public Sub New()
+            InitializeComponent()
+            Dim dirs = IO.Directory.GetDirectories("/")
+        End Sub
+    End Class
+End Namespace
+`).analysis());
+        t.equal(vb.length, 1, 'dir-list', 'the VB form of the listing is reported too');
+        t.equal(vb[0].line, 7, 'dir-list', 'pointing at the VB line');
+
+        const vbGuarded = found(makeProject('TestForm.axaml.vb', `Imports Avalonia.Controls
+Namespace Proj
+    Public Class TestForm
+        Inherits Window
+        Public Sub New()
+            InitializeComponent()
+            Try
+                Dim dirs = IO.Directory.GetDirectories("/")
+            Catch
+            End Try
+        End Sub
+    End Class
+End Namespace
+`).analysis());
+        t.equal(vbGuarded.length, 0, 'dir-list', 'and a VB Try block counts as guarded');
+    }
 };

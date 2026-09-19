@@ -1222,7 +1222,57 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
         });
     }
 
-    // ---- 14) writing into the app's own folder (fails once the app is installed) ----
+    // ---- 14) a directory listing that may be refused at runtime ----
+    // Asked for after a real crash (2026-09-19): DriveInfo.GetDrives() on Linux returns every mount —
+    // /sys/fs/pstore, /proc, /boot/efi … — and some of them are unreadable for a normal user, so an
+    // unguarded GetDirectories took the whole window down the moment it loaded. It compiles, so neither the
+    // build nor the repair loop (which verifies by rebuilding) can see it. That is the gap this fills.
+    /** True when `index` sits inside a `try` block, so the listing is already guarded. C# is tracked by brace
+     *  nesting (only `try {` opens a guarded block); VB by its `Try … End Try` keywords. */
+    const insideTry = (body: string, index: number): boolean => {
+        if (language === 'vb') {
+            const before = body.slice(0, index);
+            const opens = (before.match(/^[ \t]*Try\b/gm) ?? []).length;
+            const closes = (before.match(/^[ \t]*End Try\b/gm) ?? []).length;
+            return opens > closes;
+        }
+        const before = body.slice(0, index);
+        const stack: boolean[] = [];
+        const brace = /try\s*\{|\{|\}/g;
+        let m: RegExpExecArray | null;
+        while ((m = brace.exec(before))) {
+            if (m[0] === '}') stack.pop();
+            else stack.push(/^try/.test(m[0]));
+        }
+        return stack.some((guarded) => guarded);
+    };
+    // `Directory.X(...)` and the directory-only methods on a DirectoryInfo. GetFiles on something that is not
+    // a directory (a zip, a package) is deliberately not matched — that would be noise.
+    const listingPatterns = language === 'vb'
+        ? [/\b(?:IO\.Directory|My\.Computer\.FileSystem)\s*\.\s*(GetFiles|GetDirectories|EnumerateFiles|EnumerateDirectories)\s*\(/g,
+            /\.\s*(GetDirectories|EnumerateDirectories)\s*\(/g]
+        : [/\bDirectory\s*\.\s*(GetFiles|GetDirectories|EnumerateFiles|EnumerateDirectories)\s*\(/g,
+            /\.\s*(GetDirectories|EnumerateDirectories)\s*\(/g];
+    const listingLines = new Set<number>();
+    for (const re of listingPatterns) {
+        re.lastIndex = 0;
+        for (let m = re.exec(code.body); m; m = re.exec(code.body)) {
+            const line = lineAt(code.body, m.index);
+            if (listingLines.has(line) || insideTry(code.body, m.index)) continue;
+            listingLines.add(line);
+            add({
+                severity: 'warning', kind: 'report-only', line, member: m[1],
+                title: 'Lists a directory that may not be readable',
+                detail: 'A directory listing can throw at runtime, and nothing in the build sees it: on '
+                    + 'Linux DriveInfo.GetDrives() returns every mount, and some of them (/sys/fs/pstore, '
+                    + '/proc, /boot/efi …) are unreadable for a normal user — one UnauthorizedAccessException '
+                    + 'ends the whole window. Fix: wrap the listing in try/catch (or skip the mounts that '
+                    + 'throw) and filter the drives you really want.'
+            });
+        }
+    }
+
+    // ---- 15) writing into the app's own folder (fails once the app is installed) ----
     const appFolderLines = new Set<number>();
     APP_FOLDER_RE.lastIndex = 0;
     for (let m = APP_FOLDER_RE.exec(code.body); m; m = APP_FOLDER_RE.exec(code.body)) {
