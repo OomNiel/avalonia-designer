@@ -277,7 +277,9 @@ export const HAS_FONT_PROPS = new Set([
     'TabControl', 'TabItem', 'DataGrid', 'Menu', 'StatusBar', 'ScrollViewer', 'UserControl', 'Window',
     'TreeView',
     // Avalonia 12 text-bearing controls (headers / labels / link text)
-    'GroupBox', 'HyperlinkButton', 'CommandBar', 'CommandBarButton', 'CommandBarToggleButton'
+    'GroupBox', 'HyperlinkButton', 'CommandBar', 'CommandBarButton', 'CommandBarToggleButton',
+    // The 2026-09-19 controls that show or take text
+    'ToggleSwitch', 'MaskedTextBox', 'NumericUpDown'
 ]);
 
 export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
@@ -617,6 +619,60 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
     // --- Shapes (Avalonia.Controls.Shapes) ---
     // Line is stroked only (no fill); its length/angle come from Start/End points, exposed as
     // editable "x,y" text. The designer stretches a Line on resize by scaling these points.
+    // --- Progress, status & misc + the remaining input/button/shape gaps (2026-09-19) ---
+    ProgressBar: [
+        { key: 'Value', label: 'Value', kind: 'number' },
+        { key: 'Minimum', label: 'Minimum', kind: 'number' },
+        { key: 'Maximum', label: 'Maximum', kind: 'number' },
+        { key: 'IsIndeterminate', label: 'Indeterminate', kind: 'dropdown', options: BOOL },
+        { key: 'Foreground', label: 'Bar Colour', kind: 'color', options: COLORS },
+        { key: 'Background', label: 'Background', kind: 'color', options: COLORS }
+    ],
+    Slider: [
+        { key: 'Value', label: 'Value', kind: 'number' },
+        { key: 'Minimum', label: 'Minimum', kind: 'number' },
+        { key: 'Maximum', label: 'Maximum', kind: 'number' },
+        { key: 'TickFrequency', label: 'Tick Every', kind: 'number' },
+        { key: 'IsSnapToTickEnabled', label: 'Snap to Ticks', kind: 'dropdown', options: BOOL }
+    ],
+    Separator: [
+        { key: 'Background', label: 'Colour', kind: 'color', options: COLORS }
+    ],
+    ToggleSwitch: [
+        { key: 'IsChecked', label: 'On', kind: 'dropdown', options: BOOL },
+        { key: 'OnContent', label: 'Text when On', kind: 'text' },
+        { key: 'OffContent', label: 'Text when Off', kind: 'text' },
+        { key: 'Content', label: 'Label', kind: 'text' }
+    ],
+    MaskedTextBox: [
+        { key: 'Text', label: 'Text', kind: 'text' },
+        { key: 'Mask', label: 'Mask', kind: 'text' },
+        { key: 'Watermark', label: 'Hint Text', kind: 'text' },
+        { key: 'PasswordChar', label: 'Password Char', kind: 'text' }
+    ],
+    NumericUpDown: [
+        { key: 'Value', label: 'Value', kind: 'number' },
+        { key: 'Minimum', label: 'Minimum', kind: 'number' },
+        { key: 'Maximum', label: 'Maximum', kind: 'number' },
+        { key: 'Increment', label: 'Step', kind: 'number' },
+        { key: 'FormatString', label: 'Format', kind: 'text' },
+        { key: 'ShowButtonSpinner', label: 'Show Arrows', kind: 'dropdown', options: BOOL }
+    ],
+    Polyline: [
+        { key: 'Points', label: 'Points', kind: 'text' },
+        { key: 'Stroke', label: 'Line Colour', kind: 'color', options: COLORS },
+        { key: 'StrokeThickness', label: 'Line Thickness', kind: 'number' }
+    ],
+    Polygon: [
+        { key: 'Points', label: 'Points', kind: 'text' },
+        { key: 'Fill', label: 'Backcolor', kind: 'color', options: COLORS },
+        { key: 'Stroke', label: 'Line Colour', kind: 'color', options: COLORS },
+        { key: 'StrokeThickness', label: 'Line Thickness', kind: 'number' }
+    ],
+    PathIcon: [
+        { key: 'Data', label: 'Path Data', kind: 'text' },
+        { key: 'Foreground', label: 'Icon Colour', kind: 'color', options: COLORS }
+    ],
     Line: [
         { key: 'Stroke', label: 'Line Colour', kind: 'color', options: COLORS },
         { key: 'StrokeThickness', label: 'Line Thickness', kind: 'number' },
@@ -732,6 +788,24 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     Radius: { kind: 'number', unit: 'px', desc: 'Corner rounding in pixels (0 = square corners). Applied equally to X and Y.' },
     StartPoint: { desc: 'Line start, as "x,y" within the line\'s own box (e.g. "0,0").' },
     EndPoint: { desc: 'Line end, as "x,y" within the line\'s own box (e.g. "120,80").' },
+
+    // --- The 2026-09-19 additions (ProgressBar / Slider / ToggleSwitch / MaskedTextBox /
+    // NumericUpDown / Polyline / Polygon / PathIcon) ---
+    Points: { desc: 'The shape\'s outline: "x,y" points separated by spaces (e.g. "0,80 30,10 60,60").' },
+    Data: { desc: 'The icon\'s path data, e.g. "M0,8 L8,16 L16,0".' },
+    Value: { kind: 'number', desc: 'The current value (Progress bar / Slider: 0-100; Number box: a number).' },
+    Minimum: { kind: 'number', desc: 'The lowest value the control allows.' },
+    Maximum: { kind: 'number', desc: 'The highest value the control allows.' },
+    Increment: { kind: 'number', desc: 'How much one click of the arrows adds or subtracts.' },
+    TickFrequency: { kind: 'number', desc: 'Distance between the slider\'s tick marks.' },
+    IsIndeterminate: { desc: 'A moving bar for work whose progress is not known.' },
+    IsSnapToTickEnabled: { desc: 'Whether the slider snaps to its tick marks while dragging.' },
+    ShowButtonSpinner: { desc: 'Show the up/down arrows on the number box.' },
+    FormatString: { desc: 'A format for the number, e.g. "F2" for two decimals or "{0:C}" for currency.' },
+    Mask: { desc: 'Which characters are allowed: 0 = digit, L = letter, 9 = digit or space (e.g. "0000-0000").' },
+    Watermark: { desc: 'Hint text shown while the box is empty.' },
+    OnContent: { desc: 'What the switch shows when it is ON.' },
+    OffContent: { desc: 'What the switch shows when it is OFF.' },
 
     // booleans / common state
     IsVisible: { desc: 'Whether the control is shown. (Avalonia uses IsVisible, not Visibility.)' },
@@ -1019,6 +1093,21 @@ export const DEFAULTS: Record<string, string> = {
     RadiusY: '0',
     StartPoint: '',
     EndPoint: '',
+    Points: '0,0 40,0 40,40',
+    Data: 'M0,0 L16,16',
+    Value: '50',
+    Minimum: '0',
+    Maximum: '100',
+    Increment: '1',
+    TickFrequency: '10',
+    IsIndeterminate: 'False',
+    IsSnapToTickEnabled: 'False',
+    ShowButtonSpinner: 'True',
+    FormatString: '',
+    Mask: '0000-0000',
+    Watermark: '',
+    OnContent: 'On',
+    OffContent: 'Off',
     Radius: '',
 
     // --- Menu ---
@@ -1184,7 +1273,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'CaretBrush', 'SelectionBrush', 'Fill', 'Stroke', 'StrokeThickness', 'StrokeLineCap',
             'Radius', 'Angle', 'StartPoint', 'EndPoint', 'StartAngle', 'SweepAngle',
             'Source', 'Stretch', 'StretchDirection', 'Icon', 'TitleBarIcon', 'ShowIcon',
-            'TitleBarBackground', 'TitleBarForeground'
+            'TitleBarBackground', 'TitleBarForeground',
+            // Point-defined shapes and path icons (2026-09-19)
+            'Points', 'Data'
         ]
     },
     {
@@ -1200,7 +1291,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'TextAlignment', 'TextWrapping', 'TextTrimming', 'LetterSpacing', 'LineHeight',
             'MaxLength', 'MaxLines', 'AcceptsReturn', 'AcceptsTab',
             'WrapSelection', 'SelectionStart', 'SelectionEnd',
-            'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview'
+            'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview',
+            // The 2026-09-19 controls: switch state text, the masked box's mask and hint, number format
+            'OnContent', 'OffContent', 'Mask', 'Watermark', 'FormatString'
         ]
     },
     {
@@ -1212,7 +1305,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'PathType', 'SelectedPath', 'Filter', 'InitialFolder', 'IsPathReadOnly',
             'AutoGenerateColumns', 'IsReadOnly',
             'CanUserSortColumns', 'CanUserReorderColumns', 'CanUserResizeColumns',
-            'FirstRow', 'FirstColumn', 'IsUndoEnabled', 'UndoRedoDepth'
+            'FirstRow', 'FirstColumn', 'IsUndoEnabled', 'UndoRedoDepth',
+            // Numeric payload of the 2026-09-19 controls (progress bar, slider, number box)
+            'Value', 'Minimum', 'Maximum', 'Increment', 'TickFrequency'
         ]
     },
     {
@@ -1228,7 +1323,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'LabelPosition', 'DefaultLabelPosition', 'OverflowButtonVisibility',
             'IsDynamicOverflowEnabled', 'TabStripPlacement',
             'Topmost', 'ShowInTaskbar', 'ShowActivated', 'SystemDecorations',
-            'ExtendClientAreaToDecorationsHint'
+            'ExtendClientAreaToDecorationsHint',
+            // State flags of the 2026-09-19 controls
+            'IsIndeterminate', 'IsSnapToTickEnabled', 'ShowButtonSpinner'
         ]
     }
 ];

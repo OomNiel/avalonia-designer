@@ -60,6 +60,9 @@ const VALUES = {
     // Shapes — the Point "x,y" and angle properties must be real values to compile.
     StartPoint: '10,20', EndPoint: '110,80', StartAngle: '0', SweepAngle: '180',
     RadiusX: '8', RadiusY: '8', StrokeThickness: '3', StrokeLineCap: 'Round',
+    // Point-defined shapes and path icons: a generic "Hello" is neither a Points list nor a Geometry,
+    // and the XAML compiler rejects it (AVLN2005, caught on Polyline/Polygon when they were added).
+    Points: '0,0 40,0 40,40', Data: 'M0,0 L16,16',
     GridLinesVisibility: 'Horizontal', 'DockPanel.Dock': 'Left', 'chrome:AnchorHelper.Anchor': 'Left',
     HorizontalAlignment: 'Left', VerticalAlignment: 'Top',
     HorizontalContentAlignment: 'Left', VerticalContentAlignment: 'Top',
