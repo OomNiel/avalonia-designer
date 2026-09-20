@@ -2,6 +2,16 @@
   <img src="Grumpy.png" width="128" height="128" alt="Avalonia Designer">
 </p>
 
+<h3 align="center">
+  <a href="https://paypal.me/grumpyextensions">If you enjoy using this extension, please contribute and consider making a donation.</a>
+</h3>
+
+<p align="center">
+  <a href="https://paypal.me/grumpyextensions">
+    <img src="https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white" alt="Donate with PayPal">
+  </a>
+</p>
+
 # Avalonia Designer for VS Code
 
 A **WYSIWYG form designer for the [Avalonia](https://avaloniaui.net) UI framework** that lives inside
@@ -162,8 +172,9 @@ save, including while Excel or LibreOffice has it open. Four editors in the Prop
 rest: **Series** (one line per series, its own columns and its own axis), **Axis** (sides, ticks, labels,
 colours and per-series scales), **Legend** (side, font size and a rounded frame; the entries switch
 traces on and off at runtime) and **Cursors** — up to two draggable cursors with a value readout, the
-arrow keys stepping a sample at a time, *follow trace* keeping the crossing on the selected series, and a
-`ΔX`/`ΔY` row once both are on. The whole walkthrough is **USER_MANUAL §19**.
+arrow keys stepping a sample at a time, *follow trace* keeping the crossing on the selected series, each
+cursor drawn in the colour of the series it follows, and a `ΔX`/`ΔY` row once both are on. The whole
+walkthrough is **USER_MANUAL §19**.
 
 ## 8. A property grid that behaves like a real one
 
@@ -365,7 +376,7 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~6,153 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~6,178 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release

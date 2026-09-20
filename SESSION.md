@@ -19,7 +19,22 @@
 
 ## Where the last session left off (2026-09-20)
 
-**Built, tested, packed, released and installed: `0.10.11`** — *the prompt is written where you are, and the
+**Packed for publication and installed: `0.11.0`** — *the cursors belong to their series, and the charting tool
+is written down*. The code change is one sentence from the user: *"the cursors must inherrit the color of the
+series that it is following"* — a cursor whose **Follow trace** is on is now drawn (its lines, the handle at
+its crossing and its whole readout panel) in the traced series' colour, so a reading is tied to its line
+without reading the name, and its own **Colour** row applies to a free crosshair / threshold line.
+`CursorColor(cursor, trace)` is the one place the rule lives and `DrawnColor` carries it to the panel; **the
+`GrumpyCharts` staleness marker moved to `DrawnColor`**, because a project keeping an older bundled file would
+have kept the old picture and looked like a fix that never arrived. The same release writes the charting tool
+down in full — `USER_MANUAL` §19.8 (cursors, with the tips moved to §19.9), `CONTROLS.md`, `README.md` §7 —
+and the README now opens with the **PayPal donation link** (*"If you enjoy using this extension, please
+contribute and consider making a donation."*), which the Marketplace listing shows too. Suite **6,178 passed /
+0 failed** (was 6,153), PROBLEMS clean, both twins 0/0 on Avalonia 12.1.1 and 11.0.10, and the VSIX is
+`avalonia-designer-0.11.0.vsix` — 1,045,148 bytes, sha256 `64e0f13f…`, audited (a local project name in a
+shipped comment was caught and scrubbed *before* packaging). Read `NOTES.md` §142.
+
+**Previously: `0.10.11`** — *the prompt is written where you are, and the
 extension can chart your data*. Two feature sets in one version. (1) The AI-assist prompt is now typed **in the
 editor, at the caret**, between two marker comments and sent by a code lens (`Ctrl+Alt+Enter`), because neither
 `showInputBox` nor the Comments API could put a multi-line box where the caret is. (2) **The charting tool** —

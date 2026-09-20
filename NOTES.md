@@ -3434,3 +3434,38 @@ seven things about that shape cost real time:
   documentation each artefact on disk actually contains — a doc that ships inside the package is part of the
   artefact's identity, and the hash is the only thing that says so.
 
+### §142 — a rule that has to reach the picture, and the marker that was not enough (2026-09-20, 0.11.0)
+
+*"The cursors must inherrit the color of the series that it is following."* One sentence, and it touched the
+three places a change like this usually misses:
+
+- **A colour rule belongs in one function — and the panel must read the same answer.** `CursorColor(cursor,
+  trace)` decides; `DrawCursors` uses it for the pen and for the handle at the crossing; and the readout is
+  drawn from the colour recorded on the cursor's own clickable record (`DrawnColor`) rather than from the
+  configured one. The readout and the two-cursor ΔX/ΔY row are precisely the parts that used to disagree
+  with the line beside them, so they are the parts a careless version of this change leaves behind.
+- **A change in how something DRAWS needs the staleness marker moved too.** The bundled-file check was
+  documented as "move the marker when the control gains a type the designer can write" — but a copy of
+  `GrumpyCharts.cs` from before today *has* `ChartCursor` and would have been called current, leaving the
+  user with the old picture and me with "the fix did not work". The marker is `DrawnColor` now, and the rule
+  in `bundledComponents.ts` says the real thing: move it whenever the **drawing** changes. The fixture that
+  proves it is a copy *with* cursors that is nevertheless stale.
+- **Pixel tests must name the box they measure — learned again from the other side.** "A following cursor
+  leaves no ink in its own colour" failed twice on a chart that was drawing exactly right: text is rendered
+  with **subpixel fringing**, so a readout's letters contribute warm pixels whatever colour they are in
+  (verified on a render whose panel is green: panel green, letters green, and the fringes around the letters
+  still matched the orange matcher). The claim is measured in the plot's interior, where no text is drawn —
+  §141 recorded the same lesson about the readout panel and axis text, and it was worth a second entry.
+- **A comment in a shipped artefact is a shipped artefact.** The pre-publication grep caught the name of a
+  local test project inside a comment of `out/bundledComponents.js` — a comment *added that day*, carrying
+  the diagnosis of the `AVLN2000` report. Third release in a row (§135, §141, here), so the rule stands
+  unchanged: grep the **package**, not the sources, and do it before the tag. Reworded without the project
+  name, recompiled, repackaged, re-audited (only the verbatim user quote in `CHANGELOG.md` remains, left
+  alone on purpose).
+- **Two pre-existing mentions of the user's own other projects** (`ChromeWindow.cs`/`.vb` say "as used by
+  LinuxHelper / DataSafe") are still shipped in the bundled resource and were *not* touched: bundled
+  resources are library code the user owns, so scrubbing them is their call, not mine.
+- **Suite 6,153 → 6,178**, PROBLEMS clean, both twins 0/0 on Avalonia 12.1.1 and 11.0.10. The docs pass of
+  the same release (USER_MANUAL §19.8, CONTROLS, README with the donation link, TEST_PLAN) rides inside the
+  VSIX, which is why `0.11.0` is the file to upload rather than the already-released `0.10.11`.
+

@@ -233,6 +233,36 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
+> **`0.11.0` (2026-09-20) — packed, audited, ready to upload. THIS is the file to upload.** Supersedes
+> `0.10.11` (released on GitHub the same day, never uploaded) and everything before it. It carries the whole
+> charting tool, the nine Toolbox controls and the AI assist — **plus the documentation the released `0.10.11`
+> was missing** (the cursor chapter, `CONTROLS.md`, `README.md` §7 and the new PayPal donation link at the top
+> of the README, which the Marketplace listing renders as well). Code changes since `0.10.11`: a following
+> chart cursor is drawn in the traced series' colour, the `GrumpyCharts` staleness marker moved to
+> `DrawnColor` so old project copies are refreshed on save, and the help text says so — `NOTES.md` §142.
+> Suite **6,178 assertions, 0 failed**.
+>
+> Plain VSIX — `avalonia-designer-0.11.0.vsix`, **1,045,148 bytes**, sha256
+> `64e0f13fdfcbf5bd1f0298011fbc6ff7430ea2bda17f3c65b9d66121560005f6` — built by `npm run package` (**117 files**)
+> after the docs pass and the version bump in `package.json`, manifest `Version="0.11.0"` with **no
+> `PreRelease` attribute**, and audited by unpacking the package and grepping it: user name, host name,
+> `/home/…`, `/tmp/…`, server alias and local project names. That grep found one hit — the name of a local test
+> project inside a comment of the *compiled* `out/bundledComponents.js`, added that day — so it was reworded,
+> recompiled and **repackaged**, and the hash above is the repackaged file. The only hits left are the
+> **verbatim user quote** in `CHANGELOG.md` (*"My test program is OptimisedCSTest."*) and the two phrases in
+> the bundled `ChromeWindow.cs`/`.vb` headers naming the user's own other projects (LinuxHelper / DataSafe) —
+> both left alone on purpose: history is quoted rather than edited, and bundled resources are the user's own
+> library code.
+>
+> **Not tagged, not released, not uploaded.** The upload goes through the publisher portal (leave
+> *Pre-release* unchecked), then verify with the `flags: 914` query that the version is `0.11.0` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above.
+>
+> **Still on disk, both superseded by the above:** `avalonia-designer-0.10.11.vsix` (1,035,659 bytes,
+> `20cfa4ce…`, the released one — its docs predate the cursor chapter) and `avalonia-designer-0.10.10.vsix`
+> (905,176 bytes, `ec4acc0e…`, frozen). Neither is a candidate for the upload any more; delete them once
+> `0.11.0` has gone out, if the one-artefact-per-release rule is to be restored.
+
 > **`0.10.11` (2026-09-18 → released 2026-09-20) — built, installed, audited; released on GitHub, not yet uploaded.**
 > Three fixes, all from the same day's reports. (1) The prompt for the AI assist is now typed **in the editor, at
 > the caret**, between two marker comments, sent by a code lens (`Ctrl+Alt+Enter`) or cancelled by the other one —

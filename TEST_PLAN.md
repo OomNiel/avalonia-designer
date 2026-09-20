@@ -1,6 +1,6 @@
 # Test Script Plan — Avalonia Designer Extension
 
-Date: 2026-09-20 · Status: **full suite green on this machine — 6,153 passed / 0 failed / 0 skipped (51 s)**
+Date: 2026-09-20 · Status: **full suite green on this machine — 6,178 passed / 0 failed / 0 skipped (46–75 s; the run length depends on what else the machine is doing)**
 
 > 2026-09-20: **the charting tool** added 1,221 assertions (suite 4,915 → 6,153) across ten new or
 > extended files. It is the first bundled feature that is *drawn*, so the tests had to learn to measure
@@ -379,6 +379,31 @@ Each step ends with the log green before the next begins.
   probe, plus the VB twin under `Option Strict On` — a new element or enum is only really checked when a real
   project compiles it. The 11.0.10 probe deliberately avoids `Values=`/`Points=`, because that version's
   compiled XAML cannot convert a string to `double[]`.
+
+### 0.11.0 (2026-09-20) — the cursor wears the colour of the series it follows
+
+- `tests/t1-preview/chartCursors.test.js` (**45**, +8) — the pixel proof of the rule, measured on two
+differently coloured series: the *same* orange cursor on a green series and on a blue one is drawn in the
+series' colour, a following cursor leaves no ink of its own **in the plot**, two following cursors both ride
+the trace, and a cursor with FollowTrace off keeps the colour it was given. The file's own cursors now state
+FollowTrace explicitly, because that switch is what decides the colour — following is the default, so "the
+cursor is orange" only holds while it is off.
+  - **Trap that cost two false failures:** "no ink in its own colour" cannot be measured over the whole
+    image. Text is drawn with subpixel fringing, so a readout's letters produce warm pixels whatever colour
+    they are in — verified on a render whose panel is green: the panel and its text are green, and the
+    fringes around the letters still matched the orange matcher. Measure the plot's interior (`LINES`),
+    where no text is drawn.
+- `tests/t2-logic/chartCursors.test.js` (**142**, +16) — the rule as a seam in **both twins**: one place
+derives the colour (`CursorColor(cursor, trace)`), the lines and the handle at the crossing use it, each
+cursor's clickable record carries `DrawnColor`, and the readout's border and values plus the two-cursor
+`ΔX`/`ΔY` row use the colour that was actually drawn (`(first.Index == index ? second : first).DrawnColor` in
+C#, `If(first.Index = index, second.DrawnColor, first.DrawnColor)` in VB). Two existing delta assertions were
+updated to that seam.
+- `tests/t2-logic/bundledComponents.test.js` (**37**, +1) — the staleness marker is `DrawnColor` now, and the
+fixtures remember the copy that **has** cursors and is nevertheless stale: a change in how an existing type
+*draws* has to refresh a project's bundled file exactly as a new element does.
+- The help text is pinned too: the Cursors modal has to say the cursor takes the series' colour, and the
+Colour row's tooltip has to say when its own colour applies.
 
 ### Status 2026-09-11 — full suite green (2176 passed / 0 failed / 0 skipped, 35 s)
 

@@ -69,10 +69,10 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // elements, `Axis`, and `ChartCursor` inside the `.Cursors` property element). A copy from
             // before any of those cannot compile the XAML this designer writes — saving a form with two
             // series failed with "AVLN2000: Unable to resolve type XYSeries from namespace
-            // using:AvaloniaCharts" (ChartTestCS, 2026-09-20) — so the marker has to be the NEWEST
-            // token, not the older `PlotBackOpacityProperty` (which every copy since the first release
-            // has, and which therefore detected nothing) nor `XYSeries` (which the multi-series copies
-            // have).
+            // using:AvaloniaCharts" (seen 2026-09-20 on a project created before the series classes) —
+            // so the marker has to be the NEWEST token, not the older `PlotBackOpacityProperty` (which
+            // every copy since the first release has, and which therefore detected nothing) nor
+            // `XYSeries` (which the multi-series copies have).
             //
             // The marker is not only about new TYPES: a change in how an existing type DRAWS is just as
             // invisible in an old copy, and a project that keeps the old file simply shows the old

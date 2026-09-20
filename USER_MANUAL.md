@@ -1966,9 +1966,9 @@ it stands at.
 | **+ Add cursor** | Adds another cursor, up to the maximum of **two**. **Save** writes them all into the form. |
 | **Orientation** | **Both** (a cross with a handle), **Vertical** or **Horizontal**. |
 | **Style** | Solid, Dash, Dot, Long or Short. |
-| **Colour** | The cursor's own colour, from the picker. |
+| **Colour** | The cursor's own colour, from the picker — used while it **does not** follow a trace. A following cursor is drawn in the traced series' colour instead. |
 | **X Values / Y Values** | Per cursor: whether its readout shows that value (the readout shows the *selected trace*, with a column per switch). Both off leaves a line you can still drag, with no numbers. |
-| **Follow trace** | A **cross** cursor's own setting, and **on by default**: the crossing point is placed *on the selected series* at the cursor's X, interpolated between samples, so the handle, the line and the readout can never disagree. Switch it off for a free crosshair whose Y is yours to place — a threshold line. |
+| **Follow trace** | A **cross** cursor's own setting, and **on by default**: the crossing point is placed *on the selected series* at the cursor's X, interpolated between samples, so the handle, the line and the readout can never disagree — and the cursor is drawn in that series' own colour. Switch it off for a free crosshair whose Y is yours to place — a threshold line, drawn in the colour you chose. |
 | **X / Y** | The cursor's starting position, in data units. An empty box means "the middle of the axis". |
 
 Two settings belong to the chart rather than to one cursor — they sit under **Readout** in the same
@@ -1991,6 +1991,12 @@ editor:
 > **With two cursors switched on, the readout gains a second row:** `ΔX n   ΔY n` — the absolute
 difference between the two cursors, measured between the values their rows show, drawn in the *other*
 cursor's colour under a hairline. That is the "how wide is this peak" arithmetic, done for you.
+
+> **A cursor that follows a trace is drawn in that trace's colour.** Its lines, the handle at the crossing
+> and the readout panel all take the series' own colour, so a reading is tied to the line it belongs to
+> without reading the name — and the **Colour** row in the editor is then the colour of a cursor that does
+> *not* follow (a threshold line). Two cursors following the same series are both that colour; their dash
+> styles are what tells those two apart.
 
 > **Cursors are drawn over the plot and change no data.** They are saved in the form as the chart's
 > `<chart>.Cursors` children, so they survive a resize, a re-bind or a re-read of the workbook. Which

@@ -6,11 +6,69 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.10.11` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.11.0` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.11.0] - 2026-09-20 · *the cursors belong to their series, and the charting tool is written down*
+
+Asked the day after the charting tool shipped in `0.10.11`: *"the cursors must inherrit the color of the series
+that it is following."* One line, and it settles something the Cursor editor had been leaving open — a cursor was
+drawn in the colour it had been given while the value it reported came from a series drawn in another colour, so
+the number and the line it belonged to had to be matched up by eye.
+
+### Changed — a cursor that follows a trace is drawn in that trace's colour (2026-09-20)
+
+- **The cursor wears the series' colour.** While a cursor's **Follow trace** switch is on, its lines, the
+  handle at its crossing and its whole readout panel are drawn in the traced series' own `LineColor`. The
+  **Colour** row in the editor now applies to a cursor that does *not* follow — a free crosshair used as a
+  threshold line. Two cursors on one trace are both that trace's colour, which is the point of the change:
+  what belongs to a series now looks like that series, and a reading no longer has to be matched to its line
+  by reading the name.
+- **One place decides it.** `ChartBase.CursorColor(cursor, trace)` is the rule, and each cursor's clickable
+  record now carries `DrawnColor` — the colour it was actually drawn in — so the readout's border and values
+  and the two-cursor `ΔX`/`ΔY` row are drawn in the colour that is on screen rather than in a configured one.
+- **The bundled-file marker moved to `DrawnColor`.** A change in how an existing type *draws* is as invisible
+  in an old copy as a new type is: a project keeping an older `GrumpyCharts.cs` would simply have kept the old
+  picture and reported this as a fix that never arrived. Saving the form refreshes the file, exactly as it does
+  for a new element — and the rule in `bundledComponents.ts` now says so: when the drawing changes, move the
+  marker, not only when a new element appears.
+- **Both twins.** `resources/GrumpyCharts.cs` and `.vb` compile 0 errors / 0 warnings on Avalonia **12.1.1 and
+  11.0.10**, the VB one under `Option Strict On`.
+- **The help text says it** — the Cursors modal hint, the **Colour** and **Follow trace** field tooltips, and
+  the chart entries in the in-app help and in the Cursors row's description.
+
+### Added — the charting tool, written down (2026-09-20)
+
+- **`USER_MANUAL.md` §19 has its cursors chapter at last** (§19.8): the editor's fields, what *Follow trace*
+  does to the crossing, the readout panel and its two placements, `Decimals`, the runtime keys (`←/→` steps a
+  sample, `↑/↓` picks the trace, the drag, the right-click menu) and the `ΔX`/`ΔY` row — plus why *which*
+  cursors are switched on is deliberately not saved. The tips follow it as §19.9 and gained the
+  workbook-open-in-Excel message.
+- **`CONTROLS.md`** lists the cursors beside the other chart editors, and **`README.md` §7** is now *Bundled
+  helper controls and charts*: the two self-drawing charts, the workbook they read, the four editors and the
+  cursors — in the shop window, not only in the manual.
+- **`NOTES.md` §141** collects what the charting session cost: VB `[Long]`/`[Short]`, `MenuItem.IsChecked`
+  missing in Avalonia 11.0, pixel tests that must name the box they measure, the Excel `FileShare` refusal,
+  `SelectedTrace` as the single source of truth, and the pre-tag audit of the compiled artefact (a project
+  name had reached a shipped comment again).
+- **A donation link.** The README now opens with a PayPal link — *"If you enjoy using this extension, please
+  contribute and consider making a donation."* — and because the README is what the Marketplace renders, the
+  listing carries it as well.
+- Suite **6,153 → 6,178** assertions: the pixel tests now prove the colour rule on two differently coloured
+  series, and the marker test remembers the copy that *has* cursors and is nevertheless stale.
+
+### Notes
+
+- **`0.10.11`'s released VSIX carries the chart chapter without the cursor section**, because that documentation
+  pass came after it was packaged. This version carries the whole chapter, which is one more reason it is the
+  file to upload.
+- The documentation rides **inside** the VSIX — `README.md`, `USER_MANUAL.md`, `CHANGELOG.md` and `CONTROLS.md`;
+  `NOTES.md`, `TEST_PLAN.md`, `SESSION.md` and `PUBLISHING.md` are not shipped.
+- Nothing else changed: the charting tool, the nine Toolbox controls and the AI assist are exactly as `0.10.11`
+  left them.
 
 ## [0.10.11] - 2026-09-18 · *the prompt is written where you are, not at the top of the window — and the charts arrive*
 

@@ -181,7 +181,10 @@ into every new project next to the other helpers — no package, no image file, 
   marker is drawn on the crossing), dragging the handle slides the point along the trace, and the
   right-click menu switches each cursor on and off, picks the readout placement, adds/removes/re-centres
   cursors and copies the readout as text. With **two** cursors on, the readout gains a `ΔX`/`ΔY` row — the
-  absolute difference between them. Which cursors are *enabled* is runtime state and is not saved.
+  absolute difference between them. **A cursor that follows a trace is drawn in that traced series' own
+  colour** (its `Colour` then applies to a cursor that does not follow — a threshold line), so its line,
+  its crossing and its readout panel all belong visibly to the trace they read. Which cursors are *enabled*
+  is runtime state and is not saved.
 - **Styling in Properties**: plot backcolour + opacity, border (colour/thickness/corner radius),
   gridlines (colour/thickness/style), the title (text/show/position/colour/size), the fixed scale
   overrides (`MinX`/`MaxX`/`MinY`/`MaxY`) and `DockPanel.Dock`.
