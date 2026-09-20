@@ -14,6 +14,10 @@
  *   4. the property element itself — `Series` is the chart's CONTENT property, so cursors have to
  *      live in `<charts:GrumpyXYPlot.Cursors>`; writing them as plain children would fail to compile.
  *
+ * The last section pins one rule of the DRAWING rather than of the model, because a user only sees it
+ * as a picture: a cursor that follows its trace is drawn in that series' colour (its own Colour row
+ * then applies to a free cursor), in both twins and in the readout panel.
+ *
  * These checks drive the real reader/writer and pin every side to the others.
  */
 'use strict';
@@ -277,10 +281,11 @@ module.exports = async (t) => {
     t.ok(/X = x, Y = readoutY/.test(draw), 'delta',
         'the C# records each cursor\'s readout value as it draws it');
     t.ok(/\.X = x, \.Y = readoutY/.test(vbDraw), 'delta', 'and the VB twin does too');
-    // The delta row is drawn in the OTHER cursor's colour, and looks for that cursor explicitly.
-    t.ok(/first\.Index == index \? second\.Cursor\.Color : first\.Cursor\.Color/.test(readoutCs), 'delta',
+    // The delta row is drawn in the OTHER cursor's colour, and looks for that cursor explicitly —
+    // the colour it was DRAWN in, which for a following cursor is the traced series' colour.
+    t.ok(/\(first\.Index == index \? second : first\)\.DrawnColor/.test(readoutCs), 'delta',
         'the C# difference row takes the colour of the cursor it is not reporting');
-    t.ok(/first\.Index = index, second\.Cursor\.Color, first\.Cursor\.Color/.test(readoutVb), 'delta',
+    t.ok(/first\.Index = index, second\.DrawnColor, first\.DrawnColor/.test(readoutVb), 'delta',
         'and the VB twin does the same');
     // The pair's numbers travel with the copied readout too.
     t.ok(/_readoutText = tag[\s\S]{0,220}delta/.test(readoutCs), 'delta',
@@ -366,4 +371,37 @@ module.exports = async (t) => {
     const one = chartCursorChildren(two.el);
     t.equal(one.length, 1, 'write', 'deleting one of two cursors leaves one element');
     t.ok(two.model.serialize(true).includes('X="2"'), 'write', 'and it is the one that was kept');
+
+    // --- 8. a following cursor wears the colour of the series it follows ----------------------
+    // The rule: while a cursor's FollowTrace switch is on it draws in the traced series' colour, so
+    // its line, its crossing and its readout visibly belong to that trace; with the switch off it
+    // keeps the colour it was given (a free crosshair or a threshold line). Both twins must agree,
+    // and the readout panel must follow the same colour — it is the panel of THAT cursor.
+    for (const [name, src] of [['C#', cs], ['VB', vb]]) {
+        t.ok(/CursorColor\(cursor,\s*trace\)/.test(src), 'colour',
+            `${name}: the drawn colour is derived in one place (CursorColor)`);
+        t.ok(/FollowTrace && trace is not null \? trace\.LineColor : cursor\.Color/.test(src)
+            || /If\(cursor\.FollowTrace AndAlso trace IsNot Nothing, trace\.LineColor, cursor\.Color\)/.test(src),
+            'colour', `${name}: and the rule is FollowTrace -> the traced series' colour, else its own`);
+        t.ok(!/MakeCursorPen\(cursor\.Color/.test(src), 'colour',
+            `${name}: the lines no longer unconditionally use the cursor's own colour`);
+        t.ok(!/DrawRectangle\(new SolidColorBrush\(cursor\.Color\)/.test(src)
+            && !/DrawRectangle\(New SolidColorBrush\(cursor\.Color\)/.test(src),
+            'colour', `${name}: nor does the handle at the crossing`);
+        t.ok(/DrawnColor/.test(src), 'colour',
+            `${name}: each cursor's clickable record remembers the colour it was drawn in`);
+    }
+    t.ok(/FirstOrDefault\(h => h\.Index == index\)\?\.DrawnColor/.test(cs), 'colour',
+        'C#: the readout panel is drawn in the colour that cursor was drawn in');
+    t.ok(/FirstOrDefault\(Function\(one\) one\.Index = index\)/.test(vb) && /\.DrawnColor/.test(vb),
+        'colour', 'VB: the same, looked up by index');
+    t.ok(/deltaColor = \(first\.Index == index \? second : first\)\.DrawnColor/.test(cs), 'colour',
+        'C#: the delta row still belongs to the OTHER cursor, in the colour THAT cursor was drawn in');
+    t.ok(/deltaColor = If\(first\.Index = index, second\.DrawnColor, first\.DrawnColor\)/.test(vb),
+        'colour', 'VB: the same');
+    // The help text has to say it, or a user sees a colour they did not choose and calls it a bug.
+    t.ok(panel.includes("series' own colour"), 'hint',
+        'the Cursors modal says a following cursor is drawn in the series\' colour');
+    t.ok(js.includes('follows its trace is drawn in that series'), 'hint',
+        'the Colour row\'s tooltip says when its own colour applies');
 };

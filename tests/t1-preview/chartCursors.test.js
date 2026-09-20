@@ -4,9 +4,10 @@
  * Why this exists: every claim the Cursor editor makes is invisible to the property tests. A cursor
  * has to land on the pixel column its X maps to, its lines have to be long or short or dotted as
  * chosen, a chart with three cursor elements must still draw two, the readout must report the
- * trace's value BETWEEN samples (the cursors move freely — the number is interpolated), and
- * Orientation must hide a LINE while keeping the position (a Horizontal cursor still reports a value
- * for its X). All of that is a pixel fact, so this renders through the real host.
+ * trace's value BETWEEN samples (the cursors move freely — the number is interpolated), Orientation
+ * must hide a LINE while keeping the position (a Horizontal cursor still reports a value for its X),
+ * and a cursor that FOLLOWS its trace must be drawn in that series' own colour rather than in the
+ * colour it was given. All of that is a pixel fact, so this renders through the real host.
  *
  * Measuring: three traps, each of which made an earlier version of this file report that a cursor line
  * was missing or somewhere else entirely. (1) The readout panel is drawn in the cursor's colour too.
@@ -41,17 +42,22 @@ function freePort() {
     });
 }
 
-const form = (attrs, cursors) => `<Window ${NS} Title="cursors" Width="${W}" Height="${H}">
+const form = (attrs, cursors, lineColor) => `<Window ${NS} Title="cursors" Width="${W}" Height="${H}">
   <Canvas Name="Holder" Width="${W}" Height="${H}">
     <charts:GrumpyXYPlot x:Name="Chart1" Width="${W}" Height="${H}" SourceFile="${FIXTURE}"
       ShowTitle="False" ShowLegend="False" ${attrs}>
-      <charts:XYSeries Title="Inside" XColumn="B" YColumn="C" LineColor="#2D7DD2" MarkerStyle="None"/>
+      <charts:XYSeries Title="Inside" XColumn="B" YColumn="C" LineColor="${lineColor || '#2D7DD2'}" MarkerStyle="None"/>
       ${cursors ? `<charts:GrumpyXYPlot.Cursors>${cursors}</charts:GrumpyXYPlot.Cursors>` : ''}
     </charts:GrumpyXYPlot>
   </Canvas>
 </Window>`;
 
-const cursor = (attrs) => `<charts:ChartCursor ${attrs}/>`;
+// FollowTrace defaults to ON in the control, and a cursor that follows draws in the colour of the
+// SERIES it follows (the last section of this file is about exactly that). Everything above it is
+// about the cursor's own drawing — its own colour, dash pattern and geometry — so the helper turns
+// following OFF unless a test says FollowTrace itself.
+const cursor = (attrs) =>
+    `<charts:ChartCursor ${/FollowTrace=/.test(attrs) ? attrs : attrs + ' FollowTrace="False"'}/>`;
 
 // Hue-based matchers: a 1 px cursor line is anti-aliased (its pixels are blends with the plate), so
 // matching the exact colour finds nothing while the line is plainly there. The trace's blue is
@@ -258,28 +264,77 @@ module.exports = async (t) => {
         // measures at row ~205). Y="0" is deliberately WRONG: a cursor that honoured its own Y would
         // draw its horizontal line along the plot's bottom edge instead.
         const LINE_BAND = { x0: 56, x1: 236, y0: 60, y1: 250 };
+        // A FOLLOWING cursor is drawn in the traced series' colour (see the last section), so its
+        // line is measured here in the TRACE's colour — and a horizontal cursor line is recognised by
+        // its WIDTH: a row of it spans the plot, while the trace's own polyline crosses any row with
+        // only a couple of pixels.
         const followsDefault = await renderPng(host, form('ReadoutPosition="TopRight"',
-            cursor('Orientation="Horizontal" X="2.5" Y="0" Color="#FF8C00"')), W, H);
+            cursor('Orientation="Horizontal" X="2.5" Y="0" Color="#FF8C00" FollowTrace="True"')), W, H);
         const ownY = await renderPng(host, form('ReadoutPosition="TopRight"',
             cursor('Orientation="Horizontal" X="2.5" Y="0" Color="#FF8C00" FollowTrace="False"')), W, H);
         const band = (img) => peak(rowProfile(img, ORANGE, LINE_BAND), LINE_BAND.y0);
-        t.ok(band(followsDefault.img).at < 150, 'chart-cursors',
+        const traceBand = (img) => peak(rowProfile(img, BLUE_TRACE, LINE_BAND), LINE_BAND.y0);
+        t.ok(traceBand(followsDefault.img).n > 100 && traceBand(followsDefault.img).at < 150, 'chart-cursors',
             'by default the crossing follows the selected trace (the trace value at X=2.5, high up)',
-            `row=${band(followsDefault.img).at}`);
+            `row=${traceBand(followsDefault.img).at} (${traceBand(followsDefault.img).n} px wide)`);
         t.ok(band(ownY.img).at > 190, 'chart-cursors',
             'FollowTrace=False puts it back at the cursor\'s own Y (Y=0 = the plot\'s bottom edge)',
             `row=${band(ownY.img).at}`);
-        t.ok(band(ownY.img).at - band(followsDefault.img).at > 60, 'chart-cursors',
+        t.ok(band(ownY.img).at - traceBand(followsDefault.img).at > 60, 'chart-cursors',
             'the two are far apart, so the switch really changes the drawing',
-            `${band(followsDefault.img).at} vs ${band(ownY.img).at}`);
+            `${traceBand(followsDefault.img).at} vs ${band(ownY.img).at}`);
         // While following, the cursor's own Y is IGNORED — so a wrong Y and a matching one draw the
         // same picture. That is also what makes the readout agree with the crossing.
         const followsWithRightY = await renderPng(host, form('ReadoutPosition="TopRight"',
-            cursor('Orientation="Horizontal" X="2.5" Y="9" Color="#FF8C00"')), W, H);
-        t.equal(ink(followsWithRightY.img, ORANGE, PANEL).n, ink(followsDefault.img, ORANGE, PANEL).n,
+            cursor('Orientation="Horizontal" X="2.5" Y="9" Color="#FF8C00" FollowTrace="True"')), W, H);
+        t.equal(ink(followsWithRightY.img, BLUE_TRACE, PANEL).n, ink(followsDefault.img, BLUE_TRACE, PANEL).n,
             'chart-cursors', 'while following, the cursor\'s own Y does not change the readout');
-        t.equal(band(followsWithRightY.img).at, band(followsDefault.img).at, 'chart-cursors',
+        t.equal(traceBand(followsWithRightY.img).at, traceBand(followsDefault.img).at, 'chart-cursors',
             'nor where the crossing is drawn');
+
+        // --- the cursor wears the colour of the series it follows -------------------------------
+        // The rule: a following cursor is drawn in the traced series' colour, so its line, its
+        // crossing and its readout visibly belong to that trace. Two renders with the SAME orange
+        // cursor on two DIFFERENTLY coloured series show the colour comes from the series.
+        const greenLine = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Horizontal" X="2.5" Y="0" Color="#FF8C00" FollowTrace="True"'), '#008000'), W, H);
+        const greenTraceOnly = await renderPng(host, form('ReadoutPosition="TopRight"', '', '#008000'), W, H);
+        // "No ink in its own colour" is measured in the PLOT box, not over the whole image: text is
+        // rendered with subpixel fringing, so the readout's own letters contribute warm pixels whatever
+        // colour they are drawn in (checked on a render with a green panel: the panel and its text are
+        // green, and the fringes around the letters still tripped the orange matcher).
+        t.equal(ink(greenLine.img, ORANGE, LINES).n, 0, 'chart-cursors',
+            'a following cursor leaves no ink in its own colour in the plot');
+        t.ok(peak(rowProfile(greenLine.img, GREEN, LINE_BAND)).n > 100, 'chart-cursors',
+            'it is drawn in the traced series\' colour instead',
+            `widest green row ${peak(rowProfile(greenLine.img, GREEN, LINE_BAND)).n} px`);
+        t.ok(ink(greenLine.img, GREEN, PANEL).n > ink(greenTraceOnly.img, GREEN, PANEL).n + 20, 'chart-cursors',
+            'and the readout panel is drawn in that colour too',
+            `panel green ${ink(greenTraceOnly.img, GREEN, PANEL).n} -> ${ink(greenLine.img, GREEN, PANEL).n}`);
+        // The very same cursor on a BLUE series is blue, so it is the series' colour and not a fixed
+        // one: this is the difference between "inherits" and "is drawn in some other colour".
+        const blueLine = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Horizontal" X="2.5" Y="0" Color="#FF8C00" FollowTrace="True"'), '#2D7DD2'), W, H);
+        t.ok(peak(rowProfile(blueLine.img, BLUE_TRACE, LINE_BAND)).n > 100, 'chart-cursors',
+            'the same cursor on a blue series is drawn in blue',
+            `widest blue row ${peak(rowProfile(blueLine.img, BLUE_TRACE, LINE_BAND)).n} px`);
+        t.equal(ink(blueLine.img, ORANGE, LINES).n, 0, 'chart-cursors',
+            'still without a pixel of the colour it was given (in the plot)');
+        // Two cursors on one trace are both that trace's colour, wherever they were placed.
+        const twoFollowing = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Horizontal" X="0.5" Y="0" Color="#FF8C00" FollowTrace="True"')
+            + cursor('Orientation="Horizontal" X="5" Y="0" Color="#8000FF" FollowTrace="True"'), '#008000'), W, H);
+        t.equal(ink(twoFollowing.img, ORANGE, LINES).n + ink(twoFollowing.img, PURPLE, LINES).n, 0,
+            'chart-cursors', 'two following cursors drop their own colours as well');
+        t.ok(thick(rowProfile(twoFollowing.img, GREEN, LINE_BAND), 100) >= 2, 'chart-cursors',
+            'and both their lines ride the trace, each in the trace\'s colour',
+            `${thick(rowProfile(twoFollowing.img, GREEN, LINE_BAND), 100)} wide green rows`);
+        // The other half of the rule: a cursor that does NOT follow keeps the colour it was given.
+        const freeAgain = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Horizontal" X="2.5" Y="0" Color="#FF8C00" FollowTrace="False"'), '#008000'), W, H);
+        t.ok(ink(freeAgain.img, ORANGE, LINE_BAND).n > 40, 'chart-cursors',
+            'a cursor that does not follow keeps its own colour (a threshold line)',
+            `orange=${ink(freeAgain.img, ORANGE, LINE_BAND).n}`);
 
         // --- the two-cursor delta row ---------------------------------------------------------
         // With TWO cursors switched on, the panel adds |X1 − X2| and |Y1 − Y2|, drawn in the OTHER

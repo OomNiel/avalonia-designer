@@ -7504,7 +7504,10 @@ ${publishButtons}      <span class="sep"></span>
           reports an X. <b>Follow trace</b> (on by default) makes the crossing point sit ON the
           selected series at the cursor's X, interpolated between samples, so the handle, the
           horizontal line and the readout all agree; switch it off for a free crosshair whose Y is
-          yours to place (a threshold line). The readout shows the <b>selected trace</b> (up/down
+          yours to place (a threshold line). A cursor that follows a trace is drawn <b>in that
+          series' own colour</b>, so its line, its crossing and its readout visibly belong to the
+          trace they read — the Colour row below is then the colour of a free cursor. The readout
+          shows the <b>selected trace</b> (up/down
           arrows choose it), with a column for each of the cursor's <b>X Values</b> / <b>Y Values</b>
           switches. An empty position box means “the middle of the axis”. Left/right arrows step the
           selected cursor one sample; the chart's right-click menu switches cursors on and off at

@@ -69,11 +69,17 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // elements, `Axis`, and `ChartCursor` inside the `.Cursors` property element). A copy from
             // before any of those cannot compile the XAML this designer writes — saving a form with two
             // series failed with "AVLN2000: Unable to resolve type XYSeries from namespace
-            // using:AvaloniaCharts" (ChartTestCS, 2026-09-20) — so the marker has to be the NEWEST type,
-            // not the older `PlotBackOpacityProperty` (which every copy since the first release has, and
-            // which therefore detected nothing) nor `XYSeries` (which the multi-series copies have).
-            // Each time the control gains a type the designer can write into a form, move it here.
-            marker: 'ChartCursor'
+            // using:AvaloniaCharts" (ChartTestCS, 2026-09-20) — so the marker has to be the NEWEST
+            // token, not the older `PlotBackOpacityProperty` (which every copy since the first release
+            // has, and which therefore detected nothing) nor `XYSeries` (which the multi-series copies
+            // have).
+            //
+            // The marker is not only about new TYPES: a change in how an existing type DRAWS is just as
+            // invisible in an old copy, and a project that keeps the old file simply shows the old
+            // picture. So when the drawing changes, move the marker to a token the new code introduced
+            // — here `DrawnColor`, the field that remembers the colour a cursor was drawn in (a
+            // following cursor takes the followed series' colour, measured 2026-09-20).
+            marker: 'DrawnColor'
         }
     ];
 }

@@ -101,13 +101,15 @@ public class PathPicker : UserControl { public bool ShowIcon { get; set; } }`;
     // 2026-09-20: the charts gained SERIES and AXIS objects. A project created before that keeps its
     // old chart file, and saving a form with two series into it does not compile:
     //   "AVLN2000: Unable to resolve type XYSeries from namespace using:AvaloniaCharts" (ChartTestCS).
-    // The same day they gained CURSORS (`ChartCursor` inside the `.Cursors` property element), so the
-    // marker is the NEWEST type: the pre-series `PlotBackOpacityProperty` exists in every copy ever
-    // shipped (it detected nothing), and `XYSeries` is present in the multi-series copies that still
-    // know nothing about cursors.
+    // The same day they gained CURSORS (`ChartCursor` inside the `.Cursors` property element), and later
+    // that day a following cursor began to be DRAWN in the colour of the series it follows — a change
+    // with no new type at all, which an old copy still shows the old way. So the marker is the newest
+    // token the current file has: not the pre-series `PlotBackOpacityProperty` (every copy ever shipped
+    // has it, so it detected nothing), not `XYSeries` (the multi-series copies have it), and no longer
+    // `ChartCursor` either (a copy with cursors can still draw them in the wrong colour).
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'ChartCursor', 'spec',
-        'the GrumpyCharts marker is the newest type the designer can write into a form');
+    t.equal(chartSpec.marker, 'DrawnColor', 'spec',
+        'the GrumpyCharts marker is the newest token in the current bundled file');
     const oldCsCharts = `// GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb).
 public sealed class ChartSeries { public double[] Xs = Array.Empty<double>(); }
 public abstract class ChartBase : Control { public string? SourceFile { get; set; } }`;
@@ -116,12 +118,17 @@ public abstract class ChartBase : Control { public string? SourceFile { get; set
 public class LineSeries : ChartSeries { }
 public class XYSeries : ChartSeries { public Axis? XAxis { get; set; } }
 public sealed class Axis { public AxisPosition Position { get; set; } }`;
-    const curCsCharts = `${seriesEraCsCharts}
+    // A copy WITH cursors but from before they inherited the traced series' colour.
+    const cursorEraCsCharts = `${seriesEraCsCharts}
 public sealed class ChartCursor { public CursorOrientation Orientation { get; set; } }`;
+    const curCsCharts = `${cursorEraCsCharts}
+public sealed class CursorHit { internal Color DrawnColor = Colors.Transparent; }`;
     t.equal(isStaleBundledCopy(oldCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'a chart file from before the series classes is stale (this broke ChartTestCS)');
     t.equal(isStaleBundledCopy(seriesEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'a chart file with series and axes but no cursors is stale too (the cursor XAML would not compile)');
+    t.equal(isStaleBundledCopy(cursorEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and so is one with cursors from before they took the followed series\' colour');
     t.equal(isStaleBundledCopy(curCsCharts, false, 'GrumpyCharts'), false, 'detect',
         'the current chart file is current');
     t.equal(isStaleBundledCopy(`${oldCsCharts}\n// hand-tweaked below`, false, 'GrumpyCharts'), true, 'detect',
@@ -134,7 +141,8 @@ Public Class XYSeries
     Inherits ChartSeries
 End Class
 Public NotInheritable Class ChartCursor
-End Class`;
+End Class
+Friend DrawnColor As Color = Colors.Transparent`;
     t.equal(isStaleBundledCopy(oldVbCharts, true, 'GrumpyCharts'), true, 'detect',
         'a VB chart file from before the series classes is stale');
     t.equal(isStaleBundledCopy(curVbCharts, true, 'GrumpyCharts'), false, 'detect',

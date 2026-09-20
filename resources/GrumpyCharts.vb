@@ -964,6 +964,10 @@ Namespace Global.AvaloniaCharts
             Friend Horizontal As Rect
             ''' <summary>The square at the crossing point where both lines meet.</summary>
             Friend Handle As Rect
+            ''' <summary>The colour it was drawn in — the followed series' own colour when it follows
+            ''' one, else its own (see CursorColor). Kept so the readout and the delta row are drawn
+            ''' in exactly the colour that is on screen.</summary>
+            Friend DrawnColor As Color = Colors.Transparent
         End Class
 
         ''' <summary>How close to a cursor line a click counts (each side, in pixels).</summary>
@@ -2575,10 +2579,19 @@ Namespace Global.AvaloniaCharts
             Return traces(_selectedTrace)
         End Function
 
+        ''' <summary>The colour a cursor draws in: the colour of the series it follows, when it follows
+        ''' one — the line, the crossing and the readout are then unmistakably the trace they read — and
+        ''' otherwise the cursor's own colour, which is what a free crosshair or a threshold wants.
+        ''' A cursor only follows a trace while its FollowTrace is on, the same switch that decides
+        ''' whether its horizontal line rides the trace.</summary>
+        Private Shared Function CursorColor(cursor As ChartCursor, trace As Plot) As Color
+            Return If(cursor.FollowTrace AndAlso trace IsNot Nothing, trace.LineColor, cursor.Color)
+        End Function
+
         ''' <summary>Draws the cursors and their readout. A cursor is a crosshair the user drags: its
-        ''' lines sit at its X and Y, and the readout reports the selected trace where the cursor's X
-        ''' cuts it. The clickable parts are remembered while drawing, so a click always tests the
-        ''' picture that is on screen.</summary>
+        ''' lines sit at its X and Y, the readout reports the selected trace where the cursor's X cuts
+        ''' it, and the whole cursor is drawn in the colour of the series it follows. The clickable
+        ''' parts are remembered while drawing, so a click always tests the picture that is on screen.</summary>
         Private Sub DrawCursors(context As DrawingContext, plot As Rect, plots As List(Of Plot))
             _cursorHits.Clear()
             Dim common = plots.FirstOrDefault(Function(one) Not one.PerSeries)
@@ -2606,9 +2619,12 @@ Namespace Global.AvaloniaCharts
                 Dim px = common.XRange.ToPixel(x, plot.X, plot.Width)
                 Dim py = common.YRange.ToPixel(y, plot.Bottom, -plot.Height)
                 Dim selected = index = _selectedCursor AndAlso live.Count > 1
-                Dim pen = MakeCursorPen(cursor.Color, If(selected, 2.0, 1.0), cursor.Style)
+                ' A cursor that follows a trace wears that trace's colour, so "which line is this?" is
+                ' answered by looking at it; a free one keeps the colour it was given.
+                Dim color = CursorColor(cursor, trace)
+                Dim pen = MakeCursorPen(color, If(selected, 2.0, 1.0), cursor.Style)
 
-                Dim hit As New CursorHit With {.Cursor = cursor, .Index = index, .X = x, .Y = readoutY}
+                Dim hit As New CursorHit With {.Cursor = cursor, .Index = index, .X = x, .Y = readoutY, .DrawnColor = color}
                 ' The crossing point is clamped into the plot, so a cursor parked outside the axis
                 ' shows as a line along the edge instead of vanishing — and the lines are then inside
                 ' the plot by construction, which is why they need no clip.
@@ -2623,7 +2639,7 @@ Namespace Global.AvaloniaCharts
                     hit.Horizontal = New Rect(plot.X, cy - CursorGrab, plot.Width, CursorGrab * 2)
                 End If
                 If cursor.Orientation = CursorOrientation.Both Then
-                    context.DrawRectangle(New SolidColorBrush(cursor.Color), Nothing, New Rect(cx - 3, cy - 3, 6, 6))
+                    context.DrawRectangle(New SolidColorBrush(color), Nothing, New Rect(cx - 3, cy - 3, 6, 6))
                     hit.Handle = New Rect(cx - CursorGrab, cy - CursorGrab, CursorGrab * 2, CursorGrab * 2)
                 End If
                 _cursorHits.Add(hit)
@@ -2633,9 +2649,10 @@ Namespace Global.AvaloniaCharts
         End Sub
 
         ''' <summary>Draws the readout of the selected cursor: the tag (C1/C2), the name of the trace it
-        ''' reports — in that trace's colour — and the values, in the cursor's colour. The columns follow
-        ''' the cursor's own X/Y Values switches. It follows the mouse or sits in the top right corner;
-        ''' with no mouse (in the designer) it is drawn in that corner too, so it can always be seen.</summary>
+        ''' reports — in that trace's colour — and the values, in the cursor's own drawn colour (the
+        ''' followed series' colour for a following cursor). The columns follow the cursor's own X/Y
+        ''' Values switches. It follows the mouse or sits in the top right corner; with no mouse (in the
+        ''' designer) it is drawn in that corner too, so it can always be seen.</summary>
         Private Sub DrawCursorReadout(context As DrawingContext, plot As Rect, plots As List(Of Plot), common As Plot)
             _readoutText = String.Empty
             Dim live = LiveCursorIndexes()
@@ -2666,13 +2683,17 @@ Namespace Global.AvaloniaCharts
             ' line shows. Drawn in the OTHER cursor's colour, because it is the pair that it describes,
             ' and only while both are switched on.
             Dim delta As String = Nothing
-            Dim deltaColor = cursor.Color
+            ' The panel belongs to the cursor beside it, so it is drawn in the colour that cursor was
+            ' drawn in — inherited from the series it follows, or its own when it does not.
+            Dim ownHit = _cursorHits.FirstOrDefault(Function(one) one.Index = index)
+            Dim color = If(ownHit Is Nothing, CursorColor(cursor, trace), ownHit.DrawnColor)
+            Dim deltaColor = color
             If _cursorHits.Count >= 2 Then
                 Dim first = _cursorHits(0)
                 Dim second = _cursorHits(1)
                 delta = "ΔX " & FormatCursor(Math.Abs(first.X - second.X)) &
                         "   ΔY " & FormatCursor(Math.Abs(first.Y - second.Y))
-                deltaColor = If(first.Index = index, second.Cursor.Color, first.Cursor.Color)
+                deltaColor = If(first.Index = index, second.DrawnColor, first.DrawnColor)
             End If
 
             Dim parts As New List(Of String)()
@@ -2682,7 +2703,7 @@ Namespace Global.AvaloniaCharts
             Dim tag = "C" & (index + 1)
 
             Dim head = MakeText(tag & "  " & name, 11, trace.LineColor)
-            Dim body = If(parts.Count > 0, MakeText(String.Join("   ", parts), 11, cursor.Color), Nothing)
+            Dim body = If(parts.Count > 0, MakeText(String.Join("   ", parts), 11, color), Nothing)
             Dim deltaText = If(delta Is Nothing, Nothing, MakeText(delta, 11, deltaColor))
             Dim width = Math.Min(Math.Max(Math.Max(head.Width, If(body Is Nothing, 0.0, body.Width)),
                                           If(deltaText Is Nothing, 0.0, deltaText.Width)) + 12,
@@ -2705,7 +2726,7 @@ Namespace Global.AvaloniaCharts
             _readoutRect = rect
 
             context.DrawRectangle(New SolidColorBrush(PlotBackColor, 0.92),
-                                  New Pen(New SolidColorBrush(cursor.Color), 1),
+                                  New Pen(New SolidColorBrush(color), 1),
                                   New RoundedRect(rect, New Avalonia.CornerRadius(3)))
             context.DrawText(head, New Point(rect.X + 6, rect.Y + 5))
             If body IsNot Nothing Then context.DrawText(body, New Point(rect.X + 6, rect.Y + 5 + head.Height + 2))

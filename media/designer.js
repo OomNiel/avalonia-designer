@@ -5227,7 +5227,8 @@
             els.cursorFields.appendChild(seriesField('Style',
                 seriesSelect(CURSOR_STYLES, row.style, (v) => { row.style = v; repaint(); }),
                 'The dash pattern of this cursor\u2019s lines. Long and Short are longer and shorter dashes than Dash.'));
-            els.cursorFields.appendChild(seriesField('Colour', seriesColor(row.color, (v) => { row.color = v; recolour(v); })));
+            els.cursorFields.appendChild(seriesField('Colour', seriesColor(row.color, (v) => { row.color = v; recolour(v); }),
+                'This cursor\u2019s own colour \u2014 what a free crosshair or a threshold line uses. A cursor that follows its trace is drawn in that series\u2019 colour instead, so the line, the crossing and the readout all belong to the trace they read.'));
             // 'Follow trace' decides whether the crossing point's Y is the trace's value (on) or the
             // user's own (off) — so while it is on, the Y position below has nothing to say and is
             // switched off, both here and by the control itself.
@@ -5235,7 +5236,7 @@
             els.cursorFields.appendChild(seriesField('Follow trace',
                 axisPairs([['True', 'On'], ['False', 'Off']], follows ? 'True' : 'False',
                     (v) => { row.followTrace = v; renderCursorEditor(); }),
-                'On: the crossing point sits ON the selected trace at the cursor\u2019s X, interpolated between samples, and dragging its horizontal line slides the point along the series. Off: a free crosshair whose Y you place yourself \u2014 a threshold line.'));
+                'On: the crossing point sits ON the selected trace at the cursor\u2019s X, interpolated between samples, dragging its horizontal line slides the point along the series, and the cursor is drawn in that series\u2019 own colour. Off: a free crosshair whose Y you place yourself \u2014 a threshold line, in the colour you chose.'));
             els.cursorFields.appendChild(seriesField('X Values',
                 axisPairs([['True', 'On'], ['False', 'Off']], row.xValues === 'False' ? 'False' : 'True',
                     (v) => { row.xValues = v; }),

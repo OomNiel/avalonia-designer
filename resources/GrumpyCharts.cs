@@ -1007,6 +1007,10 @@ public abstract class ChartBase : Control
     {
         internal ChartCursor Cursor = null!;
         internal int Index;
+        /// <summary>The colour it was drawn in — the followed series' own colour when it follows
+        /// one, else its own (see <see cref="CursorColor"/>). Kept so the readout and the delta
+        /// row are drawn in exactly the colour that is on screen.</summary>
+        internal Color DrawnColor = Colors.Transparent;
         /// <summary>The cursor's X, in data units (the value its readout shows).</summary>
         internal double X;
         /// <summary>The Y its readout reports: the selected trace's value at that X, else the
@@ -2357,10 +2361,18 @@ public abstract class ChartBase : Control
         return traces[_selectedTrace];
     }
 
+    /// <summary>The colour a cursor draws in: the colour of the series it follows, when it follows
+    /// one — the line, the crossing and the readout are then unmistakably the trace they read — and
+    /// otherwise the cursor's own colour, which is what a free crosshair or a threshold wants.
+    /// A cursor only follows a trace while its <see cref="ChartCursor.FollowTrace"/> is on, the same
+    /// switch that decides whether its horizontal line rides the trace.</summary>
+    private static Color CursorColor(ChartCursor cursor, Plot? trace)
+        => cursor.FollowTrace && trace is not null ? trace.LineColor : cursor.Color;
+
     /// <summary>Draws the cursors and their readout. A cursor is a crosshair the user drags: its
-    /// lines sit at its X and Y, and the readout reports the selected trace where the cursor's X
-    /// cuts it. The clickable parts are remembered while drawing, so a click always tests the
-    /// picture that is on screen.</summary>
+    /// lines sit at its X and Y, the readout reports the selected trace where the cursor's X cuts
+    /// it, and the whole cursor is drawn in the colour of the series it follows. The clickable parts
+    /// are remembered while drawing, so a click always tests the picture that is on screen.</summary>
     private void DrawCursors(DrawingContext context, Rect plot, List<Plot> plots)
     {
         _cursorHits.Clear();
@@ -2389,9 +2401,12 @@ public abstract class ChartBase : Control
             var px = common.XRange.ToPixel(x, plot.X, plot.Width);
             var py = common.YRange.ToPixel(y, plot.Bottom, -plot.Height);
             var selected = index == _selectedCursor && live.Count > 1;
-            var pen = MakeCursorPen(cursor.Color, selected ? 2d : 1d, cursor.Style);
+            // A cursor that follows a trace wears that trace's colour, so "which line is this?" is
+            // answered by looking at it; a free one keeps the colour it was given.
+            var color = CursorColor(cursor, trace);
+            var pen = MakeCursorPen(color, selected ? 2d : 1d, cursor.Style);
 
-            var hit = new CursorHit { Cursor = cursor, Index = index, X = x, Y = readoutY };
+            var hit = new CursorHit { Cursor = cursor, Index = index, X = x, Y = readoutY, DrawnColor = color };
             // The crossing point is clamped into the plot, so a cursor parked outside the axis shows as
             // a line along the edge instead of vanishing — and the lines are then inside the plot by
             // construction, which is why they need no clip.
@@ -2411,7 +2426,7 @@ public abstract class ChartBase : Control
             // the readout refers to) and it is the grip that moves both lines at once.
             if (cursor.Orientation is CursorOrientation.Both)
             {
-                context.DrawRectangle(new SolidColorBrush(cursor.Color), null, new Rect(cx - 3, cy - 3, 6, 6));
+                context.DrawRectangle(new SolidColorBrush(color), null, new Rect(cx - 3, cy - 3, 6, 6));
                 hit.Handle = new Rect(cx - CursorGrab, cy - CursorGrab, CursorGrab * 2, CursorGrab * 2);
             }
             _cursorHits.Add(hit);
@@ -2421,9 +2436,10 @@ public abstract class ChartBase : Control
     }
 
     /// <summary>Draws the readout of the selected cursor: the tag (C1/C2), the name of the trace it
-    /// reports — in that trace's colour — and the values, in the cursor's colour. The columns follow
-    /// the cursor's own X/Y Values switches. It follows the mouse or sits in the top right corner;
-    /// with no mouse (in the designer) it is drawn in that corner too, so it can always be seen.</summary>
+    /// reports — in that trace's colour — and the values, in the cursor's own drawn colour (the
+    /// followed series' colour for a following cursor). The columns follow the cursor's own X/Y
+    /// Values switches. It follows the mouse or sits in the top right corner; with no mouse (in the
+    /// designer) it is drawn in that corner too, so it can always be seen.</summary>
     private void DrawCursorReadout(DrawingContext context, Rect plot, List<Plot> plots, Plot common)
     {
         _readoutText = string.Empty;
@@ -2463,18 +2479,21 @@ public abstract class ChartBase : Control
         // cursor's own readout line shows. Drawn in the OTHER cursor's colour, because it is the pair
         // that it describes, and only while both are switched on.
         string? delta = null;
-        var deltaColor = cursor.Color;
+        // The panel belongs to the cursor beside it, so it is drawn in the colour that cursor was
+        // drawn in — inherited from the series it follows, or its own when it does not.
+        var color = _cursorHits.FirstOrDefault(h => h.Index == index)?.DrawnColor ?? CursorColor(cursor, trace);
+        var deltaColor = color;
         if (_cursorHits.Count >= 2)
         {
             var first = _cursorHits[0];
             var second = _cursorHits[1];
             delta = "ΔX " + FormatCursor(Math.Abs(first.X - second.X))
                   + "   ΔY " + FormatCursor(Math.Abs(first.Y - second.Y));
-            deltaColor = first.Index == index ? second.Cursor.Color : first.Cursor.Color;
+            deltaColor = (first.Index == index ? second : first).DrawnColor;
         }
 
         var head = MakeText(tag + "  " + name, 11, trace.LineColor);
-        var body = parts.Count > 0 ? MakeText(string.Join("   ", parts), 11, cursor.Color) : null;
+        var body = parts.Count > 0 ? MakeText(string.Join("   ", parts), 11, color) : null;
         var deltaText = delta is null ? null : MakeText(delta, 11, deltaColor);
         var width = Math.Min(Math.Max(Math.Max(head.Width, body?.Width ?? 0), deltaText?.Width ?? 0) + 12,
                              Math.Max(20, plot.Width - 8));
@@ -2497,7 +2516,7 @@ public abstract class ChartBase : Control
         _readoutRect = rect;
 
         context.DrawRectangle(new SolidColorBrush(PlotBackColor, 0.92),
-            new Pen(new SolidColorBrush(cursor.Color), 1), new RoundedRect(rect, new CornerRadius(3)));
+            new Pen(new SolidColorBrush(color), 1), new RoundedRect(rect, new CornerRadius(3)));
         context.DrawText(head, new Point(rect.X + 6, rect.Y + 5));
         if (body is not null) context.DrawText(body, new Point(rect.X + 6, rect.Y + 5 + head.Height + 2));
         if (deltaText is not null)
