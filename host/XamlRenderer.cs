@@ -693,6 +693,11 @@ public class XamlRenderer
             ApplyProperty(ctrl, attr.Name.LocalName, attr.Value);
         }
 
+        // A GrumpyCharts chart keeps its series (and their axes) as PLAIN objects, not as child
+        // Controls, so the recursion below would never reach them and a two-series chart would
+        // preview as empty while rendering fine at runtime. Populate them explicitly.
+        ApplyChartSeries(ctrl, elem);
+
         // Recurse into child elements so controls nested inside panels (e.g. a
         // Canvas inside a StackPanel) are created too — otherwise they vanish from
         // the preview. Property elements (Foo.Bar) are skipped by the type map.
@@ -746,6 +751,47 @@ public class XamlRenderer
             ApplyProperty(ctrl, "SelectedIndex", selAttr.Value);
         }
         return ctrl;
+    }
+
+    /// <summary>
+    /// GrumpyCharts charts hold their series (and each series' axes) as PLAIN objects rather than as
+    /// child Controls, so the Panel/ContentControl recursion never reaches them. Build them here from
+    /// the element's children: <c>&lt;charts:XYSeries …/&gt;</c> plus an optional nested
+    /// <c>&lt;charts:XYSeries.YAxis&gt;&lt;charts:Axis …/&gt;</c>.
+    /// </summary>
+    private static void ApplyChartSeries(Control ctrl, XElement elem)
+    {
+        if (ctrl is not AvaloniaCharts.ChartBase chart) return;
+        foreach (var child in elem.Elements())
+        {
+            AvaloniaCharts.ChartSeries? series = child.Name.LocalName switch
+            {
+                "LineSeries" => new AvaloniaCharts.LineSeries(),
+                "XYSeries" => new AvaloniaCharts.XYSeries(),
+                _ => null
+            };
+            if (series is null) continue;
+
+            foreach (var attr in child.Attributes())
+            {
+                if (attr.Name.LocalName.StartsWith("xmlns")) continue;
+                ApplyProperty(series, attr.Name.LocalName, attr.Value);
+            }
+            foreach (var prop in child.Elements())
+            {
+                var axisElem = prop.Elements().FirstOrDefault();
+                if (axisElem is null) continue;
+                var axis = new AvaloniaCharts.Axis();
+                foreach (var attr in axisElem.Attributes())
+                {
+                    if (attr.Name.LocalName.StartsWith("xmlns")) continue;
+                    ApplyProperty(axis, attr.Name.LocalName, attr.Value);
+                }
+                if (prop.Name.LocalName.EndsWith(".XAxis", StringComparison.Ordinal)) series.XAxis = axis;
+                else if (prop.Name.LocalName.EndsWith(".YAxis", StringComparison.Ordinal)) series.YAxis = axis;
+            }
+            chart.Series.Add(series);
+        }
     }
 
     private static void ApplyProperty(object target, string propName, string value)

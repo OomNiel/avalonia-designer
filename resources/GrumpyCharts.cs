@@ -2,57 +2,80 @@
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs.
 //
 // A small, dependency-free CHART CONTROL SET: two controls that draw themselves, with no NuGet
-// package, no template and no assets. It is the Avalonia equivalent of the old WinForms charting
-// you would drop on a form, size with the mouse and feed from a spreadsheet.
+// package, no template and no assets. Every chart type supports MULTIPLE SERIES, each with its own
+// line/marker styling and its own axis mode.
 //
-//   <charts:GrumpyLinePlot x:Name="LinePlot1" Width="320" Height="180"
-//                          Values="4,9,6,12,8,15"
-//                          Title="Temperature" ShowTitle="True"/>
+//   <charts:GrumpyLinePlot x:Name="LinePlot1" Width="320" Height="180" SourceFile="/home/me/data.xlsx">
+//     <charts:LineSeries Title="Inside"  YColumn="C" LineColor="#4ea6a1" MarkerStyle="Dot"/>
+//     <charts:LineSeries Title="Outside" YColumn="E" LineColor="#e08a3c" MarkerStyle="Cross"/>
+//   </charts:GrumpyLinePlot>
 //
-//   <charts:GrumpyXYPlot x:Name="XYPlot1" Width="320" Height="180"
-//                        SourceFile="/home/me/measurements.xlsx"
-//                        LineStyle="Dotted" MarkerStyle="Cross"/>
+//   <charts:GrumpyXYPlot x:Name="XYPlot1" SourceFile="/home/me/data.xlsx">
+//     <charts:XYSeries Title="Sensor A" XColumn="B" YColumn="C" AxisMode="Common"/>
+//     <charts:XYSeries Title="Sensor B" XColumn="D" YColumn="E" AxisMode="PerSeries">
+//       <charts:XYSeries.YAxis>
+//         <charts:Axis Position="Right" AxisColor="#e08a3c"/>
+//       </charts:XYSeries.YAxis>
+//     </charts:XYSeries>
+//   </charts:GrumpyXYPlot>
 //
-// DATA
+// SERIES
+// ------
+//   LineSeries  Y values in sample order; X counts 0..N-1 (the sample index).
+//   XYSeries    (x,y) pairs.
+//   Both carry: Title, XColumn, YColumn, AxisMode, LineColor, LineThickness, LineStyle,
+//   MarkerStyle, MarkerSize, Connected — and optional XAxis / YAxis children (see AXES).
+//   Series are drawn IN ORDER, so the list order is the z-order.
+//
+// DATA (an .xlsx, read with plain System.IO.Compression + XML — no dependency)
+// ---------------------------------------------------------------------------
+//   The spreadsheet layout is the SAME for both chart types: a series' Y data comes from a Y column,
+//   and the columns pair up B/C, D/E, F/G … So series 1 reads Y from column C, series 2 from E,
+//   series 3 from G, and each series' X defaults to the partner column (B, D, F) when it needs one.
+//   Row 1 names the axes, data starts at row 2 (XColumn / YColumn / HeaderRow / FirstDataRow change
+//   that; a series' own XColumn / YColumn override the chart's for that series).
+//
+//     AxisMode = Common     every series is plotted against the SHARED X column (the chart's
+//                           XColumn, default B) and shares one scale, so the series are comparable.
+//                           A line series always uses the sample index for X.
+//     AxisMode = PerSeries  the series uses its OWN XColumn/YColumn pair and its own scale.
+//
+//   A chart with NO series elements still works as a single implicit series, styled from the
+//   chart-level LineColor / MarkerStyle / … (kept for older forms), or from Values / Points:
+//     <charts:GrumpyLinePlot Values="4,9,6,12" .../>          (Y samples, X = index)
+//     <charts:GrumpyXYPlot Points="0,0 1,4 2,9" .../>         (x,y pairs)
+//   Code can push data at any time: SetValues(...) / AddPoint(x, y).
+//
+// AXES
 // ----
-//   * Inline arrays   — Values="4,9,6,12,8" (line plot, X is the sample index) or
-//                       Points="0,0 1,4 2,9" (X,Y plot, x,y pairs), or from code:
-//                       plot.Values = new double[] { 4, 9, 6 };  xy.Points = new double[,] { {0,0}, {1,4} };
-//   * An .xlsx file   — SourceFile points at a spreadsheet: the header row names the axes and the
-//                       rows below it are the values. Defaults follow the convention
-//                       COLUMN B = X, COLUMN C = Y, ROW 1 = axis names, data from ROW 2
-//                       (XColumn / YColumn / HeaderRow / FirstDataRow change that).
-//                       The reader is plain System.IO.Compression + XML — no dependency.
-//                       For a LINE plot the Y values come from YColumn; if that column is empty it
-//                       falls back to XColumn, so a single-column sheet still plots.
-//   * LiveUpdate = True re-reads the file when it changes on disk (edit the sheet, save, the chart
-//     redraws). Code can also push data at any time: AddPoint(x, y) / SetValues(...).
+//   The chart-level rows (ShowAxes, AxisColor, ticks, tick labels, XAxisTitle / YAxisTitle, Min/Max,
+//   gridlines) describe the COMMON axis — the one every series uses by default. A series that opts
+//   into PerSeries can carry its own <charts:Axis> for X and/or Y, each with:
+//     Position (Left | Right for a Y axis, Top | Bottom for an X axis), ShowAxis, AxisColor,
+//     ShowMajorTicks, ShowMinorTicks, ShowTickLabels, ShowAxisName, Name
+//   Deleting the axis element puts that series back on the common axis.
 //
-// STYLE (all of it optional — the defaults are already presentation-ready)
-// -----------------------------------------------------------------------
+// STYLE (chart-level; all optional — the defaults are presentation-ready)
+// ---------------------------------------------------------------------
 //   Frame        ShowBorder, BorderBrush, BorderThickness, CornerRadius
-//   Plot area    PlotBackColor, PlotBackOpacity (0-100 %)
-//   Plot line    LineColor, LineThickness, LineStyle (Solid | Dash | Dot | DashDot)
-//   Markers      MarkerStyle (None | Dot | Cross | Square | Diamond), MarkerSize, Connected
+//   Plot area    PlotBackColor (fills the whole chart), PlotBackOpacity (0-100 %)
 //   Gridlines    ShowGrid, GridColor, GridThickness, GridStyle (Solid | Dash | Dot | DashDot)
-//   Axes         ShowAxes, AxisColor (axes + ticks + labels), ShowMajorTicks, MajorTickLength,
-//                ShowMinorTicks, MinorTickLength, ShowTickLabels, TickLabelFontSize,
-//                ShowAxisTitles, XAxisTitle, YAxisTitle
+//   Common axis  ShowAxes, AxisColor, ShowMajorTicks, MajorTickLength, ShowMinorTicks,
+//                MinorTickLength, ShowTickLabels, TickLabelFontSize, ShowAxisTitles,
+//                XAxisTitle, YAxisTitle
 //   Title        ShowTitle, Title, TitleColor, TitlePosition (Top | Bottom | Left | Right),
 //                TitleFontSize
-//   Scaling      Auto-fit; MinX / MaxX / MinY / MaxY override it (leave them empty to auto-fit)
+//   Scaling      Auto-fit; MinX / MaxX / MinY / MaxY override it (empty = auto-fit)
 //
 // NOTES
 // -----
-//   * Everything is proportional, so the chart survives any resize (in the designer and at runtime).
-//   * The axis range auto-fits the data and then SNAPS outward to "nice" tick values (1/2/5 x 10^n),
-//     which is what makes the labels read as 0, 5, 10, 15 rather than 0.37, 3.7, 7.03.
-//   * A missing or unreadable file draws a short explanation inside the plot area instead of
-//     throwing — the form still loads.
-//   * ShowBrowse = True draws a small "…" button in the top-right of the plot that opens the
-//     platform file dialog and loads the chosen sheet. BrowseForFile() does the same from your own
-//     button. Both do nothing when there is no TopLevel yet (e.g. a designer preview), so the
-//     control is always safe to place and render before the window is shown.
+//   * Everything is proportional, so the chart survives any resize.
+//   * Ranges auto-fit and then SNAP outward to "nice" tick values (1/2/5 x 10^n), which is what makes
+//     the labels read as 0, 5, 10, 15 rather than 0.37, 3.7, 7.03.
+//   * A missing or unreadable file draws a short explanation inside the plot area instead of throwing.
+//   * LiveUpdate = True re-reads the workbook when it changes on disk. ShowBrowse draws a "…" button
+//     (also shown automatically while the chart has no data) and BrowseForFile() does the same from
+//     your own button; both are no-ops without a TopLevel, so the control is safe to place in a preview.
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -63,9 +86,11 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Avalonia;
+using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Metadata;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 
@@ -84,7 +109,7 @@ public enum ChartLineStyle
     DashDot
 }
 
-/// <summary>The point symbol used by the X,Y plot.</summary>
+/// <summary>The point symbol used by a series.</summary>
 public enum ChartMarkerStyle
 {
     /// <summary>No symbol — a bare line (when Connected) or nothing at all.</summary>
@@ -110,6 +135,28 @@ public enum ChartTitlePosition
     Left,
     /// <summary>Down the right edge, rotated.</summary>
     Right
+}
+
+/// <summary>Where an axis is drawn: Left/Right for a Y axis, Top/Bottom for an X axis.</summary>
+public enum AxisPosition
+{
+    /// <summary>The left edge (a Y axis).</summary>
+    Left,
+    /// <summary>The right edge (a Y axis).</summary>
+    Right,
+    /// <summary>The top edge (an X axis).</summary>
+    Top,
+    /// <summary>The bottom edge (an X axis — the default).</summary>
+    Bottom
+}
+
+/// <summary>Whether a series is plotted against the shared axis or its own.</summary>
+public enum AxisMode
+{
+    /// <summary>Use the chart's common axis (the default): one shared X and one shared scale.</summary>
+    Common,
+    /// <summary>Use this series' own X/Y columns and its own axis (see <see cref="ChartSeries.XAxis"/>).</summary>
+    PerSeries
 }
 
 /// <summary>Reads <c>Values="4,9,6,12"</c> from XAML into a <see cref="double"/> array.</summary>
@@ -168,22 +215,126 @@ public sealed class DoubleMatrixConverter : TypeConverter
     }
 }
 
-/// <summary>One series of points, plus the axis names and any reason there is no data.</summary>
-public sealed class ChartSeries
+/// <summary>The series styling shared by <see cref="LineSeries"/> and <see cref="XYSeries"/>.</summary>
+public abstract class ChartSeries
 {
-    /// <summary>The X values (for a line plot these are the sample indices 0,1,2…).</summary>
+    /// <summary>The name shown for this series (in the editor; charts do not draw a legend yet).</summary>
+    public string? Title { get; set; }
+
+    /// <summary>The spreadsheet column holding this series' X values. Empty = the chart's XColumn,
+    /// and a line series always uses the sample index instead.</summary>
+    public string? XColumn { get; set; }
+
+    /// <summary>The spreadsheet column holding this series' Y values. Empty = the chart's YColumn.</summary>
+    public string? YColumn { get; set; }
+
+    /// <summary>Common (the chart's shared axis) or PerSeries (this series' own X/Y columns and scale).</summary>
+    public AxisMode AxisMode { get; set; } = AxisMode.Common;
+
+    /// <summary>Colour of this series' line and markers.</summary>
+    public Color LineColor { get; set; } = Color.Parse("#2D7DD2");
+
+    /// <summary>Thickness of this series' line.</summary>
+    public double LineThickness { get; set; } = 2d;
+
+    /// <summary>Solid, dashed, dotted or dash-dot.</summary>
+    public ChartLineStyle LineStyle { get; set; } = ChartLineStyle.Solid;
+
+    /// <summary>The symbol drawn at each point: None, Dot, Cross, Square or Diamond.</summary>
+    public ChartMarkerStyle MarkerStyle { get; set; } = ChartMarkerStyle.Dot;
+
+    /// <summary>Marker diameter in pixels.</summary>
+    public double MarkerSize { get; set; } = 8d;
+
+    /// <summary>Join the points with a line (False = markers only).</summary>
+    public bool Connected { get; set; } = true;
+
+    /// <summary>This series' own X axis (only used with AxisMode = PerSeries).</summary>
+    public Axis? XAxis { get; set; }
+
+    /// <summary>This series' own Y axis (only used with AxisMode = PerSeries).</summary>
+    public Axis? YAxis { get; set; }
+
+    /// <summary>True for a line series: X is the sample index, so only the Y column is read.</summary>
+    internal abstract bool XFromIndex { get; }
+
+    /// <summary>True when this series is plotted against its own scale.</summary>
+    internal bool PerSeries => AxisMode == AxisMode.PerSeries;
+}
+
+/// <summary>A LINE SERIES: Y values in sample order, with X running 0…N-1.</summary>
+public class LineSeries : ChartSeries
+{
+    internal override bool XFromIndex => true;
+}
+
+/// <summary>An X,Y SERIES: (x,y) pairs, drawn as a line, as markers, or both.</summary>
+public class XYSeries : ChartSeries
+{
+    internal override bool XFromIndex => false;
+}
+
+/// <summary>
+/// One axis of a series: where it sits, whether it is drawn, its colour, which of its parts are
+/// shown, and its name. A Y axis uses <see cref="AxisPosition.Left"/>/<see cref="AxisPosition.Right"/>;
+/// an X axis uses <see cref="AxisPosition.Top"/>/<see cref="AxisPosition.Bottom"/>.
+/// </summary>
+public sealed class Axis
+{
+    /// <summary>Left/Right for a Y axis, Top/Bottom for an X axis.</summary>
+    public AxisPosition Position { get; set; } = AxisPosition.Left;
+
+    /// <summary>Draw this axis at all.</summary>
+    public bool ShowAxis { get; set; } = true;
+
+    /// <summary>Colour of the axis line, its ticks, its labels and its name.</summary>
+    public Color AxisColor { get; set; } = Color.Parse("#666666");
+
+    /// <summary>Draw the ticks at the labelled values.</summary>
+    public bool ShowMajorTicks { get; set; } = true;
+
+    /// <summary>Draw the short ticks between the labelled values.</summary>
+    public bool ShowMinorTicks { get; set; } = true;
+
+    /// <summary>Draw the numbers along this axis.</summary>
+    public bool ShowTickLabels { get; set; } = true;
+
+    /// <summary>Draw this axis' name (from <see cref="Name"/>, or the spreadsheet's column header).</summary>
+    public bool ShowAxisName { get; set; } = true;
+
+    /// <summary>The axis name. Empty = use the spreadsheet's column header.</summary>
+    public string? Name { get; set; }
+
+    /// <summary>A copy of this axis, for the renderer's per-series use.</summary>
+    internal Axis Clone() => new()
+    {
+        Position = Position,
+        ShowAxis = ShowAxis,
+        AxisColor = AxisColor,
+        ShowMajorTicks = ShowMajorTicks,
+        ShowMinorTicks = ShowMinorTicks,
+        ShowTickLabels = ShowTickLabels,
+        ShowAxisName = ShowAxisName,
+        Name = Name
+    };
+}
+
+/// <summary>One series of points, plus the axis names and any reason there is no data.</summary>
+public sealed class ChartData
+{
+    /// <summary>The X values (for a line series these are the sample indices 0,1,2…).</summary>
     public double[] Xs { get; set; } = Array.Empty<double>();
 
     /// <summary>The Y values.</summary>
     public double[] Ys { get; set; } = Array.Empty<double>();
 
-    /// <summary>The X axis name (the spreadsheet's column-B header).</summary>
+    /// <summary>The X axis name (the spreadsheet's X-column header).</summary>
     public string XTitle { get; set; } = string.Empty;
 
-    /// <summary>The Y axis name (the spreadsheet's column-C header).</summary>
+    /// <summary>The Y axis name (the spreadsheet's Y-column header).</summary>
     public string YTitle { get; set; } = string.Empty;
 
-    /// <summary>Why the chart has nothing to draw, or <c>null</c> when it is fine.</summary>
+    /// <summary>Why this series has nothing to draw, or <c>null</c> when it is fine.</summary>
     public string? Error { get; set; }
 
     /// <summary>True when the series carries at least one point.</summary>
@@ -209,6 +360,16 @@ internal static class SpreadsheetReader
         return index - 1;
     }
 
+    /// <summary>The column letter(s) one step after <paramref name="column"/> ("A"+"2" → "C", "Z"+2 → "AB").</summary>
+    internal static string ColumnAfter(string column, int step)
+    {
+        var index = ColumnIndex(column) + step;
+        if (index < 0) index = 0;
+        var text = string.Empty;
+        for (var n = index + 1; n > 0; n = (n - 1) / 26) text = (char)('A' + (n - 1) % 26) + text;
+        return text;
+    }
+
     /// <summary>The column letters in a cell reference such as "BC12" (trailing digits dropped).</summary>
     private static string ColumnOf(string cellRef)
     {
@@ -217,24 +378,15 @@ internal static class SpreadsheetReader
         return cellRef.Substring(0, end);
     }
 
-    /// <summary>The row number in a cell reference ("BC12" → 12), or 0 when there is none.</summary>
-    private static int RowOf(string cellRef)
-    {
-        var start = 0;
-        while (start < cellRef.Length && char.IsLetter(cellRef[start])) start++;
-        var digits = cellRef.Substring(start);
-        return int.TryParse(digits, NumberStyles.Integer, CultureInfo.InvariantCulture, out var row) ? row : 0;
-    }
-
     /// <summary>
-    /// Reads the series. <paramref name="xFromIndex"/> makes a line plot: the X values are the
+    /// Reads one series. <paramref name="xFromIndex"/> makes a line series: the X values are the
     /// sample indices and only the Y column is read (falling back to the X column when the Y column
     /// turns out to be empty, so a one-column sheet still draws).
     /// </summary>
-    internal static ChartSeries Read(string path, string xColumn, string yColumn,
-                                    int headerRow, int firstDataRow, bool xFromIndex)
+    internal static ChartData Read(string path, string xColumn, string yColumn,
+                                   int headerRow, int firstDataRow, bool xFromIndex)
     {
-        var series = new ChartSeries();
+        var data = new ChartData();
         try
         {
             using var zip = ZipFile.OpenRead(path);
@@ -242,8 +394,8 @@ internal static class SpreadsheetReader
             var sheet = FindSheet(zip);
             if (sheet is null)
             {
-                series.Error = $"\"{Path.GetFileName(path)}\" has no worksheet.";
-                return series;
+                data.Error = $"\"{Path.GetFileName(path)}\" has no worksheet.";
+                return data;
             }
 
             var xi = ColumnIndex(xColumn);
@@ -269,8 +421,6 @@ internal static class SpreadsheetReader
                     var text = CellText(cell, shared);
                     if (index >= 0 && text is not null) cells[index] = text;
                 }
-                cells.TryGetValue(xi, out var xText);
-                cells.TryGetValue(yi, out var yText);
 
                 if (rowNumber == headerRow)
                 {
@@ -280,12 +430,14 @@ internal static class SpreadsheetReader
                 }
                 if (firstDataRow > 0 && rowNumber > 0 && rowNumber < firstDataRow) continue;
 
+                cells.TryGetValue(xi, out var xText);
+                cells.TryGetValue(yi, out var yText);
                 var hasX = TryNumber(xText, out var xVal);
                 var hasY = TryNumber(yText, out var yVal);
 
                 if (xFromIndex)
                 {
-                    // A line plot only needs one column. Prefer the Y column; if the sheet has the
+                    // A line series only needs one column. Prefer the Y column; if the sheet has the
                     // values in the X column instead, take those rather than drawing nothing.
                     if (hasY) { xs.Add(ys.Count); ys.Add(yVal); }
                     else if (hasX) { xsFallback.Add(ysFallback.Count); ysFallback.Add(xVal); }
@@ -303,21 +455,21 @@ internal static class SpreadsheetReader
                 ys = ysFallback;
             }
 
-            series.Xs = xs.ToArray();
-            series.Ys = ys.ToArray();
-            series.XTitle = xTitle;
-            series.YTitle = yTitle;
-            if (series.Ys.Length == 0)
+            data.Xs = xs.ToArray();
+            data.Ys = ys.ToArray();
+            data.XTitle = xTitle;
+            data.YTitle = yTitle;
+            if (data.Ys.Length == 0)
             {
-                series.Error = $"No numbers found in column {(xFromIndex ? yColumn : $"{xColumn}/{yColumn}")} " +
-                               $"of \"{Path.GetFileName(path)}\" from row {firstDataRow}.";
+                data.Error = $"No numbers found in column {(xFromIndex ? yColumn : $"{xColumn}/{yColumn}")} " +
+                             $"of \"{Path.GetFileName(path)}\" from row {firstDataRow}.";
             }
         }
         catch (Exception ex)
         {
-            series.Error = $"Cannot read \"{Path.GetFileName(path)}\": {ex.Message}";
+            data.Error = $"Cannot read \"{Path.GetFileName(path)}\": {ex.Message}";
         }
-        return series;
+        return data;
     }
 
     /// <summary>The workbook's first worksheet part, or null when the zip has none.</summary>
@@ -341,10 +493,7 @@ internal static class SpreadsheetReader
             foreach (var si in XDocument.Load(stream).Descendants().Where(e => e.Name.LocalName == "si"))
             {
                 // A shared string is either one <t> or a run list <r><t>…</t></r>.
-                var text = string.Concat(si.Descendants()
-                    .Where(e => e.Name.LocalName == "t")
-                    .Select(e => e.Value));
-                list.Add(text);
+                list.Add(string.Concat(si.Descendants().Where(e => e.Name.LocalName == "t").Select(e => e.Value)));
             }
         }
         catch
@@ -381,164 +530,131 @@ internal static class SpreadsheetReader
     }
 }
 
+/// <summary>One series ready to draw: its data, its styling, its scale and (for PerSeries) its axes.</summary>
+internal sealed class Plot
+{
+    internal ChartData Data = new();
+    internal ChartSeries? Definition;
+    internal Color LineColor = Color.Parse("#2D7DD2");
+    internal double LineThickness = 2d;
+    internal ChartLineStyle LineStyle = ChartLineStyle.Solid;
+    internal ChartMarkerStyle MarkerStyle = ChartMarkerStyle.Dot;
+    internal double MarkerSize = 8d;
+    internal bool Connected = true;
+    internal bool PerSeries;
+    internal Axis? XAxis;
+    internal Axis? YAxis;
+    internal AxisRange XRange = new();
+    internal AxisRange YRange = new();
+}
+
 /// <summary>
-/// The shared base for <see cref="GrumpyLinePlot"/> and <see cref="GrumpyXYPlot"/>: everything from
-/// the frame and plot background to the gridlines, ticks, tick labels, axis titles and chart title,
-/// plus the spreadsheet reader and the live-update watcher. Subclasses only supply the data.
+/// The shared base for <see cref="GrumpyLinePlot"/> and <see cref="GrumpyXYPlot"/>: the frame, plot
+/// background, gridlines, the common axis with its ticks and labels, the chart title, the series
+/// collection, the spreadsheet reader and the live-update watcher.
 /// </summary>
 public abstract class ChartBase : Control
 {
-    private const string DefaultFont = "Default";
-
     // ---- frame ------------------------------------------------------------------------------
-    /// <summary>Draw the border around the whole control.</summary>
     public static readonly StyledProperty<bool> ShowBorderProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowBorder), true);
 
-    /// <summary>Border colour (see <see cref="ShowBorder"/>).</summary>
     public static readonly StyledProperty<Color> BorderBrushProperty =
         AvaloniaProperty.Register<ChartBase, Color>(nameof(BorderBrush), Color.Parse("#C8C8C8"));
 
-    /// <summary>Border line thickness.</summary>
     public static readonly StyledProperty<double> BorderThicknessProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(BorderThickness), 1d);
 
-    /// <summary>Corner rounding of the frame.</summary>
     public static readonly StyledProperty<CornerRadius> CornerRadiusProperty =
         AvaloniaProperty.Register<ChartBase, CornerRadius>(nameof(CornerRadius), new CornerRadius(4));
 
     // ---- plot area --------------------------------------------------------------------------
-    /// <summary>Fill colour of the plot area (the region inside the axes).</summary>
+    /// <summary>The chart's backcolour: fills the whole chart, behind the plot area, the title and
+    /// the axis labels, so the chart reads the same on any form.</summary>
     public static readonly StyledProperty<Color> PlotBackColorProperty =
         AvaloniaProperty.Register<ChartBase, Color>(nameof(PlotBackColor), Colors.White);
 
-    /// <summary>Plot-area opacity in percent (0 = invisible, 100 = solid).</summary>
+    /// <summary>How solid the chart's backcolour is, in percent.</summary>
     public static readonly StyledProperty<double> PlotBackOpacityProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(PlotBackOpacity), 100d);
 
-    // ---- plot line --------------------------------------------------------------------------
-    /// <summary>Colour of the plotted line.</summary>
-    public static readonly StyledProperty<Color> LineColorProperty =
-        AvaloniaProperty.Register<ChartBase, Color>(nameof(LineColor), Color.Parse("#2D7DD2"));
-
-    /// <summary>Thickness of the plotted line.</summary>
-    public static readonly StyledProperty<double> LineThicknessProperty =
-        AvaloniaProperty.Register<ChartBase, double>(nameof(LineThickness), 2d);
-
-    /// <summary>Solid, dashed, dotted or dash-dot.</summary>
-    public static readonly StyledProperty<ChartLineStyle> LineStyleProperty =
-        AvaloniaProperty.Register<ChartBase, ChartLineStyle>(nameof(LineStyle), ChartLineStyle.Solid);
-
-    // ---- markers (the X,Y plot) -------------------------------------------------------------
-    /// <summary>The point symbol: None, Dot, Cross, Square or Diamond.</summary>
-    public static readonly StyledProperty<ChartMarkerStyle> MarkerStyleProperty =
-        AvaloniaProperty.Register<ChartBase, ChartMarkerStyle>(nameof(MarkerStyle), ChartMarkerStyle.Dot);
-
-    /// <summary>Marker diameter in pixels.</summary>
-    public static readonly StyledProperty<double> MarkerSizeProperty =
-        AvaloniaProperty.Register<ChartBase, double>(nameof(MarkerSize), 8d);
-
-    /// <summary>Join the points with a line (False = markers only).</summary>
-    public static readonly StyledProperty<bool> ConnectedProperty =
-        AvaloniaProperty.Register<ChartBase, bool>(nameof(Connected), true);
-
     // ---- gridlines --------------------------------------------------------------------------
-    /// <summary>Draw gridlines at the major ticks.</summary>
     public static readonly StyledProperty<bool> ShowGridProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowGrid), true);
 
-    /// <summary>Gridline colour.</summary>
     public static readonly StyledProperty<Color> GridColorProperty =
         AvaloniaProperty.Register<ChartBase, Color>(nameof(GridColor), Color.Parse("#E8E8E8"));
 
-    /// <summary>Gridline thickness.</summary>
     public static readonly StyledProperty<double> GridThicknessProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(GridThickness), 1d);
 
-    /// <summary>Solid, dashed, dotted or dash-dot gridlines.</summary>
     public static readonly StyledProperty<ChartLineStyle> GridStyleProperty =
         AvaloniaProperty.Register<ChartBase, ChartLineStyle>(nameof(GridStyle), ChartLineStyle.Solid);
 
-    // ---- axes, ticks and labels -------------------------------------------------------------
-    /// <summary>Draw the two axis lines.</summary>
+    // ---- the common axis --------------------------------------------------------------------
     public static readonly StyledProperty<bool> ShowAxesProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowAxes), true);
 
-    /// <summary>Colour of the axes, the ticks and the tick labels.</summary>
     public static readonly StyledProperty<Color> AxisColorProperty =
         AvaloniaProperty.Register<ChartBase, Color>(nameof(AxisColor), Color.Parse("#666666"));
 
-    /// <summary>Draw the major ticks.</summary>
     public static readonly StyledProperty<bool> ShowMajorTicksProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowMajorTicks), true);
 
-    /// <summary>Length of the major ticks, in pixels.</summary>
     public static readonly StyledProperty<double> MajorTickLengthProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(MajorTickLength), 6d);
 
-    /// <summary>Draw the minor ticks (four between each pair of major ticks).</summary>
     public static readonly StyledProperty<bool> ShowMinorTicksProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowMinorTicks), true);
 
-    /// <summary>Length of the minor ticks, in pixels.</summary>
     public static readonly StyledProperty<double> MinorTickLengthProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(MinorTickLength), 3d);
 
-    /// <summary>Draw the numbers under the ticks.</summary>
     public static readonly StyledProperty<bool> ShowTickLabelsProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowTickLabels), true);
 
-    /// <summary>Font size of the tick labels.</summary>
     public static readonly StyledProperty<double> TickLabelFontSizeProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(TickLabelFontSize), 11d);
 
-    /// <summary>Draw the axis names (from the spreadsheet's header row, or XAxisTitle/YAxisTitle).</summary>
     public static readonly StyledProperty<bool> ShowAxisTitlesProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowAxisTitles), true);
 
-    /// <summary>The X axis name. Empty = use the spreadsheet's column header.</summary>
     public static readonly StyledProperty<string?> XAxisTitleProperty =
         AvaloniaProperty.Register<ChartBase, string?>(nameof(XAxisTitle), string.Empty);
 
-    /// <summary>The Y axis name. Empty = use the spreadsheet's column header.</summary>
     public static readonly StyledProperty<string?> YAxisTitleProperty =
         AvaloniaProperty.Register<ChartBase, string?>(nameof(YAxisTitle), string.Empty);
 
     // ---- title ------------------------------------------------------------------------------
-    /// <summary>Draw the chart title.</summary>
     public static readonly StyledProperty<bool> ShowTitleProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowTitle), false);
 
-    /// <summary>The chart title text.</summary>
     public static readonly StyledProperty<string?> TitleProperty =
         AvaloniaProperty.Register<ChartBase, string?>(nameof(Title), string.Empty);
 
-    /// <summary>Title colour.</summary>
     public static readonly StyledProperty<Color> TitleColorProperty =
         AvaloniaProperty.Register<ChartBase, Color>(nameof(TitleColor), Color.Parse("#303030"));
 
-    /// <summary>Top (default), Bottom, Left or Right of the plot area.</summary>
     public static readonly StyledProperty<ChartTitlePosition> TitlePositionProperty =
         AvaloniaProperty.Register<ChartBase, ChartTitlePosition>(nameof(TitlePosition), ChartTitlePosition.Top);
 
-    /// <summary>Title font size.</summary>
     public static readonly StyledProperty<double> TitleFontSizeProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(TitleFontSize), 14d);
 
     // ---- data source ------------------------------------------------------------------------
-    /// <summary>The .xlsx file to read. Empty = use the inline Values/Points.</summary>
+    /// <summary>The .xlsx workbook every series reads from. Empty = the inline Values/Points.</summary>
     public static readonly StyledProperty<string?> SourceFileProperty =
         AvaloniaProperty.Register<ChartBase, string?>(nameof(SourceFile), string.Empty);
 
-    /// <summary>Re-read the file whenever it changes on disk.</summary>
+    /// <summary>Re-read the workbook whenever it changes on disk.</summary>
     public static readonly StyledProperty<bool> LiveUpdateProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(LiveUpdate), true);
 
-    /// <summary>The X column letter in the sheet (default "B").</summary>
+    /// <summary>The column holding the SHARED X values (AxisMode = Common). Default "B".</summary>
     public static readonly StyledProperty<string?> XColumnProperty =
         AvaloniaProperty.Register<ChartBase, string?>(nameof(XColumn), "B");
 
-    /// <summary>The Y column letter in the sheet (default "C").</summary>
+    /// <summary>The Y column used when the chart has no series elements. Default "C".</summary>
     public static readonly StyledProperty<string?> YColumnProperty =
         AvaloniaProperty.Register<ChartBase, string?>(nameof(YColumn), "C");
 
@@ -550,26 +666,44 @@ public abstract class ChartBase : Control
     public static readonly StyledProperty<int> FirstDataRowProperty =
         AvaloniaProperty.Register<ChartBase, int>(nameof(FirstDataRow), 2);
 
-    /// <summary>Draw the "…" file picker in the top-right of the plot.</summary>
+    /// <summary>Draw the "…" file picker (also drawn automatically while the chart has no data).</summary>
     public static readonly StyledProperty<bool> ShowBrowseProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowBrowse), false);
 
-    // ---- scaling overrides ------------------------------------------------------------------
-    /// <summary>Fixed X minimum. Empty (NaN) = auto-fit.</summary>
+    // ---- scaling overrides (the common axis) -------------------------------------------------
     public static readonly StyledProperty<double> MinXProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(MinX), double.NaN);
 
-    /// <summary>Fixed X maximum. Empty (NaN) = auto-fit.</summary>
     public static readonly StyledProperty<double> MaxXProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(MaxX), double.NaN);
 
-    /// <summary>Fixed Y minimum. Empty (NaN) = auto-fit.</summary>
     public static readonly StyledProperty<double> MinYProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(MinY), double.NaN);
 
-    /// <summary>Fixed Y maximum. Empty (NaN) = auto-fit.</summary>
     public static readonly StyledProperty<double> MaxYProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(MaxY), double.NaN);
+
+    // ---- LEGACY single-series styling -------------------------------------------------------
+    // Kept so older forms still compile AND still look right: these style the implicit series a
+    // chart uses when it has NO <charts:…Series> elements. The Series Editor seeds the first series
+    // from them, and they are no longer offered in the Properties panel (the series own them now).
+    public static readonly StyledProperty<Color> LineColorProperty =
+        AvaloniaProperty.Register<ChartBase, Color>(nameof(LineColor), Color.Parse("#2D7DD2"));
+
+    public static readonly StyledProperty<double> LineThicknessProperty =
+        AvaloniaProperty.Register<ChartBase, double>(nameof(LineThickness), 2d);
+
+    public static readonly StyledProperty<ChartLineStyle> LineStyleProperty =
+        AvaloniaProperty.Register<ChartBase, ChartLineStyle>(nameof(LineStyle), ChartLineStyle.Solid);
+
+    public static readonly StyledProperty<ChartMarkerStyle> MarkerStyleProperty =
+        AvaloniaProperty.Register<ChartBase, ChartMarkerStyle>(nameof(MarkerStyle), ChartMarkerStyle.Dot);
+
+    public static readonly StyledProperty<double> MarkerSizeProperty =
+        AvaloniaProperty.Register<ChartBase, double>(nameof(MarkerSize), 8d);
+
+    public static readonly StyledProperty<bool> ConnectedProperty =
+        AvaloniaProperty.Register<ChartBase, bool>(nameof(Connected), true);
 
     static ChartBase()
     {
@@ -577,8 +711,6 @@ public abstract class ChartBase : Control
         AffectsRender<ChartBase>(
             ShowBorderProperty, BorderBrushProperty, BorderThicknessProperty, CornerRadiusProperty,
             PlotBackColorProperty, PlotBackOpacityProperty,
-            LineColorProperty, LineThicknessProperty, LineStyleProperty,
-            MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty,
             ShowGridProperty, GridColorProperty, GridThicknessProperty, GridStyleProperty,
             ShowAxesProperty, AxisColorProperty,
             ShowMajorTicksProperty, MajorTickLengthProperty,
@@ -588,7 +720,9 @@ public abstract class ChartBase : Control
             ShowTitleProperty, TitleProperty, TitleColorProperty, TitlePositionProperty, TitleFontSizeProperty,
             SourceFileProperty, XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
             ShowBrowseProperty,
-            MinXProperty, MaxXProperty, MinYProperty, MaxYProperty);
+            MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
+            LineColorProperty, LineThicknessProperty, LineStyleProperty,
+            MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty);
         SourceFileProperty.Changed.AddClassHandler<ChartBase>((chart, _) => chart.InvalidateCache());
         LiveUpdateProperty.Changed.AddClassHandler<ChartBase>((chart, _) => chart.RestartWatcher());
     }
@@ -605,31 +739,13 @@ public abstract class ChartBase : Control
     /// <summary>Corner rounding of the frame.</summary>
     public CornerRadius CornerRadius { get => GetValue(CornerRadiusProperty); set => SetValue(CornerRadiusProperty, value); }
 
-    /// <summary>Fill colour of the plot area.</summary>
+    /// <summary>The chart's backcolour (fills the whole chart).</summary>
     public Color PlotBackColor { get => GetValue(PlotBackColorProperty); set => SetValue(PlotBackColorProperty, value); }
 
-    /// <summary>Plot-area opacity in percent (0-100).</summary>
+    /// <summary>How solid the chart's backcolour is, in percent (0-100).</summary>
     public double PlotBackOpacity { get => GetValue(PlotBackOpacityProperty); set => SetValue(PlotBackOpacityProperty, value); }
 
-    /// <summary>Colour of the plotted line.</summary>
-    public Color LineColor { get => GetValue(LineColorProperty); set => SetValue(LineColorProperty, value); }
-
-    /// <summary>Thickness of the plotted line.</summary>
-    public double LineThickness { get => GetValue(LineThicknessProperty); set => SetValue(LineThicknessProperty, value); }
-
-    /// <summary>Line style of the plotted line.</summary>
-    public ChartLineStyle LineStyle { get => GetValue(LineStyleProperty); set => SetValue(LineStyleProperty, value); }
-
-    /// <summary>Marker style (the X,Y plot).</summary>
-    public ChartMarkerStyle MarkerStyle { get => GetValue(MarkerStyleProperty); set => SetValue(MarkerStyleProperty, value); }
-
-    /// <summary>Marker diameter in pixels.</summary>
-    public double MarkerSize { get => GetValue(MarkerSizeProperty); set => SetValue(MarkerSizeProperty, value); }
-
-    /// <summary>Join the points with a line.</summary>
-    public bool Connected { get => GetValue(ConnectedProperty); set => SetValue(ConnectedProperty, value); }
-
-    /// <summary>Draw gridlines at the major ticks.</summary>
+    /// <summary>Draw gridlines at the common axis' major ticks.</summary>
     public bool ShowGrid { get => GetValue(ShowGridProperty); set => SetValue(ShowGridProperty, value); }
 
     /// <summary>Gridline colour.</summary>
@@ -641,19 +757,19 @@ public abstract class ChartBase : Control
     /// <summary>Gridline style.</summary>
     public ChartLineStyle GridStyle { get => GetValue(GridStyleProperty); set => SetValue(GridStyleProperty, value); }
 
-    /// <summary>Draw the two axis lines.</summary>
+    /// <summary>Draw the common axis' two axis lines.</summary>
     public bool ShowAxes { get => GetValue(ShowAxesProperty); set => SetValue(ShowAxesProperty, value); }
 
-    /// <summary>Colour of the axes, ticks and tick labels.</summary>
+    /// <summary>Colour of the common axes, ticks and tick labels.</summary>
     public Color AxisColor { get => GetValue(AxisColorProperty); set => SetValue(AxisColorProperty, value); }
 
-    /// <summary>Draw the major ticks.</summary>
+    /// <summary>Draw the common axis' major ticks.</summary>
     public bool ShowMajorTicks { get => GetValue(ShowMajorTicksProperty); set => SetValue(ShowMajorTicksProperty, value); }
 
     /// <summary>Major tick length in pixels.</summary>
     public double MajorTickLength { get => GetValue(MajorTickLengthProperty); set => SetValue(MajorTickLengthProperty, value); }
 
-    /// <summary>Draw the minor ticks.</summary>
+    /// <summary>Draw the common axis' minor ticks.</summary>
     public bool ShowMinorTicks { get => GetValue(ShowMinorTicksProperty); set => SetValue(ShowMinorTicksProperty, value); }
 
     /// <summary>Minor tick length in pixels.</summary>
@@ -662,10 +778,10 @@ public abstract class ChartBase : Control
     /// <summary>Draw the tick numbers.</summary>
     public bool ShowTickLabels { get => GetValue(ShowTickLabelsProperty); set => SetValue(ShowTickLabelsProperty, value); }
 
-    /// <summary>Font size of the tick labels.</summary>
+    /// <summary>Font size of the tick labels and the axis names.</summary>
     public double TickLabelFontSize { get => GetValue(TickLabelFontSizeProperty); set => SetValue(TickLabelFontSizeProperty, value); }
 
-    /// <summary>Draw the axis names.</summary>
+    /// <summary>Draw the common axis' names.</summary>
     public bool ShowAxisTitles { get => GetValue(ShowAxisTitlesProperty); set => SetValue(ShowAxisTitlesProperty, value); }
 
     /// <summary>The X axis name (empty = the spreadsheet's column header).</summary>
@@ -689,16 +805,16 @@ public abstract class ChartBase : Control
     /// <summary>Title font size.</summary>
     public double TitleFontSize { get => GetValue(TitleFontSizeProperty); set => SetValue(TitleFontSizeProperty, value); }
 
-    /// <summary>The .xlsx file to read (empty = the inline Values/Points).</summary>
+    /// <summary>The .xlsx workbook every series reads from (empty = the inline Values/Points).</summary>
     public string? SourceFile { get => GetValue(SourceFileProperty); set => SetValue(SourceFileProperty, value); }
 
-    /// <summary>Re-read the file when it changes on disk.</summary>
+    /// <summary>Re-read the workbook when it changes on disk.</summary>
     public bool LiveUpdate { get => GetValue(LiveUpdateProperty); set => SetValue(LiveUpdateProperty, value); }
 
-    /// <summary>The X column letter in the sheet.</summary>
+    /// <summary>The column holding the shared X values (AxisMode = Common).</summary>
     public string? XColumn { get => GetValue(XColumnProperty); set => SetValue(XColumnProperty, value); }
 
-    /// <summary>The Y column letter in the sheet.</summary>
+    /// <summary>The Y column used when the chart has no series elements.</summary>
     public string? YColumn { get => GetValue(YColumnProperty); set => SetValue(YColumnProperty, value); }
 
     /// <summary>The row holding the axis names.</summary>
@@ -707,49 +823,169 @@ public abstract class ChartBase : Control
     /// <summary>The first row of values.</summary>
     public int FirstDataRow { get => GetValue(FirstDataRowProperty); set => SetValue(FirstDataRowProperty, value); }
 
-    /// <summary>Draw the "…" file picker button in the top-right of the plot.</summary>
+    /// <summary>Draw the "…" file picker button.</summary>
     public bool ShowBrowse { get => GetValue(ShowBrowseProperty); set => SetValue(ShowBrowseProperty, value); }
 
-    /// <summary>Fixed X minimum (NaN = auto-fit).</summary>
+    /// <summary>Fixed X minimum for the common axis (NaN = auto-fit).</summary>
     public double MinX { get => GetValue(MinXProperty); set => SetValue(MinXProperty, value); }
 
-    /// <summary>Fixed X maximum (NaN = auto-fit).</summary>
+    /// <summary>Fixed X maximum for the common axis (NaN = auto-fit).</summary>
     public double MaxX { get => GetValue(MaxXProperty); set => SetValue(MaxXProperty, value); }
 
-    /// <summary>Fixed Y minimum (NaN = auto-fit).</summary>
+    /// <summary>Fixed Y minimum for the common axis (NaN = auto-fit).</summary>
     public double MinY { get => GetValue(MinYProperty); set => SetValue(MinYProperty, value); }
 
-    /// <summary>Fixed Y maximum (NaN = auto-fit).</summary>
+    /// <summary>Fixed Y maximum for the common axis (NaN = auto-fit).</summary>
     public double MaxY { get => GetValue(MaxYProperty); set => SetValue(MaxYProperty, value); }
+
+    /// <summary>LEGACY: the implicit series' line colour (used only when there are no series elements).</summary>
+    public Color LineColor { get => GetValue(LineColorProperty); set => SetValue(LineColorProperty, value); }
+
+    /// <summary>LEGACY: the implicit series' line thickness.</summary>
+    public double LineThickness { get => GetValue(LineThicknessProperty); set => SetValue(LineThicknessProperty, value); }
+
+    /// <summary>LEGACY: the implicit series' line style.</summary>
+    public ChartLineStyle LineStyle { get => GetValue(LineStyleProperty); set => SetValue(LineStyleProperty, value); }
+
+    /// <summary>LEGACY: the implicit series' marker style.</summary>
+    public ChartMarkerStyle MarkerStyle { get => GetValue(MarkerStyleProperty); set => SetValue(MarkerStyleProperty, value); }
+
+    /// <summary>LEGACY: the implicit series' marker size.</summary>
+    public double MarkerSize { get => GetValue(MarkerSizeProperty); set => SetValue(MarkerSizeProperty, value); }
+
+    /// <summary>LEGACY: whether the implicit series joins its points with a line.</summary>
+    public bool Connected { get => GetValue(ConnectedProperty); set => SetValue(ConnectedProperty, value); }
+
+    /// <summary>
+    /// The chart's series, drawn in this order. This is the content property, so a series is written
+    /// as a child element: <c>&lt;charts:GrumpyXYPlot&gt;&lt;charts:XYSeries …/&gt;&lt;/charts:GrumpyXYPlot&gt;</c>.
+    /// Empty = one implicit series styled from the chart-level values.
+    /// </summary>
+    [Content]
+    public AvaloniaList<ChartSeries> Series { get; } = new();
 
     // ---- data -------------------------------------------------------------------------------
 
-    /// <summary>True for a line plot: X is the sample index and only the Y column is read.</summary>
-    protected abstract bool XFromIndex { get; }
+    /// <summary>The data to draw when the chart has no series and no SourceFile.</summary>
+    protected abstract ChartData InlineData();
 
-    /// <summary>The data to draw when no <see cref="SourceFile"/> is set.</summary>
-    protected abstract ChartSeries InlineSeries();
+    /// <summary>How a subclass stores inline data pushed from code (Values or Points).</summary>
+    protected abstract void SetInlineData(double[] xs, double[] ys);
 
-    private ChartSeries? _cached;
-    private string? _cacheKey;
+    /// <summary>The X column a series reads when it needs one.</summary>
+    private string SeriesXColumn(ChartSeries series)
+        => !string.IsNullOrWhiteSpace(series.XColumn) ? series.XColumn!
+           : !string.IsNullOrWhiteSpace(XColumn) ? XColumn! : "B";
 
-    /// <summary>The series for the current settings, cached until something changes.</summary>
-    protected ChartSeries Series()
+    /// <summary>The Y column a series reads: its own, else the chart's, else the next of B/C, D/E…</summary>
+    private string SeriesYColumn(ChartSeries series, int index)
     {
-        var file = SourceFile;
-        var key = $"{file}|{XColumn}|{YColumn}|{HeaderRow}|{FirstDataRow}|{XFromIndex}";
-        if (_cached is not null && _cacheKey == key) return _cached;
-
-        var series = string.IsNullOrWhiteSpace(file)
-            ? InlineSeries()
-            : SpreadsheetReader.Read(file!, XColumn ?? "B", YColumn ?? "C", HeaderRow, FirstDataRow, XFromIndex);
-
-        _cached = series;
-        _cacheKey = key;
-        return series;
+        if (!string.IsNullOrWhiteSpace(series.YColumn)) return series.YColumn!;
+        if (Series.Count == 1 && !string.IsNullOrWhiteSpace(YColumn)) return YColumn!;
+        // The pairing rule: series 1 → C, series 2 → E, series 3 → G …
+        return SpreadsheetReader.ColumnAfter("C", index * 2);
     }
 
-    /// <summary>Drop the cached data so the next redraw re-reads the file.</summary>
+    /// <summary>The X column of the nth series in the editor's default pairing (B, D, F, …).</summary>
+    internal static string DefaultXColumn(int index) => SpreadsheetReader.ColumnAfter("B", index * 2);
+
+    /// <summary>The Y column of the nth series in the editor's default pairing (C, E, G, …).</summary>
+    internal static string DefaultYColumn(int index) => SpreadsheetReader.ColumnAfter("C", index * 2);
+
+    private readonly Dictionary<string, ChartData> _cache = new();
+    private string? _cacheFile;
+
+    /// <summary>The data for one series (cached per column pair and workbook).</summary>
+    private ChartData DataFor(ChartSeries? series, string xColumn, string yColumn, bool xFromIndex)
+    {
+        var file = SourceFile;
+        if (string.IsNullOrWhiteSpace(file)) return InlineData();
+
+        var key = $"{xColumn}|{yColumn}|{xFromIndex}";
+        if (_cacheFile != file) { _cache.Clear(); _cacheFile = file; }
+        if (_cache.TryGetValue(key, out var cached)) return cached;
+
+        var data = SpreadsheetReader.Read(file!, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex);
+        _cache[key] = data;
+        return data;
+    }
+
+    /// <summary>Every series to draw, with its data, styling, scale and axes resolved.</summary>
+    private List<Plot> BuildPlots()
+    {
+        var plots = new List<Plot>();
+        if (Series.Count == 0)
+        {
+            // The implicit single series: chart-level columns and (legacy) chart-level styling.
+            var data = DataFor(null, XColumn ?? "B", YColumn ?? "C", XFromIndex);
+            var plot = new Plot
+            {
+                Data = data,
+                LineColor = LineColor,
+                LineThickness = LineThickness,
+                LineStyle = LineStyle,
+                MarkerStyle = MarkerStyle,
+                MarkerSize = MarkerSize,
+                Connected = Connected
+            };
+            plot.XRange = AxisRange.Over(data.Xs, MinX, MaxX, 6, 1);
+            plot.YRange = AxisRange.Over(data.Ys, MinY, MaxY, 5, 5);
+            plots.Add(plot);
+            return plots;
+        }
+
+        for (var i = 0; i < Series.Count; i++)
+        {
+            var series = Series[i];
+            // Common mode shares one X (the chart's XColumn); PerSeries uses the series' own pair.
+            var common = !series.PerSeries || series.XFromIndex;
+            var xColumn = common ? (XColumn ?? "B") : SeriesXColumn(series);
+            var yColumn = SeriesYColumn(series, i);
+            var data = DataFor(series, xColumn, yColumn, series.XFromIndex);
+            var plot = new Plot
+            {
+                Data = data,
+                Definition = series,
+                LineColor = series.LineColor,
+                LineThickness = series.LineThickness,
+                LineStyle = series.LineStyle,
+                MarkerStyle = series.MarkerStyle,
+                MarkerSize = series.MarkerSize,
+                Connected = series.Connected,
+                PerSeries = series.PerSeries,
+                XAxis = series.XAxis,
+                YAxis = series.YAxis
+            };
+            if (series.PerSeries)
+            {
+                plot.XRange = AxisRange.Over(data.Xs, double.NaN, double.NaN, 6, 5);
+                plot.YRange = AxisRange.Over(data.Ys, double.NaN, double.NaN, 5, 5);
+            }
+            plots.Add(plot);
+        }
+
+        // The common axis covers the series that use it (or all of them when every series is its own).
+        var commonPlots = plots.Where(p => !p.PerSeries).ToList();
+        if (commonPlots.Count == 0) commonPlots = plots;
+        var xs = commonPlots.SelectMany(p => p.Data.Xs).ToArray();
+        var ys = commonPlots.SelectMany(p => p.Data.Ys).ToArray();
+        var subdivisions = Series.Any(s => s.XFromIndex) ? 1 : 5;
+        var xr = AxisRange.Over(xs, MinX, MaxX, 6, subdivisions);
+        var yr = AxisRange.Over(ys, MinY, MaxY, 5, 5);
+        foreach (var plot in commonPlots)
+        {
+            plot.XRange = xr;
+            plot.YRange = yr;
+        }
+        return plots;
+    }
+
+    private bool XFromIndex => Series.Count > 0 ? Series[0].XFromIndex : ImplicitXFromIndex;
+
+    /// <summary>True when the implicit (no-series) chart plots Y against the sample index.</summary>
+    protected abstract bool ImplicitXFromIndex { get; }
+
+    /// <summary>Drop the cached data so the next redraw re-reads the workbook.</summary>
     public void Reload()
     {
         InvalidateCache();
@@ -757,38 +993,37 @@ public abstract class ChartBase : Control
 
     private void InvalidateCache()
     {
-        _cached = null;
-        _cacheKey = null;
+        _cache.Clear();
+        _cacheFile = null;
         InvalidateVisual();
     }
 
-    /// <summary>Replace the plotted data (a line plot can also just append with AddPoint).</summary>
+    /// <summary>Replace the implicit series' data (a line chart can also just append with AddPoint).</summary>
     public void SetValues(IEnumerable<double> values)
     {
-        var array = values?.ToArray() ?? Array.Empty<double>();
-        SetInlineData(array.Select((_, i) => (double)i).ToArray(), array);
-        SetInlineTitles();
+        var data = values?.ToArray() ?? Array.Empty<double>();
+        SetInlineData(Enumerable.Range(0, data.Length).Select(i => (double)i).ToArray(), data);
         InvalidateCache();
     }
 
-    /// <summary>Append one point and redraw — for a chart fed live from your own code.</summary>
+    /// <summary>Append one point to the implicit series and redraw.</summary>
     public void AddPoint(double x, double y)
     {
-        var series = InlineSeries();
-        var xs = series.Xs.ToList();
-        var ys = series.Ys.ToList();
+        var data = InlineData();
+        var xs = data.Xs.ToList();
+        var ys = data.Ys.ToList();
         xs.Add(x);
         ys.Add(y);
         SetInlineData(xs.ToArray(), ys.ToArray());
         InvalidateCache();
     }
 
-    /// <summary>How a subclass stores its inline data (Values or Points).</summary>
-    protected abstract void SetInlineData(double[] xs, double[] ys);
-
-    /// <summary>How a subclass names its inline data (usually nothing to do).</summary>
-    protected virtual void SetInlineTitles()
+    /// <inheritdoc/>
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
+        base.OnPropertyChanged(change);
+        if (change.Property == SourceFileProperty) InvalidateCache();
+        else if (change.Property == LiveUpdateProperty) RestartWatcher();
     }
 
     // ---- file picker ------------------------------------------------------------------------
@@ -830,7 +1065,12 @@ public abstract class ChartBase : Control
     /// True when the "…" file picker should be drawn: when <see cref="ShowBrowse"/> asks for it, or
     /// when the chart has no data — an empty chart is exactly where you want to pick the workbook.
     /// </summary>
-    private bool BrowseVisible => ShowBrowse || !Series().HasData;
+    private bool BrowseVisible => ShowBrowse || !HasAnyData();
+
+    /// <summary>True when at least one series has points to draw.</summary>
+    private bool HasAnyData() => _lastPlotCount > 0;
+
+    private int _lastPlotCount;
 
     /// <summary>Clicking the drawn "…" button loads a file.</summary>
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -934,30 +1174,30 @@ public abstract class ChartBase : Control
         var size = Bounds.Size;
         if (size.Width < 8 || size.Height < 8) return;
 
-        var borderThickness = ShowBorder ? Math.Max(0, BorderThickness) : 0;
-        var frame = new Rect(size).Deflate(borderThickness / 2);
-
-        // 1. The chart's OWN plate comes first, filling the whole interior - not just the plot area.
-        //    Everything drawn outside the plot (the title, the axis labels, the ticks) then sits on
-        //    the chart's colour instead of on whatever is behind the control. Without this a chart
-        //    tuned for a dark form (white TitleColor, dark PlotBackColor) is invisible in the
-        //    Designer - whose preview is always the light theme - while looking right at runtime,
-        //    because the surround used to take the form's background.
+        var frameWidth = ShowBorder ? Math.Max(0, BorderThickness) : 0;
+        var frame = new Rect(size).Deflate(frameWidth / 2);
         var radius = CornerRadius;
+
+        // The chart's OWN plate comes first, filling the whole interior - not just the plot area.
+        // Everything drawn outside the plot (the title, the axis labels, the ticks) then sits on the
+        // chart's colour instead of on whatever is behind the control.
         var opacity = Math.Clamp(PlotBackOpacity, 0, 100) / 100d;
         var plate = new SolidColorBrush(PlotBackColor, opacity);
         context.DrawRectangle(plate, null, new RoundedRect(frame, radius));
 
-        var series = Series();
-        var showTitle = ShowTitle && !string.IsNullOrWhiteSpace(Title);
-        var titleText = showTitle ? MakeText(Title!, TitleFontSize, TitleColor) : null;
+        var plots = BuildPlots();
+        _lastPlotCount = plots.Count(p => p.Data.HasData);
+        var outer = plots.FirstOrDefault(p => p.Data.Error is not null) ?? plots.FirstOrDefault();
+        var seriesError = outer?.Data.Error;
 
-        // 2. Work out the plot rectangle: the frame, minus the breathing room, minus the title and
-        //    the axis furniture around it.
+        var wantTitle = ShowTitle && !string.IsNullOrWhiteSpace(Title);
+        var titleText = wantTitle ? MakeText(Title!, TitleFontSize, TitleColor) : null;
+
+        // Work out the plot rectangle: the frame, minus the breathing room, minus the title and the
+        // axis furniture around it.
         var plot = frame.Deflate(8);
         if (titleText is not null)
         {
-            // The title takes a measured strip off one edge, so it can never overlap the plot.
             var strip = titleText.Height + 6;
             plot = TitlePosition switch
             {
@@ -968,153 +1208,276 @@ public abstract class ChartBase : Control
             };
         }
 
-        var axisTitleText = ShowAxisTitles ? AxisTitles(series) : (X: (FormattedText?)null, Y: (FormattedText?)null);
-        var leftLabels = new List<(double Value, string Text)>();
-        var bottomLabels = new List<(double Value, string Text)>();
-        var leftLabelWidth = 0d;
-        var xRange = new AxisRange();
-        var yRange = new AxisRange();
-
-        if (series.HasData)
+        var common = plots.FirstOrDefault(p => !p.PerSeries) ?? plots.FirstOrDefault();
+        if (common is null)
         {
-            xRange = AxisRange.For(series.Xs, MinX, MaxX, 6, this is GrumpyLinePlot ? 1 : 5);
-            yRange = AxisRange.For(series.Ys, MinY, MaxY, 5, 5);
-            if (ShowTickLabels)
-            {
-                foreach (var v in yRange.Ticks()) leftLabels.Add((v, FormatNumber(v, yRange.Step)));
-                foreach (var v in xRange.Ticks()) bottomLabels.Add((v, FormatNumber(v, xRange.Step)));
-                foreach (var label in leftLabels)
-                {
-                    leftLabelWidth = Math.Max(leftLabelWidth, MakeText(label.Text, TickLabelFontSize, AxisColor).Width);
-                }
-            }
-        }
-
-        var labelHeight = ShowTickLabels ? MakeText("0", TickLabelFontSize, AxisColor).Height : 0;
-        var tickOut = ShowAxes && ShowMajorTicks ? Math.Max(0, MajorTickLength) : 0;
-        var leftGutter = 4 + tickOut + leftLabelWidth
-                         + (axisTitleText.Y is null ? 0 : axisTitleText.Y.Height + 6);
-        var bottomGutter = 4 + tickOut + labelHeight
-                           + (axisTitleText.X is null ? 0 : axisTitleText.X.Height + 6);
-        plot = Chop(plot, leftGutter, 0, 0, bottomGutter);
-        if (plot.Width <= 4 || plot.Height <= 4) return;
-
-        // 3. Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry
-        //    its own tint without touching the rest of the chart).
-        context.DrawRectangle(plate, null, plot);
-
-        if (!series.HasData)
-        {
-            DrawFrame(context, frame, radius, borderThickness);
+            DrawFrame(context, frame, radius, frameWidth);
             DrawTitle(context, titleText, plot, frame);
-            DrawMessage(context, plot, series.Error);
-            // An empty chart is exactly when you want the file picker, so the "…" button is
-            // drawn here even when ShowBrowse is off (see BrowseVisible).
+            DrawMessage(context, plot, null);
             DrawBrowseButton(context, frame);
             return;
         }
 
-        // 4. Gridlines, then the axes with their ticks and labels.
+        var labelSize = TickLabelFontSize;
+        var yLabels = ShowTickLabels ? common.YRange.Ticks().Select(v => FormatNumber(v, common.YRange.TickStep)).ToList() : new List<string>();
+        var leftLabelWidth = yLabels.Count > 0 ? yLabels.Max(t => MakeText(t, labelSize, AxisColor).Width) : 0;
+        var labelHeight = ShowTickLabels ? MakeText("0", labelSize, AxisColor).Height : 0;
+        var xLabels = ShowTickLabels ? common.XRange.Ticks().Select(v => FormatNumber(v, common.XRange.TickStep)).ToList() : new List<string>();
+
+        var titles = AxisTitles(common);
+        var tickOut = ShowAxes && ShowMajorTicks ? Math.Max(0, MajorTickLength) : 0;
+
+        // Per-series axes need their own gutters, so several Y scales can live side by side.
+        var perSeries = plots.Where(p => p.PerSeries).ToList();
+        var leftAxisBlocks = perSeries.Count(p => (p.YAxis?.Position ?? AxisPosition.Left) is not AxisPosition.Right);
+        var rightAxisBlocks = perSeries.Count(p => (p.YAxis?.Position ?? AxisPosition.Left) is AxisPosition.Right);
+        var topAxisBlocks = perSeries.Count(p => (p.XAxis?.Position ?? AxisPosition.Bottom) is AxisPosition.Top);
+        var bottomAxisBlocks = perSeries.Count(p => (p.XAxis?.Position ?? AxisPosition.Bottom) is not AxisPosition.Top);
+        var perYWidth = perSeries.Count == 0 ? 0 : perSeries.Max(p => PerAxisLabelWidth(p, true));
+        var perXHeight = perSeries.Count == 0 ? 0 : labelHeight;
+
+        var leftGutter = 4 + tickOut + leftLabelWidth + (titles.Y is null ? 0 : titles.Y.Height + 6)
+                         + (leftAxisBlocks > 0 ? (4 + tickOut + perYWidth) * 1 : 0);
+        var rightGutter = rightAxisBlocks > 0 ? (4 + tickOut + perYWidth + 6) * 1 : 0;
+        var bottomGutter = 4 + tickOut + labelHeight + (titles.X is null ? 0 : titles.X.Height + 6)
+                           + (bottomAxisBlocks > 0 ? 4 + tickOut + perXHeight : 0);
+        var topGutter = topAxisBlocks > 0 ? 4 + tickOut + perXHeight : 0;
+        plot = Chop(plot, leftGutter, topGutter, rightGutter, bottomGutter);
+        if (plot.Width <= 4 || plot.Height <= 4) return;
+
+        // Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry its
+        // own tint without touching the rest of the chart).
+        context.DrawRectangle(plate, null, plot);
+
+        if (_lastPlotCount == 0)
+        {
+            DrawFrame(context, frame, radius, frameWidth);
+            DrawTitle(context, titleText, plot, frame);
+            DrawMessage(context, plot, seriesError);
+            DrawBrowseButton(context, frame);
+            return;
+        }
+
+        // Gridlines, then the common axis with its ticks and labels.
         if (ShowGrid)
         {
             var gridPen = MakePen(GridColor, GridThickness, GridStyle);
-            foreach (var tick in xRange.Ticks())
+            foreach (var tick in common.XRange.Ticks())
             {
-                var x = xRange.ToPixel(tick, plot.X, plot.Width);
+                var x = common.XRange.ToPixel(tick, plot.X, plot.Width);
                 context.DrawLine(gridPen, new Point(x, plot.Y), new Point(x, plot.Bottom));
             }
-            foreach (var tick in yRange.Ticks())
+            foreach (var tick in common.YRange.Ticks())
             {
-                var y = yRange.ToPixel(tick, plot.Bottom, -plot.Height);
+                var y = common.YRange.ToPixel(tick, plot.Bottom, -plot.Height);
                 context.DrawLine(gridPen, new Point(plot.X, y), new Point(plot.Right, y));
             }
         }
 
-        var axisPen = MakePen(AxisColor, 1, ChartLineStyle.Solid);
-        if (ShowAxes)
+        var commonAxis = new Axis
         {
-            context.DrawLine(axisPen, new Point(plot.X, plot.Y), new Point(plot.X, plot.Bottom));
-            context.DrawLine(axisPen, new Point(plot.X, plot.Bottom), new Point(plot.Right, plot.Bottom));
-        }
-        MinorAndMajorTicks(context, plot, xRange, yRange);
+            Position = AxisPosition.Left,
+            ShowAxis = ShowAxes,
+            AxisColor = AxisColor,
+            ShowMajorTicks = ShowMajorTicks,
+            ShowMinorTicks = ShowMinorTicks,
+            ShowTickLabels = ShowTickLabels,
+            ShowAxisName = ShowAxisTitles
+        };
+        DrawYAxis(context, plot, common.YRange, commonAxis, right: false, titles.Y, yLabels);
+        var commonXAxis = commonAxis.Clone();
+        commonXAxis.Position = AxisPosition.Bottom;
+        DrawXAxis(context, plot, common.XRange, commonXAxis, top: false, titles.X, xLabels);
 
-        if (ShowTickLabels)
+        // Per-series axes: their own scale, drawn on the side each axis asks for.
+        foreach (var p in perSeries)
         {
-            foreach (var (value, text) in bottomLabels)
+            if (p.YAxis is not null && p.YAxis.ShowAxis)
             {
-                var t = MakeText(text, TickLabelFontSize, AxisColor);
-                var x = xRange.ToPixel(value, plot.X, plot.Width) - t.Width / 2;
-                context.DrawText(t, new Point(x, plot.Bottom + tickOut + 2));
+                var right = p.YAxis.Position == AxisPosition.Right;
+                var axis = p.YAxis.Clone();
+                axis.AxisColor = p.YAxis.AxisColor;
+                DrawYAxis(context, plot, p.YRange, axis, right, PerAxisName(p.YAxis, p.Data.YTitle),
+                    p.YAxis.ShowTickLabels ? p.YRange.Ticks().Select(v => FormatNumber(v, p.YRange.TickStep)).ToList() : new List<string>());
             }
-            foreach (var (value, text) in leftLabels)
+            if (p.XAxis is not null && p.XAxis.ShowAxis)
             {
-                var t = MakeText(text, TickLabelFontSize, AxisColor);
-                var y = yRange.ToPixel(value, plot.Bottom, -plot.Height) - t.Height / 2;
-                context.DrawText(t, new Point(plot.X - tickOut - 2 - t.Width, y));
-            }
-        }
-
-        if (axisTitleText.Y is not null)
-        {
-            // Rotate FIRST, then translate: Avalonia's matrices are row-vector, so they compose
-            // left-to-right. Getting this backwards draws the title above the control's own bounds
-            // (which is how it ends up inside the chart sitting above it on the form).
-            var axisTitleY = plot.Y + plot.Height / 2 + axisTitleText.Y.Width / 2;
-            using (context.PushTransform(Matrix.CreateRotation(-Math.PI / 2)
-                                         * Matrix.CreateTranslation(frame.X + 3, axisTitleY)))
-            {
-                context.DrawText(axisTitleText.Y, new Point(0, 0));
+                var top = p.XAxis.Position == AxisPosition.Top;
+                DrawXAxis(context, plot, p.XRange, p.XAxis, top, PerAxisName(p.XAxis, p.Data.XTitle),
+                    p.XAxis.ShowTickLabels ? p.XRange.Ticks().Select(v => FormatNumber(v, p.XRange.TickStep)).ToList() : new List<string>());
             }
         }
-        if (axisTitleText.X is not null)
-        {
-            var x = plot.X + (plot.Width - axisTitleText.X.Width) / 2;
-            context.DrawText(axisTitleText.X, new Point(x, plot.Bottom + tickOut + 2 + labelHeight + 2));
-        }
 
-        // 5. The data itself, clipped to the plot area.
+        // The data itself, in order, clipped to the plot area.
         using (context.PushClip(plot))
         {
-            var points = series.Xs.Select((_, i) => new Point(
-                xRange.ToPixel(series.Xs[i], plot.X, plot.Width),
-                yRange.ToPixel(series.Ys[i], plot.Bottom, -plot.Height))).ToArray();
-
-            if (Connected && points.Length > 1)
+            foreach (var p in plots)
             {
-                var pen = MakePen(LineColor, LineThickness, LineStyle);
-                for (var i = 1; i < points.Length; i++) context.DrawLine(pen, points[i - 1], points[i]);
+                if (!p.Data.HasData) continue;
+                var points = p.Data.Xs.Select((_, i) => new Point(
+                    p.XRange.ToPixel(p.Data.Xs[i], plot.X, plot.Width),
+                    p.YRange.ToPixel(p.Data.Ys[i], plot.Bottom, -plot.Height))).ToArray();
+
+                if (p.Connected && points.Length > 1)
+                {
+                    var pen = MakePen(p.LineColor, p.LineThickness, p.LineStyle);
+                    for (var i = 1; i < points.Length; i++) context.DrawLine(pen, points[i - 1], points[i]);
+                }
+                DrawMarkers(context, points, p);
             }
-            DrawMarkers(context, points);
         }
 
-        // 6. Frame + title last, so nothing can overdraw them.
-        DrawFrame(context, frame, radius, borderThickness);
+        // Frame + title last, so nothing can overdraw them.
+        DrawFrame(context, frame, radius, frameWidth);
         DrawTitle(context, titleText, plot, frame);
         DrawBrowseButton(context, frame);
     }
 
-    private void DrawMarkers(DrawingContext context, Point[] points)
+    /// <summary>The label text of one series' Y axis, so the editor's column width is right.</summary>
+    private double PerAxisLabelWidth(Plot plot, bool yAxis)
     {
-        if (MarkerStyle == ChartMarkerStyle.None) return;
-        var size = Math.Max(2, MarkerSize);
-        var brush = new SolidColorBrush(LineColor);
+        var axis = yAxis ? plot.YAxis : plot.XAxis;
+        var range = yAxis ? plot.YRange : plot.XRange;
+        if (axis is null || !axis.ShowTickLabels || !plot.PerSeries) return 0;
+        var widest = 0d;
+        foreach (var tick in range.Ticks())
+        {
+            var text = MakeText(FormatNumber(tick, range.TickStep), TickLabelFontSize, axis.AxisColor);
+            widest = Math.Max(widest, text.Width);
+        }
+        return widest;
+    }
+
+    /// <summary>An axis' own name, or the spreadsheet's column header when it has none.</summary>
+    private FormattedText? PerAxisName(Axis axis, string fromSheet)
+    {
+        var text = !string.IsNullOrWhiteSpace(axis.Name) ? axis.Name! : fromSheet;
+        if (!axis.ShowAxisName || string.IsNullOrWhiteSpace(text)) return null;
+        return MakeText(text, TickLabelFontSize, axis.AxisColor);
+    }
+
+    /// <summary>Draws a Y axis: its line, ticks, labels and name, on the left or the right edge.</summary>
+    private void DrawYAxis(DrawingContext context, Rect plot, AxisRange range, Axis axis, bool right,
+                           FormattedText? name, List<string> labels)
+    {
+        var pen = MakePen(axis.AxisColor, 1, ChartLineStyle.Solid);
+        var x = right ? plot.Right : plot.X;
+        var tickOut = axis.ShowMajorTicks ? Math.Max(0, MajorTickLength) : 0;
+        var dir = right ? 1 : -1;
+
+        if (axis.ShowMinorTicks && MinorTickLength > 0)
+        {
+            foreach (var tick in range.MinorTicks())
+            {
+                var y = range.ToPixel(tick, plot.Bottom, -plot.Height);
+                context.DrawLine(pen, new Point(x, y), new Point(x + dir * MinorTickLength, y));
+            }
+        }
+        if (axis.ShowMajorTicks && MajorTickLength > 0)
+        {
+            foreach (var tick in range.Ticks())
+            {
+                var y = range.ToPixel(tick, plot.Bottom, -plot.Height);
+                context.DrawLine(pen, new Point(x, y), new Point(x + dir * MajorTickLength, y));
+            }
+        }
+
+        var widest = 0d;
+        var ticks = range.Ticks().ToList();
+        var drawn = 0;
+        foreach (var tick in ticks)
+        {
+            var text = drawn < labels.Count ? labels[drawn] : FormatNumber(tick, range.TickStep);
+            drawn++;
+            var t = MakeText(text, TickLabelFontSize, axis.AxisColor);
+            var y = range.ToPixel(tick, plot.Bottom, -plot.Height) - t.Height / 2;
+            var tx = right ? x + tickOut + 2 : x - tickOut - 2 - t.Width;
+            if (axis.ShowTickLabels) context.DrawText(t, new Point(tx, y));
+            widest = Math.Max(widest, t.Width);
+        }
+
+        if (name is not null)
+        {
+            var nameY = plot.Y + plot.Height / 2 + name.Width / 2;
+            var nameX = right ? x + tickOut + 4 + widest + 2 : x - tickOut - 4 - widest - 2 - name.Height;
+            // Rotate FIRST, then translate: Avalonia's matrices are row-vector, so they compose
+            // left-to-right. Getting this backwards draws the name above the control's own bounds.
+            using (context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) * Matrix.CreateTranslation(nameX, nameY)))
+            {
+                context.DrawText(name, new Point(0, 0));
+            }
+        }
+    }
+
+    /// <summary>Draws an X axis: its line, ticks, labels and name, at the top or the bottom edge.</summary>
+    private void DrawXAxis(DrawingContext context, Rect plot, AxisRange range, Axis axis, bool top,
+                           FormattedText? name, List<string> labels)
+    {
+        var pen = MakePen(axis.AxisColor, 1, ChartLineStyle.Solid);
+        var y = top ? plot.Y : plot.Bottom;
+        var tickOut = axis.ShowMajorTicks ? Math.Max(0, MajorTickLength) : 0;
+        var dir = top ? -1 : 1;
+
+        if (axis.ShowMinorTicks && MinorTickLength > 0)
+        {
+            foreach (var tick in range.MinorTicks())
+            {
+                var x = range.ToPixel(tick, plot.X, plot.Width);
+                context.DrawLine(pen, new Point(x, y), new Point(x, y + dir * MinorTickLength));
+            }
+        }
+        if (axis.ShowMajorTicks && MajorTickLength > 0)
+        {
+            foreach (var tick in range.Ticks())
+            {
+                var x = range.ToPixel(tick, plot.X, plot.Width);
+                context.DrawLine(pen, new Point(x, y), new Point(x, y + dir * MajorTickLength));
+            }
+        }
+
+        var labelHeight = MakeText("0", TickLabelFontSize, axis.AxisColor).Height;
+        var drawn = 0;
+        foreach (var tick in range.Ticks())
+        {
+            var text = drawn < labels.Count ? labels[drawn] : FormatNumber(tick, range.TickStep);
+            drawn++;
+            var t = MakeText(text, TickLabelFontSize, axis.AxisColor);
+            var x = range.ToPixel(tick, plot.X, plot.Width) - t.Width / 2;
+            var ty = top ? y - tickOut - 2 - t.Height : y + tickOut + 2;
+            if (axis.ShowTickLabels) context.DrawText(t, new Point(x, ty));
+        }
+
+        if (name is not null)
+        {
+            var nameX = plot.X + (plot.Width - name.Width) / 2;
+            var nameY = top ? y - tickOut - 2 - labelHeight - 2 - name.Height
+                            : y + tickOut + 2 + labelHeight + 2;
+            context.DrawText(name, new Point(nameX, nameY));
+        }
+    }
+
+    private void DrawMarkers(DrawingContext context, Point[] points, Plot plot)
+    {
+        if (plot.MarkerStyle == ChartMarkerStyle.None) return;
+        var size = Math.Max(2, plot.MarkerSize);
+        var brush = new SolidColorBrush(plot.LineColor);
         var pen = new Pen(brush, 1);
+        var half = size / 2;
         foreach (var p in points)
         {
-            switch (MarkerStyle)
+            switch (plot.MarkerStyle)
             {
                 case ChartMarkerStyle.Dot:
-                    context.DrawEllipse(brush, null, p, size / 2, size / 2);
+                    context.DrawEllipse(brush, null, p, half, half);
                     break;
                 case ChartMarkerStyle.Cross:
-                    context.DrawLine(pen, new Point(p.X - size / 2, p.Y - size / 2), new Point(p.X + size / 2, p.Y + size / 2));
-                    context.DrawLine(pen, new Point(p.X - size / 2, p.Y + size / 2), new Point(p.X + size / 2, p.Y - size / 2));
+                    context.DrawLine(pen, new Point(p.X - half, p.Y - half), new Point(p.X + half, p.Y + half));
+                    context.DrawLine(pen, new Point(p.X - half, p.Y + half), new Point(p.X + half, p.Y - half));
                     break;
                 case ChartMarkerStyle.Square:
-                    context.DrawRectangle(brush, null, new Rect(p.X - size / 2, p.Y - size / 2, size, size));
+                    context.DrawRectangle(brush, null, new Rect(p.X - half, p.Y - half, size, size));
                     break;
                 case ChartMarkerStyle.Diamond:
-                    var half = size / 2;
                     var geometry = new StreamGeometry();
                     using (var g = geometry.Open())
                     {
@@ -1126,37 +1489,6 @@ public abstract class ChartBase : Control
                     }
                     context.DrawGeometry(brush, null, geometry);
                     break;
-            }
-        }
-    }
-
-    private void MinorAndMajorTicks(DrawingContext context, Rect plot, AxisRange xRange, AxisRange yRange)
-    {
-        var axisPen = MakePen(AxisColor, 1, ChartLineStyle.Solid);
-        if (ShowAxes && ShowMinorTicks && MinorTickLength > 0)
-        {
-            foreach (var tick in xRange.MinorTicks())
-            {
-                var x = xRange.ToPixel(tick, plot.X, plot.Width);
-                context.DrawLine(axisPen, new Point(x, plot.Bottom), new Point(x, plot.Bottom + MinorTickLength));
-            }
-            foreach (var tick in yRange.MinorTicks())
-            {
-                var y = yRange.ToPixel(tick, plot.Bottom, -plot.Height);
-                context.DrawLine(axisPen, new Point(plot.X - MinorTickLength, y), new Point(plot.X, y));
-            }
-        }
-        if (ShowAxes && ShowMajorTicks && MajorTickLength > 0)
-        {
-            foreach (var tick in xRange.Ticks())
-            {
-                var x = xRange.ToPixel(tick, plot.X, plot.Width);
-                context.DrawLine(axisPen, new Point(x, plot.Bottom), new Point(x, plot.Bottom + MajorTickLength));
-            }
-            foreach (var tick in yRange.Ticks())
-            {
-                var y = yRange.ToPixel(tick, plot.Bottom, -plot.Height);
-                context.DrawLine(axisPen, new Point(plot.X - MajorTickLength, y), new Point(plot.X, y));
             }
         }
     }
@@ -1180,8 +1512,8 @@ public abstract class ChartBase : Control
                 context.DrawText(title, new Point(plot.X + (plot.Width - title.Width) / 2, plot.Bottom + 4));
                 break;
             case ChartTitlePosition.Left:
-                // Rotate then translate (see the Y axis title in Render): the rotated text starts at
-                // the anchor and reads upward, so the anchor sits half a text-width below centre.
+                // Rotate then translate (see the Y axis name): the rotated text starts at the anchor
+                // and reads upward, so the anchor sits half a text-width below centre.
                 var leftY = plot.Y + plot.Height / 2 + title.Width / 2;
                 using (context.PushTransform(Matrix.CreateRotation(-Math.PI / 2)
                                              * Matrix.CreateTranslation(frame.X + 4, leftY)))
@@ -1203,14 +1535,14 @@ public abstract class ChartBase : Control
     private void DrawMessage(DrawingContext context, Rect plot, string? message)
     {
         var text = string.IsNullOrWhiteSpace(message)
-            ? "No data — set Values, or point SourceFile at an .xlsx"
+            ? "No data — set SourceFile, or add a series"
             : message!;
         var brush = Color.Parse("#909090");
         var formatted = MakeText(text, 12, brush);
         if (formatted.Width > plot.Width)
         {
-            // A long explanation (a full path, a reader exception) would otherwise be dropped
-            // whole and leave the chart looking broken — trim it to fit instead.
+            // A long explanation (a full path, a reader exception) would otherwise be dropped whole
+            // and leave the chart looking broken — trim it to fit instead.
             var perChar = formatted.Width / Math.Max(1, text.Length);
             var maxChars = Math.Max(0, (int)Math.Floor(plot.Width / perChar) - 1);
             if (maxChars < 8) return;   // no room for anything readable
@@ -1232,20 +1564,20 @@ public abstract class ChartBase : Control
     {
         _browseRect = default;
         if (!BrowseVisible) return;
-        var size = 18d;
-        var rect = new Rect(frame.Right - size - 4, frame.Y + 4, size, size);
+        const double boxSize = 18d;
+        var rect = new Rect(frame.Right - boxSize - 4, frame.Y + 4, boxSize, boxSize);
         _browseRect = rect;
         context.DrawRectangle(new SolidColorBrush(Color.Parse("#F0F0F0")),
             new Pen(new SolidColorBrush(Color.Parse("#C0C0C0")), 1), new RoundedRect(rect, new CornerRadius(3)));
         var dots = MakeText("…", 12, Color.Parse("#505050"));
-        context.DrawText(dots, new Point(rect.X + (size - dots.Width) / 2, rect.Y + (size - dots.Height) / 2));
+        context.DrawText(dots, new Point(rect.X + (boxSize - dots.Width) / 2, rect.Y + (boxSize - dots.Height) / 2));
     }
 
-    /// <summary>Resolves the two axis names: the explicit properties win, then the sheet's headers.</summary>
-    private (FormattedText? X, FormattedText? Y) AxisTitles(ChartSeries series)
+    /// <summary>Resolves the common axis' names: the explicit properties win, then the sheet's headers.</summary>
+    private (FormattedText? X, FormattedText? Y) AxisTitles(Plot common)
     {
-        var x = !string.IsNullOrWhiteSpace(XAxisTitle) ? XAxisTitle! : series.XTitle;
-        var y = !string.IsNullOrWhiteSpace(YAxisTitle) ? YAxisTitle! : series.YTitle;
+        var x = !string.IsNullOrWhiteSpace(XAxisTitle) ? XAxisTitle! : common.Data.XTitle;
+        var y = !string.IsNullOrWhiteSpace(YAxisTitle) ? YAxisTitle! : common.Data.YTitle;
         return (
             string.IsNullOrWhiteSpace(x) ? null : MakeText(x, TickLabelFontSize, AxisColor),
             string.IsNullOrWhiteSpace(y) ? null : MakeText(y, TickLabelFontSize, AxisColor));
@@ -1285,8 +1617,8 @@ public abstract class ChartBase : Control
 }
 
 /// <summary>
-/// A fitted axis: the range actually drawn, the tick step, and the data→pixel mapping. Built from
-/// the data (auto-fit) or from explicit Min/Max, and snapped outward to "nice" 1/2/5 x 10^n steps so
+/// A fitted axis: the range actually drawn, the tick step, and the data-to-pixel mapping. Built from
+/// the data (auto-fit) or from explicit Min/Max, then snapped outward to "nice" 1/2/5 x 10^n steps so
 /// the labels are round numbers.
 /// </summary>
 internal sealed class AxisRange
@@ -1295,27 +1627,27 @@ internal sealed class AxisRange
     private double _max;
 
     /// <summary>The tick step (also the basis for the label precision).</summary>
-    internal double Step { get; private set; } = 1;
+    internal double TickStep { get; private set; } = 1;
 
     /// <summary>The subdivisions of a major step (minor ticks).</summary>
     private int Subdivisions { get; set; } = 5;
 
     /// <summary>Builds the range for one axis of data.</summary>
-    internal static AxisRange For(IReadOnlyList<double> values, double forcedMin, double forcedMax,
-                                 int targetTicks, int subdivisions)
+    internal static AxisRange Over(IReadOnlyList<double> values, double forcedMin, double forcedMax,
+                                   int targetTicks, int subdivisions)
     {
         var range = new AxisRange { Subdivisions = Math.Max(1, subdivisions) };
-        var min = double.IsNaN(forcedMin) ? values.Min() : forcedMin;
-        var max = double.IsNaN(forcedMax) ? values.Max() : forcedMax;
+        var min = double.IsNaN(forcedMin) || values.Count == 0 ? (values.Count == 0 ? 0 : values.Min()) : forcedMin;
+        var max = double.IsNaN(forcedMax) || values.Count == 0 ? (values.Count == 0 ? 1 : values.Max()) : forcedMax;
         if (max <= min) max = min + (Math.Abs(min) > 1 ? Math.Abs(min) * 0.1 : 1);
 
-        range.Step = NiceStep(max - min, Math.Max(2, targetTicks));
-        if (double.IsNaN(forcedMin)) min = Math.Floor(min / range.Step) * range.Step;
-        if (double.IsNaN(forcedMax)) max = Math.Ceiling(max / range.Step) * range.Step;
+        range.TickStep = NiceStep(max - min, Math.Max(2, targetTicks));
+        if (double.IsNaN(forcedMin)) min = Math.Floor(min / range.TickStep) * range.TickStep;
+        if (double.IsNaN(forcedMax)) max = Math.Ceiling(max / range.TickStep) * range.TickStep;
         // Always include the span, even when a forced bound falls inside it.
         range._min = Math.Min(min, max);
         range._max = Math.Max(min, max);
-        if (range._max <= range._min) range._max = range._min + range.Step;
+        if (range._max <= range._min) range._max = range._min + range.TickStep;
         return range;
     }
 
@@ -1333,22 +1665,21 @@ internal sealed class AxisRange
     /// <summary>The major tick values across the range.</summary>
     internal IEnumerable<double> Ticks()
     {
-        var count = (int)Math.Round((_max - _min) / Step);
+        var count = (int)Math.Round((_max - _min) / TickStep);
         count = Math.Clamp(count, 0, 1000);
-        for (var i = 0; i <= count; i++) yield return _min + i * Step;
+        for (var i = 0; i <= count; i++) yield return _min + i * TickStep;
     }
 
     /// <summary>The minor tick values (the major step split into <see cref="Subdivisions"/>).</summary>
     internal IEnumerable<double> MinorTicks()
     {
         if (Subdivisions < 2) yield break;
-        var sub = Step / Subdivisions;
-        var count = (int)Math.Round((_max - _min) / sub);
+        var subStep = TickStep / Subdivisions;
+        var count = (int)Math.Round((_max - _min) / subStep);
         count = Math.Clamp(count, 0, 5000);
         for (var i = 0; i <= count; i++)
         {
-            var value = _min + i * sub;
-            if (i % Subdivisions != 0) yield return value;
+            if (i % Subdivisions != 0) yield return _min + i * subStep;
         }
     }
 
@@ -1358,12 +1689,12 @@ internal sealed class AxisRange
 }
 
 /// <summary>
-/// A LINE PLOT: Y values in sample order, with the X axis running 0…N-1. Feed it from an array
-/// (<see cref="Values"/>) or from an .xlsx file (column C by default).
+/// A LINE PLOT: one line per series, Y values in sample order with X running 0…N-1. Series read their
+/// Y from the spreadsheet's Y columns (C, E, G …) and may set AxisMode="PerSeries" for their own scale.
 /// </summary>
 public class GrumpyLinePlot : ChartBase
 {
-    /// <summary>The Y samples to draw. X is the sample index (0,1,2…).</summary>
+    /// <summary>The implicit series' Y samples (used only when the chart has no series elements).</summary>
     public static readonly StyledProperty<double[]?> ValuesProperty =
         AvaloniaProperty.Register<GrumpyLinePlot, double[]?>(nameof(Values));
 
@@ -1373,24 +1704,22 @@ public class GrumpyLinePlot : ChartBase
         ValuesProperty.Changed.AddClassHandler<GrumpyLinePlot>((plot, _) => plot.Reload());
     }
 
-    /// <summary>The Y samples (X is the sample index).</summary>
+    /// <summary>The Y samples of the implicit series (X is the sample index).</summary>
     [TypeConverter(typeof(DoubleArrayConverter))]
     public double[]? Values { get => GetValue(ValuesProperty); set => SetValue(ValuesProperty, value); }
 
     /// <inheritdoc/>
-    protected override bool XFromIndex => true;
+    protected override bool ImplicitXFromIndex => true;
 
     /// <inheritdoc/>
-    protected override ChartSeries InlineSeries()
+    protected override ChartData InlineData()
     {
         var values = Values ?? Array.Empty<double>();
-        var series = new ChartSeries
+        return new ChartData
         {
             Xs = Enumerable.Range(0, values.Length).Select(i => (double)i).ToArray(),
             Ys = values
         };
-        if (values.Length == 0) series.Error = null;   // an empty plot is fine, not an error
-        return series;
     }
 
     /// <inheritdoc/>
@@ -1398,12 +1727,13 @@ public class GrumpyLinePlot : ChartBase
 }
 
 /// <summary>
-/// An X,Y PLOT: (x,y) pairs, drawn as a line, as markers, or both. Feed it from a 2-D array
-/// (<see cref="Points"/>) or from an .xlsx file (column B = X, column C = Y by default).
+/// An X,Y PLOT: one point-set per series, drawn as a line, as markers, or both. A series reads its X
+/// and Y from the spreadsheet's column pairs (B/C, D/E, F/G …) unless AxisMode="Common" is used, in
+/// which case every series shares the chart's X column.
 /// </summary>
 public class GrumpyXYPlot : ChartBase
 {
-    /// <summary>The (x,y) pairs to draw — an n×2 array.</summary>
+    /// <summary>The implicit series' (x,y) pairs (used only when the chart has no series elements).</summary>
     public static readonly StyledProperty<double[,]?> PointsProperty =
         AvaloniaProperty.Register<GrumpyXYPlot, double[,]?>(nameof(Points));
 
@@ -1413,33 +1743,34 @@ public class GrumpyXYPlot : ChartBase
         PointsProperty.Changed.AddClassHandler<GrumpyXYPlot>((plot, _) => plot.Reload());
     }
 
-    /// <summary>The (x,y) pairs — an n×2 array.</summary>
+    /// <summary>The (x,y) pairs of the implicit series — an n-by-2 array.</summary>
     [TypeConverter(typeof(DoubleMatrixConverter))]
     public double[,]? Points { get => GetValue(PointsProperty); set => SetValue(PointsProperty, value); }
 
     /// <inheritdoc/>
-    protected override bool XFromIndex => false;
+    protected override bool ImplicitXFromIndex => false;
 
     /// <inheritdoc/>
-    protected override ChartSeries InlineSeries()
+    protected override ChartData InlineData()
     {
         var points = Points;
-        if (points is null) return new ChartSeries();
+        if (points is null) return new ChartData();
         var count = points.GetLength(0);
-        var series = new ChartSeries { Xs = new double[count], Ys = new double[count] };
+        var data = new ChartData { Xs = new double[count], Ys = new double[count] };
         for (var i = 0; i < count; i++)
         {
-            series.Xs[i] = points[i, 0];
-            series.Ys[i] = points[i, 1];
+            data.Xs[i] = points[i, 0];
+            data.Ys[i] = points[i, 1];
         }
-        return series;
+        return data;
     }
 
     /// <inheritdoc/>
     protected override void SetInlineData(double[] xs, double[] ys)
     {
-        var points = new double[Math.Min(xs.Length, ys.Length), 2];
-        for (var i = 0; i < points.GetLength(0); i++)
+        var count = Math.Min(xs.Length, ys.Length);
+        var points = new double[count, 2];
+        for (var i = 0; i < count; i++)
         {
             points[i, 0] = xs[i];
             points[i, 1] = ys[i];
