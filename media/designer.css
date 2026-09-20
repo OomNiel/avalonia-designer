@@ -2248,6 +2248,112 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     cursor: pointer;
 }
 
+/* 'Series' editor (GrumpyCharts): the chart's series listed on the left, the selected series'
+   fields on the right. */
+.series-buttons {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.series-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    text-align: left;
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.series-item:hover {
+    border-color: var(--accent);
+}
+
+.series-item.active {
+    border-color: var(--accent);
+    background: var(--panel-1);
+}
+
+.series-swatch {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    border: 1px solid var(--border);
+}
+
+.series-item-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.series-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.series-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+}
+
+.series-field>span {
+    flex: 0 0 96px;
+    opacity: 0.85;
+}
+
+.series-field input[type='text'],
+.series-field select {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--panel-1);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.series-field input[type='number'] {
+    flex: 0 0 64px;
+    background: var(--panel-1);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.series-field input[type='color'] {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: transparent;
+}
+
+.series-field input:focus,
+.series-field select:focus {
+    outline: 1px solid var(--accent);
+}
+
 /* 'Rows' / 'Columns' editors: one labelled field per DataGrid decoration. */
 .dg-input {
     width: 128px;

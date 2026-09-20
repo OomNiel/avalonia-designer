@@ -198,6 +198,17 @@
         dgBody: $('dgBody'),
         dgSave: $('dgSave'),
         dgCancel: $('dgCancel'),
+        seriesModal: $('seriesModal'),
+        seriesTitle: $('seriesTitle'),
+        seriesList: $('seriesList'),
+        seriesFields: $('seriesFields'),
+        seriesHead: $('seriesHead'),
+        seriesAdd: $('seriesAdd'),
+        seriesDel: $('seriesDel'),
+        seriesUp: $('seriesUp'),
+        seriesDown: $('seriesDown'),
+        seriesSave: $('seriesSave'),
+        seriesCancel: $('seriesCancel'),
         cellHighlight: $('cellHighlight'),
         rulerH: $('rulerH'),
         rulerV: $('rulerV'),
@@ -2794,6 +2805,8 @@
                     // 'Rows' / 'Columns' open the DataGrid decoration editors.
                     if (p.key === 'Rows') openDataGridEditor('rows', msg.name, msg.dgRows || {});
                     if (p.key === 'Columns') openDataGridEditor('cols', msg.name, msg.dgCols || {});
+                    // 'Series' opens the multi-series editor for either chart.
+                    if (p.key === 'Series') openSeriesEditor(msg.name, msg.chartSeries || []);
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -3702,6 +3715,7 @@
             if (!els.splitModal.hidden) closeSplitEditor();
             if (!els.splitterModal.hidden) closeSplitterEditor();
             if (!els.dgModal.hidden) closeDataGridEditor();
+            if (!els.seriesModal.hidden) closeSeriesEditor();
             if (!els.codeModal.hidden) closeCodeFixes();
         }
     });
@@ -4565,6 +4579,232 @@
     els.dgCancel.addEventListener('click', closeDataGridEditor);
     els.dgModal.addEventListener('click', (e) => {
         if (e.target === els.dgModal) closeDataGridEditor(); // click outside the box
+    });
+
+    /* Series editor (GrumpyCharts) — a chart draws ONE line per <charts:LineSeries> /
+       <charts:XYSeries> child it holds, and a chart with no children draws a single implicit line
+       from its own styling properties. The extension sends the current list in `msg.chartSeries`
+       (seeded from those chart properties while the implicit line is still in charge) and writes
+       the list back on 'saveChartSeries'. An entry carries `src` — the child index it came from, or
+       -1 when it is new — so an existing series keeps its element (and any per-series X/Y axis it
+       already carries in the XAML) when the list is reordered or restyled. */
+    const SERIES_LINE_STYLES = ['Solid', 'Dash', 'Dot', 'DashDot'];
+    const SERIES_MARKERS = ['None', 'Dot', 'Cross', 'Square', 'Diamond'];
+    // Readable colours for an ADDED series: the first entry keeps whatever the chart already used,
+    // each further one takes the next of these, so a multi-series chart needs no colour picking.
+    const SERIES_PALETTE = ['#2D7DD2', '#EE6C4D', '#3D9970', '#B07CC6', '#D9A519', '#4C9FDC'];
+    let seriesEdit = null; // { name, rows: [...], sel } while the modal is open
+
+    /** One labelled field row: a caption plus the control(s) it edits. */
+    function seriesField(caption, inputs, hint) {
+        const row = document.createElement('label');
+        row.className = 'series-field';
+        const text = document.createElement('span');
+        text.textContent = caption;
+        if (hint) text.title = hint;
+        row.appendChild(text);
+        for (const input of (Array.isArray(inputs) ? inputs : [inputs])) row.appendChild(input);
+        return row;
+    }
+    function seriesText(value, onInput, hint) {
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.value = value;
+        if (hint) inp.title = hint;
+        inp.addEventListener('input', () => onInput(inp.value));
+        return inp;
+    }
+    function seriesNumber(value, onInput) {
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        inp.step = '1';
+        inp.value = value;
+        inp.addEventListener('input', () => onInput(inp.value));
+        return inp;
+    }
+    function seriesSelect(options, value, onChange) {
+        const sel = document.createElement('select');
+        for (const opt of options) {
+            const o = document.createElement('option');
+            o.value = opt;
+            o.textContent = opt;
+            sel.appendChild(o);
+        }
+        sel.value = options.indexOf(value) >= 0 ? value : options[0];
+        sel.addEventListener('change', () => onChange(sel.value));
+        return sel;
+    }
+    /** A colour cell: a swatch (a convenience) PLUS the authoritative text field, so a NAMED colour
+     *  written by hand ("White", "Teal") survives a trip through the editor unchanged. */
+    function seriesColor(value, onChange) {
+        const sw = document.createElement('input');
+        sw.type = 'color';
+        sw.value = normalizeHex(value) || '#B0B0B0';
+        const txt = seriesText(value, (v) => {
+            onChange(v);
+            const hex = normalizeHex(v);
+            if (hex) sw.value = hex;
+        }, 'A colour name (White, Teal, …) or #RRGGBB.');
+        sw.addEventListener('input', () => { txt.value = sw.value; onChange(sw.value); });
+        return [sw, txt];
+    }
+    /** The one-line summary shown for a series in the list. */
+    function seriesItemText(row, i) {
+        return (row.title || 'Series ' + (i + 1)) + '  ·  '
+            + (row.type === 'Line'
+                ? 'Y ' + (row.yColumn || 'C')
+                : 'X ' + (row.xColumn || 'B') + ', Y ' + (row.yColumn || 'C'))
+            + (row.axisMode === 'PerSeries' ? '  ·  own axis' : '');
+    }
+    function renderSeriesEditor() {
+        if (!seriesEdit) return;
+        const rows = seriesEdit.rows;
+        if (seriesEdit.sel > rows.length - 1) seriesEdit.sel = Math.max(0, rows.length - 1);
+        els.seriesList.innerHTML = '';
+        els.seriesFields.innerHTML = '';
+        rows.forEach((row, i) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'series-item' + (i === seriesEdit.sel ? ' active' : '');
+            const swatch = document.createElement('span');
+            swatch.className = 'series-swatch';
+            swatch.style.background = normalizeHex(row.lineColor) || '#2D7DD2';
+            item.appendChild(swatch);
+            const label = document.createElement('span');
+            label.className = 'series-item-label';
+            label.textContent = seriesItemText(row, i);
+            item.appendChild(label);
+            item.addEventListener('click', () => { seriesEdit.sel = i; renderSeriesEditor(); });
+            els.seriesList.appendChild(item);
+        });
+        // A chart always draws at least one line: deleting the last series would just bring back the
+        // implicit one the editor is showing anyway, so the button is disabled at one entry.
+        els.seriesDel.disabled = rows.length < 2;
+        els.seriesUp.disabled = seriesEdit.sel <= 0;
+        els.seriesDown.disabled = seriesEdit.sel >= rows.length - 1;
+        els.seriesHead.textContent = rows.length
+            ? 'Series ' + (seriesEdit.sel + 1) + ' of ' + rows.length
+            : 'Details';
+        const row = rows[seriesEdit.sel];
+        if (!row) return;
+        // Keep the list's summary of the SELECTED series in step as its title/columns change.
+        const repaint = () => {
+            const item = els.seriesList.children[seriesEdit.sel];
+            if (item) item.querySelector('.series-item-label').textContent = seriesItemText(row, seriesEdit.sel);
+        };
+        const recolour = (v) => {
+            const item = els.seriesList.children[seriesEdit.sel];
+            if (item) item.querySelector('.series-swatch').style.background = normalizeHex(v) || '#2D7DD2';
+        };
+        els.seriesFields.appendChild(seriesField('Title', seriesText(row.title, (v) => { row.title = v; repaint(); },
+            'The name you see in this editor. Charts do not draw a legend yet.')));
+        if (row.type === 'Line') {
+            els.seriesFields.appendChild(seriesField('Y Column', seriesText(row.yColumn, (v) => { row.yColumn = v; repaint(); },
+                'The spreadsheet column with this line’s values. Empty = the chart’s Y Column. A line plot’s X is the sample number (0, 1, 2…).')));
+        } else {
+            els.seriesFields.appendChild(seriesField('X Column', seriesText(row.xColumn, (v) => { row.xColumn = v; repaint(); },
+                'The spreadsheet column with this series’ X values. Empty = the chart’s X Column.')));
+            els.seriesFields.appendChild(seriesField('Y Column', seriesText(row.yColumn, (v) => { row.yColumn = v; repaint(); },
+                'The spreadsheet column with this series’ Y values. Empty = the chart’s Y Column.')));
+        }
+        els.seriesFields.appendChild(seriesField('Axis', seriesSelect(['Common', 'PerSeries'], row.axisMode,
+            (v) => { row.axisMode = v; renderSeriesEditor(); }),
+            'Common shares the chart’s columns and scale. PerSeries reads this series’ own columns and scales it on its own axis.'));
+        els.seriesFields.appendChild(seriesField('Line Colour', seriesColor(row.lineColor,
+            (v) => { row.lineColor = v; recolour(v); })));
+        els.seriesFields.appendChild(seriesField('Line Thickness', seriesNumber(row.lineThickness, (v) => { row.lineThickness = v; })));
+        els.seriesFields.appendChild(seriesField('Line Style', seriesSelect(SERIES_LINE_STYLES, row.lineStyle,
+            (v) => { row.lineStyle = v; })));
+        if (row.type !== 'Line') {
+            els.seriesFields.appendChild(seriesField('Marker', seriesSelect(SERIES_MARKERS, row.markerStyle,
+                (v) => { row.markerStyle = v; })));
+            els.seriesFields.appendChild(seriesField('Marker Size', seriesNumber(row.markerSize, (v) => { row.markerSize = v; })));
+            els.seriesFields.appendChild(seriesField('Join Points', seriesSelect(['True', 'False'], row.connected,
+                (v) => { row.connected = v; }), 'False draws the markers only — a scatter plot.'));
+        }
+        if (row.axisMode === 'PerSeries') {
+            const note = document.createElement('p');
+            note.className = 'modal-hint';
+            note.textContent = 'This series is scaled on its own axis. Its position, colour and labels are '
+                + 'edited in the XAML for now.';
+            els.seriesFields.appendChild(note);
+        }
+    }
+    /** A brand-new series: the same defaults the control uses, in the next palette colour. */
+    function seriesSeedRow(type, index) {
+        return {
+            src: '-1', type, title: '', xColumn: '', yColumn: '', axisMode: 'Common',
+            lineColor: SERIES_PALETTE[index % SERIES_PALETTE.length], lineThickness: '2',
+            lineStyle: 'Solid', markerStyle: 'Dot', markerSize: '8', connected: 'True'
+        };
+    }
+    function openSeriesEditor(name, list) {
+        const rows = (list || []).map((s) => ({
+            src: String(s.src == null ? '-1' : s.src),
+            type: s.type === 'Line' ? 'Line' : 'XY',
+            title: String(s.title || ''),
+            xColumn: String(s.xColumn || ''),
+            yColumn: String(s.yColumn || ''),
+            axisMode: s.axisMode === 'PerSeries' ? 'PerSeries' : 'Common',
+            lineColor: String(s.lineColor || '#2D7DD2'),
+            lineThickness: String(s.lineThickness || '2'),
+            lineStyle: String(s.lineStyle || 'Solid'),
+            markerStyle: String(s.markerStyle || 'Dot'),
+            markerSize: String(s.markerSize || '8'),
+            connected: String(s.connected || 'True')
+        }));
+        seriesEdit = { name: name || null, rows: rows.length ? rows : [seriesSeedRow('XY', 0)], sel: 0 };
+        els.seriesTitle.textContent = 'Series' + (seriesEdit.name ? ' — ' + seriesEdit.name : '');
+        renderSeriesEditor();
+        els.seriesModal.hidden = false;
+    }
+    function closeSeriesEditor() { els.seriesModal.hidden = true; seriesEdit = null; }
+    els.seriesAdd.addEventListener('click', () => {
+        if (!seriesEdit) return;
+        const type = seriesEdit.rows[0] ? seriesEdit.rows[0].type : 'XY';
+        seriesEdit.rows.push(seriesSeedRow(type, seriesEdit.rows.length));
+        seriesEdit.sel = seriesEdit.rows.length - 1;
+        renderSeriesEditor();
+    });
+    els.seriesDel.addEventListener('click', () => {
+        if (!seriesEdit || seriesEdit.rows.length < 2) return;
+        seriesEdit.rows.splice(seriesEdit.sel, 1);
+        seriesEdit.sel = Math.max(0, seriesEdit.sel - 1);
+        renderSeriesEditor();
+    });
+    els.seriesUp.addEventListener('click', () => {
+        if (!seriesEdit || seriesEdit.sel <= 0) return;
+        const rows = seriesEdit.rows;
+        const i = seriesEdit.sel;
+        [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]];
+        seriesEdit.sel = i - 1;
+        renderSeriesEditor();
+    });
+    els.seriesDown.addEventListener('click', () => {
+        if (!seriesEdit || seriesEdit.sel >= seriesEdit.rows.length - 1) return;
+        const rows = seriesEdit.rows;
+        const i = seriesEdit.sel;
+        [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]];
+        seriesEdit.sel = i + 1;
+        renderSeriesEditor();
+    });
+    els.seriesSave.addEventListener('click', () => {
+        if (seriesEdit) {
+            post({
+                type: 'saveChartSeries', name: seriesEdit.name,
+                items: seriesEdit.rows.map((r) => ({
+                    src: r.src, type: r.type, title: r.title, xColumn: r.xColumn, yColumn: r.yColumn,
+                    axisMode: r.axisMode, lineColor: r.lineColor, lineThickness: r.lineThickness,
+                    lineStyle: r.lineStyle, markerStyle: r.markerStyle, markerSize: r.markerSize,
+                    connected: r.connected
+                }))
+            });
+        }
+        closeSeriesEditor();
+    });
+    els.seriesCancel.addEventListener('click', closeSeriesEditor);
+    els.seriesModal.addEventListener('click', (e) => {
+        if (e.target === els.seriesModal) closeSeriesEditor(); // click outside the box
     });
 
     /* Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay

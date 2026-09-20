@@ -45,6 +45,8 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'splitModal', 'splitTitle', 'splitZones', 'splitCols', 'splitRows', 'splitPanesRow', 'splitPanesLabel', 'splitCount', 'splitMinus', 'splitPlus', 'splitSave', 'splitCancel',
     'splitterModal', 'splitterTitle', 'splitterBody', 'splitterSave', 'splitterCancel',
     'dgModal', 'dgTitle', 'dgHint', 'dgBody', 'dgSave', 'dgCancel',
+    'seriesModal', 'seriesTitle', 'seriesList', 'seriesFields', 'seriesHead',
+    'seriesAdd', 'seriesDel', 'seriesUp', 'seriesDown', 'seriesSave', 'seriesCancel',
     'codeModal', 'codeHint', 'codeBody', 'codeRecheck', 'codeFixAll', 'codeClose',
     'cellHighlight',
     'btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'dotGrid',
@@ -2379,6 +2381,118 @@ module.exports = async (t) => {
         t.equal(colMsg.values.headerAlign, 'Center', 'dg-editor', 'header alignment carried');
         t.equal($('dgModal').hidden, true, 'dg-editor', 'Columns Save closes the editor');
     }
+    // --- 'Series' editor (GrumpyCharts): a chart's series are CHILD ELEMENTS, so the editor owns
+    // the list (add / delete / reorder) and posts each entry's source child index, which is how the
+    // extension keeps an existing element (with any per-series axis it carries) or creates a new one.
+    {
+        msg(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'Chart1', type: 'GrumpyLinePlot', x: 60, y: 60, w: 300, h: 180, parent: 'Body' }
+        ]));
+        const chartSeries = [
+            { src: '0', type: 'Line', title: 'Inside', xColumn: '', yColumn: 'C', axisMode: 'Common', lineColor: '#FF0000', lineThickness: '3', lineStyle: 'Solid', markerStyle: 'Dot', markerSize: '8', connected: 'True' },
+            { src: '1', type: 'Line', title: 'Outside', xColumn: '', yColumn: 'E', axisMode: 'Common', lineColor: '#0000FF', lineThickness: '3', lineStyle: 'Solid', markerStyle: 'Dot', markerSize: '8', connected: 'True' }
+        ];
+        msg({
+            type: 'properties', name: 'Chart1', properties: [
+                { key: 'Series', label: 'Series', kind: 'button', value: 'Edit series…' }
+            ], chartSeries: chartSeries, info: null
+        });
+        const sbtn = $('propsBody').querySelector('.prop-button');
+        t.ok(!!sbtn, 'series', 'Series renders as a property button');
+        $('seriesModal').hidden = true;
+        sbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('seriesModal').hidden, false, 'series', 'Series opens the editor');
+        t.equal($('seriesTitle').textContent, 'Series — Chart1', 'series', 'the title names the chart');
+        const sItems = () => $('seriesList').querySelectorAll('.series-item');
+        const sFields = () => [...$('seriesFields').querySelectorAll('.series-field')];
+        const sField = (caption) => {
+            const row = sFields().find((f) => f.textContent.trim().startsWith(caption));
+            return row ? row.querySelector('input, select') : null;
+        };
+        t.equal(sItems().length, 2, 'series', 'one row per series');
+        t.ok(/Inside/.test(sItems()[0].textContent), 'series', 'the first row shows its title + columns');
+        t.ok(sItems()[0].className.indexOf('active') >= 0, 'series', 'the FIRST entry starts selected');
+        t.ok(/Marker/.test($('seriesFields').textContent) === false, 'series',
+            'a line series offers no marker fields');
+
+        // + Add series: a fresh entry, selected, in the next palette colour, with no Y column of its
+        // own (empty = the chart's own column at render time).
+        $('seriesAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(sItems().length, 3, 'series', '+ Add series appends an entry');
+        t.equal($('seriesHead').textContent, 'Series 3 of 3', 'series', 'the new entry is selected');
+        t.equal(sField('Y Column').value, '', 'series', 'a new series has no Y column of its own');
+        t.equal(sField('Line Colour').value.toLowerCase(), '#3d9970', 'series',
+            'a new series takes the next palette colour (the swatch normalises case)');
+
+        // Type into it: the list row follows live (title + column summary).
+        const yIn = sField('Y Column');
+        yIn.value = 'G';
+        yIn.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        const titleIn = sField('Title');
+        titleIn.value = 'Delta';
+        titleIn.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        t.ok(/Delta/.test(sItems()[2].textContent) && /Y G/.test(sItems()[2].textContent), 'series',
+            'editing a field updates its list row');
+
+        // ↑ Up swaps it with the row above (the order is what the chart draws in).
+        $('seriesUp').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('seriesHead').textContent, 'Series 2 of 3', 'series', 'Up moves the selection with the row');
+        t.ok(/Delta/.test(sItems()[1].textContent), 'series', 'Up moves the entry one place up');
+        t.equal($('seriesDown').disabled, false, 'series', 'Down is available again after moving up');
+
+        // Save: every entry carries its source index, so the extension can keep the right element.
+        posted.length = 0;
+        $('seriesSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const sv = posted[posted.length - 1];
+        t.equal(sv.type, 'saveChartSeries', 'series', 'Save posts saveChartSeries');
+        t.equal(sv.name, 'Chart1', 'series', 'carries the chart name');
+        t.equal(sv.items.length, 3, 'series', 'every entry is sent');
+        t.equal(sv.items[0].src, '0', 'series', 'the first entry keeps its source child index');
+        t.equal(sv.items[1].src, '-1', 'series', 'the new entry is marked as new (-1)');
+        t.equal(sv.items[1].title, 'Delta', 'series', 'the new entry carries what was typed');
+        t.equal(sv.items[1].yColumn, 'G', 'series', 'its Y column is carried');
+        t.equal(sv.items[1].type, 'Line', 'series', 'the chart tag decides the series type');
+        t.equal(sv.items[2].src, '1', 'series', 'the displaced entry follows in order');
+        t.equal($('seriesModal').hidden, true, 'series', 'Save closes the editor');
+
+        // Selecting another row and deleting it drops it from the list (and from the save message).
+        // Reopening re-sends the chart's CURRENT two series, so the editor lists two.
+        sbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(sItems().length, 2, 'series', 'reopening lists the chart’s series again');
+        sItems()[1].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('seriesHead').textContent, 'Series 2 of 2', 'series', 'clicking a row selects it');
+        $('seriesDel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(sItems().length, 1, 'series', 'Delete removes the selected entry');
+        posted.length = 0;
+        $('seriesSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const del = posted[posted.length - 1];
+        t.equal(del.items.length, 1, 'series', 'the deleted entry is not sent back');
+        t.equal(del.items.map((i) => i.src).join(','), '0', 'series',
+            'the surviving entry keeps its source index');
+
+        // The last series cannot be deleted: a chart always draws at least one line.
+        msg({
+            type: 'properties', name: 'Chart1', properties: [
+                { key: 'Series', label: 'Series', kind: 'button', value: 'Edit series…' }
+            ], chartSeries: [chartSeries[0]], info: null
+        });
+        // A properties message re-renders the panel, so the button must be re-queried (the old node's
+        // handler still closes over the PREVIOUS payload).
+        $('propsBody').querySelector('.prop-button')
+            .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(sItems().length, 1, 'series', 'a single-series chart lists one entry');
+        t.equal($('seriesDel').disabled, true, 'series', 'Delete is disabled at one series');
+        t.equal($('seriesUp').disabled, true, 'series', 'Up is disabled on the first row');
+        t.equal($('seriesDown').disabled, true, 'series', 'Down is disabled on the last row');
+        // Deleting anyway must not empty the list (the button is disabled, and the handler guards).
+        $('seriesDel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(sItems().length, 1, 'series', 'the only series cannot be deleted');
+        $('seriesCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('seriesModal').hidden, true, 'series', 'Cancel closes the editor');
+    }
+
     // --- foldable toolbar categories: click a heading to fold its buttons away, click again to
     // bring them back (the REAL markup from the extension, not the fixture's bare buttons) ---
     {

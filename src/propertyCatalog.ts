@@ -699,6 +699,10 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Values', label: 'Values', kind: 'text' },
         { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
         { key: 'ShowBrowse', label: 'Browse Button', kind: 'dropdown', options: BOOL },
+        // X/Y Column and the data rows below belong to the ONE implicit series this chart draws
+        // when it has no explicit <charts:LineSeries> children. A line plot reads X from the sample
+        // index (0, 1, 2…), so only Y Column matters. Line Colour / Thickness / Style and the marker
+        // rows moved into the 'Series' editor, where each line is styled on its own.
         { key: 'XColumn', label: 'X Column', kind: 'text' },
         { key: 'YColumn', label: 'Y Column', kind: 'text' },
         { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
@@ -709,9 +713,6 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
         { key: 'TitleColor', label: 'Title Colour', kind: 'color', options: COLORS },
         { key: 'TitleFontSize', label: 'Title Size', kind: 'number' },
-        { key: 'LineColor', label: 'Line Colour', kind: 'color', options: COLORS },
-        { key: 'LineThickness', label: 'Line Thickness', kind: 'number' },
-        { key: 'LineStyle', label: 'Line Style', kind: 'dropdown', options: CHART_LINE_STYLES },
         { key: 'PlotBackColor', label: 'Plot Backcolour', kind: 'color', options: COLORS },
         { key: 'PlotBackOpacity', label: 'Plot Opacity', kind: 'number' },
         { key: 'ShowBorder', label: 'Border', kind: 'dropdown', options: BOOL },
@@ -742,9 +743,6 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         // See GrumpyLinePlot: the same Dock row, so either chart can be pinned to a DockPanel edge.
         { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
         { key: 'Points', label: 'Points (x,y)', kind: 'text' },
-        { key: 'MarkerStyle', label: 'Marker', kind: 'dropdown', options: CHART_MARKERS },
-        { key: 'MarkerSize', label: 'Marker Size', kind: 'number' },
-        { key: 'Connected', label: 'Join Points', kind: 'dropdown', options: BOOL },
         { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
         { key: 'ShowBrowse', label: 'Browse Button', kind: 'dropdown', options: BOOL },
         { key: 'XColumn', label: 'X Column', kind: 'text' },
@@ -757,9 +755,6 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
         { key: 'TitleColor', label: 'Title Colour', kind: 'color', options: COLORS },
         { key: 'TitleFontSize', label: 'Title Size', kind: 'number' },
-        { key: 'LineColor', label: 'Line Colour', kind: 'color', options: COLORS },
-        { key: 'LineThickness', label: 'Line Thickness', kind: 'number' },
-        { key: 'LineStyle', label: 'Line Style', kind: 'dropdown', options: CHART_LINE_STYLES },
         { key: 'PlotBackColor', label: 'Plot Backcolour', kind: 'color', options: COLORS },
         { key: 'PlotBackOpacity', label: 'Plot Opacity', kind: 'number' },
         { key: 'ShowBorder', label: 'Border', kind: 'dropdown', options: BOOL },
@@ -1452,7 +1447,7 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
         // Everything the designer edits through a popup editor (`kind: 'button'`) — whether it is
         // pushed as a "top action" (DataGrid Rows/Columns, SplitPanel Split Layout/Splitters) or
         // lives in the control's own list (Items, Grid.Defs, MenuItems, StatusItems).
-        keys: ['Rows', 'Columns', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
+        keys: ['Rows', 'Columns', 'Series', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
     },
     {
         id: 'layout', label: 'Layout & size',
@@ -1789,6 +1784,22 @@ export function propertyDefsFor(
             kind: 'button',
             value: 'Edit columns…',
             desc: 'Styles the columns and headers: the default column width, minimum/maximum column width, frozen (pinned) columns and the header height.'
+        });
+    }
+    // 'Series' opens the multi-series editor for either chart: one line per entry, each with its own
+    // spreadsheet column(s), colour, line style and markers. A single-series chart needs no series
+    // at all — the chart's own styling draws it — so opening the editor seeds one entry from those
+    // values. Series can share the chart's axis (Common) or be scaled on their own (Per series).
+    // Shown at the TOP of the list.
+    if (tag === 'GrumpyLinePlot' || tag === 'GrumpyXYPlot') {
+        topActions.push({
+            key: 'Series',
+            label: 'Series',
+            kind: 'button',
+            value: 'Edit series…',
+            desc: 'Adds, removes and reorders the lines this chart draws. Each series has its own '
+                + 'spreadsheet column(s), colour, line style, markers and join setting, and either shares '
+                + 'the chart\'s axis and columns (Common) or is scaled on its own (Per series).'
         });
     }
     // 'Items' (batch editor) for combo/list/items controls — opens a popup where you type

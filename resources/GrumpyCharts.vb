@@ -2,55 +2,28 @@
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb.
 '
 ' A small, dependency-free CHART CONTROL SET: two controls that draw themselves, with no NuGet
-' package, no template and no assets.
+' package, no template and no assets. Every chart type supports MULTIPLE SERIES, each with its own
+' line/marker styling and its own axis mode.
 '
-'   <charts:GrumpyLinePlot x:Name="LinePlot1" Width="320" Height="180"
-'                          Values="4,9,6,12,8,15"
-'                          Title="Temperature" ShowTitle="True"/>
+'   <charts:GrumpyLinePlot x:Name="LinePlot1" Width="320" Height="180" SourceFile="/home/me/data.xlsx">
+'     <charts:LineSeries Title="Inside"  YColumn="C" LineColor="#4ea6a1" MarkerStyle="Dot"/>
+'     <charts:LineSeries Title="Outside" YColumn="E" LineColor="#e08a3c" MarkerStyle="Cross"/>
+'   </charts:GrumpyLinePlot>
 '
-'   <charts:GrumpyXYPlot x:Name="XYPlot1" Width="320" Height="180"
-'                        SourceFile="/home/me/measurements.xlsx"
-'                        LineStyle="Dotted" MarkerStyle="Cross"/>
+'   <charts:GrumpyXYPlot x:Name="XYPlot1" SourceFile="/home/me/data.xlsx">
+'     <charts:XYSeries Title="Sensor A" XColumn="B" YColumn="C" AxisMode="Common"/>
+'     <charts:XYSeries Title="Sensor B" XColumn="D" YColumn="E" AxisMode="PerSeries">
+'       <charts:XYSeries.YAxis>
+'         <charts:Axis Position="Right" AxisColor="#e08a3c"/>
+'       </charts:XYSeries.YAxis>
+'     </charts:XYSeries>
+'   </charts:GrumpyXYPlot>
 '
-' DATA
-' ----
-'   * Inline arrays   — Values="4,9,6,12,8" (line plot, X is the sample index) or
-'                       Points="0,0 1,4 2,9" (X,Y plot, x,y pairs), or from code:
-'                       plot.Values = New Double() {4, 9, 6} : xy.Points = New Double(,) {{0,0}, {1,4}}
-'   * An .xlsx file   — SourceFile points at a spreadsheet: the header row names the axes and the
-'                       rows below it are the values. Defaults follow the convention
-'                       COLUMN B = X, COLUMN C = Y, ROW 1 = axis names, data from ROW 2
-'                       (XColumn / YColumn / HeaderRow / FirstDataRow change that).
-'                       The reader is plain System.IO.Compression + XML — no dependency.
-'                       For a LINE plot the Y values come from YColumn; if that column is empty it
-'                       falls back to XColumn, so a single-column sheet still plots.
-'   * LiveUpdate = True re-reads the file when it changes on disk. Code can also push data at any
-'     time: AddPoint(x, y) / SetValues(...).
-'
-' STYLE (all of it optional — the defaults are already presentation-ready)
-' -----------------------------------------------------------------------
-'   Frame        ShowBorder, BorderBrush, BorderThickness, CornerRadius
-'   Plot area    PlotBackColor, PlotBackOpacity (0-100 %)
-'   Plot line    LineColor, LineThickness, LineStyle (Solid | Dash | Dot | DashDot)
-'   Markers      MarkerStyle (None | Dot | Cross | Square | Diamond), MarkerSize, Connected
-'   Gridlines    ShowGrid, GridColor, GridThickness, GridStyle (Solid | Dash | Dot | DashDot)
-'   Axes         ShowAxes, AxisColor, ShowMajorTicks, MajorTickLength, ShowMinorTicks,
-'                MinorTickLength, ShowTickLabels, TickLabelFontSize, ShowAxisTitles,
-'                XAxisTitle, YAxisTitle
-'   Title        ShowTitle, Title, TitleColor, TitlePosition (Top | Bottom | Left | Right),
-'                TitleFontSize
-'   Scaling      Auto-fit; MinX / MaxX / MinY / MaxY override it (leave them empty to auto-fit)
-'
-' NOTES
-' -----
-'   * Everything is proportional, so the chart survives any resize.
-'   * The axis range auto-fits the data and then SNAPS outward to "nice" tick values (1/2/5 x 10^n),
-'     which is what makes the labels read as 0, 5, 10, 15 rather than 0.37, 3.7, 7.03.
-'   * A missing or unreadable file draws a short explanation inside the plot area instead of
-'     throwing — the form still loads.
-'   * ShowBrowse = True draws a small "…" button in the top-right of the plot that opens the
-'     platform file dialog. BrowseForFile() does the same from your own button. Both do nothing when
-'     there is no TopLevel yet (e.g. a designer preview), so the control is safe to place and render.
+' SERIES / DATA / AXES — see the long comment block in resources/GrumpyCharts.cs; the rules are
+' identical here: series 1 reads Y from column C, series 2 from E, series 3 from G (the pairs are
+' B/C, D/E, F/G), a line series plots against the sample index, AxisMode=Common shares the chart's X
+' column and one scale while PerSeries gives the series its own columns, scale and axes, and a chart
+' with no series elements still works as one implicit series styled from the chart-level values.
 Imports System
 Imports System.Collections.Generic
 Imports System.ComponentModel
@@ -61,9 +34,11 @@ Imports System.Linq
 Imports System.Threading.Tasks
 Imports System.Xml.Linq
 Imports Avalonia
+Imports Avalonia.Collections
 Imports Avalonia.Controls
 Imports Avalonia.Input
 Imports Avalonia.Media
+Imports Avalonia.Metadata
 Imports Avalonia.Platform.Storage
 Imports Avalonia.Threading
 
@@ -81,7 +56,7 @@ Namespace Global.AvaloniaCharts
         DashDot
     End Enum
 
-    ''' <summary>The point symbol used by the X,Y plot.</summary>
+    ''' <summary>The point symbol used by a series.</summary>
     Public Enum ChartMarkerStyle
         ''' <summary>No symbol — a bare line (when Connected) or nothing at all.</summary>
         None
@@ -107,7 +82,27 @@ Namespace Global.AvaloniaCharts
         Right
     End Enum
 
-    ''' <summary>Reads <c>Values="4,9,6,12"</c> from XAML into a <see cref="Double"/> array.</summary>
+    ''' <summary>Where an axis is drawn: Left/Right for a Y axis, Top/Bottom for an X axis.</summary>
+    Public Enum AxisPosition
+        ''' <summary>The left edge (a Y axis).</summary>
+        Left
+        ''' <summary>The right edge (a Y axis).</summary>
+        Right
+        ''' <summary>The top edge (an X axis).</summary>
+        Top
+        ''' <summary>The bottom edge (an X axis — the default).</summary>
+        Bottom
+    End Enum
+
+    ''' <summary>Whether a series is plotted against the shared axis or its own.</summary>
+    Public Enum AxisMode
+        ''' <summary>Use the chart's common axis (the default).</summary>
+        Common
+        ''' <summary>Use this series' own X/Y columns and its own axis.</summary>
+        PerSeries
+    End Enum
+
+    ''' <summary>Reads Values="4,9,6,12" from XAML into a Double array.</summary>
     Public Class DoubleArrayConverter
         Inherits TypeConverter
 
@@ -129,7 +124,7 @@ Namespace Global.AvaloniaCharts
         End Function
     End Class
 
-    ''' <summary>Reads <c>Points="0,0 1,4 2,9"</c> (x,y pairs) from XAML into a 2-D <c>(n,2)</c> array.</summary>
+    ''' <summary>Reads Points="0,0 1,4 2,9" (x,y pairs) from XAML into a 2-D (n,2) array.</summary>
     Public Class DoubleMatrixConverter
         Inherits TypeConverter
 
@@ -140,8 +135,7 @@ Namespace Global.AvaloniaCharts
         Public Overrides Function ConvertFrom(context As ITypeDescriptorContext, culture As CultureInfo, value As Object) As Object
             Dim text = TryCast(value, String)
             If text Is Nothing Then Return MyBase.ConvertFrom(context, culture, value)
-            ' Each whitespace-separated group is one "x,y" pair; a semicolon also separates pairs, so
-            ' both "0,0 1,4" and "0,0; 1,4" read the same way.
+            ' Each whitespace-separated group is one "x,y" pair; a semicolon also separates pairs.
             Dim pairs As New List(Of Double())
             For Each group In text.Split(New Char() {";"c, " "c, ControlChars.Tab, ControlChars.Cr, ControlChars.Lf}, StringSplitOptions.RemoveEmptyEntries)
                 Dim xy = group.Split(New Char() {","c}, StringSplitOptions.RemoveEmptyEntries)
@@ -162,18 +156,140 @@ Namespace Global.AvaloniaCharts
         End Function
     End Class
 
+    ''' <summary>The series styling shared by LineSeries and XYSeries.</summary>
+    Public MustInherit Class ChartSeries
+        ''' <summary>The name shown for this series in the Series Editor (charts draw no legend yet).</summary>
+        Public Property Title As String = Nothing
+
+        ''' <summary>The spreadsheet column holding this series' X values (empty = the chart's, and a
+        ''' line series always uses the sample index instead).</summary>
+        Public Property XColumn As String = Nothing
+
+        ''' <summary>The spreadsheet column holding this series' Y values (empty = the chart's).</summary>
+        Public Property YColumn As String = Nothing
+
+        ''' <summary>Common (the chart's shared axis) or PerSeries (own columns and scale).</summary>
+        ''' <remarks>Fully qualified: the type is named exactly like the property.</remarks>
+        Public Property AxisMode As AvaloniaCharts.AxisMode = AvaloniaCharts.AxisMode.Common
+
+        ''' <summary>Colour of this series' line and markers.</summary>
+        Public Property LineColor As Color = Color.Parse("#2D7DD2")
+
+        ''' <summary>Thickness of this series' line.</summary>
+        Public Property LineThickness As Double = 2.0
+
+        ''' <summary>Solid, dashed, dotted or dash-dot.</summary>
+        Public Property LineStyle As AvaloniaCharts.ChartLineStyle = AvaloniaCharts.ChartLineStyle.Solid
+
+        ''' <summary>The symbol drawn at each point: None, Dot, Cross, Square or Diamond.</summary>
+        Public Property MarkerStyle As AvaloniaCharts.ChartMarkerStyle = AvaloniaCharts.ChartMarkerStyle.Dot
+
+        ''' <summary>Marker diameter in pixels.</summary>
+        Public Property MarkerSize As Double = 8.0
+
+        ''' <summary>Join the points with a line (False = markers only).</summary>
+        Public Property Connected As Boolean = True
+
+        ''' <summary>This series' own X axis (only used with AxisMode = PerSeries).</summary>
+        Public Property XAxis As Axis = Nothing
+
+        ''' <summary>This series' own Y axis (only used with AxisMode = PerSeries).</summary>
+        Public Property YAxis As Axis = Nothing
+
+        ''' <summary>True for a line series: X is the sample index, so only the Y column is read.</summary>
+        Friend MustOverride ReadOnly Property XFromIndex As Boolean
+
+        ''' <summary>True when this series is plotted against its own scale.</summary>
+        Friend ReadOnly Property PerSeries As Boolean
+            Get
+                Return AxisMode = AvaloniaCharts.AxisMode.PerSeries
+            End Get
+        End Property
+    End Class
+
+    ''' <summary>A LINE SERIES: Y values in sample order, with X running 0…N-1.</summary>
+    Public Class LineSeries
+        Inherits ChartSeries
+
+        Friend Overrides ReadOnly Property XFromIndex As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+    End Class
+
+    ''' <summary>An X,Y SERIES: (x,y) pairs, drawn as a line, as markers, or both.</summary>
+    Public Class XYSeries
+        Inherits ChartSeries
+
+        Friend Overrides ReadOnly Property XFromIndex As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+    End Class
+
+    ''' <summary>
+    ''' One axis of a series: where it sits, whether it is drawn, its colour, which of its parts are
+    ''' shown, and its name. A Y axis uses Left/Right; an X axis uses Top/Bottom.
+    ''' </summary>
+    Public NotInheritable Class Axis
+        ''' <summary>Left/Right for a Y axis, Top/Bottom for an X axis.</summary>
+        Public Property Position As AvaloniaCharts.AxisPosition = AvaloniaCharts.AxisPosition.Left
+
+        ''' <summary>Draw this axis at all.</summary>
+        Public Property ShowAxis As Boolean = True
+
+        ''' <summary>Colour of the axis line, its ticks, its labels and its name.</summary>
+        Public Property AxisColor As Color = Color.Parse("#666666")
+
+        ''' <summary>Draw the ticks at the labelled values.</summary>
+        Public Property ShowMajorTicks As Boolean = True
+
+        ''' <summary>Draw the short ticks between the labelled values.</summary>
+        Public Property ShowMinorTicks As Boolean = True
+
+        ''' <summary>Draw the numbers along this axis.</summary>
+        Public Property ShowTickLabels As Boolean = True
+
+        ''' <summary>Draw this axis' name (from Name, or the spreadsheet's column header).</summary>
+        Public Property ShowAxisName As Boolean = True
+
+        ''' <summary>The axis name. Empty = use the spreadsheet's column header.</summary>
+        Public Property Name As String = Nothing
+
+        ''' <summary>A copy of this axis, for the renderer's per-series use.</summary>
+        Friend Function Clone() As Axis
+            Return New Axis With {
+                .Position = Position,
+                .ShowAxis = ShowAxis,
+                .AxisColor = AxisColor,
+                .ShowMajorTicks = ShowMajorTicks,
+                .ShowMinorTicks = ShowMinorTicks,
+                .ShowTickLabels = ShowTickLabels,
+                .ShowAxisName = ShowAxisName,
+                .Name = Name
+            }
+        End Function
+    End Class
+
     ''' <summary>One series of points, plus the axis names and any reason there is no data.</summary>
-    Public Class ChartSeries
-        ''' <summary>The X values (for a line plot these are the sample indices 0,1,2…).</summary>
+    Public NotInheritable Class ChartData
+        ''' <summary>The X values (for a line series these are the sample indices 0,1,2…).</summary>
         Public Property Xs As Double() = Array.Empty(Of Double)()
+
         ''' <summary>The Y values.</summary>
         Public Property Ys As Double() = Array.Empty(Of Double)()
-        ''' <summary>The X axis name (the spreadsheet's column-B header).</summary>
+
+        ''' <summary>The X axis name (the spreadsheet's X-column header).</summary>
         Public Property XTitle As String = String.Empty
-        ''' <summary>The Y axis name (the spreadsheet's column-C header).</summary>
+
+        ''' <summary>The Y axis name (the spreadsheet's Y-column header).</summary>
         Public Property YTitle As String = String.Empty
-        ''' <summary>Why the chart has nothing to draw, or Nothing when it is fine.</summary>
+
+        ''' <summary>Why this series has nothing to draw, or Nothing when it is fine.</summary>
         Public Property [Error] As String = Nothing
+
         ''' <summary>True when the series carries at least one point.</summary>
         Public ReadOnly Property HasData As Boolean
             Get
@@ -198,6 +314,20 @@ Namespace Global.AvaloniaCharts
             Return index - 1
         End Function
 
+        ''' <summary>The column letter(s) a few steps along ("A"+2 gives "C", "Z"+2 gives "AB").</summary>
+        ''' <remarks>Not named 'step': that is a VB keyword (For … Step).</remarks>
+        Friend Shared Function ColumnAfter(column As String, offset As Integer) As String
+            Dim index = ColumnIndex(column) + offset
+            If index < 0 Then index = 0
+            Dim text = String.Empty
+            Dim n = index + 1
+            While n > 0
+                text = ChrW(AscW("A"c) + (n - 1) Mod 26) & text
+                n = (n - 1) \ 26
+            End While
+            Return text
+        End Function
+
         ''' <summary>The column letters in a cell reference such as "BC12" (trailing digits dropped).</summary>
         Private Shared Function ColumnOf(cellRef As String) As String
             Dim [end] As Integer = 0
@@ -207,36 +337,22 @@ Namespace Global.AvaloniaCharts
             Return cellRef.Substring(0, [end])
         End Function
 
-        ''' <summary>The row number in a cell reference ("BC12" gives 12), or 0 when there is none.</summary>
-        Private Shared Function RowOf(cellRef As String) As Integer
-            Dim start As Integer = 0
-            While start < cellRef.Length AndAlso Char.IsLetter(cellRef(start))
-                start += 1
-            End While
-            Dim row As Integer = 0
-            If Integer.TryParse(cellRef.Substring(start), NumberStyles.Integer, CultureInfo.InvariantCulture, row) Then
-                Return row
-            End If
-            Return 0
-        End Function
-
         ''' <summary>
-        ''' Reads the series. xFromIndex makes a line plot: the X values are the sample indices and
-        ''' only the Y column is read (falling back to the X column when the Y column is empty, so a
-        ''' one-column sheet still draws).
+        ''' Reads one series. xFromIndex makes a line series: the X values are the sample indices and
+        ''' only the Y column is read (falling back to the X column when the Y column is empty).
         ''' </summary>
         Friend Shared Function Read(path As String, xColumn As String, yColumn As String,
                                     headerRow As Integer, firstDataRow As Integer,
-                                    xFromIndex As Boolean) As ChartSeries
-            Dim series As New ChartSeries()
+                                    xFromIndex As Boolean) As ChartData
+            Dim data As New ChartData()
             Try
                 Using zip = ZipFile.OpenRead(path)
                     ' 'shared' is a VB keyword, hence sharedStrings.
                     Dim sharedStrings = ReadSharedStrings(zip)
                     Dim sheet = FindSheet(zip)
                     If sheet Is Nothing Then
-                        series.Error = """" & System.IO.Path.GetFileName(path) & """ has no worksheet."
-                        Return series
+                        data.Error = """" & System.IO.Path.GetFileName(path) & """ has no worksheet."
+                        Return data
                     End If
 
                     Dim xi = ColumnIndex(xColumn)
@@ -282,9 +398,6 @@ Namespace Global.AvaloniaCharts
                             Dim hasY = TryNumber(yText, yVal)
 
                             If xFromIndex Then
-                                ' A line plot only needs one column. Prefer the Y column; if the sheet
-                                ' has the values in the X column instead, take those rather than
-                                ' drawing nothing.
                                 If hasY Then
                                     xs.Add(ys.Count)
                                     ys.Add(yVal)
@@ -304,20 +417,20 @@ Namespace Global.AvaloniaCharts
                         ys = ysFallback
                     End If
 
-                    series.Xs = xs.ToArray()
-                    series.Ys = ys.ToArray()
-                    series.XTitle = xTitle
-                    series.YTitle = yTitle
-                    If series.Ys.Length = 0 Then
+                    data.Xs = xs.ToArray()
+                    data.Ys = ys.ToArray()
+                    data.XTitle = xTitle
+                    data.YTitle = yTitle
+                    If data.Ys.Length = 0 Then
                         Dim columns = If(xFromIndex, yColumn, xColumn & "/" & yColumn)
-                        series.Error = "No numbers found in column " & columns & " of """ & System.IO.Path.GetFileName(path) &
-                                       """ from row " & firstDataRow.ToString(CultureInfo.InvariantCulture) & "."
+                        data.Error = "No numbers found in column " & columns & " of """ & System.IO.Path.GetFileName(path) &
+                                     """ from row " & firstDataRow.ToString(CultureInfo.InvariantCulture) & "."
                     End If
                 End Using
             Catch ex As Exception
-                series.Error = "Cannot read """ & System.IO.Path.GetFileName(path) & """: " & ex.Message
+                data.Error = "Cannot read """ & System.IO.Path.GetFileName(path) & """: " & ex.Message
             End Try
-            Return series
+            Return data
         End Function
 
         ''' <summary>The workbook's first worksheet part, or Nothing when the zip has none.</summary>
@@ -337,7 +450,6 @@ Namespace Global.AvaloniaCharts
             Try
                 Using stream = entry.Open()
                     For Each si In XDocument.Load(stream).Descendants().Where(Function(e) e.Name.LocalName = "si")
-                        ' A shared string is either one <t> or a run list <r><t>…</t></r>.
                         list.Add(String.Concat(si.Descendants().Where(Function(e) e.Name.LocalName = "t").Select(Function(e) e.Value)))
                     Next
                 End Using
@@ -377,10 +489,27 @@ Namespace Global.AvaloniaCharts
         End Function
     End Class
 
+    ''' <summary>One series ready to draw: data, styling, scale and (for PerSeries) its own axes.</summary>
+    Friend NotInheritable Class Plot
+        Friend Data As New ChartData()
+        Friend Definition As ChartSeries = Nothing
+        Friend LineColor As Color = Color.Parse("#2D7DD2")
+        Friend LineThickness As Double = 2.0
+        Friend LineStyle As AvaloniaCharts.ChartLineStyle = AvaloniaCharts.ChartLineStyle.Solid
+        Friend MarkerStyle As AvaloniaCharts.ChartMarkerStyle = AvaloniaCharts.ChartMarkerStyle.Dot
+        Friend MarkerSize As Double = 8.0
+        Friend Connected As Boolean = True
+        Friend PerSeries As Boolean = False
+        Friend XAxis As Axis = Nothing
+        Friend YAxis As Axis = Nothing
+        Friend XRange As New AxisRange()
+        Friend YRange As New AxisRange()
+    End Class
+
     ''' <summary>
-    ''' The shared base for GrumpyLinePlot and GrumpyXYPlot: the frame, plot area, plot line,
-    ''' markers, gridlines, axes with ticks and labels, the chart title, the spreadsheet reader and
-    ''' the live-update watcher. Subclasses only supply the data.
+    ''' The shared base for GrumpyLinePlot and GrumpyXYPlot: the frame, plot background, gridlines, the
+    ''' common axis with its ticks and labels, the chart title, the series collection, the spreadsheet
+    ''' reader and the live-update watcher.
     ''' </summary>
     Public MustInherit Class ChartBase
         Inherits Control
@@ -395,8 +524,7 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly BorderThicknessProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(BorderThickness), 1.0)
 
-        ' Fully qualified: the type is named exactly like the property, and VB would otherwise
-        ' resolve 'CornerRadius' to the member rather than the type.
+        ' Fully qualified: the type is named exactly like the property.
         Public Shared ReadOnly CornerRadiusProperty As StyledProperty(Of Avalonia.CornerRadius) =
             AvaloniaProperty.Register(Of ChartBase, Avalonia.CornerRadius)(NameOf(CornerRadius), New Avalonia.CornerRadius(4))
 
@@ -406,26 +534,6 @@ Namespace Global.AvaloniaCharts
 
         Public Shared ReadOnly PlotBackOpacityProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(PlotBackOpacity), 100.0)
-
-        ' ---- plot line ------------------------------------------------------------------------
-        Public Shared ReadOnly LineColorProperty As StyledProperty(Of Color) =
-            AvaloniaProperty.Register(Of ChartBase, Color)(NameOf(LineColor), Color.Parse("#2D7DD2"))
-
-        Public Shared ReadOnly LineThicknessProperty As StyledProperty(Of Double) =
-            AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(LineThickness), 2.0)
-
-        Public Shared ReadOnly LineStyleProperty As StyledProperty(Of ChartLineStyle) =
-            AvaloniaProperty.Register(Of ChartBase, ChartLineStyle)(NameOf(LineStyle), ChartLineStyle.Solid)
-
-        ' ---- markers (the X,Y plot) -----------------------------------------------------------
-        Public Shared ReadOnly MarkerStyleProperty As StyledProperty(Of ChartMarkerStyle) =
-            AvaloniaProperty.Register(Of ChartBase, ChartMarkerStyle)(NameOf(MarkerStyle), ChartMarkerStyle.Dot)
-
-        Public Shared ReadOnly MarkerSizeProperty As StyledProperty(Of Double) =
-            AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(MarkerSize), 8.0)
-
-        Public Shared ReadOnly ConnectedProperty As StyledProperty(Of Boolean) =
-            AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(Connected), True)
 
         ' ---- gridlines ------------------------------------------------------------------------
         Public Shared ReadOnly ShowGridProperty As StyledProperty(Of Boolean) =
@@ -437,10 +545,10 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly GridThicknessProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(GridThickness), 1.0)
 
-        Public Shared ReadOnly GridStyleProperty As StyledProperty(Of ChartLineStyle) =
-            AvaloniaProperty.Register(Of ChartBase, ChartLineStyle)(NameOf(GridStyle), ChartLineStyle.Solid)
+        Public Shared ReadOnly GridStyleProperty As StyledProperty(Of AvaloniaCharts.ChartLineStyle) =
+            AvaloniaProperty.Register(Of ChartBase, AvaloniaCharts.ChartLineStyle)(NameOf(GridStyle), AvaloniaCharts.ChartLineStyle.Solid)
 
-        ' ---- axes, ticks and labels -----------------------------------------------------------
+        ' ---- the common axis ------------------------------------------------------------------
         Public Shared ReadOnly ShowAxesProperty As StyledProperty(Of Boolean) =
             AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(ShowAxes), True)
 
@@ -484,8 +592,8 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly TitleColorProperty As StyledProperty(Of Color) =
             AvaloniaProperty.Register(Of ChartBase, Color)(NameOf(TitleColor), Color.Parse("#303030"))
 
-        Public Shared ReadOnly TitlePositionProperty As StyledProperty(Of ChartTitlePosition) =
-            AvaloniaProperty.Register(Of ChartBase, ChartTitlePosition)(NameOf(TitlePosition), ChartTitlePosition.Top)
+        Public Shared ReadOnly TitlePositionProperty As StyledProperty(Of AvaloniaCharts.ChartTitlePosition) =
+            AvaloniaProperty.Register(Of ChartBase, AvaloniaCharts.ChartTitlePosition)(NameOf(TitlePosition), AvaloniaCharts.ChartTitlePosition.Top)
 
         Public Shared ReadOnly TitleFontSizeProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(TitleFontSize), 14.0)
@@ -512,7 +620,7 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly ShowBrowseProperty As StyledProperty(Of Boolean) =
             AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(ShowBrowse), False)
 
-        ' ---- scaling overrides ----------------------------------------------------------------
+        ' ---- scaling overrides (the common axis) ----------------------------------------------
         Public Shared ReadOnly MinXProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(MinX), Double.NaN)
 
@@ -525,13 +633,32 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly MaxYProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(MaxY), Double.NaN)
 
+        ' ---- LEGACY single-series styling -----------------------------------------------------
+        ' Kept so older forms still compile AND still look right: these style the implicit series a
+        ' chart uses when it has NO series elements. The Series Editor seeds the first series from
+        ' them, and they are no longer offered in the Properties panel (the series own them now).
+        Public Shared ReadOnly LineColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of ChartBase, Color)(NameOf(LineColor), Color.Parse("#2D7DD2"))
+
+        Public Shared ReadOnly LineThicknessProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(LineThickness), 2.0)
+
+        Public Shared ReadOnly LineStyleProperty As StyledProperty(Of AvaloniaCharts.ChartLineStyle) =
+            AvaloniaProperty.Register(Of ChartBase, AvaloniaCharts.ChartLineStyle)(NameOf(LineStyle), AvaloniaCharts.ChartLineStyle.Solid)
+
+        Public Shared ReadOnly MarkerStyleProperty As StyledProperty(Of AvaloniaCharts.ChartMarkerStyle) =
+            AvaloniaProperty.Register(Of ChartBase, AvaloniaCharts.ChartMarkerStyle)(NameOf(MarkerStyle), AvaloniaCharts.ChartMarkerStyle.Dot)
+
+        Public Shared ReadOnly MarkerSizeProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(MarkerSize), 8.0)
+
+        Public Shared ReadOnly ConnectedProperty As StyledProperty(Of Boolean) =
+            AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(Connected), True)
+
         Shared Sub New()
-            ' Any style or data change is a change to the picture.
             AffectsRender(Of ChartBase)(
                 ShowBorderProperty, BorderBrushProperty, BorderThicknessProperty, CornerRadiusProperty,
                 PlotBackColorProperty, PlotBackOpacityProperty,
-                LineColorProperty, LineThicknessProperty, LineStyleProperty,
-                MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty,
                 ShowGridProperty, GridColorProperty, GridThicknessProperty, GridStyleProperty,
                 ShowAxesProperty, AxisColorProperty,
                 ShowMajorTicksProperty, MajorTickLengthProperty,
@@ -541,7 +668,9 @@ Namespace Global.AvaloniaCharts
                 ShowTitleProperty, TitleProperty, TitleColorProperty, TitlePositionProperty, TitleFontSizeProperty,
                 SourceFileProperty, XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
                 ShowBrowseProperty,
-                MinXProperty, MaxXProperty, MinYProperty, MaxYProperty)
+                MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
+                LineColorProperty, LineThicknessProperty, LineStyleProperty,
+                MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty)
         End Sub
 
         Public Property ShowBorder As Boolean
@@ -598,60 +727,6 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
-        Public Property LineColor As Color
-            Get
-                Return GetValue(LineColorProperty)
-            End Get
-            Set(value As Color)
-                SetValue(LineColorProperty, value)
-            End Set
-        End Property
-
-        Public Property LineThickness As Double
-            Get
-                Return GetValue(LineThicknessProperty)
-            End Get
-            Set(value As Double)
-                SetValue(LineThicknessProperty, value)
-            End Set
-        End Property
-
-        Public Property LineStyle As ChartLineStyle
-            Get
-                Return GetValue(LineStyleProperty)
-            End Get
-            Set(value As ChartLineStyle)
-                SetValue(LineStyleProperty, value)
-            End Set
-        End Property
-
-        Public Property MarkerStyle As ChartMarkerStyle
-            Get
-                Return GetValue(MarkerStyleProperty)
-            End Get
-            Set(value As ChartMarkerStyle)
-                SetValue(MarkerStyleProperty, value)
-            End Set
-        End Property
-
-        Public Property MarkerSize As Double
-            Get
-                Return GetValue(MarkerSizeProperty)
-            End Get
-            Set(value As Double)
-                SetValue(MarkerSizeProperty, value)
-            End Set
-        End Property
-
-        Public Property Connected As Boolean
-            Get
-                Return GetValue(ConnectedProperty)
-            End Get
-            Set(value As Boolean)
-                SetValue(ConnectedProperty, value)
-            End Set
-        End Property
-
         Public Property ShowGrid As Boolean
             Get
                 Return GetValue(ShowGridProperty)
@@ -679,11 +754,11 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
-        Public Property GridStyle As ChartLineStyle
+        Public Property GridStyle As AvaloniaCharts.ChartLineStyle
             Get
                 Return GetValue(GridStyleProperty)
             End Get
-            Set(value As ChartLineStyle)
+            Set(value As AvaloniaCharts.ChartLineStyle)
                 SetValue(GridStyleProperty, value)
             End Set
         End Property
@@ -814,11 +889,11 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
-        Public Property TitlePosition As ChartTitlePosition
+        Public Property TitlePosition As AvaloniaCharts.ChartTitlePosition
             Get
                 Return GetValue(TitlePositionProperty)
             End Get
-            Set(value As ChartTitlePosition)
+            Set(value As AvaloniaCharts.ChartTitlePosition)
                 SetValue(TitlePositionProperty, value)
             End Set
         End Property
@@ -931,68 +1006,219 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
+        Public Property LineColor As Color
+            Get
+                Return GetValue(LineColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(LineColorProperty, value)
+            End Set
+        End Property
+
+        Public Property LineThickness As Double
+            Get
+                Return GetValue(LineThicknessProperty)
+            End Get
+            Set(value As Double)
+                SetValue(LineThicknessProperty, value)
+            End Set
+        End Property
+
+        Public Property LineStyle As AvaloniaCharts.ChartLineStyle
+            Get
+                Return GetValue(LineStyleProperty)
+            End Get
+            Set(value As AvaloniaCharts.ChartLineStyle)
+                SetValue(LineStyleProperty, value)
+            End Set
+        End Property
+
+        Public Property MarkerStyle As AvaloniaCharts.ChartMarkerStyle
+            Get
+                Return GetValue(MarkerStyleProperty)
+            End Get
+            Set(value As AvaloniaCharts.ChartMarkerStyle)
+                SetValue(MarkerStyleProperty, value)
+            End Set
+        End Property
+
+        Public Property MarkerSize As Double
+            Get
+                Return GetValue(MarkerSizeProperty)
+            End Get
+            Set(value As Double)
+                SetValue(MarkerSizeProperty, value)
+            End Set
+        End Property
+
+        Public Property Connected As Boolean
+            Get
+                Return GetValue(ConnectedProperty)
+            End Get
+            Set(value As Boolean)
+                SetValue(ConnectedProperty, value)
+            End Set
+        End Property
+
+        Private ReadOnly _series As New AvaloniaList(Of ChartSeries)()
+
+        ''' <summary>
+        ''' The chart's series, drawn in this order. This is the content property, so a series is
+        ''' written as a child element:
+        ''' <c>&lt;charts:GrumpyXYPlot&gt;&lt;charts:XYSeries …/&gt;&lt;/charts:GrumpyXYPlot&gt;</c>.
+        ''' Empty = one implicit series styled from the chart-level values.
+        ''' </summary>
+        <Content>
+        Public ReadOnly Property Series As AvaloniaList(Of ChartSeries)
+            Get
+                Return _series
+            End Get
+        End Property
+
         ' ---- data -----------------------------------------------------------------------------
 
-        ''' <summary>True for a line plot: X is the sample index and only the Y column is read.</summary>
-        Protected MustOverride ReadOnly Property XFromIndex As Boolean
+        ''' <summary>The data to draw when the chart has no series and no SourceFile.</summary>
+        Protected MustOverride Function InlineData() As ChartData
 
-        ''' <summary>The data to draw when no SourceFile is set.</summary>
-        Protected MustOverride Function InlineSeries() As ChartSeries
-
-        ''' <summary>How a subclass stores its inline data (Values or Points).</summary>
+        ''' <summary>How a subclass stores inline data pushed from code (Values or Points).</summary>
         Protected MustOverride Sub SetInlineData(xs As Double(), ys As Double())
 
-        ''' <summary>How a subclass names its inline data (usually nothing to do).</summary>
-        Protected Overridable Sub SetInlineTitles()
-        End Sub
+        ''' <summary>True when the implicit (no-series) chart plots Y against the sample index.</summary>
+        Protected MustOverride ReadOnly Property ImplicitXFromIndex As Boolean
 
-        Private _cached As ChartSeries
-        Private _cacheKey As String
+        ''' <summary>The Y column of the nth series in the default pairing (C, E, G …).</summary>
+        Friend Shared Function DefaultYColumn(index As Integer) As String
+            Return SpreadsheetReader.ColumnAfter("C", index * 2)
+        End Function
 
-        ''' <summary>The series for the current settings, cached until something changes.</summary>
-        ''' <remarks>Not named Series(): VB is case-insensitive and would clash with locals.
-        ''' </remarks>
-        Protected Function GetSeries() As ChartSeries
+        ''' <summary>The X column of the nth series in the default pairing (B, D, F …).</summary>
+        Friend Shared Function DefaultXColumn(index As Integer) As String
+            Return SpreadsheetReader.ColumnAfter("B", index * 2)
+        End Function
+
+        ''' <summary>The X column a series reads when it needs one.</summary>
+        Private Function SeriesXColumn(oneSeries As ChartSeries) As String
+            If Not String.IsNullOrWhiteSpace(oneSeries.XColumn) Then Return oneSeries.XColumn
+            If Not String.IsNullOrWhiteSpace(XColumn) Then Return XColumn
+            Return "B"
+        End Function
+
+        ''' <summary>The Y column a series reads: its own, else the chart's, else the next of C, E, G…</summary>
+        Private Function SeriesYColumn(oneSeries As ChartSeries, index As Integer) As String
+            If Not String.IsNullOrWhiteSpace(oneSeries.YColumn) Then Return oneSeries.YColumn
+            ' '_series', not 'Series': VB is case-insensitive and would match the parameter above.
+            If _series.Count = 1 AndAlso Not String.IsNullOrWhiteSpace(YColumn) Then Return YColumn
+            Return SpreadsheetReader.ColumnAfter("C", index * 2)
+        End Function
+
+        Private ReadOnly _cache As New Dictionary(Of String, ChartData)()
+        Private _cacheFile As String = Nothing
+        Private _lastPlotCount As Integer = 0
+
+        ''' <summary>The data for one series (cached per column pair and workbook).</summary>
+        Private Function DataFor(xColumn As String, yColumn As String, xFromIndex As Boolean) As ChartData
             Dim file = SourceFile
-            Dim key = file & "|" & XColumn & "|" & YColumn & "|" & HeaderRow.ToString(CultureInfo.InvariantCulture) & "|" &
-                      FirstDataRow.ToString(CultureInfo.InvariantCulture) & "|" & XFromIndex.ToString()
-            If _cached IsNot Nothing AndAlso _cacheKey = key Then Return _cached
+            If String.IsNullOrWhiteSpace(file) Then Return InlineData()
 
-            Dim loaded As ChartSeries
-            If String.IsNullOrWhiteSpace(file) Then
-                loaded = InlineSeries()
-            Else
-                loaded = SpreadsheetReader.Read(file, If(XColumn, "B"), If(YColumn, "C"), HeaderRow, FirstDataRow, XFromIndex)
+            Dim key = xColumn & "|" & yColumn & "|" & xFromIndex.ToString()
+            If _cacheFile <> file Then
+                _cache.Clear()
+                _cacheFile = file
             End If
+            Dim cached As ChartData = Nothing
+            If _cache.TryGetValue(key, cached) Then Return cached
 
-            _cached = loaded
-            _cacheKey = key
+            Dim loaded = SpreadsheetReader.Read(file, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex)
+            _cache(key) = loaded
             Return loaded
         End Function
 
-        ''' <summary>Drop the cached data so the next redraw re-reads the file.</summary>
+        ''' <summary>Every series to draw, with its data, styling, scale and axes resolved.</summary>
+        Private Function BuildPlots() As List(Of Plot)
+            Dim plots As New List(Of Plot)()
+            If Series.Count = 0 Then
+                ' The implicit single series: chart-level columns and (legacy) chart-level styling.
+                Dim only = DataFor(If(XColumn, "B"), If(YColumn, "C"), ImplicitXFromIndex)
+                ' Not named 'single': that is a VB type keyword.
+                Dim onePlot As New Plot With {
+                    .Data = only,
+                    .LineColor = LineColor,
+                    .LineThickness = LineThickness,
+                    .LineStyle = LineStyle,
+                    .MarkerStyle = MarkerStyle,
+                    .MarkerSize = MarkerSize,
+                    .Connected = Connected
+                }
+                onePlot.XRange = AxisRange.Over(only.Xs, MinX, MaxX, 6, 1)
+                onePlot.YRange = AxisRange.Over(only.Ys, MinY, MaxY, 5, 5)
+                plots.Add(onePlot)
+                Return plots
+            End If
+
+            For i = 0 To Series.Count - 1
+                ' 'oneSeries' / 'xCol' / 'yCol' rather than series/xColumn/yColumn: VB would match
+                ' those against the Series / XColumn / YColumn members (it is case-insensitive).
+                Dim oneSeries = Series(i)
+                Dim useCommonX = Not oneSeries.PerSeries OrElse oneSeries.XFromIndex
+                Dim xCol = If(useCommonX, If(XColumn, "B"), SeriesXColumn(oneSeries))
+                Dim yCol = SeriesYColumn(oneSeries, i)
+                Dim seriesData = DataFor(xCol, yCol, oneSeries.XFromIndex)
+                Dim one As New Plot With {
+                    .Data = seriesData,
+                    .Definition = oneSeries,
+                    .LineColor = oneSeries.LineColor,
+                    .LineThickness = oneSeries.LineThickness,
+                    .LineStyle = oneSeries.LineStyle,
+                    .MarkerStyle = oneSeries.MarkerStyle,
+                    .MarkerSize = oneSeries.MarkerSize,
+                    .Connected = oneSeries.Connected,
+                    .PerSeries = oneSeries.PerSeries,
+                    .XAxis = oneSeries.XAxis,
+                    .YAxis = oneSeries.YAxis
+                }
+                If oneSeries.PerSeries Then
+                    one.XRange = AxisRange.Over(seriesData.Xs, Double.NaN, Double.NaN, 6, 5)
+                    one.YRange = AxisRange.Over(seriesData.Ys, Double.NaN, Double.NaN, 5, 5)
+                End If
+                plots.Add(one)
+            Next
+
+            ' The common axis covers the series that use it (or all of them when every series is its own).
+            Dim commonPlots = plots.Where(Function(p) Not p.PerSeries).ToList()
+            If commonPlots.Count = 0 Then commonPlots = plots
+            Dim allXs = commonPlots.SelectMany(Function(p) p.Data.Xs).ToArray()
+            Dim allYs = commonPlots.SelectMany(Function(p) p.Data.Ys).ToArray()
+            Dim subdivisions = If(Series.Any(Function(s) s.XFromIndex), 1, 5)
+            Dim sharedX = AxisRange.Over(allXs, MinX, MaxX, 6, subdivisions)
+            Dim sharedY = AxisRange.Over(allYs, MinY, MaxY, 5, 5)
+            For Each one In commonPlots
+                one.XRange = sharedX
+                one.YRange = sharedY
+            Next
+            Return plots
+        End Function
+
+        ''' <summary>Drop the cached data so the next redraw re-reads the workbook.</summary>
         Public Sub Reload()
             InvalidateCache()
         End Sub
 
         Private Sub InvalidateCache()
-            _cached = Nothing
-            _cacheKey = Nothing
+            _cache.Clear()
+            _cacheFile = Nothing
             InvalidateVisual()
         End Sub
 
-        ''' <summary>Replace the plotted data (a line plot can also just append with AddPoint).</summary>
+        ''' <summary>Replace the implicit series' data (a line chart can also just append with AddPoint).</summary>
         Public Sub SetValues(values As IEnumerable(Of Double))
-            ' Not 'array': that would shadow the System.Array type used just below.
             Dim data = If(values?.ToArray(), Array.Empty(Of Double)())
             SetInlineData(Enumerable.Range(0, data.Length).Select(Function(i) CDbl(i)).ToArray(), data)
-            SetInlineTitles()
             InvalidateCache()
         End Sub
 
-        ''' <summary>Append one point and redraw — for a chart fed live from your own code.</summary>
+        ''' <summary>Append one point to the implicit series and redraw.</summary>
         Public Sub AddPoint(x As Double, y As Double)
-            Dim current = InlineSeries()
+            Dim current = InlineData()
             Dim xs = current.Xs.ToList()
             Dim ys = current.Ys.ToList()
             xs.Add(x)
@@ -1001,7 +1227,6 @@ Namespace Global.AvaloniaCharts
             InvalidateCache()
         End Sub
 
-        ''' <inheritdoc/>
         Protected Overrides Sub OnPropertyChanged(change As AvaloniaPropertyChangedEventArgs)
             MyBase.OnPropertyChanged(change)
             If change.Property Is SourceFileProperty Then
@@ -1015,7 +1240,7 @@ Namespace Global.AvaloniaCharts
 
         ''' <summary>
         ''' Opens the platform's file dialog and, when a workbook is picked, loads it. Does nothing
-        ''' when the control has no TopLevel yet (a designer preview), so it is safe to call.
+        ''' when the control has no TopLevel yet (a designer preview), so it is always safe to call.
         ''' </summary>
         Public Async Function BrowseForFile() As Task
             Try
@@ -1045,13 +1270,10 @@ Namespace Global.AvaloniaCharts
             End Try
         End Function
 
-        ''' <summary>
-        ''' True when the "…" file picker should be drawn: when ShowBrowse asks for it, or when the
-        ''' chart has no data — an empty chart is exactly where you want to pick the workbook.
-        ''' </summary>
+        ''' <summary>True when the "…" file picker is drawn: asked for, or the chart has no data.</summary>
         Private ReadOnly Property BrowseVisible As Boolean
             Get
-                Return ShowBrowse OrElse Not GetSeries().HasData
+                Return ShowBrowse OrElse _lastPlotCount = 0
             End Get
         End Property
 
@@ -1092,7 +1314,7 @@ Namespace Global.AvaloniaCharts
                 If String.IsNullOrEmpty(folder) OrElse Not Directory.Exists(folder) Then Return
 
                 ' Editors save by writing a temp file and renaming it over the original, so watch the
-                ' FOLDER for the file name rather than the file handle itself (which gets replaced).
+                ' FOLDER for the file name rather than the file handle itself.
                 _watcher = New FileSystemWatcher(folder, Path.GetFileName(full)) With {
                     .NotifyFilter = NotifyFilters.LastWrite Or NotifyFilters.Size Or NotifyFilters.FileName Or NotifyFilters.CreationTime,
                     .EnableRaisingEvents = True
@@ -1145,171 +1367,299 @@ Namespace Global.AvaloniaCharts
             Dim size = Bounds.Size
             If size.Width < 8 OrElse size.Height < 8 Then Return
 
-            ' Local names deliberately differ from the members they read: VB is case-INSENSITIVE, so a
-            ' local called borderThickness (vs the BorderThickness property) or series (vs the
-            ' GetSeries method) makes the compiler infer the local instead of the member.
             Dim frameWidth = If(ShowBorder, Math.Max(0, BorderThickness), 0)
             Dim frame = New Rect(size).Deflate(frameWidth / 2)
-            ' The chart's OWN plate comes first, filling the whole interior - not just the plot area.
-            ' Everything drawn outside the plot (the title, the axis labels, the ticks) then sits on the
-            ' chart's colour instead of on whatever is behind the control: a chart tuned for a dark form
-            ' (white TitleColor, dark PlotBackColor) used to be invisible in the Designer, whose preview
-            ' is always the light theme, while looking right at runtime.
             Dim radius = CornerRadius
+
+            ' The chart's OWN plate comes first, filling the whole interior - not just the plot area,
+            ' so the title and the axis labels sit on the chart's colour, not on the form's.
             Dim opacity = Math.Clamp(PlotBackOpacity, 0, 100) / 100.0
             Dim plate As New SolidColorBrush(PlotBackColor, opacity)
             context.DrawRectangle(plate, Nothing, New RoundedRect(frame, radius))
 
-            Dim chartData = GetSeries()
+            Dim plots = BuildPlots()
+            _lastPlotCount = plots.Where(Function(p) p.Data.HasData).Count()
+            Dim withError = plots.FirstOrDefault(Function(p) p.Data.Error IsNot Nothing)
+            Dim seriesError = If(withError IsNot Nothing, withError.Data.Error, Nothing)
+
             Dim wantTitle = ShowTitle AndAlso Not String.IsNullOrWhiteSpace(Title)
             Dim titleText As FormattedText = Nothing
             If wantTitle Then titleText = MakeText(Title, TitleFontSize, TitleColor)
 
             ' Work out the plot rectangle: the frame, minus the breathing room, minus the title and
             ' the axis furniture around it.
-            Dim plot = frame.Deflate(8)
+            Dim plotRect = frame.Deflate(8)
             If titleText IsNot Nothing Then
-                ' The title takes a measured strip off one edge, so it can never overlap the plot.
                 Dim strip = titleText.Height + 6
                 Select Case TitlePosition
                     Case ChartTitlePosition.Top
-                        plot = Chop(plot, 0, strip, 0, 0)
+                        plotRect = Chop(plotRect, 0, strip, 0, 0)
                     Case ChartTitlePosition.Bottom
-                        plot = Chop(plot, 0, 0, 0, strip)
+                        plotRect = Chop(plotRect, 0, 0, 0, strip)
                     Case ChartTitlePosition.Left
-                        plot = Chop(plot, strip, 0, 0, 0)
+                        plotRect = Chop(plotRect, strip, 0, 0, 0)
                     Case Else
-                        plot = Chop(plot, 0, 0, strip, 0)
+                        plotRect = Chop(plotRect, 0, 0, strip, 0)
                 End Select
             End If
 
-            Dim titles = If(ShowAxisTitles, AxisTitles(chartData), New ValueTuple(Of FormattedText, FormattedText)(Nothing, Nothing))
-            Dim leftLabels As New List(Of KeyValuePair(Of Double, String))()
-            Dim bottomLabels As New List(Of KeyValuePair(Of Double, String))()
-            Dim leftLabelWidth As Double = 0
-            Dim xRange As AxisRange = Nothing
-            Dim yRange As AxisRange = Nothing
-
-            If chartData.HasData Then
-                xRange = AxisRange.Build(chartData.Xs, MinX, MaxX, 6, If(TypeOf Me Is GrumpyLinePlot, 1, 5))
-                yRange = AxisRange.Build(chartData.Ys, MinY, MaxY, 5, 5)
-                If ShowTickLabels Then
-                    For Each v In yRange.Ticks()
-                        leftLabels.Add(New KeyValuePair(Of Double, String)(v, FormatNumber(v, yRange.TickStep)))
-                    Next
-                    For Each v In xRange.Ticks()
-                        bottomLabels.Add(New KeyValuePair(Of Double, String)(v, FormatNumber(v, xRange.TickStep)))
-                    Next
-                    For Each label In leftLabels
-                        leftLabelWidth = Math.Max(leftLabelWidth, MakeText(label.Value, TickLabelFontSize, AxisColor).Width)
-                    Next
-                End If
-            End If
-
-            Dim labelHeight As Double = 0
-            If ShowTickLabels Then labelHeight = MakeText("0", TickLabelFontSize, AxisColor).Height
-            Dim tickOut As Double = 0
-            If ShowAxes AndAlso ShowMajorTicks Then tickOut = Math.Max(0, MajorTickLength)
-            Dim leftGutter = 4 + tickOut + leftLabelWidth
-            If titles.Item2 IsNot Nothing Then leftGutter += titles.Item2.Height + 6
-            Dim bottomGutter = 4 + tickOut + labelHeight
-            If titles.Item1 IsNot Nothing Then bottomGutter += titles.Item1.Height + 6
-            plot = Chop(plot, leftGutter, 0, 0, bottomGutter)
-            If plot.Width <= 4 OrElse plot.Height <= 4 Then Return
-
-            ' Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry its
-            ' own tint without touching the rest of the chart).
-            context.DrawRectangle(plate, Nothing, plot)
-
-            If Not chartData.HasData Then
+            Dim commonPlot = plots.FirstOrDefault(Function(p) Not p.PerSeries)
+            If commonPlot Is Nothing Then commonPlot = plots.FirstOrDefault()
+            If commonPlot Is Nothing Then
                 DrawFrame(context, frame, radius, frameWidth)
-                DrawTitle(context, titleText, plot, frame)
-                DrawMessage(context, plot, chartData.Error)
-                ' An empty chart is exactly when you want the file picker, so the "…" button is
-                ' drawn here even when ShowBrowse is off (see BrowseVisible).
+                DrawTitle(context, titleText, plotRect, frame)
+                DrawMessage(context, plotRect, Nothing)
                 DrawBrowseButton(context, frame)
                 Return
             End If
 
-            ' Gridlines, then the axes with their ticks and labels.
+            Dim yLabels As New List(Of String)()
+            If ShowTickLabels Then
+                For Each tick In commonPlot.YRange.Ticks()
+                    yLabels.Add(FormatNumber(tick, commonPlot.YRange.TickStep))
+                Next
+            End If
+            Dim leftLabelWidth As Double = 0
+            For Each label In yLabels
+                leftLabelWidth = Math.Max(leftLabelWidth, MakeText(label, TickLabelFontSize, AxisColor).Width)
+            Next
+            Dim labelHeight As Double = 0
+            If ShowTickLabels Then labelHeight = MakeText("0", TickLabelFontSize, AxisColor).Height
+            Dim xLabels As New List(Of String)()
+            If ShowTickLabels Then
+                For Each tick In commonPlot.XRange.Ticks()
+                    xLabels.Add(FormatNumber(tick, commonPlot.XRange.TickStep))
+                Next
+            End If
+
+            Dim titles = AxisTitles(commonPlot)
+            Dim tickOut As Double = 0
+            If ShowAxes AndAlso ShowMajorTicks Then tickOut = Math.Max(0, MajorTickLength)
+
+            ' Per-series axes need their own gutters, so several Y scales can live side by side.
+            Dim perSeries = plots.Where(Function(p) p.PerSeries).ToList()
+            Dim leftAxisBlocks = perSeries.Where(Function(p) (If(p.YAxis Is Nothing, AxisPosition.Left, p.YAxis.Position)) <> AxisPosition.Right).Count()
+            Dim rightAxisBlocks = perSeries.Where(Function(p) p.YAxis IsNot Nothing AndAlso p.YAxis.Position = AxisPosition.Right).Count()
+            Dim topAxisBlocks = perSeries.Where(Function(p) p.XAxis IsNot Nothing AndAlso p.XAxis.Position = AxisPosition.Top).Count()
+            Dim bottomAxisBlocks = perSeries.Where(Function(p) (If(p.XAxis Is Nothing, AxisPosition.Bottom, p.XAxis.Position)) <> AxisPosition.Top).Count()
+            Dim perYWidth As Double = 0
+            For Each one In perSeries
+                perYWidth = Math.Max(perYWidth, PerAxisLabelWidth(one))
+            Next
+
+            Dim leftGutter = 4 + tickOut + leftLabelWidth + (If(titles.Item2 Is Nothing, 0, titles.Item2.Height + 6))
+            If leftAxisBlocks > 0 Then leftGutter += 4 + tickOut + perYWidth
+            Dim rightGutter As Double = 0
+            If rightAxisBlocks > 0 Then rightGutter = 4 + tickOut + perYWidth + 6
+            Dim bottomGutter = 4 + tickOut + labelHeight + (If(titles.Item1 Is Nothing, 0, titles.Item1.Height + 6))
+            If bottomAxisBlocks > 0 Then bottomGutter += 4 + tickOut + labelHeight
+            Dim topGutter As Double = 0
+            If topAxisBlocks > 0 Then topGutter = 4 + tickOut + labelHeight
+            plotRect = Chop(plotRect, leftGutter, topGutter, rightGutter, bottomGutter)
+            If plotRect.Width <= 4 OrElse plotRect.Height <= 4 Then Return
+
+            ' Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry
+            ' its own tint without touching the rest of the chart).
+            context.DrawRectangle(plate, Nothing, plotRect)
+
+            If _lastPlotCount = 0 Then
+                DrawFrame(context, frame, radius, frameWidth)
+                DrawTitle(context, titleText, plotRect, frame)
+                DrawMessage(context, plotRect, seriesError)
+                DrawBrowseButton(context, frame)
+                Return
+            End If
+
+            ' Gridlines, then the common axis with its ticks and labels.
             If ShowGrid Then
                 Dim gridPen = MakePen(GridColor, GridThickness, GridStyle)
-                For Each tick In xRange.Ticks()
-                    Dim x = xRange.ToPixel(tick, plot.X, plot.Width)
-                    context.DrawLine(gridPen, New Point(x, plot.Y), New Point(x, plot.Bottom))
+                For Each tick In commonPlot.XRange.Ticks()
+                    Dim x = commonPlot.XRange.ToPixel(tick, plotRect.X, plotRect.Width)
+                    context.DrawLine(gridPen, New Point(x, plotRect.Y), New Point(x, plotRect.Bottom))
                 Next
-                For Each tick In yRange.Ticks()
-                    Dim y = yRange.ToPixel(tick, plot.Bottom, -plot.Height)
-                    context.DrawLine(gridPen, New Point(plot.X, y), New Point(plot.Right, y))
-                Next
-            End If
-
-            Dim axisPen = MakePen(AxisColor, 1, ChartLineStyle.Solid)
-            If ShowAxes Then
-                context.DrawLine(axisPen, New Point(plot.X, plot.Y), New Point(plot.X, plot.Bottom))
-                context.DrawLine(axisPen, New Point(plot.X, plot.Bottom), New Point(plot.Right, plot.Bottom))
-            End If
-            MinorAndMajorTicks(context, plot, xRange, yRange)
-
-            If ShowTickLabels Then
-                For Each label In bottomLabels
-                    Dim t = MakeText(label.Value, TickLabelFontSize, AxisColor)
-                    Dim x = xRange.ToPixel(label.Key, plot.X, plot.Width) - t.Width / 2
-                    context.DrawText(t, New Point(x, plot.Bottom + tickOut + 2))
-                Next
-                For Each label In leftLabels
-                    Dim t = MakeText(label.Value, TickLabelFontSize, AxisColor)
-                    Dim y = yRange.ToPixel(label.Key, plot.Bottom, -plot.Height) - t.Height / 2
-                    context.DrawText(t, New Point(plot.X - tickOut - 2 - t.Width, y))
+                For Each tick In commonPlot.YRange.Ticks()
+                    Dim y = commonPlot.YRange.ToPixel(tick, plotRect.Bottom, -plotRect.Height)
+                    context.DrawLine(gridPen, New Point(plotRect.X, y), New Point(plotRect.Right, y))
                 Next
             End If
 
-            If titles.Item2 IsNot Nothing Then
-                ' Rotate FIRST, then translate: Avalonia's matrices are row-vector, so they compose
-                ' left-to-right. Getting this backwards draws the title above the control's own
-                ' bounds (inside the chart sitting above it on the form).
-                Dim axisTitleY = plot.Y + plot.Height / 2 + titles.Item2.Width / 2
-                Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) *
-                                            Matrix.CreateTranslation(frame.X + 3, axisTitleY))
-                    context.DrawText(titles.Item2, New Point(0, 0))
-                End Using
-            End If
-            If titles.Item1 IsNot Nothing Then
-                Dim axisX = plot.X + (plot.Width - titles.Item1.Width) / 2
-                context.DrawText(titles.Item1, New Point(axisX, plot.Bottom + tickOut + 2 + labelHeight + 2))
-            End If
+            Dim commonAxis As New Axis With {
+                .Position = AxisPosition.Left,
+                .ShowAxis = ShowAxes,
+                .AxisColor = AxisColor,
+                .ShowMajorTicks = ShowMajorTicks,
+                .ShowMinorTicks = ShowMinorTicks,
+                .ShowTickLabels = ShowTickLabels,
+                .ShowAxisName = ShowAxisTitles
+            }
+            DrawYAxis(context, plotRect, commonPlot.YRange, commonAxis, False, titles.Item2, yLabels)
+            Dim commonXAxis = commonAxis.Clone()
+            commonXAxis.Position = AxisPosition.Bottom
+            DrawXAxis(context, plotRect, commonPlot.XRange, commonXAxis, False, titles.Item1, xLabels)
 
-            ' The data itself, clipped to the plot area.
-            Using context.PushClip(plot)
-                Dim dataPoints = chartData.Xs.Select(
-                    Function(v, i)
-                        Return New Point(xRange.ToPixel(v, plot.X, plot.Width),
-                                         yRange.ToPixel(chartData.Ys(i), plot.Bottom, -plot.Height))
-                    End Function).ToArray()
-
-                If Connected AndAlso dataPoints.Length > 1 Then
-                    Dim pen = MakePen(LineColor, LineThickness, LineStyle)
-                    For i = 1 To dataPoints.Length - 1
-                        context.DrawLine(pen, dataPoints(i - 1), dataPoints(i))
-                    Next
+            ' Per-series axes: their own scale, drawn on the side each axis asks for.
+            For Each one In perSeries
+                If one.YAxis IsNot Nothing AndAlso one.YAxis.ShowAxis Then
+                    Dim isRight = one.YAxis.Position = AxisPosition.Right
+                    Dim labels As New List(Of String)()
+                    If one.YAxis.ShowTickLabels Then
+                        For Each tick In one.YRange.Ticks()
+                            labels.Add(FormatNumber(tick, one.YRange.TickStep))
+                        Next
+                    End If
+                    DrawYAxis(context, plotRect, one.YRange, one.YAxis, isRight, PerAxisName(one.YAxis, one.Data.YTitle), labels)
                 End If
-                DrawMarkers(context, dataPoints)
+                If one.XAxis IsNot Nothing AndAlso one.XAxis.ShowAxis Then
+                    Dim isTop = one.XAxis.Position = AxisPosition.Top
+                    Dim labels As New List(Of String)()
+                    If one.XAxis.ShowTickLabels Then
+                        For Each tick In one.XRange.Ticks()
+                            labels.Add(FormatNumber(tick, one.XRange.TickStep))
+                        Next
+                    End If
+                    DrawXAxis(context, plotRect, one.XRange, one.XAxis, isTop, PerAxisName(one.XAxis, one.Data.XTitle), labels)
+                End If
+            Next
+
+            ' The data itself, in order, clipped to the plot area.
+            Using context.PushClip(plotRect)
+                For Each one In plots
+                    If Not one.Data.HasData Then Continue For
+                    Dim dataPoints = one.Data.Xs.Select(
+                        Function(v, i)
+                            Return New Point(one.XRange.ToPixel(v, plotRect.X, plotRect.Width),
+                                             one.YRange.ToPixel(one.Data.Ys(i), plotRect.Bottom, -plotRect.Height))
+                        End Function).ToArray()
+
+                    If one.Connected AndAlso dataPoints.Length > 1 Then
+                        Dim pen = MakePen(one.LineColor, one.LineThickness, one.LineStyle)
+                        For i = 1 To dataPoints.Length - 1
+                            context.DrawLine(pen, dataPoints(i - 1), dataPoints(i))
+                        Next
+                    End If
+                    DrawMarkers(context, dataPoints, one)
+                Next
             End Using
 
             ' Frame + title last, so nothing can overdraw them.
             DrawFrame(context, frame, radius, frameWidth)
-            DrawTitle(context, titleText, plot, frame)
+            DrawTitle(context, titleText, plotRect, frame)
             DrawBrowseButton(context, frame)
         End Sub
 
-        Private Sub DrawMarkers(context As DrawingContext, points As Point())
-            If MarkerStyle = ChartMarkerStyle.None Then Return
-            Dim size = Math.Max(2, MarkerSize)
-            Dim brush As New SolidColorBrush(LineColor)
+        ''' <summary>The widest tick label of one series' Y axis, so the gutter is wide enough.</summary>
+        Private Function PerAxisLabelWidth(one As Plot) As Double
+            If one.YAxis Is Nothing OrElse Not one.YAxis.ShowTickLabels OrElse Not one.PerSeries Then Return 0
+            Dim widest As Double = 0
+            For Each tick In one.YRange.Ticks()
+                Dim text = MakeText(FormatNumber(tick, one.YRange.TickStep), TickLabelFontSize, one.YAxis.AxisColor)
+                widest = Math.Max(widest, text.Width)
+            Next
+            Return widest
+        End Function
+
+        ''' <summary>An axis' own name, or the spreadsheet's column header when it has none.</summary>
+        Private Function PerAxisName(axis As Axis, fromSheet As String) As FormattedText
+            Dim text = If(Not String.IsNullOrWhiteSpace(axis.Name), axis.Name, fromSheet)
+            If Not axis.ShowAxisName OrElse String.IsNullOrWhiteSpace(text) Then Return Nothing
+            Return MakeText(text, TickLabelFontSize, axis.AxisColor)
+        End Function
+
+        ''' <summary>Draws a Y axis: its ticks, labels and name, on the left or the right edge.</summary>
+        Private Sub DrawYAxis(context As DrawingContext, plotRect As Rect, range As AxisRange, axis As Axis,
+                             isRight As Boolean, name As FormattedText, labels As List(Of String))
+            Dim pen = MakePen(axis.AxisColor, 1, ChartLineStyle.Solid)
+            Dim x = If(isRight, plotRect.Right, plotRect.X)
+            Dim tickOut As Double = 0
+            If axis.ShowMajorTicks Then tickOut = Math.Max(0, MajorTickLength)
+            Dim direction = If(isRight, 1, -1)
+
+            If axis.ShowMinorTicks AndAlso MinorTickLength > 0 Then
+                For Each tick In range.MinorTicks()
+                    Dim y = range.ToPixel(tick, plotRect.Bottom, -plotRect.Height)
+                    context.DrawLine(pen, New Point(x, y), New Point(x + direction * MinorTickLength, y))
+                Next
+            End If
+
+            Dim widest As Double = 0
+            Dim index As Integer = 0
+            For Each tick In range.Ticks()
+                Dim text = If(index < labels.Count, labels(index), FormatNumber(tick, range.TickStep))
+                index += 1
+                Dim label = MakeText(text, TickLabelFontSize, axis.AxisColor)
+                Dim y = range.ToPixel(tick, plotRect.Bottom, -plotRect.Height) - label.Height / 2
+                Dim textX = If(isRight, x + tickOut + 2, x - tickOut - 2 - label.Width)
+                If axis.ShowTickLabels Then context.DrawText(label, New Point(textX, y))
+                widest = Math.Max(widest, label.Width)
+            Next
+
+            If axis.ShowMajorTicks AndAlso MajorTickLength > 0 Then
+                For Each tick In range.Ticks()
+                    Dim y = range.ToPixel(tick, plotRect.Bottom, -plotRect.Height)
+                    context.DrawLine(pen, New Point(x, y), New Point(x + direction * MajorTickLength, y))
+                Next
+            End If
+
+            If name IsNot Nothing Then
+                Dim nameY = plotRect.Y + plotRect.Height / 2 + name.Width / 2
+                Dim nameX = If(isRight, x + tickOut + 4 + widest + 2, x - tickOut - 4 - widest - 2 - name.Height)
+                ' Rotate FIRST, then translate: Avalonia's matrices are row-vector, so they compose
+                ' left-to-right. Getting this backwards draws the name above the control's own bounds.
+                Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) * Matrix.CreateTranslation(nameX, nameY))
+                    context.DrawText(name, New Point(0, 0))
+                End Using
+            End If
+        End Sub
+
+        ''' <summary>Draws an X axis: its ticks, labels and name, at the top or the bottom edge.</summary>
+        Private Sub DrawXAxis(context As DrawingContext, plotRect As Rect, range As AxisRange, axis As Axis,
+                             isTop As Boolean, name As FormattedText, labels As List(Of String))
+            Dim pen = MakePen(axis.AxisColor, 1, ChartLineStyle.Solid)
+            Dim y = If(isTop, plotRect.Y, plotRect.Bottom)
+            Dim tickOut As Double = 0
+            If axis.ShowMajorTicks Then tickOut = Math.Max(0, MajorTickLength)
+            Dim direction = If(isTop, -1, 1)
+
+            If axis.ShowMinorTicks AndAlso MinorTickLength > 0 Then
+                For Each tick In range.MinorTicks()
+                    Dim x = range.ToPixel(tick, plotRect.X, plotRect.Width)
+                    context.DrawLine(pen, New Point(x, y), New Point(x, y + direction * MinorTickLength))
+                Next
+            End If
+            If axis.ShowMajorTicks AndAlso MajorTickLength > 0 Then
+                For Each tick In range.Ticks()
+                    Dim x = range.ToPixel(tick, plotRect.X, plotRect.Width)
+                    context.DrawLine(pen, New Point(x, y), New Point(x, y + direction * MajorTickLength))
+                Next
+            End If
+
+            Dim labelHeight = MakeText("0", TickLabelFontSize, axis.AxisColor).Height
+            Dim index As Integer = 0
+            For Each tick In range.Ticks()
+                Dim text = If(index < labels.Count, labels(index), FormatNumber(tick, range.TickStep))
+                index += 1
+                Dim label = MakeText(text, TickLabelFontSize, axis.AxisColor)
+                Dim x = range.ToPixel(tick, plotRect.X, plotRect.Width) - label.Width / 2
+                Dim textY = If(isTop, y - tickOut - 2 - label.Height, y + tickOut + 2)
+                If axis.ShowTickLabels Then context.DrawText(label, New Point(x, textY))
+            Next
+
+            If name IsNot Nothing Then
+                Dim nameX = plotRect.X + (plotRect.Width - name.Width) / 2
+                Dim nameY = If(isTop, y - tickOut - 2 - labelHeight - 2 - name.Height,
+                                     y + tickOut + 2 + labelHeight + 2)
+                context.DrawText(name, New Point(nameX, nameY))
+            End If
+        End Sub
+
+        Private Sub DrawMarkers(context As DrawingContext, dataPoints As Point(), one As Plot)
+            If one.MarkerStyle = ChartMarkerStyle.None Then Return
+            Dim size = Math.Max(2, one.MarkerSize)
+            Dim brush As New SolidColorBrush(one.LineColor)
             Dim pen As New Pen(brush, 1)
             Dim half = size / 2
-            For Each p In points
-                Select Case MarkerStyle
+            For Each p In dataPoints
+                Select Case one.MarkerStyle
                     Case ChartMarkerStyle.Dot
                         context.DrawEllipse(brush, Nothing, p, half, half)
                     Case ChartMarkerStyle.Cross
@@ -1331,101 +1681,74 @@ Namespace Global.AvaloniaCharts
             Next
         End Sub
 
-        Private Sub MinorAndMajorTicks(context As DrawingContext, plot As Rect, xRange As AxisRange, yRange As AxisRange)
-            Dim axisPen = MakePen(AxisColor, 1, ChartLineStyle.Solid)
-            If ShowAxes AndAlso ShowMinorTicks AndAlso MinorTickLength > 0 Then
-                For Each tick In xRange.MinorTicks()
-                    Dim x = xRange.ToPixel(tick, plot.X, plot.Width)
-                    context.DrawLine(axisPen, New Point(x, plot.Bottom), New Point(x, plot.Bottom + MinorTickLength))
-                Next
-                For Each tick In yRange.MinorTicks()
-                    Dim y = yRange.ToPixel(tick, plot.Bottom, -plot.Height)
-                    context.DrawLine(axisPen, New Point(plot.X - MinorTickLength, y), New Point(plot.X, y))
-                Next
-            End If
-            If ShowAxes AndAlso ShowMajorTicks AndAlso MajorTickLength > 0 Then
-                For Each tick In xRange.Ticks()
-                    Dim x = xRange.ToPixel(tick, plot.X, plot.Width)
-                    context.DrawLine(axisPen, New Point(x, plot.Bottom), New Point(x, plot.Bottom + MajorTickLength))
-                Next
-                For Each tick In yRange.Ticks()
-                    Dim y = yRange.ToPixel(tick, plot.Bottom, -plot.Height)
-                    context.DrawLine(axisPen, New Point(plot.X - MajorTickLength, y), New Point(plot.X, y))
-                Next
-            End If
-        End Sub
-
         Private Sub DrawFrame(context As DrawingContext, frame As Rect, radius As Avalonia.CornerRadius, thickness As Double)
             If thickness <= 0 Then Return
             context.DrawRectangle(Nothing, New Pen(New SolidColorBrush(BorderBrush), thickness), New RoundedRect(frame, radius))
         End Sub
 
-        Private Sub DrawTitle(context As DrawingContext, title As FormattedText, plot As Rect, frame As Rect)
+        Private Sub DrawTitle(context As DrawingContext, title As FormattedText, plotRect As Rect, frame As Rect)
             If title Is Nothing Then Return
             Select Case TitlePosition
                 Case ChartTitlePosition.Top
-                    context.DrawText(title, New Point(plot.X + (plot.Width - title.Width) / 2, frame.Y + 4))
+                    context.DrawText(title, New Point(plotRect.X + (plotRect.Width - title.Width) / 2, frame.Y + 4))
                 Case ChartTitlePosition.Bottom
-                    context.DrawText(title, New Point(plot.X + (plot.Width - title.Width) / 2, plot.Bottom + 4))
+                    context.DrawText(title, New Point(plotRect.X + (plotRect.Width - title.Width) / 2, plotRect.Bottom + 4))
                 Case ChartTitlePosition.Left
-                    ' Rotate then translate (see the Y axis title in Render): the rotated text starts
-                    ' at the anchor and reads upward, so the anchor sits half a text-width below centre.
-                    Dim leftY = plot.Y + plot.Height / 2 + title.Width / 2
-                    Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) *
-                                                Matrix.CreateTranslation(frame.X + 4, leftY))
+                    Dim leftY = plotRect.Y + plotRect.Height / 2 + title.Width / 2
+                    Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) * Matrix.CreateTranslation(frame.X + 4, leftY))
                         context.DrawText(title, New Point(0, 0))
                     End Using
                 Case ChartTitlePosition.Right
-                    Dim rightY = plot.Y + plot.Height / 2 + title.Width / 2
-                    Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) *
-                                                Matrix.CreateTranslation(frame.Right - 4 - title.Height, rightY))
+                    Dim rightY = plotRect.Y + plotRect.Height / 2 + title.Width / 2
+                    Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) * Matrix.CreateTranslation(frame.Right - 4 - title.Height, rightY))
                         context.DrawText(title, New Point(0, 0))
                     End Using
             End Select
         End Sub
 
-        Private Sub DrawMessage(context As DrawingContext, plot As Rect, message As String)
-            Dim text = If(String.IsNullOrWhiteSpace(message), "No data — set Values, or point SourceFile at an .xlsx", message)
+        Private Sub DrawMessage(context As DrawingContext, plotRect As Rect, message As String)
+            Dim text = If(String.IsNullOrWhiteSpace(message), "No data — set SourceFile, or add a series", message)
             Dim brush = Color.Parse("#909090")
             Dim formatted = MakeText(text, 12, brush)
-            If formatted.Width > plot.Width Then
+            If formatted.Width > plotRect.Width Then
                 ' A long explanation (a full path, a reader exception) would otherwise be dropped
                 ' whole and leave the chart looking broken — trim it to fit instead.
                 Dim perChar = formatted.Width / Math.Max(1, text.Length)
-                Dim maxChars = Math.Max(0, CInt(Math.Floor(plot.Width / perChar)) - 1)
+                Dim maxChars = Math.Max(0, CInt(Math.Floor(plotRect.Width / perChar)) - 1)
                 If maxChars < 8 Then Return   ' no room for anything readable
                 Dim cut = text.Substring(0, Math.Min(text.Length, maxChars)).TrimEnd() & "…"
                 formatted = MakeText(cut, 12, brush)
-                While formatted.Width > plot.Width AndAlso cut.Length > 9
+                While formatted.Width > plotRect.Width AndAlso cut.Length > 9
                     cut = cut.Substring(0, cut.Length - 2).TrimEnd() & "…"
                     formatted = MakeText(cut, 12, brush)
                 End While
-                If formatted.Width > plot.Width Then Return
+                If formatted.Width > plotRect.Width Then Return
             End If
-            context.DrawText(formatted, New Point(plot.X + (plot.Width - formatted.Width) / 2,
-                                                  plot.Y + (plot.Height - formatted.Height) / 2))
+            context.DrawText(formatted, New Point(plotRect.X + (plotRect.Width - formatted.Width) / 2,
+                                                  plotRect.Y + (plotRect.Height - formatted.Height) / 2))
         End Sub
 
         Private Sub DrawBrowseButton(context As DrawingContext, frame As Rect)
             _browseRect = Nothing
             If Not BrowseVisible Then Return
-            Dim size As Double = 18
-            Dim rect As New Rect(frame.Right - size - 4, frame.Y + 4, size, size)
+            Dim boxSize As Double = 18
+            Dim rect As New Rect(frame.Right - boxSize - 4, frame.Y + 4, boxSize, boxSize)
             _browseRect = rect
             context.DrawRectangle(New SolidColorBrush(Color.Parse("#F0F0F0")),
                                   New Pen(New SolidColorBrush(Color.Parse("#C0C0C0")), 1),
                                   New RoundedRect(rect, New Avalonia.CornerRadius(3)))
             Dim dots = MakeText("…", 12, Color.Parse("#505050"))
-            context.DrawText(dots, New Point(rect.X + (size - dots.Width) / 2, rect.Y + (size - dots.Height) / 2))
+            context.DrawText(dots, New Point(rect.X + (boxSize - dots.Width) / 2, rect.Y + (boxSize - dots.Height) / 2))
         End Sub
 
-        ''' <summary>Resolves the two axis names: the explicit properties win, then the sheet's headers.</summary>
-        Private Function AxisTitles(series As ChartSeries) As (X As FormattedText, Y As FormattedText)
-            Dim x = If(Not String.IsNullOrWhiteSpace(XAxisTitle), XAxisTitle, series.XTitle)
-            Dim y = If(Not String.IsNullOrWhiteSpace(YAxisTitle), YAxisTitle, series.YTitle)
-            Return (If(String.IsNullOrWhiteSpace(x), Nothing, MakeText(x, TickLabelFontSize, AxisColor)),
-                    If(String.IsNullOrWhiteSpace(y), Nothing, MakeText(y, TickLabelFontSize, AxisColor)))
+        ''' <summary>Resolves the common axis' names: the explicit properties win, then the sheet's headers.</summary>
+        Private Function AxisTitles(commonPlot As Plot) As (X As FormattedText, Y As FormattedText)
+            Dim xName = If(Not String.IsNullOrWhiteSpace(XAxisTitle), XAxisTitle, commonPlot.Data.XTitle)
+            Dim yName = If(Not String.IsNullOrWhiteSpace(YAxisTitle), YAxisTitle, commonPlot.Data.YTitle)
+            Return (If(String.IsNullOrWhiteSpace(xName), Nothing, MakeText(xName, TickLabelFontSize, AxisColor)),
+                    If(String.IsNullOrWhiteSpace(yName), Nothing, MakeText(yName, TickLabelFontSize, AxisColor)))
         End Function
+
         Private Shared Function MakeText(text As String, size As Double, color As Color) As FormattedText
             Return New FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
                                      New Typeface(FontFamily.Default), Math.Max(6, size), New SolidColorBrush(color))
@@ -1449,7 +1772,6 @@ Namespace Global.AvaloniaCharts
                 Case ChartLineStyle.Dash
                     Return New DashStyle(New Double() {4, 3}, 0)
                 Case ChartLineStyle.Dot
-                    ' A dash of ~0 with round caps is a dot; a true 0-length dash can vanish.
                     Return New DashStyle(New Double() {0.01, 3}, 0)
                 Case ChartLineStyle.DashDot
                     Return New DashStyle(New Double() {4, 3, 0.01, 3}, 0)
@@ -1458,7 +1780,6 @@ Namespace Global.AvaloniaCharts
             End Select
         End Function
 
-        ' 'step'/'Step' is a VB keyword, hence tickStep/TickStep below.
         Private Shared Function FormatNumber(value As Double, tickStep As Double) As String
             Dim decimals As Integer = 0
             If tickStep < 1 Then decimals = Math.Min(6, CInt(Math.Ceiling(-Math.Log10(tickStep))) + 1)
@@ -1484,11 +1805,11 @@ Namespace Global.AvaloniaCharts
         Private Property Subdivisions As Integer = 5
 
         ''' <summary>Builds the range for one axis of data.</summary>
-        Friend Shared Function Build(values As IReadOnlyList(Of Double), forcedMin As Double, forcedMax As Double,
-                                     targetTicks As Integer, subdivisions As Integer) As AxisRange
+        Friend Shared Function Over(values As IReadOnlyList(Of Double), forcedMin As Double, forcedMax As Double,
+                                    targetTicks As Integer, subdivisions As Integer) As AxisRange
             Dim range As New AxisRange With {.Subdivisions = Math.Max(1, subdivisions)}
-            Dim min = If(Double.IsNaN(forcedMin), values.Min(), forcedMin)
-            Dim max = If(Double.IsNaN(forcedMax), values.Max(), forcedMax)
+            Dim min = If(Double.IsNaN(forcedMin) OrElse values.Count = 0, If(values.Count = 0, 0.0, values.Min()), forcedMin)
+            Dim max = If(Double.IsNaN(forcedMax) OrElse values.Count = 0, If(values.Count = 0, 1.0, values.Max()), forcedMax)
             If max <= min Then max = min + If(Math.Abs(min) > 1, Math.Abs(min) * 0.1, 1)
 
             range.TickStep = NiceStep(max - min, Math.Max(2, targetTicks))
@@ -1538,17 +1859,18 @@ Namespace Global.AvaloniaCharts
     End Class
 
     ''' <summary>
-    ''' A LINE PLOT: Y values in sample order, with the X axis running 0 to N-1. Feed it from an
-    ''' array (Values) or from an .xlsx file (column C by default).
+    ''' A LINE PLOT: one line per series, Y values in sample order with X running 0…N-1. Series read
+    ''' their Y from the spreadsheet's Y columns (C, E, G …) and may set AxisMode="PerSeries" for their
+    ''' own scale.
     ''' </summary>
     Public Class GrumpyLinePlot
         Inherits ChartBase
 
-        ''' <summary>The Y samples to draw. X is the sample index (0,1,2…).</summary>
+        ''' <summary>The implicit series' Y samples (used only when the chart has no series elements).</summary>
         Public Shared ReadOnly ValuesProperty As StyledProperty(Of Double()) =
             AvaloniaProperty.Register(Of GrumpyLinePlot, Double())(NameOf(Values))
 
-        ''' <summary>The Y samples (X is the sample index).</summary>
+        ''' <summary>The Y samples of the implicit series (X is the sample index).</summary>
         <TypeConverter(GetType(DoubleArrayConverter))>
         Public Property Values As Double()
             Get
@@ -1559,16 +1881,15 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
-        Protected Overrides ReadOnly Property XFromIndex As Boolean
+        Protected Overrides ReadOnly Property ImplicitXFromIndex As Boolean
             Get
                 Return True
             End Get
         End Property
 
-        Protected Overrides Function InlineSeries() As ChartSeries
-            ' Not 'values': that would collide with the Values property (VB is case-insensitive).
+        Protected Overrides Function InlineData() As ChartData
             Dim samples = If(Values, Array.Empty(Of Double)())
-            Return New ChartSeries With {
+            Return New ChartData With {
                 .Xs = Enumerable.Range(0, samples.Length).Select(Function(i) CDbl(i)).ToArray(),
                 .Ys = samples
             }
@@ -1585,17 +1906,18 @@ Namespace Global.AvaloniaCharts
     End Class
 
     ''' <summary>
-    ''' An X,Y PLOT: (x,y) pairs, drawn as a line, as markers, or both. Feed it from a 2-D array
-    ''' (Points) or from an .xlsx file (column B = X, column C = Y by default).
+    ''' An X,Y PLOT: one point-set per series, drawn as a line, as markers, or both. A series reads its
+    ''' X and Y from the spreadsheet's column pairs (B/C, D/E, F/G …) unless AxisMode="Common" is used,
+    ''' in which case every series shares the chart's X column.
     ''' </summary>
     Public Class GrumpyXYPlot
         Inherits ChartBase
 
-        ''' <summary>The (x,y) pairs to draw — an n-by-2 array.</summary>
+        ''' <summary>The implicit series' (x,y) pairs (used only when the chart has no series elements).</summary>
         Public Shared ReadOnly PointsProperty As StyledProperty(Of Double(,)) =
             AvaloniaProperty.Register(Of GrumpyXYPlot, Double(,))(NameOf(Points))
 
-        ''' <summary>The (x,y) pairs — an n-by-2 array.</summary>
+        ''' <summary>The (x,y) pairs of the implicit series — an n-by-2 array.</summary>
         <TypeConverter(GetType(DoubleMatrixConverter))>
         Public Property Points As Double(,)
             Get
@@ -1606,34 +1928,32 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
-        Protected Overrides ReadOnly Property XFromIndex As Boolean
+        Protected Overrides ReadOnly Property ImplicitXFromIndex As Boolean
             Get
                 Return False
             End Get
         End Property
 
-        Protected Overrides Function InlineSeries() As ChartSeries
-            ' Not 'points': that would collide with the Points property (VB is case-insensitive).
+        Protected Overrides Function InlineData() As ChartData
             Dim pairs = Points
-            If pairs Is Nothing Then Return New ChartSeries()
+            If pairs Is Nothing Then Return New ChartData()
             Dim count = pairs.GetLength(0)
-            Dim series As New ChartSeries With {.Xs = New Double(count - 1) {}, .Ys = New Double(count - 1) {}}
+            Dim data As New ChartData With {.Xs = New Double(count - 1) {}, .Ys = New Double(count - 1) {}}
             For i = 0 To count - 1
-                series.Xs(i) = pairs(i, 0)
-                series.Ys(i) = pairs(i, 1)
+                data.Xs(i) = pairs(i, 0)
+                data.Ys(i) = pairs(i, 1)
             Next
-            Return series
+            Return data
         End Function
 
         Protected Overrides Sub SetInlineData(xs As Double(), ys As Double())
             Dim count = Math.Min(xs.Length, ys.Length)
-            ' Not 'points': see InlineSeries above.
-            Dim newPairs(count - 1, 1) As Double
+            Dim pairs(count - 1, 1) As Double
             For i = 0 To count - 1
-                newPairs(i, 0) = xs(i)
-                newPairs(i, 1) = ys(i)
+                pairs(i, 0) = xs(i)
+                pairs(i, 1) = ys(i)
             Next
-            Points = newPairs
+            Points = pairs
         End Sub
 
         Protected Overrides Sub OnPropertyChanged(change As AvaloniaPropertyChangedEventArgs)
