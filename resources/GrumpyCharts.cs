@@ -296,8 +296,17 @@ public sealed class Axis
     /// <summary>Draw the short ticks between the labelled values.</summary>
     public bool ShowMinorTicks { get; set; } = true;
 
+    /// <summary>Length of the ticks at the labelled values, in pixels.</summary>
+    public double MajorTickLength { get; set; } = 6d;
+
+    /// <summary>Length of the short ticks between them, in pixels.</summary>
+    public double MinorTickLength { get; set; } = 3d;
+
     /// <summary>Draw the numbers along this axis.</summary>
     public bool ShowTickLabels { get; set; } = true;
+
+    /// <summary>Font size of this axis' tick labels and its name.</summary>
+    public double TickLabelFontSize { get; set; } = 11d;
 
     /// <summary>Draw this axis' name (from <see cref="Name"/>, or the spreadsheet's column header).</summary>
     public bool ShowAxisName { get; set; } = true;
@@ -312,8 +321,11 @@ public sealed class Axis
         ShowAxis = ShowAxis,
         AxisColor = AxisColor,
         ShowMajorTicks = ShowMajorTicks,
+        MajorTickLength = MajorTickLength,
         ShowMinorTicks = ShowMinorTicks,
+        MinorTickLength = MinorTickLength,
         ShowTickLabels = ShowTickLabels,
+        TickLabelFontSize = TickLabelFontSize,
         ShowAxisName = ShowAxisName,
         Name = Name
     };
@@ -790,6 +802,18 @@ public abstract class ChartBase : Control
     /// <summary>The Y axis name (empty = the spreadsheet's column header).</summary>
     public string? YAxisTitle { get => GetValue(YAxisTitleProperty); set => SetValue(YAxisTitleProperty, value); }
 
+    /// <summary>
+    /// The chart's COMMON X axis — the one every series uses unless it is set to PerSeries. An Axis
+    /// object written as a property element:
+    /// <c>&lt;charts:GrumpyXYPlot.XAxis&gt;&lt;charts:Axis Position="Top"/&gt;&lt;/charts:GrumpyXYPlot.XAxis&gt;</c>.
+    /// Left null, the chart-level axis properties below describe it instead, so a form written before
+    /// the Axis Editor looks exactly as it did.
+    /// </summary>
+    public Axis? XAxis { get; set; }
+
+    /// <summary>The chart's COMMON Y axis. See <see cref="XAxis"/>.</summary>
+    public Axis? YAxis { get; set; }
+
     /// <summary>Draw the chart title.</summary>
     public bool ShowTitle { get => GetValue(ShowTitleProperty); set => SetValue(ShowTitleProperty, value); }
 
@@ -872,10 +896,10 @@ public abstract class ChartBase : Control
     /// <summary>How a subclass stores inline data pushed from code (Values or Points).</summary>
     protected abstract void SetInlineData(double[] xs, double[] ys);
 
-    /// <summary>The X column a series reads when it needs one.</summary>
-    private string SeriesXColumn(ChartSeries series)
-        => !string.IsNullOrWhiteSpace(series.XColumn) ? series.XColumn!
-           : !string.IsNullOrWhiteSpace(XColumn) ? XColumn! : "B";
+    /// <summary>The X column a PER-SERIES series reads: its own, else its place in the B/C, D/E, F/G
+    /// pairing. A common-axis series shares the chart's <see cref="XColumn"/> instead.</summary>
+    private string SeriesXColumn(ChartSeries series, int index)
+        => !string.IsNullOrWhiteSpace(series.XColumn) ? series.XColumn! : DefaultXColumn(index);
 
     /// <summary>The Y column a series reads: its own, else the chart's, else the next of B/C, D/E…</summary>
     private string SeriesYColumn(ChartSeries series, int index)
@@ -885,6 +909,39 @@ public abstract class ChartBase : Control
         // The pairing rule: series 1 → C, series 2 → E, series 3 → G …
         return SpreadsheetReader.ColumnAfter("C", index * 2);
     }
+
+    /// <summary>The common Y axis to draw: the Axis object when the XAML has one, else one built from
+    /// the chart-level (legacy) axis properties.</summary>
+    private Axis CommonYAxis() => YAxis ?? new Axis
+    {
+        Position = AxisPosition.Left,
+        ShowAxis = ShowAxes,
+        AxisColor = AxisColor,
+        ShowMajorTicks = ShowMajorTicks,
+        MajorTickLength = MajorTickLength,
+        ShowMinorTicks = ShowMinorTicks,
+        MinorTickLength = MinorTickLength,
+        ShowTickLabels = ShowTickLabels,
+        TickLabelFontSize = TickLabelFontSize,
+        ShowAxisName = ShowAxisTitles,
+        Name = YAxisTitle
+    };
+
+    /// <summary>The common X axis to draw: see <see cref="CommonYAxis"/>.</summary>
+    private Axis CommonXAxis() => XAxis ?? new Axis
+    {
+        Position = AxisPosition.Bottom,
+        ShowAxis = ShowAxes,
+        AxisColor = AxisColor,
+        ShowMajorTicks = ShowMajorTicks,
+        MajorTickLength = MajorTickLength,
+        ShowMinorTicks = ShowMinorTicks,
+        MinorTickLength = MinorTickLength,
+        ShowTickLabels = ShowTickLabels,
+        TickLabelFontSize = TickLabelFontSize,
+        ShowAxisName = ShowAxisTitles,
+        Name = XAxisTitle
+    };
 
     /// <summary>The X column of the nth series in the editor's default pairing (B, D, F, …).</summary>
     internal static string DefaultXColumn(int index) => SpreadsheetReader.ColumnAfter("B", index * 2);
@@ -937,9 +994,9 @@ public abstract class ChartBase : Control
         for (var i = 0; i < Series.Count; i++)
         {
             var series = Series[i];
-            // Common mode shares one X (the chart's XColumn); PerSeries uses the series' own pair.
+            // Common mode shares one X (the chart's XColumn); PerSeries walks the B/C, D/E, F/G pairs.
             var common = !series.PerSeries || series.XFromIndex;
-            var xColumn = common ? (XColumn ?? "B") : SeriesXColumn(series);
+            var xColumn = common ? (XColumn ?? "B") : SeriesXColumn(series, i);
             var yColumn = SeriesYColumn(series, i);
             var data = DataFor(series, xColumn, yColumn, series.XFromIndex);
             var plot = new Plot
@@ -1218,31 +1275,30 @@ public abstract class ChartBase : Control
             return;
         }
 
-        var labelSize = TickLabelFontSize;
-        var yLabels = ShowTickLabels ? common.YRange.Ticks().Select(v => FormatNumber(v, common.YRange.TickStep)).ToList() : new List<string>();
-        var leftLabelWidth = yLabels.Count > 0 ? yLabels.Max(t => MakeText(t, labelSize, AxisColor).Width) : 0;
-        var labelHeight = ShowTickLabels ? MakeText("0", labelSize, AxisColor).Height : 0;
-        var xLabels = ShowTickLabels ? common.XRange.Ticks().Select(v => FormatNumber(v, common.XRange.TickStep)).ToList() : new List<string>();
+        // The common axis: an Axis object from the XAML, or one built from the chart-level (legacy)
+        // axis properties. An axis carries its own side, ticks, label size and name, so the gutters
+        // follow the axes instead of one fixed layout.
+        var commonY = CommonYAxis();
+        var commonX = CommonXAxis();
+        var yOnRight = commonY.Position is AxisPosition.Right;
+        var xOnTop = commonX.Position is AxisPosition.Top;
 
-        var titles = AxisTitles(common);
-        var tickOut = ShowAxes && ShowMajorTicks ? Math.Max(0, MajorTickLength) : 0;
-
-        // Per-series axes need their own gutters, so several Y scales can live side by side.
+        // Per-series axes need their own gutters, so several scales can live side by side: every axis
+        // on a side takes one strip, and they stack outward from the plot edge.
         var perSeries = plots.Where(p => p.PerSeries).ToList();
-        var leftAxisBlocks = perSeries.Count(p => (p.YAxis?.Position ?? AxisPosition.Left) is not AxisPosition.Right);
-        var rightAxisBlocks = perSeries.Count(p => (p.YAxis?.Position ?? AxisPosition.Left) is AxisPosition.Right);
-        var topAxisBlocks = perSeries.Count(p => (p.XAxis?.Position ?? AxisPosition.Bottom) is AxisPosition.Top);
-        var bottomAxisBlocks = perSeries.Count(p => (p.XAxis?.Position ?? AxisPosition.Bottom) is not AxisPosition.Top);
-        var perYWidth = perSeries.Count == 0 ? 0 : perSeries.Max(p => PerAxisLabelWidth(p, true));
-        var perXHeight = perSeries.Count == 0 ? 0 : labelHeight;
+        var leftBlocks = perSeries.Where(p => p.YAxis is not null && p.YAxis.Position is not AxisPosition.Right).ToList();
+        var rightBlocks = perSeries.Where(p => p.YAxis is not null && p.YAxis.Position is AxisPosition.Right).ToList();
+        var topBlocks = perSeries.Where(p => p.XAxis is not null && p.XAxis.Position is AxisPosition.Top).ToList();
+        var bottomBlocks = perSeries.Where(p => p.XAxis is not null && p.XAxis.Position is not AxisPosition.Top).ToList();
 
-        var leftGutter = 4 + tickOut + leftLabelWidth + (titles.Y is null ? 0 : titles.Y.Height + 6)
-                         + (leftAxisBlocks > 0 ? (4 + tickOut + perYWidth) * 1 : 0);
-        var rightGutter = rightAxisBlocks > 0 ? (4 + tickOut + perYWidth + 6) * 1 : 0;
-        var bottomGutter = 4 + tickOut + labelHeight + (titles.X is null ? 0 : titles.X.Height + 6)
-                           + (bottomAxisBlocks > 0 ? 4 + tickOut + perXHeight : 0);
-        var topGutter = topAxisBlocks > 0 ? 4 + tickOut + perXHeight : 0;
-        plot = Chop(plot, leftGutter, topGutter, rightGutter, bottomGutter);
+        var commonYWidth = YBlockWidth(commonY, common.YRange, YAxisTitle, common.Data.YTitle);
+        var commonXHeight = XBlockHeight(commonX, common.XRange, XAxisTitle, common.Data.XTitle);
+
+        plot = Chop(plot,
+            (yOnRight ? 0 : commonYWidth) + leftBlocks.Sum(p => YBlockWidth(p.YAxis!, p.YRange, null, p.Data.YTitle)),
+            (xOnTop ? commonXHeight : 0) + topBlocks.Sum(p => XBlockHeight(p.XAxis!, p.XRange, null, p.Data.XTitle)),
+            (yOnRight ? commonYWidth : 0) + rightBlocks.Sum(p => YBlockWidth(p.YAxis!, p.YRange, null, p.Data.YTitle)),
+            (xOnTop ? 0 : commonXHeight) + bottomBlocks.Sum(p => XBlockHeight(p.XAxis!, p.XRange, null, p.Data.XTitle)));
         if (plot.Width <= 4 || plot.Height <= 4) return;
 
         // Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry its
@@ -1274,38 +1330,41 @@ public abstract class ChartBase : Control
             }
         }
 
-        var commonAxis = new Axis
-        {
-            Position = AxisPosition.Left,
-            ShowAxis = ShowAxes,
-            AxisColor = AxisColor,
-            ShowMajorTicks = ShowMajorTicks,
-            ShowMinorTicks = ShowMinorTicks,
-            ShowTickLabels = ShowTickLabels,
-            ShowAxisName = ShowAxisTitles
-        };
-        DrawYAxis(context, plot, common.YRange, commonAxis, right: false, titles.Y, yLabels);
-        var commonXAxis = commonAxis.Clone();
-        commonXAxis.Position = AxisPosition.Bottom;
-        DrawXAxis(context, plot, common.XRange, commonXAxis, top: false, titles.X, xLabels);
+        // The common axis hugs the plot edge; each per-series axis takes the next strip outward on
+        // its own side, so two scales on the same side never draw over each other.
+        DrawYAxis(context, plot, common.YRange, commonY, yOnRight, 0,
+            TickLabels(commonY, common.YRange), AxisName(commonY, YAxisTitle, common.Data.YTitle));
+        DrawXAxis(context, plot, common.XRange, commonX, xOnTop, 0,
+            TickLabels(commonX, common.XRange), AxisName(commonX, XAxisTitle, common.Data.XTitle));
 
-        // Per-series axes: their own scale, drawn on the side each axis asks for.
-        foreach (var p in perSeries)
+        var leftUsed = yOnRight ? 0 : commonYWidth;
+        var rightUsed = yOnRight ? commonYWidth : 0;
+        var topUsed = xOnTop ? commonXHeight : 0;
+        var bottomUsed = xOnTop ? 0 : commonXHeight;
+
+        foreach (var p in leftBlocks)
         {
-            if (p.YAxis is not null && p.YAxis.ShowAxis)
-            {
-                var right = p.YAxis.Position == AxisPosition.Right;
-                var axis = p.YAxis.Clone();
-                axis.AxisColor = p.YAxis.AxisColor;
-                DrawYAxis(context, plot, p.YRange, axis, right, PerAxisName(p.YAxis, p.Data.YTitle),
-                    p.YAxis.ShowTickLabels ? p.YRange.Ticks().Select(v => FormatNumber(v, p.YRange.TickStep)).ToList() : new List<string>());
-            }
-            if (p.XAxis is not null && p.XAxis.ShowAxis)
-            {
-                var top = p.XAxis.Position == AxisPosition.Top;
-                DrawXAxis(context, plot, p.XRange, p.XAxis, top, PerAxisName(p.XAxis, p.Data.XTitle),
-                    p.XAxis.ShowTickLabels ? p.XRange.Ticks().Select(v => FormatNumber(v, p.XRange.TickStep)).ToList() : new List<string>());
-            }
+            DrawYAxis(context, plot, p.YRange, p.YAxis!, false, leftUsed,
+                TickLabels(p.YAxis!, p.YRange), AxisName(p.YAxis!, null, p.Data.YTitle));
+            leftUsed += YBlockWidth(p.YAxis!, p.YRange, null, p.Data.YTitle);
+        }
+        foreach (var p in rightBlocks)
+        {
+            DrawYAxis(context, plot, p.YRange, p.YAxis!, true, rightUsed,
+                TickLabels(p.YAxis!, p.YRange), AxisName(p.YAxis!, null, p.Data.YTitle));
+            rightUsed += YBlockWidth(p.YAxis!, p.YRange, null, p.Data.YTitle);
+        }
+        foreach (var p in topBlocks)
+        {
+            DrawXAxis(context, plot, p.XRange, p.XAxis!, true, topUsed,
+                TickLabels(p.XAxis!, p.XRange), AxisName(p.XAxis!, null, p.Data.XTitle));
+            topUsed += XBlockHeight(p.XAxis!, p.XRange, null, p.Data.XTitle);
+        }
+        foreach (var p in bottomBlocks)
+        {
+            DrawXAxis(context, plot, p.XRange, p.XAxis!, false, bottomUsed,
+                TickLabels(p.XAxis!, p.XRange), AxisName(p.XAxis!, null, p.Data.XTitle));
+            bottomUsed += XBlockHeight(p.XAxis!, p.XRange, null, p.Data.XTitle);
         }
 
         // The data itself, in order, clipped to the plot area.
@@ -1333,52 +1392,71 @@ public abstract class ChartBase : Control
         DrawBrowseButton(context, frame);
     }
 
-    /// <summary>The label text of one series' Y axis, so the editor's column width is right.</summary>
-    private double PerAxisLabelWidth(Plot plot, bool yAxis)
+    /// <summary>The tick label texts of an axis (empty when it draws no labels).</summary>
+    private static List<string> TickLabels(Axis axis, AxisRange range)
+        => axis.ShowTickLabels
+            ? range.Ticks().Select(v => FormatNumber(v, range.TickStep)).ToList()
+            : new List<string>();
+
+    /// <summary>An axis' name text: its own <see cref="Axis.Name"/>, else the chart-level title, else
+    /// the spreadsheet's column header. Null when this axis draws no name.</summary>
+    private FormattedText? AxisName(Axis axis, string? chartTitle, string fromSheet)
     {
-        var axis = yAxis ? plot.YAxis : plot.XAxis;
-        var range = yAxis ? plot.YRange : plot.XRange;
-        if (axis is null || !axis.ShowTickLabels || !plot.PerSeries) return 0;
-        var widest = 0d;
-        foreach (var tick in range.Ticks())
-        {
-            var text = MakeText(FormatNumber(tick, range.TickStep), TickLabelFontSize, axis.AxisColor);
-            widest = Math.Max(widest, text.Width);
-        }
-        return widest;
+        if (!axis.ShowAxisName) return null;
+        var text = !string.IsNullOrWhiteSpace(axis.Name) ? axis.Name
+            : !string.IsNullOrWhiteSpace(chartTitle) ? chartTitle : fromSheet;
+        return string.IsNullOrWhiteSpace(text)
+            ? null
+            : MakeText(text!, axis.TickLabelFontSize, axis.AxisColor);
     }
 
-    /// <summary>An axis' own name, or the spreadsheet's column header when it has none.</summary>
-    private FormattedText? PerAxisName(Axis axis, string fromSheet)
+    /// <summary>The gutter width one Y axis occupies: its tick overhang, its labels and its name.</summary>
+    private double YBlockWidth(Axis axis, AxisRange range, string? chartTitle, string fromSheet)
     {
-        var text = !string.IsNullOrWhiteSpace(axis.Name) ? axis.Name! : fromSheet;
-        if (!axis.ShowAxisName || string.IsNullOrWhiteSpace(text)) return null;
-        return MakeText(text, TickLabelFontSize, axis.AxisColor);
+        var tickOut = axis.ShowAxis && axis.ShowMajorTicks ? Math.Max(0, axis.MajorTickLength) : 0;
+        var labels = TickLabels(axis, range);
+        var widest = labels.Count > 0
+            ? labels.Max(t => MakeText(t, axis.TickLabelFontSize, axis.AxisColor).Width)
+            : 0;
+        var name = AxisName(axis, chartTitle, fromSheet);
+        return 4 + tickOut + widest + (name is null ? 0 : name.Height + 6);
     }
 
-    /// <summary>Draws a Y axis: its line, ticks, labels and name, on the left or the right edge.</summary>
+    /// <summary>The gutter height one X axis occupies: its tick overhang, its labels and its name.</summary>
+    private double XBlockHeight(Axis axis, AxisRange range, string? chartTitle, string fromSheet)
+    {
+        var tickOut = axis.ShowAxis && axis.ShowMajorTicks ? Math.Max(0, axis.MajorTickLength) : 0;
+        var labels = TickLabels(axis, range);
+        var labelHeight = labels.Count > 0 ? MakeText("0", axis.TickLabelFontSize, axis.AxisColor).Height : 0;
+        var name = AxisName(axis, chartTitle, fromSheet);
+        return 4 + tickOut + labelHeight + (name is null ? 0 : name.Height + 6);
+    }
+
+    /// <summary>Draws a Y axis: its line, ticks, labels and name, on the left or the right edge.
+    /// <paramref name="offset"/> moves it one strip further out, so axes on the same side stack.</summary>
     private void DrawYAxis(DrawingContext context, Rect plot, AxisRange range, Axis axis, bool right,
-                           FormattedText? name, List<string> labels)
+                           double offset, List<string> labels, FormattedText? name)
     {
         var pen = MakePen(axis.AxisColor, 1, ChartLineStyle.Solid);
-        var x = right ? plot.Right : plot.X;
-        var tickOut = axis.ShowMajorTicks ? Math.Max(0, MajorTickLength) : 0;
+        var x = right ? plot.Right + offset : plot.X - offset;
+        var tickOut = axis.ShowMajorTicks ? Math.Max(0, axis.MajorTickLength) : 0;
         var dir = right ? 1 : -1;
 
-        if (axis.ShowMinorTicks && MinorTickLength > 0)
+        if (axis.ShowAxis) context.DrawLine(pen, new Point(x, plot.Y), new Point(x, plot.Bottom));
+        if (axis.ShowAxis && axis.ShowMinorTicks && axis.MinorTickLength > 0)
         {
             foreach (var tick in range.MinorTicks())
             {
                 var y = range.ToPixel(tick, plot.Bottom, -plot.Height);
-                context.DrawLine(pen, new Point(x, y), new Point(x + dir * MinorTickLength, y));
+                context.DrawLine(pen, new Point(x, y), new Point(x + dir * axis.MinorTickLength, y));
             }
         }
-        if (axis.ShowMajorTicks && MajorTickLength > 0)
+        if (axis.ShowAxis && axis.ShowMajorTicks && axis.MajorTickLength > 0)
         {
             foreach (var tick in range.Ticks())
             {
                 var y = range.ToPixel(tick, plot.Bottom, -plot.Height);
-                context.DrawLine(pen, new Point(x, y), new Point(x + dir * MajorTickLength, y));
+                context.DrawLine(pen, new Point(x, y), new Point(x + dir * axis.MajorTickLength, y));
             }
         }
 
@@ -1389,7 +1467,7 @@ public abstract class ChartBase : Control
         {
             var text = drawn < labels.Count ? labels[drawn] : FormatNumber(tick, range.TickStep);
             drawn++;
-            var t = MakeText(text, TickLabelFontSize, axis.AxisColor);
+            var t = MakeText(text, axis.TickLabelFontSize, axis.AxisColor);
             var y = range.ToPixel(tick, plot.Bottom, -plot.Height) - t.Height / 2;
             var tx = right ? x + tickOut + 2 : x - tickOut - 2 - t.Width;
             if (axis.ShowTickLabels) context.DrawText(t, new Point(tx, y));
@@ -1409,39 +1487,41 @@ public abstract class ChartBase : Control
         }
     }
 
-    /// <summary>Draws an X axis: its line, ticks, labels and name, at the top or the bottom edge.</summary>
+    /// <summary>Draws an X axis: its line, ticks, labels and name, at the top or the bottom edge.
+    /// <paramref name="offset"/> moves it one strip further out, so axes on the same side stack.</summary>
     private void DrawXAxis(DrawingContext context, Rect plot, AxisRange range, Axis axis, bool top,
-                           FormattedText? name, List<string> labels)
+                           double offset, List<string> labels, FormattedText? name)
     {
         var pen = MakePen(axis.AxisColor, 1, ChartLineStyle.Solid);
-        var y = top ? plot.Y : plot.Bottom;
-        var tickOut = axis.ShowMajorTicks ? Math.Max(0, MajorTickLength) : 0;
+        var y = top ? plot.Y - offset : plot.Bottom + offset;
+        var tickOut = axis.ShowMajorTicks ? Math.Max(0, axis.MajorTickLength) : 0;
         var dir = top ? -1 : 1;
 
-        if (axis.ShowMinorTicks && MinorTickLength > 0)
+        if (axis.ShowAxis) context.DrawLine(pen, new Point(plot.X, y), new Point(plot.Right, y));
+        if (axis.ShowAxis && axis.ShowMinorTicks && axis.MinorTickLength > 0)
         {
             foreach (var tick in range.MinorTicks())
             {
                 var x = range.ToPixel(tick, plot.X, plot.Width);
-                context.DrawLine(pen, new Point(x, y), new Point(x, y + dir * MinorTickLength));
+                context.DrawLine(pen, new Point(x, y), new Point(x, y + dir * axis.MinorTickLength));
             }
         }
-        if (axis.ShowMajorTicks && MajorTickLength > 0)
+        if (axis.ShowAxis && axis.ShowMajorTicks && axis.MajorTickLength > 0)
         {
             foreach (var tick in range.Ticks())
             {
                 var x = range.ToPixel(tick, plot.X, plot.Width);
-                context.DrawLine(pen, new Point(x, y), new Point(x, y + dir * MajorTickLength));
+                context.DrawLine(pen, new Point(x, y), new Point(x, y + dir * axis.MajorTickLength));
             }
         }
 
-        var labelHeight = MakeText("0", TickLabelFontSize, axis.AxisColor).Height;
+        var labelHeight = MakeText("0", axis.TickLabelFontSize, axis.AxisColor).Height;
         var drawn = 0;
         foreach (var tick in range.Ticks())
         {
             var text = drawn < labels.Count ? labels[drawn] : FormatNumber(tick, range.TickStep);
             drawn++;
-            var t = MakeText(text, TickLabelFontSize, axis.AxisColor);
+            var t = MakeText(text, axis.TickLabelFontSize, axis.AxisColor);
             var x = range.ToPixel(tick, plot.X, plot.Width) - t.Width / 2;
             var ty = top ? y - tickOut - 2 - t.Height : y + tickOut + 2;
             if (axis.ShowTickLabels) context.DrawText(t, new Point(x, ty));
@@ -1571,16 +1651,6 @@ public abstract class ChartBase : Control
             new Pen(new SolidColorBrush(Color.Parse("#C0C0C0")), 1), new RoundedRect(rect, new CornerRadius(3)));
         var dots = MakeText("…", 12, Color.Parse("#505050"));
         context.DrawText(dots, new Point(rect.X + (boxSize - dots.Width) / 2, rect.Y + (boxSize - dots.Height) / 2));
-    }
-
-    /// <summary>Resolves the common axis' names: the explicit properties win, then the sheet's headers.</summary>
-    private (FormattedText? X, FormattedText? Y) AxisTitles(Plot common)
-    {
-        var x = !string.IsNullOrWhiteSpace(XAxisTitle) ? XAxisTitle! : common.Data.XTitle;
-        var y = !string.IsNullOrWhiteSpace(YAxisTitle) ? YAxisTitle! : common.Data.YTitle;
-        return (
-            string.IsNullOrWhiteSpace(x) ? null : MakeText(x, TickLabelFontSize, AxisColor),
-            string.IsNullOrWhiteSpace(y) ? null : MakeText(y, TickLabelFontSize, AxisColor));
     }
 
     private static FormattedText MakeText(string text, double size, Color color)

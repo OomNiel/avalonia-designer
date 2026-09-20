@@ -249,8 +249,17 @@ Namespace Global.AvaloniaCharts
         ''' <summary>Draw the short ticks between the labelled values.</summary>
         Public Property ShowMinorTicks As Boolean = True
 
+        ''' <summary>Length of the ticks at the labelled values, in pixels.</summary>
+        Public Property MajorTickLength As Double = 6
+
+        ''' <summary>Length of the short ticks between them, in pixels.</summary>
+        Public Property MinorTickLength As Double = 3
+
         ''' <summary>Draw the numbers along this axis.</summary>
         Public Property ShowTickLabels As Boolean = True
+
+        ''' <summary>Font size of this axis' tick labels and its name.</summary>
+        Public Property TickLabelFontSize As Double = 11
 
         ''' <summary>Draw this axis' name (from Name, or the spreadsheet's column header).</summary>
         Public Property ShowAxisName As Boolean = True
@@ -265,8 +274,11 @@ Namespace Global.AvaloniaCharts
                 .ShowAxis = ShowAxis,
                 .AxisColor = AxisColor,
                 .ShowMajorTicks = ShowMajorTicks,
+                .MajorTickLength = MajorTickLength,
                 .ShowMinorTicks = ShowMinorTicks,
+                .MinorTickLength = MinorTickLength,
                 .ShowTickLabels = ShowTickLabels,
+                .TickLabelFontSize = TickLabelFontSize,
                 .ShowAxisName = ShowAxisName,
                 .Name = Name
             }
@@ -862,6 +874,18 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
+        ''' <summary>
+        ''' The chart's COMMON X axis - the one every series uses unless it is set to PerSeries. An
+        ''' Axis object written as a property element:
+        ''' &lt;charts:GrumpyXYPlot.XAxis&gt;&lt;charts:Axis Position="Top"/&gt;&lt;/charts:GrumpyXYPlot.XAxis&gt;.
+        ''' Left Nothing, the chart-level axis properties describe it instead, so a form written before
+        ''' the Axis Editor looks exactly as it did.
+        ''' </summary>
+        Public Property XAxis As Axis = Nothing
+
+        ''' <summary>The chart's COMMON Y axis. See XAxis.</summary>
+        Public Property YAxis As Axis = Nothing
+
         Public Property ShowTitle As Boolean
             Get
                 Return GetValue(ShowTitleProperty)
@@ -1096,11 +1120,11 @@ Namespace Global.AvaloniaCharts
             Return SpreadsheetReader.ColumnAfter("B", index * 2)
         End Function
 
-        ''' <summary>The X column a series reads when it needs one.</summary>
-        Private Function SeriesXColumn(oneSeries As ChartSeries) As String
+        ''' <summary>The X column a PER-SERIES series reads: its own, else its place in the B/C, D/E,
+        ''' F/G pairing. A common-axis series shares the chart's XColumn instead.</summary>
+        Private Function SeriesXColumn(oneSeries As ChartSeries, index As Integer) As String
             If Not String.IsNullOrWhiteSpace(oneSeries.XColumn) Then Return oneSeries.XColumn
-            If Not String.IsNullOrWhiteSpace(XColumn) Then Return XColumn
-            Return "B"
+            Return DefaultXColumn(index)
         End Function
 
         ''' <summary>The Y column a series reads: its own, else the chart's, else the next of C, E, G…</summary>
@@ -1109,6 +1133,43 @@ Namespace Global.AvaloniaCharts
             ' '_series', not 'Series': VB is case-insensitive and would match the parameter above.
             If _series.Count = 1 AndAlso Not String.IsNullOrWhiteSpace(YColumn) Then Return YColumn
             Return SpreadsheetReader.ColumnAfter("C", index * 2)
+        End Function
+
+        ''' <summary>The common Y axis to draw: the Axis object when the XAML has one, else one built
+        ''' from the chart-level (legacy) axis properties.</summary>
+        Private Function CommonYAxis() As Axis
+            If YAxis IsNot Nothing Then Return YAxis
+            Return New Axis With {
+                .Position = AxisPosition.Left,
+                .ShowAxis = ShowAxes,
+                .AxisColor = AxisColor,
+                .ShowMajorTicks = ShowMajorTicks,
+                .MajorTickLength = MajorTickLength,
+                .ShowMinorTicks = ShowMinorTicks,
+                .MinorTickLength = MinorTickLength,
+                .ShowTickLabels = ShowTickLabels,
+                .TickLabelFontSize = TickLabelFontSize,
+                .ShowAxisName = ShowAxisTitles,
+                .Name = YAxisTitle
+            }
+        End Function
+
+        ''' <summary>The common X axis to draw: see CommonYAxis.</summary>
+        Private Function CommonXAxis() As Axis
+            If XAxis IsNot Nothing Then Return XAxis
+            Return New Axis With {
+                .Position = AxisPosition.Bottom,
+                .ShowAxis = ShowAxes,
+                .AxisColor = AxisColor,
+                .ShowMajorTicks = ShowMajorTicks,
+                .MajorTickLength = MajorTickLength,
+                .ShowMinorTicks = ShowMinorTicks,
+                .MinorTickLength = MinorTickLength,
+                .ShowTickLabels = ShowTickLabels,
+                .TickLabelFontSize = TickLabelFontSize,
+                .ShowAxisName = ShowAxisTitles,
+                .Name = XAxisTitle
+            }
         End Function
 
         Private ReadOnly _cache As New Dictionary(Of String, ChartData)()
@@ -1160,7 +1221,7 @@ Namespace Global.AvaloniaCharts
                 ' those against the Series / XColumn / YColumn members (it is case-insensitive).
                 Dim oneSeries = Series(i)
                 Dim useCommonX = Not oneSeries.PerSeries OrElse oneSeries.XFromIndex
-                Dim xCol = If(useCommonX, If(XColumn, "B"), SeriesXColumn(oneSeries))
+                Dim xCol = If(useCommonX, If(XColumn, "B"), SeriesXColumn(oneSeries, i))
                 Dim yCol = SeriesYColumn(oneSeries, i)
                 Dim seriesData = DataFor(xCol, yCol, oneSeries.XFromIndex)
                 Dim one As New Plot With {
@@ -1413,48 +1474,45 @@ Namespace Global.AvaloniaCharts
                 Return
             End If
 
-            Dim yLabels As New List(Of String)()
-            If ShowTickLabels Then
-                For Each tick In commonPlot.YRange.Ticks()
-                    yLabels.Add(FormatNumber(tick, commonPlot.YRange.TickStep))
-                Next
-            End If
-            Dim leftLabelWidth As Double = 0
-            For Each label In yLabels
-                leftLabelWidth = Math.Max(leftLabelWidth, MakeText(label, TickLabelFontSize, AxisColor).Width)
-            Next
-            Dim labelHeight As Double = 0
-            If ShowTickLabels Then labelHeight = MakeText("0", TickLabelFontSize, AxisColor).Height
-            Dim xLabels As New List(Of String)()
-            If ShowTickLabels Then
-                For Each tick In commonPlot.XRange.Ticks()
-                    xLabels.Add(FormatNumber(tick, commonPlot.XRange.TickStep))
-                Next
-            End If
+            ' The common axis: an Axis object from the XAML, or one built from the chart-level (legacy)
+            ' axis properties. An axis carries its own side, ticks, label size and name, so the
+            ' gutters follow the axes instead of one fixed layout.
+            Dim commonY = CommonYAxis()
+            Dim commonX = CommonXAxis()
+            Dim yOnRight = commonY.Position = AxisPosition.Right
+            Dim xOnTop = commonX.Position = AxisPosition.Top
 
-            Dim titles = AxisTitles(commonPlot)
-            Dim tickOut As Double = 0
-            If ShowAxes AndAlso ShowMajorTicks Then tickOut = Math.Max(0, MajorTickLength)
-
-            ' Per-series axes need their own gutters, so several Y scales can live side by side.
+            ' Per-series axes need their own gutters, so several scales can live side by side: every
+            ' axis on a side takes one strip, and they stack outward from the plot edge.
             Dim perSeries = plots.Where(Function(p) p.PerSeries).ToList()
-            Dim leftAxisBlocks = perSeries.Where(Function(p) (If(p.YAxis Is Nothing, AxisPosition.Left, p.YAxis.Position)) <> AxisPosition.Right).Count()
-            Dim rightAxisBlocks = perSeries.Where(Function(p) p.YAxis IsNot Nothing AndAlso p.YAxis.Position = AxisPosition.Right).Count()
-            Dim topAxisBlocks = perSeries.Where(Function(p) p.XAxis IsNot Nothing AndAlso p.XAxis.Position = AxisPosition.Top).Count()
-            Dim bottomAxisBlocks = perSeries.Where(Function(p) (If(p.XAxis Is Nothing, AxisPosition.Bottom, p.XAxis.Position)) <> AxisPosition.Top).Count()
-            Dim perYWidth As Double = 0
-            For Each one In perSeries
-                perYWidth = Math.Max(perYWidth, PerAxisLabelWidth(one))
+            Dim leftBlocks = perSeries.Where(Function(p) p.YAxis IsNot Nothing AndAlso p.YAxis.Position <> AxisPosition.Right).ToList()
+            Dim rightBlocks = perSeries.Where(Function(p) p.YAxis IsNot Nothing AndAlso p.YAxis.Position = AxisPosition.Right).ToList()
+            Dim topBlocks = perSeries.Where(Function(p) p.XAxis IsNot Nothing AndAlso p.XAxis.Position = AxisPosition.Top).ToList()
+            Dim bottomBlocks = perSeries.Where(Function(p) p.XAxis IsNot Nothing AndAlso p.XAxis.Position <> AxisPosition.Top).ToList()
+
+            Dim commonYWidth = YBlockWidth(commonY, commonPlot.YRange, YAxisTitle, commonPlot.Data.YTitle)
+            Dim commonXHeight = XBlockHeight(commonX, commonPlot.XRange, XAxisTitle, commonPlot.Data.XTitle)
+            Dim leftBlocksWidth As Double = 0
+            Dim rightBlocksWidth As Double = 0
+            Dim topBlocksHeight As Double = 0
+            Dim bottomBlocksHeight As Double = 0
+            For Each one In leftBlocks
+                leftBlocksWidth += YBlockWidth(one.YAxis, one.YRange, Nothing, one.Data.YTitle)
+            Next
+            For Each one In rightBlocks
+                rightBlocksWidth += YBlockWidth(one.YAxis, one.YRange, Nothing, one.Data.YTitle)
+            Next
+            For Each one In topBlocks
+                topBlocksHeight += XBlockHeight(one.XAxis, one.XRange, Nothing, one.Data.XTitle)
+            Next
+            For Each one In bottomBlocks
+                bottomBlocksHeight += XBlockHeight(one.XAxis, one.XRange, Nothing, one.Data.XTitle)
             Next
 
-            Dim leftGutter = 4 + tickOut + leftLabelWidth + (If(titles.Item2 Is Nothing, 0, titles.Item2.Height + 6))
-            If leftAxisBlocks > 0 Then leftGutter += 4 + tickOut + perYWidth
-            Dim rightGutter As Double = 0
-            If rightAxisBlocks > 0 Then rightGutter = 4 + tickOut + perYWidth + 6
-            Dim bottomGutter = 4 + tickOut + labelHeight + (If(titles.Item1 Is Nothing, 0, titles.Item1.Height + 6))
-            If bottomAxisBlocks > 0 Then bottomGutter += 4 + tickOut + labelHeight
-            Dim topGutter As Double = 0
-            If topAxisBlocks > 0 Then topGutter = 4 + tickOut + labelHeight
+            Dim leftGutter As Double = If(yOnRight, 0, commonYWidth) + leftBlocksWidth
+            Dim rightGutter As Double = If(yOnRight, commonYWidth, 0) + rightBlocksWidth
+            Dim topGutter As Double = If(xOnTop, commonXHeight, 0) + topBlocksHeight
+            Dim bottomGutter As Double = If(xOnTop, 0, commonXHeight) + bottomBlocksHeight
             plotRect = Chop(plotRect, leftGutter, topGutter, rightGutter, bottomGutter)
             If plotRect.Width <= 4 OrElse plotRect.Height <= 4 Then Return
 
@@ -1483,42 +1541,37 @@ Namespace Global.AvaloniaCharts
                 Next
             End If
 
-            Dim commonAxis As New Axis With {
-                .Position = AxisPosition.Left,
-                .ShowAxis = ShowAxes,
-                .AxisColor = AxisColor,
-                .ShowMajorTicks = ShowMajorTicks,
-                .ShowMinorTicks = ShowMinorTicks,
-                .ShowTickLabels = ShowTickLabels,
-                .ShowAxisName = ShowAxisTitles
-            }
-            DrawYAxis(context, plotRect, commonPlot.YRange, commonAxis, False, titles.Item2, yLabels)
-            Dim commonXAxis = commonAxis.Clone()
-            commonXAxis.Position = AxisPosition.Bottom
-            DrawXAxis(context, plotRect, commonPlot.XRange, commonXAxis, False, titles.Item1, xLabels)
+            ' The common axis hugs the plot edge; each per-series axis takes the next strip outward on
+            ' its own side, so two scales on the same side never draw over each other.
+            DrawYAxis(context, plotRect, commonPlot.YRange, commonY, yOnRight, 0,
+                      TickLabels(commonY, commonPlot.YRange), AxisName(commonY, YAxisTitle, commonPlot.Data.YTitle))
+            DrawXAxis(context, plotRect, commonPlot.XRange, commonX, xOnTop, 0,
+                      TickLabels(commonX, commonPlot.XRange), AxisName(commonX, XAxisTitle, commonPlot.Data.XTitle))
 
-            ' Per-series axes: their own scale, drawn on the side each axis asks for.
-            For Each one In perSeries
-                If one.YAxis IsNot Nothing AndAlso one.YAxis.ShowAxis Then
-                    Dim isRight = one.YAxis.Position = AxisPosition.Right
-                    Dim labels As New List(Of String)()
-                    If one.YAxis.ShowTickLabels Then
-                        For Each tick In one.YRange.Ticks()
-                            labels.Add(FormatNumber(tick, one.YRange.TickStep))
-                        Next
-                    End If
-                    DrawYAxis(context, plotRect, one.YRange, one.YAxis, isRight, PerAxisName(one.YAxis, one.Data.YTitle), labels)
-                End If
-                If one.XAxis IsNot Nothing AndAlso one.XAxis.ShowAxis Then
-                    Dim isTop = one.XAxis.Position = AxisPosition.Top
-                    Dim labels As New List(Of String)()
-                    If one.XAxis.ShowTickLabels Then
-                        For Each tick In one.XRange.Ticks()
-                            labels.Add(FormatNumber(tick, one.XRange.TickStep))
-                        Next
-                    End If
-                    DrawXAxis(context, plotRect, one.XRange, one.XAxis, isTop, PerAxisName(one.XAxis, one.Data.XTitle), labels)
-                End If
+            Dim leftUsed As Double = If(yOnRight, 0, commonYWidth)
+            Dim rightUsed As Double = If(yOnRight, commonYWidth, 0)
+            Dim topUsed As Double = If(xOnTop, commonXHeight, 0)
+            Dim bottomUsed As Double = If(xOnTop, 0, commonXHeight)
+
+            For Each one In leftBlocks
+                DrawYAxis(context, plotRect, one.YRange, one.YAxis, False, leftUsed,
+                          TickLabels(one.YAxis, one.YRange), AxisName(one.YAxis, Nothing, one.Data.YTitle))
+                leftUsed += YBlockWidth(one.YAxis, one.YRange, Nothing, one.Data.YTitle)
+            Next
+            For Each one In rightBlocks
+                DrawYAxis(context, plotRect, one.YRange, one.YAxis, True, rightUsed,
+                          TickLabels(one.YAxis, one.YRange), AxisName(one.YAxis, Nothing, one.Data.YTitle))
+                rightUsed += YBlockWidth(one.YAxis, one.YRange, Nothing, one.Data.YTitle)
+            Next
+            For Each one In topBlocks
+                DrawXAxis(context, plotRect, one.XRange, one.XAxis, True, topUsed,
+                          TickLabels(one.XAxis, one.XRange), AxisName(one.XAxis, Nothing, one.Data.XTitle))
+                topUsed += XBlockHeight(one.XAxis, one.XRange, Nothing, one.Data.XTitle)
+            Next
+            For Each one In bottomBlocks
+                DrawXAxis(context, plotRect, one.XRange, one.XAxis, False, bottomUsed,
+                          TickLabels(one.XAxis, one.XRange), AxisName(one.XAxis, Nothing, one.Data.XTitle))
+                bottomUsed += XBlockHeight(one.XAxis, one.XRange, Nothing, one.Data.XTitle)
             Next
 
             ' The data itself, in order, clipped to the plot area.
@@ -1547,37 +1600,73 @@ Namespace Global.AvaloniaCharts
             DrawBrowseButton(context, frame)
         End Sub
 
-        ''' <summary>The widest tick label of one series' Y axis, so the gutter is wide enough.</summary>
-        Private Function PerAxisLabelWidth(one As Plot) As Double
-            If one.YAxis Is Nothing OrElse Not one.YAxis.ShowTickLabels OrElse Not one.PerSeries Then Return 0
-            Dim widest As Double = 0
-            For Each tick In one.YRange.Ticks()
-                Dim text = MakeText(FormatNumber(tick, one.YRange.TickStep), TickLabelFontSize, one.YAxis.AxisColor)
-                widest = Math.Max(widest, text.Width)
+        ''' <summary>The tick label texts of an axis (empty when it draws no labels).</summary>
+        Private Shared Function TickLabels(axis As Axis, range As AxisRange) As List(Of String)
+            Dim labels As New List(Of String)()
+            If Not axis.ShowTickLabels Then Return labels
+            For Each tick In range.Ticks()
+                labels.Add(FormatNumber(tick, range.TickStep))
             Next
-            Return widest
+            Return labels
         End Function
 
-        ''' <summary>An axis' own name, or the spreadsheet's column header when it has none.</summary>
-        Private Function PerAxisName(axis As Axis, fromSheet As String) As FormattedText
-            Dim text = If(Not String.IsNullOrWhiteSpace(axis.Name), axis.Name, fromSheet)
-            If Not axis.ShowAxisName OrElse String.IsNullOrWhiteSpace(text) Then Return Nothing
-            Return MakeText(text, TickLabelFontSize, axis.AxisColor)
+        ''' <summary>An axis' name text: its own Name, else the chart-level title, else the spreadsheet's
+        ''' column header. Nothing when this axis draws no name.</summary>
+        Private Function AxisName(axis As Axis, chartTitle As String, fromSheet As String) As FormattedText
+            If Not axis.ShowAxisName Then Return Nothing
+            Dim text = If(Not String.IsNullOrWhiteSpace(axis.Name), axis.Name,
+                          If(Not String.IsNullOrWhiteSpace(chartTitle), chartTitle, fromSheet))
+            If String.IsNullOrWhiteSpace(text) Then Return Nothing
+            Return MakeText(text, axis.TickLabelFontSize, axis.AxisColor)
         End Function
 
-        ''' <summary>Draws a Y axis: its ticks, labels and name, on the left or the right edge.</summary>
-        Private Sub DrawYAxis(context As DrawingContext, plotRect As Rect, range As AxisRange, axis As Axis,
-                             isRight As Boolean, name As FormattedText, labels As List(Of String))
-            Dim pen = MakePen(axis.AxisColor, 1, ChartLineStyle.Solid)
-            Dim x = If(isRight, plotRect.Right, plotRect.X)
+        ''' <summary>The gutter width one Y axis occupies: its tick overhang, its labels and its name.</summary>
+        Private Function YBlockWidth(axis As Axis, range As AxisRange, chartTitle As String, fromSheet As String) As Double
+            If axis Is Nothing Then Return 0
             Dim tickOut As Double = 0
-            If axis.ShowMajorTicks Then tickOut = Math.Max(0, MajorTickLength)
+            If axis.ShowAxis AndAlso axis.ShowMajorTicks Then tickOut = Math.Max(0, axis.MajorTickLength)
+            Dim widest As Double = 0
+            For Each label In TickLabels(axis, range)
+                widest = Math.Max(widest, MakeText(label, axis.TickLabelFontSize, axis.AxisColor).Width)
+            Next
+            Dim name = AxisName(axis, chartTitle, fromSheet)
+            Return 4 + tickOut + widest + (If(name Is Nothing, 0, name.Height + 6))
+        End Function
+
+        ''' <summary>The gutter height one X axis occupies: its tick overhang, its labels and its name.</summary>
+        Private Function XBlockHeight(axis As Axis, range As AxisRange, chartTitle As String, fromSheet As String) As Double
+            If axis Is Nothing Then Return 0
+            Dim tickOut As Double = 0
+            If axis.ShowAxis AndAlso axis.ShowMajorTicks Then tickOut = Math.Max(0, axis.MajorTickLength)
+            Dim labelHeight As Double = 0
+            If TickLabels(axis, range).Count > 0 Then labelHeight = MakeText("0", axis.TickLabelFontSize, axis.AxisColor).Height
+            Dim name = AxisName(axis, chartTitle, fromSheet)
+            Return 4 + tickOut + labelHeight + (If(name Is Nothing, 0, name.Height + 6))
+        End Function
+
+        ''' <summary>Draws a Y axis: its line, ticks, labels and name, on the left or the right edge.
+        ''' The offset moves it one strip further out, so axes on the same side stack.</summary>
+        Private Sub DrawYAxis(context As DrawingContext, plotRect As Rect, range As AxisRange, axis As Axis,
+                             isRight As Boolean, offset As Double, labels As List(Of String), name As FormattedText)
+            Dim pen = MakePen(axis.AxisColor, 1, ChartLineStyle.Solid)
+            Dim x = If(isRight, plotRect.Right + offset, plotRect.X - offset)
+            Dim tickOut As Double = 0
+            If axis.ShowMajorTicks Then tickOut = Math.Max(0, axis.MajorTickLength)
             Dim direction = If(isRight, 1, -1)
 
-            If axis.ShowMinorTicks AndAlso MinorTickLength > 0 Then
+            If axis.ShowAxis Then
+                context.DrawLine(pen, New Point(x, plotRect.Y), New Point(x, plotRect.Bottom))
+            End If
+            If axis.ShowAxis AndAlso axis.ShowMinorTicks AndAlso axis.MinorTickLength > 0 Then
                 For Each tick In range.MinorTicks()
                     Dim y = range.ToPixel(tick, plotRect.Bottom, -plotRect.Height)
-                    context.DrawLine(pen, New Point(x, y), New Point(x + direction * MinorTickLength, y))
+                    context.DrawLine(pen, New Point(x, y), New Point(x + direction * axis.MinorTickLength, y))
+                Next
+            End If
+            If axis.ShowAxis AndAlso axis.ShowMajorTicks AndAlso axis.MajorTickLength > 0 Then
+                For Each tick In range.Ticks()
+                    Dim y = range.ToPixel(tick, plotRect.Bottom, -plotRect.Height)
+                    context.DrawLine(pen, New Point(x, y), New Point(x + direction * axis.MajorTickLength, y))
                 Next
             End If
 
@@ -1586,19 +1675,12 @@ Namespace Global.AvaloniaCharts
             For Each tick In range.Ticks()
                 Dim text = If(index < labels.Count, labels(index), FormatNumber(tick, range.TickStep))
                 index += 1
-                Dim label = MakeText(text, TickLabelFontSize, axis.AxisColor)
+                Dim label = MakeText(text, axis.TickLabelFontSize, axis.AxisColor)
                 Dim y = range.ToPixel(tick, plotRect.Bottom, -plotRect.Height) - label.Height / 2
                 Dim textX = If(isRight, x + tickOut + 2, x - tickOut - 2 - label.Width)
                 If axis.ShowTickLabels Then context.DrawText(label, New Point(textX, y))
                 widest = Math.Max(widest, label.Width)
             Next
-
-            If axis.ShowMajorTicks AndAlso MajorTickLength > 0 Then
-                For Each tick In range.Ticks()
-                    Dim y = range.ToPixel(tick, plotRect.Bottom, -plotRect.Height)
-                    context.DrawLine(pen, New Point(x, y), New Point(x + direction * MajorTickLength, y))
-                Next
-            End If
 
             If name IsNot Nothing Then
                 Dim nameY = plotRect.Y + plotRect.Height / 2 + name.Width / 2
@@ -1611,34 +1693,38 @@ Namespace Global.AvaloniaCharts
             End If
         End Sub
 
-        ''' <summary>Draws an X axis: its ticks, labels and name, at the top or the bottom edge.</summary>
+        ''' <summary>Draws an X axis: its line, ticks, labels and name, at the top or the bottom edge.
+        ''' The offset moves it one strip further out, so axes on the same side stack.</summary>
         Private Sub DrawXAxis(context As DrawingContext, plotRect As Rect, range As AxisRange, axis As Axis,
-                             isTop As Boolean, name As FormattedText, labels As List(Of String))
+                             isTop As Boolean, offset As Double, labels As List(Of String), name As FormattedText)
             Dim pen = MakePen(axis.AxisColor, 1, ChartLineStyle.Solid)
-            Dim y = If(isTop, plotRect.Y, plotRect.Bottom)
+            Dim y = If(isTop, plotRect.Y - offset, plotRect.Bottom + offset)
             Dim tickOut As Double = 0
-            If axis.ShowMajorTicks Then tickOut = Math.Max(0, MajorTickLength)
+            If axis.ShowMajorTicks Then tickOut = Math.Max(0, axis.MajorTickLength)
             Dim direction = If(isTop, -1, 1)
 
-            If axis.ShowMinorTicks AndAlso MinorTickLength > 0 Then
+            If axis.ShowAxis Then
+                context.DrawLine(pen, New Point(plotRect.X, y), New Point(plotRect.Right, y))
+            End If
+            If axis.ShowAxis AndAlso axis.ShowMinorTicks AndAlso axis.MinorTickLength > 0 Then
                 For Each tick In range.MinorTicks()
                     Dim x = range.ToPixel(tick, plotRect.X, plotRect.Width)
-                    context.DrawLine(pen, New Point(x, y), New Point(x, y + direction * MinorTickLength))
+                    context.DrawLine(pen, New Point(x, y), New Point(x, y + direction * axis.MinorTickLength))
                 Next
             End If
-            If axis.ShowMajorTicks AndAlso MajorTickLength > 0 Then
+            If axis.ShowAxis AndAlso axis.ShowMajorTicks AndAlso axis.MajorTickLength > 0 Then
                 For Each tick In range.Ticks()
                     Dim x = range.ToPixel(tick, plotRect.X, plotRect.Width)
-                    context.DrawLine(pen, New Point(x, y), New Point(x, y + direction * MajorTickLength))
+                    context.DrawLine(pen, New Point(x, y), New Point(x, y + direction * axis.MajorTickLength))
                 Next
             End If
 
-            Dim labelHeight = MakeText("0", TickLabelFontSize, axis.AxisColor).Height
+            Dim labelHeight = MakeText("0", axis.TickLabelFontSize, axis.AxisColor).Height
             Dim index As Integer = 0
             For Each tick In range.Ticks()
                 Dim text = If(index < labels.Count, labels(index), FormatNumber(tick, range.TickStep))
                 index += 1
-                Dim label = MakeText(text, TickLabelFontSize, axis.AxisColor)
+                Dim label = MakeText(text, axis.TickLabelFontSize, axis.AxisColor)
                 Dim x = range.ToPixel(tick, plotRect.X, plotRect.Width) - label.Width / 2
                 Dim textY = If(isTop, y - tickOut - 2 - label.Height, y + tickOut + 2)
                 If axis.ShowTickLabels Then context.DrawText(label, New Point(x, textY))
@@ -1742,13 +1828,6 @@ Namespace Global.AvaloniaCharts
         End Sub
 
         ''' <summary>Resolves the common axis' names: the explicit properties win, then the sheet's headers.</summary>
-        Private Function AxisTitles(commonPlot As Plot) As (X As FormattedText, Y As FormattedText)
-            Dim xName = If(Not String.IsNullOrWhiteSpace(XAxisTitle), XAxisTitle, commonPlot.Data.XTitle)
-            Dim yName = If(Not String.IsNullOrWhiteSpace(YAxisTitle), YAxisTitle, commonPlot.Data.YTitle)
-            Return (If(String.IsNullOrWhiteSpace(xName), Nothing, MakeText(xName, TickLabelFontSize, AxisColor)),
-                    If(String.IsNullOrWhiteSpace(yName), Nothing, MakeText(yName, TickLabelFontSize, AxisColor)))
-        End Function
-
         Private Shared Function MakeText(text As String, size As Double, color As Color) As FormattedText
             Return New FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
                                      New Typeface(FontFamily.Default), Math.Max(6, size), New SolidColorBrush(color))

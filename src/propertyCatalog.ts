@@ -723,17 +723,9 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS },
         { key: 'GridThickness', label: 'Grid Thickness', kind: 'number' },
         { key: 'GridStyle', label: 'Grid Style', kind: 'dropdown', options: CHART_LINE_STYLES },
-        { key: 'ShowAxes', label: 'Axes', kind: 'dropdown', options: BOOL },
-        { key: 'AxisColor', label: 'Axis Colour', kind: 'color', options: COLORS },
-        { key: 'ShowMajorTicks', label: 'Major Ticks', kind: 'dropdown', options: BOOL },
-        { key: 'MajorTickLength', label: 'Major Tick Size', kind: 'number' },
-        { key: 'ShowMinorTicks', label: 'Minor Ticks', kind: 'dropdown', options: BOOL },
-        { key: 'MinorTickLength', label: 'Minor Tick Size', kind: 'number' },
-        { key: 'ShowTickLabels', label: 'Tick Labels', kind: 'dropdown', options: BOOL },
-        { key: 'TickLabelFontSize', label: 'Label Size', kind: 'number' },
-        { key: 'ShowAxisTitles', label: 'Axis Names', kind: 'dropdown', options: BOOL },
-        { key: 'XAxisTitle', label: 'X Axis Name', kind: 'text' },
-        { key: 'YAxisTitle', label: 'Y Axis Name', kind: 'text' },
+        // The axis furniture (axis colour, the two tick sets and their sizes, the tick labels, the
+        // axis names and their positions) belongs to the 'Axis' editor: each axis is an Axis object
+        // now, with the chart-level properties kept only for forms written before that editor.
         { key: 'MinX', label: 'X Min', kind: 'number' },
         { key: 'MaxX', label: 'X Max', kind: 'number' },
         { key: 'MinY', label: 'Y Min', kind: 'number' },
@@ -765,17 +757,6 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS },
         { key: 'GridThickness', label: 'Grid Thickness', kind: 'number' },
         { key: 'GridStyle', label: 'Grid Style', kind: 'dropdown', options: CHART_LINE_STYLES },
-        { key: 'ShowAxes', label: 'Axes', kind: 'dropdown', options: BOOL },
-        { key: 'AxisColor', label: 'Axis Colour', kind: 'color', options: COLORS },
-        { key: 'ShowMajorTicks', label: 'Major Ticks', kind: 'dropdown', options: BOOL },
-        { key: 'MajorTickLength', label: 'Major Tick Size', kind: 'number' },
-        { key: 'ShowMinorTicks', label: 'Minor Ticks', kind: 'dropdown', options: BOOL },
-        { key: 'MinorTickLength', label: 'Minor Tick Size', kind: 'number' },
-        { key: 'ShowTickLabels', label: 'Tick Labels', kind: 'dropdown', options: BOOL },
-        { key: 'TickLabelFontSize', label: 'Label Size', kind: 'number' },
-        { key: 'ShowAxisTitles', label: 'Axis Names', kind: 'dropdown', options: BOOL },
-        { key: 'XAxisTitle', label: 'X Axis Name', kind: 'text' },
-        { key: 'YAxisTitle', label: 'Y Axis Name', kind: 'text' },
         { key: 'MinX', label: 'X Min', kind: 'number' },
         { key: 'MaxX', label: 'X Max', kind: 'number' },
         { key: 'MinY', label: 'Y Min', kind: 'number' },
@@ -1447,7 +1428,7 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
         // Everything the designer edits through a popup editor (`kind: 'button'`) — whether it is
         // pushed as a "top action" (DataGrid Rows/Columns, SplitPanel Split Layout/Splitters) or
         // lives in the control's own list (Items, Grid.Defs, MenuItems, StatusItems).
-        keys: ['Rows', 'Columns', 'Series', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
+        keys: ['Rows', 'Columns', 'Series', 'Axis', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
     },
     {
         id: 'layout', label: 'Layout & size',
@@ -1800,6 +1781,15 @@ export function propertyDefsFor(
             desc: 'Adds, removes and reorders the lines this chart draws. Each series has its own '
                 + 'spreadsheet column(s), colour, line style, markers and join setting, and either shares '
                 + 'the chart\'s axis and columns (Common) or is scaled on its own (Per series).'
+        });
+        topActions.push({
+            key: 'Axis',
+            label: 'Axis',
+            kind: 'button',
+            value: 'Edit axes…',
+            desc: 'Sets up the chart\'s two common axes (where each one sits, its colour, ticks, tick '
+                + 'labels, name and font size) and gives any Per-series line its own X and/or Y axis. '
+                + 'A per-series axis can be deleted again to leave that side to the common axis.'
         });
     }
     // 'Items' (batch editor) for combo/list/items controls — opens a popup where you type

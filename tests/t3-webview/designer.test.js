@@ -47,6 +47,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'dgModal', 'dgTitle', 'dgHint', 'dgBody', 'dgSave', 'dgCancel',
     'seriesModal', 'seriesTitle', 'seriesList', 'seriesFields', 'seriesHead',
     'seriesAdd', 'seriesDel', 'seriesUp', 'seriesDown', 'seriesSave', 'seriesCancel',
+    'axisModal', 'axisTitle', 'axisList', 'axisFields', 'axisHead', 'axisAdd', 'axisDel', 'axisSave', 'axisCancel',
     'codeModal', 'codeHint', 'codeBody', 'codeRecheck', 'codeFixAll', 'codeClose',
     'cellHighlight',
     'btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'dotGrid',
@@ -2491,6 +2492,106 @@ module.exports = async (t) => {
         t.equal(sItems().length, 1, 'series', 'the only series cannot be deleted');
         $('seriesCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal($('seriesModal').hidden, true, 'series', 'Cancel closes the editor');
+    }
+
+    // --- 'Axis' editor (GrumpyCharts): the chart's two COMMON axes plus one X/Y pair per series that
+    // is set to Per series. An axis has a side, a visibility switch, a colour, two tick sets, tick
+    // labels and a name; a per-series axis can be added (tick "Own axis") and deleted again, and a
+    // series on the common axes is listed read-only as information.
+    {
+        msg(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'Chart1', type: 'GrumpyXYPlot', x: 60, y: 60, w: 300, h: 180, parent: 'Body' }
+        ]));
+        msg({
+            type: 'properties', name: 'Chart1', properties: [
+                { key: 'Axis', label: 'Axis', kind: 'button', value: 'Edit axes…' }
+            ],
+            chartAxes: {
+                commonX: null, commonY: null,
+                legacy: {
+                    showAxis: 'True', axisColor: '#123456', showMajorTicks: 'True', majorTickLength: '6',
+                    showMinorTicks: 'True', minorTickLength: '3', showTickLabels: 'True',
+                    tickLabelFontSize: '11', showAxisName: 'True', xName: 'Time', yName: 'Inside'
+                },
+                series: [
+                    { title: 'One', type: 'XY', axisMode: 'PerSeries', x: null, y: null },
+                    { title: 'Two', type: 'XY', axisMode: 'Common', x: null, y: null }
+                ]
+            },
+            info: null
+        });
+        const abtn = $('propsBody').querySelector('.prop-button');
+        t.ok(!!abtn, 'axes', 'Axis renders as a property button');
+        $('axisModal').hidden = true;
+        abtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('axisModal').hidden, false, 'axes', 'Axis opens the editor');
+        const aItems = () => $('axisList').querySelectorAll('.series-item');
+        const aFields = () => [...$('axisFields').querySelectorAll('.series-field')];
+        const aField = (caption) => {
+            const row = aFields().find((f) => f.textContent.trim().startsWith(caption));
+            return row ? row.querySelector('input, select') : null;
+        };
+        // common Y, common X, series 1 X, series 1 Y, and an information row for series 2
+        t.equal(aItems().length, 5, 'axes', 'both common axes and the per-series axes are listed');
+        t.ok(/uses the common axes/.test(aItems()[4].textContent), 'axes',
+            'a series on the common axes is listed as information');
+        t.equal(aItems()[4].disabled, true, 'axes', 'and that row cannot be selected');
+        // The first slot (the common Y axis) is pre-filled from the chart-level scalars.
+        t.equal(aField('Colour').value.toLowerCase(), '#123456', 'axes',
+            'the common axis is pre-filled from the chart-level properties');
+        t.equal(aField('Name').value, 'Inside', 'axes', 'including its name');
+        // Move it to the other side and make it invisible.
+        const posSel = aField('Position');
+        t.equal(posSel.value, 'Left', 'axes', 'a Y axis starts on the left');
+        posSel.value = 'Right';
+        posSel.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        const visSel = aField('Visible');
+        t.equal(visSel.value, 'True', 'axes', 'and is visible (On)');
+        visSel.value = 'False';
+        visSel.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        // The X axis offers only Top/Bottom.
+        aItems()[1].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const xPositions = [...aField('Position').options].map((o) => o.value);
+        t.equal(xPositions.join(','), 'Top,Bottom', 'axes', 'an X axis offers Top/Bottom only');
+        // Series 1's Y axis: not its own yet → the fields are disabled. Adding it enables them.
+        aItems()[3].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(aField('Position').disabled, true, 'axes',
+            'a per-series axis that does not exist yet shows its fields disabled');
+        t.equal($('axisAdd').disabled, false, 'axes', 'Add axis is offered for it');
+        t.equal($('axisDel').disabled, true, 'axes', 'Delete is not (there is nothing to delete)');
+        $('axisAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(aField('Position').disabled, false, 'axes', 'Add axis enables its fields');
+        t.equal($('axisDel').disabled, false, 'axes', 'and offers Delete');
+        aField('Colour').value = '#00AA00';
+        aField('Colour').dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        posted.length = 0;
+        $('axisSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const ax = posted[posted.length - 1];
+        t.equal(ax.type, 'saveChartAxes', 'axes', 'Save posts saveChartAxes');
+        t.equal(ax.name, 'Chart1', 'axes', 'carries the chart name');
+        t.equal(ax.commonY.position, 'Right', 'axes', 'the common Y axis side is carried');
+        t.equal(ax.commonY.showAxis, 'False', 'axes', 'and its visibility');
+        t.equal(ax.commonX.position, 'Bottom', 'axes', 'the untouched common X axis keeps its default');
+        t.equal(ax.series.length, 1, 'axes', 'the Common-axis series is not sent');
+        t.equal(ax.series[0].y.axisColor.toLowerCase(), '#00aa00', 'axes', 'the added per-series Y axis is sent');
+        t.equal(ax.series[0].x, null, 'axes', 'its X axis stays unset');
+        t.equal($('axisModal').hidden, true, 'axes', 'Save closes the editor');
+
+        // Deleting a per-series axis sends null for it (the property element goes away).
+        $('propsBody').querySelector('.prop-button')
+            .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        aItems()[3].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(aField('Position').disabled, true, 'axes', 'a new edit starts from the sent data again');
+        $('axisAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        posted.length = 0;
+        $('axisDel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        $('axisSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const del = posted[posted.length - 1];
+        t.equal(del.series[0].y, null, 'axes', 'Delete sends null, which removes the axis element');
+        $('axisCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('axisModal').hidden, true, 'axes', 'Cancel closes the editor');
     }
 
     // --- foldable toolbar categories: click a heading to fold its buttons away, click again to

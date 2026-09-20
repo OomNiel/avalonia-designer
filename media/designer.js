@@ -209,6 +209,15 @@
         seriesDown: $('seriesDown'),
         seriesSave: $('seriesSave'),
         seriesCancel: $('seriesCancel'),
+        axisModal: $('axisModal'),
+        axisTitle: $('axisTitle'),
+        axisList: $('axisList'),
+        axisFields: $('axisFields'),
+        axisHead: $('axisHead'),
+        axisAdd: $('axisAdd'),
+        axisDel: $('axisDel'),
+        axisSave: $('axisSave'),
+        axisCancel: $('axisCancel'),
         cellHighlight: $('cellHighlight'),
         rulerH: $('rulerH'),
         rulerV: $('rulerV'),
@@ -2807,6 +2816,8 @@
                     if (p.key === 'Columns') openDataGridEditor('cols', msg.name, msg.dgCols || {});
                     // 'Series' opens the multi-series editor for either chart.
                     if (p.key === 'Series') openSeriesEditor(msg.name, msg.chartSeries || []);
+                    // 'Axis' opens the common/per-series axis editor.
+                    if (p.key === 'Axis') openAxisEditor(msg.name, msg.chartAxes || {});
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -3716,6 +3727,7 @@
             if (!els.splitterModal.hidden) closeSplitterEditor();
             if (!els.dgModal.hidden) closeDataGridEditor();
             if (!els.seriesModal.hidden) closeSeriesEditor();
+            if (!els.axisModal.hidden) closeAxisEditor();
             if (!els.codeModal.hidden) closeCodeFixes();
         }
     });
@@ -4595,6 +4607,23 @@
     const SERIES_PALETTE = ['#2D7DD2', '#EE6C4D', '#3D9970', '#B07CC6', '#D9A519', '#4C9FDC'];
     let seriesEdit = null; // { name, rows: [...], sel } while the modal is open
 
+    /** The column letters n steps along ("B"+2 = "D", "Z"+2 = "AB") — the same spreadsheet
+     *  pairing the renderer uses for the series that name no columns of their own. */
+    function columnAfter(column, step) {
+        let index = 0;
+        for (const ch of String(column || 'A').trim().toUpperCase()) {
+            const code = ch.charCodeAt(0);
+            if (code < 65 || code > 90) continue;
+            index = index * 26 + (code - 64);
+        }
+        index = Math.max(0, index - 1 + step);
+        let text = '';
+        for (let n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+            text = String.fromCharCode(65 + ((n - 1) % 26)) + text;
+        }
+        return text;
+    }
+
     /** One labelled field row: a caption plus the control(s) it edits. */
     function seriesField(caption, inputs, hint) {
         const row = document.createElement('label');
@@ -4699,13 +4728,19 @@
         els.seriesFields.appendChild(seriesField('Title', seriesText(row.title, (v) => { row.title = v; repaint(); },
             'The name you see in this editor. Charts do not draw a legend yet.')));
         if (row.type === 'Line') {
-            els.seriesFields.appendChild(seriesField('Y Column', seriesText(row.yColumn, (v) => { row.yColumn = v; repaint(); },
-                'The spreadsheet column with this line’s values. Empty = the chart’s Y Column. A line plot’s X is the sample number (0, 1, 2…).')));
+            const yIn = seriesText(row.yColumn, (v) => { row.yColumn = v; repaint(); },
+                'The spreadsheet column with this line’s values. Empty = the column shown in grey. A line plot’s X is the sample number (0, 1, 2…).');
+            yIn.placeholder = row.defY || '';
+            els.seriesFields.appendChild(seriesField('Y Column', yIn));
         } else {
-            els.seriesFields.appendChild(seriesField('X Column', seriesText(row.xColumn, (v) => { row.xColumn = v; repaint(); },
-                'The spreadsheet column with this series’ X values. Empty = the chart’s X Column.')));
-            els.seriesFields.appendChild(seriesField('Y Column', seriesText(row.yColumn, (v) => { row.yColumn = v; repaint(); },
-                'The spreadsheet column with this series’ Y values. Empty = the chart’s Y Column.')));
+            const xIn = seriesText(row.xColumn, (v) => { row.xColumn = v; repaint(); },
+                'The spreadsheet column with this series’ X values. Empty = the column shown in grey.');
+            xIn.placeholder = row.defX || '';
+            els.seriesFields.appendChild(seriesField('X Column', xIn));
+            const yIn = seriesText(row.yColumn, (v) => { row.yColumn = v; repaint(); },
+                'The spreadsheet column with this series’ Y values. Empty = the column shown in grey.');
+            yIn.placeholder = row.defY || '';
+            els.seriesFields.appendChild(seriesField('Y Column', yIn));
         }
         els.seriesFields.appendChild(seriesField('Axis', seriesSelect(['Common', 'PerSeries'], row.axisMode,
             (v) => { row.axisMode = v; renderSeriesEditor(); }),
@@ -4731,9 +4766,12 @@
         }
     }
     /** A brand-new series: the same defaults the control uses, in the next palette colour. */
-    function seriesSeedRow(type, index) {
+    function seriesSeedRow(type, index, template) {
         return {
             src: '-1', type, title: '', xColumn: '', yColumn: '', axisMode: 'Common',
+            // Empty = the chart's own X column and this entry's place in the B/C, D/E, F/G pairing.
+            defX: (template && template.defX) || 'B',
+            defY: columnAfter('C', index * 2),
             lineColor: SERIES_PALETTE[index % SERIES_PALETTE.length], lineThickness: '2',
             lineStyle: 'Solid', markerStyle: 'Dot', markerSize: '8', connected: 'True'
         };
@@ -4745,6 +4783,8 @@
             title: String(s.title || ''),
             xColumn: String(s.xColumn || ''),
             yColumn: String(s.yColumn || ''),
+            defX: String(s.defX || 'B'),
+            defY: String(s.defY || 'C'),
             axisMode: s.axisMode === 'PerSeries' ? 'PerSeries' : 'Common',
             lineColor: String(s.lineColor || '#2D7DD2'),
             lineThickness: String(s.lineThickness || '2'),
@@ -4762,7 +4802,7 @@
     els.seriesAdd.addEventListener('click', () => {
         if (!seriesEdit) return;
         const type = seriesEdit.rows[0] ? seriesEdit.rows[0].type : 'XY';
-        seriesEdit.rows.push(seriesSeedRow(type, seriesEdit.rows.length));
+        seriesEdit.rows.push(seriesSeedRow(type, seriesEdit.rows.length, seriesEdit.rows[0]));
         seriesEdit.sel = seriesEdit.rows.length - 1;
         renderSeriesEditor();
     });
@@ -4805,6 +4845,204 @@
     els.seriesCancel.addEventListener('click', closeSeriesEditor);
     els.seriesModal.addEventListener('click', (e) => {
         if (e.target === els.seriesModal) closeSeriesEditor(); // click outside the box
+    });
+
+    /* Axis editor (GrumpyCharts) — an axis is a real OBJECT now: a side, a visibility switch, a
+       colour, two tick sets with their own sizes, tick labels with a font size, and a name. The
+       chart's own two COMMON axes are written as property elements on the chart
+       (<charts:GrumpyXYPlot.YAxis><charts:Axis …/></…>); a series set to Per series may own X and/or
+       Y axes. Deleting a per-series axis is simply not having that element, so every per-series slot
+       carries an `own` flag and the writer is sent null for a slot that is not the series' own. */
+    const AXIS_ON_OFF = [['True', 'On'], ['False', 'Off']];
+    let axisEdit = null; // { name, slots: [...], sel } while the modal is open
+
+    /** A dropdown built from [value, label] pairs (the stored value is always the plain one). */
+    function axisPairs(pairs, value, onChange, disabled) {
+        const sel = document.createElement('select');
+        for (const [val, label] of pairs) {
+            const o = document.createElement('option');
+            o.value = val;
+            o.textContent = label;
+            sel.appendChild(o);
+        }
+        sel.value = pairs.some(([v]) => v === value) ? value : pairs[0][0];
+        sel.disabled = !!disabled;
+        sel.addEventListener('change', () => onChange(sel.value));
+        return sel;
+    }
+
+    /** The slots the editor lists: the chart's two common axes, then one X (X,Y series only) and one
+     *  Y axis for every series set to Per series. A series on the common axes is shown read-only, as
+     *  information — its axes are the common ones. */
+    function axisSlots(info) {
+        const legacy = info.legacy || {};
+        const common = (kind) => {
+            const values = (kind === 'y' ? info.commonY : info.commonX) || {
+                position: kind === 'y' ? 'Left' : 'Bottom',
+                showAxis: legacy.showAxis == null ? 'True' : legacy.showAxis,
+                axisColor: legacy.axisColor == null ? '#666666' : legacy.axisColor,
+                showMajorTicks: legacy.showMajorTicks == null ? 'True' : legacy.showMajorTicks,
+                majorTickLength: legacy.majorTickLength == null ? '6' : legacy.majorTickLength,
+                showMinorTicks: legacy.showMinorTicks == null ? 'True' : legacy.showMinorTicks,
+                minorTickLength: legacy.minorTickLength == null ? '3' : legacy.minorTickLength,
+                showTickLabels: legacy.showTickLabels == null ? 'True' : legacy.showTickLabels,
+                tickLabelFontSize: legacy.tickLabelFontSize == null ? '11' : legacy.tickLabelFontSize,
+                showAxisName: legacy.showAxisName == null ? 'True' : legacy.showAxisName,
+                name: kind === 'y' ? (legacy.yName || '') : (legacy.xName || '')
+            };
+            return {
+                kind, scope: 'common', own: true, values,
+                label: kind === 'y' ? 'Common Y axis' : 'Common X axis',
+                hint: 'Every series that shares the chart’s scale uses this one — it is what a series on the common axis is measured against.'
+            };
+        };
+        const slots = [common('y'), common('x')];
+        (info.series || []).forEach((s, i) => {
+            const title = s.title || 'Series ' + (i + 1);
+            if (s.axisMode !== 'PerSeries') {
+                slots.push({
+                    label: title + ' — uses the common axes',
+                    disabled: true,
+                    hint: 'Set this series to "Per series" in the Series editor and it can have its own axes.'
+                });
+                return;
+            }
+            const add = (kind, label, values) => slots.push({
+                kind, scope: 'series', seriesIndex: i, label, own: values != null, values,
+                hint: 'A per-series axis is scaled to its own series. Delete it and that side of the plot goes back to the common axis.'
+            });
+            // A line series plots against the sample number, so it has no X column to put on an axis.
+            if (s.type !== 'Line') add('x', title + ' — X axis', s.x);
+            add('y', title + ' — Y axis', s.y);
+        });
+        return slots;
+    }
+
+    function renderAxisEditor() {
+        if (!axisEdit) return;
+        const slots = axisEdit.slots;
+        els.axisList.innerHTML = '';
+        els.axisFields.innerHTML = '';
+        slots.forEach((slot, i) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'series-item' + (i === axisEdit.sel ? ' active' : '');
+            item.disabled = !!slot.disabled;
+            const label = document.createElement('span');
+            label.className = 'series-item-label';
+            label.textContent = slot.label;
+            item.appendChild(label);
+            if (!slot.disabled) item.addEventListener('click', () => { axisEdit.sel = i; renderAxisEditor(); });
+            els.axisList.appendChild(item);
+        });
+        const slot = slots[axisEdit.sel];
+        els.axisHead.textContent = slot ? slot.label : 'Axis';
+        if (!slot || slot.disabled) {
+            const note = document.createElement('p');
+            note.className = 'modal-hint';
+            note.textContent = slot ? slot.hint : 'This chart has no axes yet — add a series first.';
+            els.axisFields.appendChild(note);
+            els.axisDel.disabled = true;
+            els.axisAdd.disabled = true;
+            return;
+        }
+        const perSeries = slot.scope === 'series';
+        const locked = perSeries && !slot.own;
+        els.axisDel.disabled = !perSeries || !slot.own;
+        els.axisAdd.disabled = !perSeries || slot.own;
+        // A per-series axis that is not the series' own yet shows what it WOULD be: a copy of the
+        // common axis of that kind, greyed out until the box above is ticked.
+        const commonSlot = slots.find((s) => s.scope === 'common' && s.kind === slot.kind);
+        const shown = slot.values || (commonSlot ? commonSlot.values : {});
+        const ensure = () => { if (!slot.values) slot.values = Object.assign({}, shown); return slot.values; };
+        if (perSeries) {
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = slot.own;
+            cb.addEventListener('change', () => {
+                if (cb.checked) { ensure(); } else { slot.own = false; slot.values = null; }
+                renderAxisEditor();
+            });
+            els.axisFields.appendChild(seriesField('Own axis', cb, slot.hint));
+        }
+        const positions = slot.kind === 'y' ? [['Left', 'Left'], ['Right', 'Right']] : [['Top', 'Top'], ['Bottom', 'Bottom']];
+        els.axisFields.appendChild(seriesField('Position',
+            axisPairs(positions, String(shown.position || ''), (v) => { ensure().position = v; }, locked),
+            'Which side of the plot this axis is drawn on.'));
+        const bool = (caption, key, hint) => els.axisFields.appendChild(seriesField(caption,
+            axisPairs(AXIS_ON_OFF, String(shown[key] == null ? 'True' : shown[key]),
+                (v) => { ensure()[key] = v; }, locked), hint));
+        bool('Visible', 'showAxis', 'Off hides this axis’ line and its ticks.');
+        const colour = seriesColor(String(shown.axisColor || '#666666'), (v) => { ensure().axisColor = v; });
+        colour[0].disabled = locked;
+        colour[1].disabled = locked;
+        els.axisFields.appendChild(seriesField('Colour', colour,
+            'The axis line, its ticks, its tick labels and its name. A colour name (White, Teal…) or #RRGGBB.'));
+        bool('Major ticks', 'showMajorTicks', 'The ticks at the labelled values.');
+        const majorLen = seriesNumber(String(shown.majorTickLength || '6'), (v) => { ensure().majorTickLength = v; });
+        majorLen.disabled = locked;
+        els.axisFields.appendChild(seriesField('Major tick size', majorLen));
+        bool('Minor ticks', 'showMinorTicks', 'The short ticks between the labelled ones.');
+        const minorLen = seriesNumber(String(shown.minorTickLength || '3'), (v) => { ensure().minorTickLength = v; });
+        minorLen.disabled = locked;
+        els.axisFields.appendChild(seriesField('Minor tick size', minorLen));
+        bool('Tick labels', 'showTickLabels', 'The numbers along the axis.');
+        const fontSize = seriesNumber(String(shown.tickLabelFontSize || '11'), (v) => { ensure().tickLabelFontSize = v; });
+        fontSize.disabled = locked;
+        els.axisFields.appendChild(seriesField('Label size', fontSize));
+        bool('Axis name', 'showAxisName', 'Show a name at the end of this axis.');
+        const nameIn = seriesText(String(shown.name == null ? '' : shown.name), (v) => { ensure().name = v; },
+            'The axis name. Empty = the spreadsheet’s column header.');
+        nameIn.disabled = locked;
+        els.axisFields.appendChild(seriesField('Name', nameIn));
+    }
+
+    function openAxisEditor(name, info) {
+        axisEdit = { name: name || null, slots: axisSlots(info || {}), sel: 0 };
+        els.axisTitle.textContent = 'Axes' + (axisEdit.name ? ' — ' + axisEdit.name : '');
+        renderAxisEditor();
+        els.axisModal.hidden = false;
+    }
+    function closeAxisEditor() { els.axisModal.hidden = true; axisEdit = null; }
+    els.axisAdd.addEventListener('click', () => {
+        if (!axisEdit) return;
+        const slot = axisEdit.slots[axisEdit.sel];
+        if (!slot || slot.scope !== 'series' || slot.own) return;
+        const commonSlot = axisEdit.slots.find((s) => s.scope === 'common' && s.kind === slot.kind);
+        slot.own = true;
+        slot.values = Object.assign({}, commonSlot ? commonSlot.values : {});
+        renderAxisEditor();
+    });
+    els.axisDel.addEventListener('click', () => {
+        if (!axisEdit) return;
+        const slot = axisEdit.slots[axisEdit.sel];
+        if (!slot || slot.scope !== 'series' || !slot.own) return;
+        slot.own = false;
+        slot.values = null;
+        renderAxisEditor();
+    });
+    els.axisSave.addEventListener('click', () => {
+        if (axisEdit) {
+            const common = (kind) => {
+                const slot = axisEdit.slots.find((s) => s.scope === 'common' && s.kind === kind);
+                return slot ? Object.assign({}, slot.values) : null;
+            };
+            const series = [];
+            for (const slot of axisEdit.slots) {
+                if (slot.scope !== 'series') continue;
+                series[slot.seriesIndex] = series[slot.seriesIndex] || { x: null, y: null };
+                series[slot.seriesIndex][slot.kind] = slot.own ? Object.assign({}, slot.values) : null;
+            }
+            post({
+                type: 'saveChartAxes', name: axisEdit.name,
+                commonX: common('x'), commonY: common('y'), series: series
+            });
+        }
+        closeAxisEditor();
+    });
+    els.axisCancel.addEventListener('click', closeAxisEditor);
+    els.axisModal.addEventListener('click', (e) => {
+        if (e.target === els.axisModal) closeAxisEditor(); // click outside the box
     });
 
     /* Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay

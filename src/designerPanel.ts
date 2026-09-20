@@ -2,6 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './xamlModel';
+import {
+    isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes
+} from './chartSeries';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
 import { propertyDefsFor, opacityToXaml, defaultFor, THEME_COLOR_KEYS, multiCommonProps, isStatusClock, statusClockSample } from './propertyCatalog';
@@ -1404,100 +1407,6 @@ function splitBarsOf(controls: { name: string | null; x: number; y: number; widt
         }
     }
     return bars;
-}
-
-// ---------------------------------------------------------------- GrumpyCharts series
-// A chart draws one line per <charts:LineSeries> / <charts:XYSeries> child. With NO children it draws
-// exactly one implicit line from the chart's own styling properties, so the 'Series' editor seeds its
-// list from those values the first time it opens and the writer then materialises real series.
-/** Series fields (key = message/UI name, attr = XAML attribute, def = the value the renderer uses
- *  when the attribute is absent). Writing a value equal to the default REMOVES the attribute, so a
- *  series the user never restyled stays a short, readable element. */
-const CHART_SERIES_FIELDS: { key: string; attr: string; def: string }[] = [
-    { key: 'title', attr: 'Title', def: '' },
-    { key: 'xColumn', attr: 'XColumn', def: '' },
-    { key: 'yColumn', attr: 'YColumn', def: '' },
-    { key: 'axisMode', attr: 'AxisMode', def: 'Common' },
-    { key: 'lineColor', attr: 'LineColor', def: '#2D7DD2' },
-    { key: 'lineThickness', attr: 'LineThickness', def: '2' },
-    { key: 'lineStyle', attr: 'LineStyle', def: 'Solid' },
-    { key: 'markerStyle', attr: 'MarkerStyle', def: 'Dot' },
-    { key: 'markerSize', attr: 'MarkerSize', def: '8' },
-    { key: 'connected', attr: 'Connected', def: 'True' }
-];
-/** The chart-level styling properties the 'Series' editor now owns. They drew the implicit series
- *  (and still do for a chart the editor has never touched), so saving explicit series clears them:
- *  one source of truth, and a series' own value wins anyway. */
-const CHART_LEGACY_SERIES_ATTRS = [
-    'LineColor', 'LineThickness', 'LineStyle', 'MarkerStyle', 'MarkerSize', 'Connected'
-];
-/** True for the two bundled chart tags (the 'Series' editor's controls). */
-function isChartTag(tag: string): boolean {
-    return tag === 'GrumpyLinePlot' || tag === 'GrumpyXYPlot';
-}
-/** A chart's series elements, in document order. */
-function chartSeriesChildren(el: Element): Element[] {
-    const out: Element[] = [];
-    for (let i = 0; i < el.childNodes.length; i++) {
-        const kid = el.childNodes[i] as Element;
-        if (kid.nodeType !== 1) continue;
-        const tag = localName(kid.tagName);
-        if (tag === 'LineSeries' || tag === 'XYSeries') out.push(kid);
-    }
-    return out;
-}
-/** One series' current field values (attribute, else the renderer's default). */
-function chartSeriesFields(node: Element): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const f of CHART_SERIES_FIELDS) out[f.key] = dgAttr(node, f.attr, f.def);
-    return out;
-}
-/** Every series of a chart, ready for the 'Series' editor: the explicit children in order, or — for a
- *  chart that still draws the implicit single line — one entry seeded from its own styling rows.
- *  `src` is the child index the entry came from, or -1 when the entry has no element yet. */
-function chartSeriesOf(el: Element): Record<string, string>[] {
-    const kids = chartSeriesChildren(el);
-    const type = localName(el.tagName) === 'GrumpyLinePlot' ? 'Line' : 'XY';
-    if (kids.length === 0) {
-        const seeded: Record<string, string> = { src: '-1', type };
-        for (const f of CHART_SERIES_FIELDS) {
-            // The implicit line is styled by the CHART's properties, so pre-fill from them. The
-            // columns stay empty on purpose: empty means "the chart's own columns" at render time.
-            const legacy = CHART_LEGACY_SERIES_ATTRS.includes(f.attr);
-            seeded[f.key] = legacy ? dgAttr(el, f.attr, f.def) : f.def;
-        }
-        return [seeded];
-    }
-    return kids.map((kid, i) => ({
-        src: String(i),
-        type: localName(kid.tagName) === 'LineSeries' ? 'Line' : 'XY',
-        ...chartSeriesFields(kid)
-    }));
-}
-/** Rewrites a chart's series from the editor's list: an entry keeps its element (so a series' nested
- *  X/Y axis children survive) and is re-appended in the new order, new entries are created and
- *  dropped ones removed. A series can never change TYPE — the chart tag decides it. */
-function writeChartSeries(model: XamlModel, el: Element, items: unknown[]): void {
-    const childTag = localName(el.tagName) === 'GrumpyLinePlot' ? 'LineSeries' : 'XYSeries';
-    const before = chartSeriesChildren(el);
-    const keep: Element[] = [];
-    for (const raw of items) {
-        const it = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-        const src = parseInt(String(it.src ?? '-1'), 10);
-        let node = Number.isInteger(src) && src >= 0 && src < before.length ? before[src] : undefined;
-        if (node && localName(node.tagName) !== childTag) node = undefined;
-        if (!node) node = model.createElement(`<charts:${childTag}/>`);
-        for (const f of CHART_SERIES_FIELDS) {
-            const val = String(it[f.key] ?? '').trim();
-            model.setProperty(node, f.attr, val === f.def ? '' : val);
-        }
-        keep.push(node);
-    }
-    // appendChild MOVES an existing child to the end, so appending in list order reorders them.
-    for (const node of keep) el.appendChild(node);
-    for (const node of before) if (!keep.includes(node)) el.removeChild(node);
-    // The chart's own styling rows are gone from the panel, so clear them once series exist.
-    if (keep.length > 0) for (const attr of CHART_LEGACY_SERIES_ATTRS) model.setProperty(el, attr, '');
 }
 
 // ---------------------------------------------------------------- DataGrid decoration
@@ -3423,6 +3332,21 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'saveChartAxes': {
+                    // 'Axis' editor on either chart: write the chart's own common X/Y axes and each
+                    // series' optional own axes (a null entry deletes that per-series axis).
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || !isChartTag(localName(el.tagName))) return;
+                    const before = doc.model.serialize(true);
+                    writeChartAxes(doc.model, el,
+                        (msg.commonX ?? null) as Record<string, unknown> | null,
+                        (msg.commonY ?? null) as Record<string, unknown> | null,
+                        Array.isArray(msg.series) ? msg.series : []);
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
+                    return;
+                }
                 case 'saveGridDefs': {
                     // 'Rows & Columns' editor for a Grid: replace the RowDefinitions /
                     // ColumnDefinitions with the sizes typed in the popup.
@@ -5014,8 +4938,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             msg.dgRows = dgRowsOf(el);
             msg.dgCols = dgColsOf(el);
         }
-        // The same for a chart's series (the 'Series' editor pre-fills from these).
-        if (isChartTag(localName(el.tagName))) msg.chartSeries = chartSeriesOf(el);
+        // The same for a chart's series and axes (the 'Series' and 'Axis' editors pre-fill from these).
+        if (isChartTag(localName(el.tagName))) {
+            msg.chartSeries = chartSeriesOf(el);
+            msg.chartAxes = chartAxesOf(el);
+        }
         await panel.webview.postMessage(msg);
     }
 
@@ -7497,7 +7424,9 @@ ${publishButtons}      <span class="sep"></span>
         <h3 id="seriesTitle">Series</h3>
         <p class="modal-hint">Each series is one line on the chart. <b>Common</b> shares the chart's
           X/Y columns and its scale; <b>Per series</b> uses this series' own columns and its own
-          axis. A line plot reads X from the sample number (0, 1, 2…), so only its Y column is used.</p>
+          axis. A line plot reads X from the sample number (0, 1, 2…), so only its Y column is used.
+          An empty column box means “use the default”: the X/Y pairs run B/C, D/E, F/G …, and a
+          series on the common axis shares the chart's X column.</p>
         <div class="grid-defs">
           <div class="grid-defs-col">
             <h4>Lines</h4>
@@ -7519,6 +7448,32 @@ ${publishButtons}      <span class="sep"></span>
         <div class="modal-buttons">
           <button id="seriesCancel" type="button" class="modal-btn">Cancel</button>
           <button id="seriesSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="axisModal" class="modal" hidden>
+      <div class="modal-box modal-wide">
+        <h3 id="axisTitle">Axes</h3>
+        <p class="modal-hint">The <b>common</b> X and Y axes are what every series uses by default.
+          A series set to <b>Per series</b> can have its own axes instead — add one per side it needs,
+          and delete it again to leave that axis to the common one.</p>
+        <div class="grid-defs">
+          <div class="grid-defs-col">
+            <h4>Axes</h4>
+            <div id="axisList" class="grid-def-list"></div>
+            <div class="series-buttons">
+              <button id="axisAdd" type="button" class="modal-btn">Add axis</button>
+              <button id="axisDel" type="button" class="modal-btn warning">Delete</button>
+            </div>
+          </div>
+          <div class="grid-defs-col">
+            <h4 id="axisHead">Axis</h4>
+            <div id="axisFields" class="series-fields"></div>
+          </div>
+        </div>
+        <div class="modal-buttons">
+          <button id="axisCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="axisSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

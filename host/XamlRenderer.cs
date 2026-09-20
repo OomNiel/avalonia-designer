@@ -764,6 +764,19 @@ public class XamlRenderer
         if (ctrl is not AvaloniaCharts.ChartBase chart) return;
         foreach (var child in elem.Elements())
         {
+            // A property element of the CHART itself: its common X or Y axis
+            // (<charts:GrumpyXYPlot.YAxis><charts:Axis Position="Right"/></…>).
+            if (child.Name.LocalName.EndsWith(".XAxis", StringComparison.Ordinal))
+            {
+                chart.XAxis = ReadAxis(child);
+                continue;
+            }
+            if (child.Name.LocalName.EndsWith(".YAxis", StringComparison.Ordinal))
+            {
+                chart.YAxis = ReadAxis(child);
+                continue;
+            }
+
             AvaloniaCharts.ChartSeries? series = child.Name.LocalName switch
             {
                 "LineSeries" => new AvaloniaCharts.LineSeries(),
@@ -779,19 +792,26 @@ public class XamlRenderer
             }
             foreach (var prop in child.Elements())
             {
-                var axisElem = prop.Elements().FirstOrDefault();
-                if (axisElem is null) continue;
-                var axis = new AvaloniaCharts.Axis();
-                foreach (var attr in axisElem.Attributes())
-                {
-                    if (attr.Name.LocalName.StartsWith("xmlns")) continue;
-                    ApplyProperty(axis, attr.Name.LocalName, attr.Value);
-                }
-                if (prop.Name.LocalName.EndsWith(".XAxis", StringComparison.Ordinal)) series.XAxis = axis;
-                else if (prop.Name.LocalName.EndsWith(".YAxis", StringComparison.Ordinal)) series.YAxis = axis;
+                if (prop.Name.LocalName.EndsWith(".XAxis", StringComparison.Ordinal)) series.XAxis = ReadAxis(prop);
+                else if (prop.Name.LocalName.EndsWith(".YAxis", StringComparison.Ordinal)) series.YAxis = ReadAxis(prop);
             }
             chart.Series.Add(series);
         }
+    }
+
+    /// <summary>The <c>&lt;charts:Axis …/&gt;</c> inside a property element as an Axis, or null when
+    /// the property element is empty (an axis that is not set at all).</summary>
+    private static AvaloniaCharts.Axis? ReadAxis(XElement holding)
+    {
+        var axisElem = holding.Elements().FirstOrDefault();
+        if (axisElem is null) return null;
+        var axis = new AvaloniaCharts.Axis();
+        foreach (var attr in axisElem.Attributes())
+        {
+            if (attr.Name.LocalName.StartsWith("xmlns")) continue;
+            ApplyProperty(axis, attr.Name.LocalName, attr.Value);
+        }
+        return axis;
     }
 
     private static void ApplyProperty(object target, string propName, string value)
