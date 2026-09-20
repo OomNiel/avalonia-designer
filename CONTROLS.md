@@ -148,6 +148,39 @@ internal/template parts have no published summary and are described by role inst
 
 ---
 
+## Charts (bundled)
+
+| Control | XAML tag | What it does | Designer |
+|---------|----------|--------------|----------|
+| Line Plot | `charts:GrumpyLinePlot` | A self-drawing line chart: Y values in sample order (X = the sample number 0, 1, 2 …) with axes, gridlines, a title and a legend. Data from a typed list or an `.xlsx` workbook. | ✅ Toolbox *(Charts)* |
+| X, Y Plot | `charts:GrumpyXYPlot` | A self-drawing X,Y chart: `(x, y)` pairs as a joined line, as markers, or both — same axes, gridlines, title and legend as the line plot. | ✅ Toolbox *(Charts)* |
+
+Both come from the bundled **`GrumpyCharts.cs` / `.vb`** file (namespace `using:AvaloniaCharts`), copied
+into every new project next to the other helpers — no package, no image file, nothing to install. See
+**USER_MANUAL §19, "The charting tools"** for the full walkthrough.
+
+- **Data**: `Values` (line plot) or `Points` (X,Y plot) for typed-in data, or `SourceFile` → an `.xlsx`
+  workbook (row 1 names the columns, data from row 2; columns `B/C`, `D/E`, `F/G` … per series).
+  `LiveUpdate` re-reads the file on save, and the chart draws its own **"…"** picker when it has no data.
+- **Series** (`Series — Edit series…`): one line per series, each with its own columns, colour, thickness,
+  line style, markers, `AxisMode` (Common / Per series) and `Visible` switch. Order in the list = draw
+  order.
+- **Axis** (`Axis — Edit axes…`): the chart's two **common** axes plus an optional X and/or Y axis per
+  *Per series* series — side (Left/Right, Top/Bottom), colour, major/minor ticks and their sizes, tick
+  labels and their font size, and the axis name.
+- **Legend** (`Legend — Edit legend…`): on/off, side (Bottom/Top/Left/Right — it wraps to fit), name font
+  size, and a frame with its own backcolour, outline and rounded corners. Clicking an entry switches that
+  trace on and off at runtime; the trace keeps its place on the axis.
+- **Styling in Properties**: plot backcolour + opacity, border (colour/thickness/corner radius),
+  gridlines (colour/thickness/style), the title (text/show/position/colour/size), the fixed scale
+  overrides (`MinX`/`MaxX`/`MinY`/`MaxY`) and `DockPanel.Dock`.
+
+> **An old copy of the bundled chart file cannot compile the newer series/axis/legend XAML**
+> (`AVLN2000: Unable to resolve type XYSeries…`). The designer refreshes it for you: save the form once
+> after using a chart editor, and the project's `GrumpyCharts.cs`/`.vb` is updated — it tells you when.
+
+---
+
 ## Layout panels
 
 | Control | XAML tag | What it does | Designer |

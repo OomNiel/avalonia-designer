@@ -196,13 +196,13 @@ const INFO: Record<string, ControlInfo> = {
     },
     GrumpyLinePlot: {
         label: 'Line Plot',
-        desc: 'A line chart: your Y values drawn in sample order, with axes, gridlines, ticks and a title — no package, no image file.',
-        use: 'Type the Y values into Values (comma separated: 4,9,6,12) or point Spreadsheet at an .xlsx workbook. The X axis runs 0,1,2… across the samples. Style it from Properties: Line Colour/Thickness/Style, the plot backcolour and its opacity, the gridlines, the axes with their ticks and labels, and the chart title (with its position). The axis range fits the data automatically — set X/Y Min/Max only when you want a fixed scale.'
+        desc: 'A line chart that draws itself: your Y values in sample order, with axes, gridlines, a title and a legend — no package, no image file.',
+        use: 'Type the Y values into Values (comma separated: 4,9,6,12) or point Spreadsheet at an .xlsx workbook; the X axis runs 0,1,2… across the samples. Add a line per series with the Series editor (Series — Edit series…): each series has its own Y column, colour, thickness, style and Visible switch, and the legend lists them with a tick box each. The Axis editor sets where each axis sits, its colour, ticks and labels; the Legend editor sets the bar\'s side, its frame and backcolour. The plot backcolour, border, gridlines and title are in Properties. The scale fits the data unless you set X/Y Min/Max.'
     },
     GrumpyXYPlot: {
         label: 'X, Y Plot',
-        desc: 'An X,Y chart: (x,y) pairs drawn as points, as a joined line, or both — with the same axes, gridlines and title as the line plot.',
-        use: 'Type the pairs into Points ("0,0 1,4 2,9") or point Spreadsheet at an .xlsx workbook where column B holds X and column C holds Y (row 1 names the axes, values start at row 2). Choose Marker (Dot, Cross, Square, Diamond or None) and Join Points: on = a line through the points, off = a scatter of markers.'
+        desc: 'An X,Y chart that draws itself: (x,y) pairs as a joined line, as markers, or both — with the same axes, gridlines, title and legend as the line plot.',
+        use: 'Type the pairs into Points ("0,0 1,4 2,9") or point Spreadsheet at an .xlsx workbook where column B holds X and column C holds Y (row 1 names the axes, values start at row 2). Use the Series editor for one line per series — each series picks its own columns, colour, line style, marker and Join Points (on = a line through the points, off = a scatter) — and the legend editor for the bar\'s side, frame and tick boxes. More than one series read the X/Y pairs B/C, D/E, F/G… unless you name the columns yourself.'
     },
     XYTracker: {
         label: 'XY-Tracker',

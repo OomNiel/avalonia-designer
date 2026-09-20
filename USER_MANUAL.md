@@ -52,6 +52,15 @@
 35:16. [Custom title bar (ChromeWindow)](#16-custom-title-bar-chromewindow)
 17. [Known issues & tips](#17-known-issues--tips)
 18. [The DataSet designer](#18-the-dataset-designer)
+19. [The charting tools (Charts)](#19-the-charting-tools-charts)
+    - [Placing a chart](#191-placing-a-chart)
+    - [Getting data into a chart](#192-getting-data-into-a-chart)
+    - [The Series editor — one line per series](#193-the-series-editor--one-line-per-series)
+    - [The Axis editor — sides, ticks and labels](#194-the-axis-editor--sides-ticks-and-labels)
+    - [The Legend editor — names, tick boxes and a frame](#195-the-legend-editor--names-tick-boxes-and-a-frame)
+    - [The spreadsheet layout at a glance](#196-the-spreadsheet-layout-at-a-glance)
+    - [Chart properties you set directly](#197-chart-properties-you-set-directly)
+    - [Tips, limits and fixes](#198-tips-limits-and-fixes)
 
 ---
 
@@ -1762,6 +1771,206 @@ A DataGrid bound to a table becomes a small data-entry grid, WinForms-style:
 > - **Existing `.adset` projects:** open the DataSet designer and click **Generate Code** (or
 >   re-bind) to regenerate `MyData.cs`/`.vb` with the typed-collection shape. The **Un-bind**
 >   button also cleans up an old DataView property if one is still present.
+
+---
+
+## 19. The charting tools (Charts)
+
+The Toolbox's **Charts** category holds two **self-drawing** chart controls. They need no packages, no
+image files and no chart engine — the control draws itself, so a chart scales cleanly to any size you
+give it and prints or screenshots like any other control.
+
+| Toolbox item | Control | What it draws |
+|---|---|---|
+| **Line Plot** | `GrumpyLinePlot` | Y values in sample order — the X axis is the sample number (0, 1, 2 …) |
+| **X, Y Plot** | `GrumpyXYPlot` | (x, y) pairs, as a joined line, as markers, or both |
+
+Both work the same way: numbers come from a **spreadsheet** (or are typed in), each **series** decides
+which columns it reads and how it is drawn, the **axes** describe the scales, and the **legend** lists
+the series with a tick box each.
+
+### 19.1 Placing a chart
+
+1. Toolbox → **Charts** → drag **Line Plot** or **X, Y Plot** onto the canvas.
+2. Place and size it like any control, or set **Dock** to pin it to an edge of a DockPanel — the chart
+   redraws to whatever space it is given, because everything it draws is proportional.
+3. Press **F5**: the app draws the same chart (what you see in the designer is the control's own
+   drawing, not a mock-up).
+
+> **The designer preview is a picture of the control.** It updates live as you change anything, but a
+> click on the canvas selects the whole chart. The interactive parts — the legend's tick boxes and the
+> in-chart **"…"** file button — belong to the running app. Use the Properties panel and the three
+> editors below while designing.
+
+### 19.2 Getting data into a chart
+
+**A. Typed-in values** (quick, static charts)
+
+- **Line Plot** — type the Y values into **Values**, comma separated: `4,9,6,12`. The X axis runs
+  0, 1, 2 … across the samples.
+- **X, Y Plot** — type the pairs into **Points (x,y)**, written `x,y` and separated by spaces:
+  `0,0 1,4 2,9`.
+
+**B. A spreadsheet (`.xlsx`)** — how real charts are fed
+
+1. **Spreadsheet → Browse…** and pick the workbook. The path is stored **absolute** and the file is
+   **not** copied into your project, so the running app reads it where it lives.
+2. Set **X Column** / **Y Column** (defaults **B** / **C**), **Names Row** (default **1** — the row
+   holding the axis names) and **First Data Row** (default **2** — the first row of numbers).
+3. **Live Update** (on by default) re-reads the workbook when it changes on disk: with the app running,
+   edit and save the sheet and the chart redraws a moment later. (Editors that save by writing a temp
+   file and renaming it over the original — Excel, LibreOffice, VS Code — are handled.)
+4. **Browse Button** draws a small **"…"** button in the chart's top-right corner so your users can
+   pick another workbook at runtime. It is also drawn automatically while the chart has **no data at
+   all**, since that is exactly when you want it.
+
+If the workbook cannot be read, the chart says so in the middle (naming the file and the column) instead
+of sitting blank.
+
+**C. From code**
+
+```csharp
+Chart1.SetValues(new[] { 4.0, 9, 6, 12 });   // replaces a line plot's values
+Chart1.AddPoint(6, 7);                       // appends one sample
+Chart1.Reload();                             // re-reads the workbook right now
+```
+
+### 19.3 The Series editor — one line per series
+
+Select the chart and click the **Series — Edit series…** row at the top of the Properties panel.
+A chart with *no* series elements draws **one** line from the chart's own styling rows (that is what an
+untouched chart does); as soon as you add a series, the chart draws one line per series.
+
+| In the editor | What it does |
+|---|---|
+| **Lines** list | One row per series, showing its title, the columns it reads and whether it has its own axis. Click a row to edit it. |
+| **+ Add series / Delete** | Adds a series (next colour from a palette) or removes the selected one. The last series cannot be deleted — a chart always draws at least one line. |
+| **↑ Up / ↓ Down** | Rendering order: the list order is the drawing order (later series draw over earlier ones). A series keeps everything that belongs to it, including its own axis. |
+| **Title** | The name used in the legend (and in this editor). Empty = the spreadsheet's column header is used instead. |
+| **X Column / Y Column** | Which spreadsheet columns this series reads. The empty box shows the column that *will* be used if you leave it empty. |
+| **Axis** | **Common** = share the chart's X column and one scale for all series; **Per series** = this series' own columns and its own scale. |
+| **Line Colour / Thickness / Style** | The line itself (Solid, Dash, Dot, DashDot). |
+| **Marker / Marker Size / Join Points** | X, Y plots only: the symbol at each point (None, Dot, Cross, Square, Diamond), its size, and whether the points are joined by a line. |
+| **Visible** | On draws the line, Off hides it. Hiding is also what the legend's tick box does at runtime; a hidden series keeps its place on the axis, so the other lines do not jump. |
+
+Notes worth knowing:
+
+- **A line plot reads only Y**: its X is the sample number, so the editor shows a single **Y Column**.
+- **Empty columns follow a pattern** (see 19.6): Y walks C, E, G … and a *Per series* X, Y series walks
+  B, D, F …, while a series on the **Common** axis shares the chart's **X Column** (default B).
+- **Saving series takes over the chart-level styling rows.** `Line Colour`, `Marker`, `Join Points` and
+  friends disappear from the Properties list, because from then on each series owns them. A chart you
+  never edited keeps working exactly as before.
+
+### 19.4 The Axis editor — sides, ticks and labels
+
+Click **Axis — Edit axes…** on a selected chart. Every axis in this editor carries the same settings:
+
+| Setting | What it does |
+|---|---|
+| **Position** | **Left** or **Right** for a Y axis, **Top** or **Bottom** for an X axis. |
+| **Visible** | Off hides that axis' line and its ticks (the labels and the name have their own switches). |
+| **Colour** | The axis line, its ticks, its tick labels and its name. A colour name (`White`, `Teal`) or `#RRGGBB`. |
+| **Major ticks / size**, **Minor ticks / size** | The ticks at the labelled values and the short ones between them, and how long they are. |
+| **Tick labels / size** | The numbers along the axis and their font size. |
+| **Axis name / Name** | Whether the axis shows a name, and the text — empty means the spreadsheet's column header is used. |
+
+The list on the left holds:
+
+- **Common Y axis** and **Common X axis** — the axes every series uses unless it is set to *Per series*.
+- **Series n — X axis** (X, Y plots only) and **Series n — Y axis** for each series set to **Per series**.
+  A per-series axis starts as a copy of the common one; **Delete** removes it again, leaving that side to
+  the common axis. Several axes on the same side **stack outward** from the plot, so two scales side by
+  side stay readable.
+- A series on the common axes is listed read-only, as information.
+
+> The old chart-level axis rows (`Axes`, `Axis Colour`, `Major/Minor Ticks`, `Tick Labels`, `Axis Names`,
+> `X/Y Axis Name`) are gone from the Properties list once you save this editor: the Axis objects are the
+> single source of truth from then on. They no longer appear because they now live here.
+
+### 19.5 The Legend editor — names, tick boxes and a frame
+
+Click **Legend — Edit legend…**. The legend bar lists every series with a tick box and its name **in that
+series' own colour**; clicking an entry (box *or* name) switches that trace on and off in the running app.
+
+| Setting | What it does |
+|---|---|
+| **Legend** | On or Off — hides the whole bar. |
+| **Position** | **Bottom** (default), **Top**, **Left** or **Right**. Bottom/Top run the entries across and wrap onto more **rows**; Left/Right run them down and wrap onto more **columns**. The bar takes that space from the plot and never claims more than 60 % of the chart. |
+| **Name size** | Font size of the entry names. |
+| **Frame** | Draws a frame around the bar. |
+| **Backcolour** | The frame's background. `Transparent` (default) leaves the chart's plate showing through; set e.g. `White` for a solid panel. |
+| **Frame colour / Frame thickness** | The outline and its width (0 = backcolour only). |
+| **Corner radius** | How round the frame's corners are. |
+
+Two things to know:
+
+- **The name shown** is the series' **Title**, else the spreadsheet's column header, else `Series n`. So
+  with a titled sheet you often need no titles at all.
+- **A chart with no series elements shows no legend** — its single unnamed line has nothing to name or
+  switch off. A chart you never edited is unaffected.
+
+### 19.6 The spreadsheet layout at a glance
+
+Row 1 (or **Names Row**) holds the column names; numbers start at **First Data Row** (2 by default).
+
+| Series | Reads | Line plot (X = sample number) | X, Y plot |
+|---|---|---|---|
+| 1 | X | — (sample number) | `B` |
+| | Y | `C` | `C` |
+| 2 | X | — | `D` |
+| | Y | `E` | `E` |
+| 3 | X | — | `F` |
+| | Y | `G` | `G` |
+| … | | two letters further along each time | |
+
+- A series on the **Common** axis shares the chart's **X Column** (default `B`) — the "one X for
+  everything" case.
+- A **Per series** X, Y series uses its own pair (`B/C`, `D/E`, `F/G` …) unless you name its columns.
+- Any of this can be overridden per series in the Series editor.
+
+### 19.7 Chart properties you set directly
+
+Everything below is in the Properties panel of a selected chart. The series, axis and legend settings are
+in their editors (19.3–19.5).
+
+| Row | What it does |
+|---|---|
+| **Dock** | Pins the chart to a DockPanel edge (wraps it in a DockPanel if it isn't in one). |
+| **Values** / **Points (x,y)** | Inline data, as described in 19.2 A. |
+| **Spreadsheet / Browse Button / X Column / Y Column / Names Row / First Data Row / Live Update** | The workbook and how it is read (19.2 B). |
+| **Title, Show Title, Title Position, Title Colour, Title Size** | The chart title and where it sits (Top, Bottom, Left, Right). |
+| **Plot Backcolour, Plot Opacity** | The chart's own background — it fills the whole control, so the title and axis labels do not depend on the form behind it. |
+| **Border, Border Colour, Border Thickness, Corner Radius** | The frame around the chart. |
+| **Gridlines, Grid Colour, Grid Thickness, Grid Style** | Gridlines at the common axis' main ticks. |
+| **X Min / X Max / Y Min / Y Max** | Fixed scale limits. Leave empty to fit the data automatically. |
+
+### 19.8 Tips, limits and fixes
+
+> **The designer preview and the running app use different loaders.** The preview is drawn by the host
+> process, the app by Avalonia's own XAML loader. They are meant to agree, and rare differences are bugs
+> we fix when they surface (an earlier version showed named colours and rounded corners wrong in the
+> preview only). If something looks right in the app but wrong on the canvas, report it — the app is the
+> truth.
+
+> **"Unable to resolve type XYSeries from namespace using:AvaloniaCharts" (or `LineSeries`).** This
+> means the project's own copy of the bundled chart file is older than the designer: that file is copied
+> into new projects, and a project created before the charts gained multiple series keeps its old copy.
+> **Save the form once** — the designer notices and refreshes the bundled file for you, and tells you
+> when it does. The file is `GrumpyCharts.cs` (or `.vb`) next to your project file. The other bundled
+> helpers (`ChromeWindow`, `AnchorHelper`, `PathPicker`) are refreshed the same way as soon as you use
+> the feature that needs them — e.g. a Title Bar property or a File Selector.
+
+> **Nothing drawn, or "No numbers found in column …".** Check the **Spreadsheet** path (it is absolute),
+> the **X/Y Column** letters and **First Data Row**, and that the sheet really has numbers in those
+> cells. A chart with no data at all offers the **"…"** picker instead of guessing.
+
+> **Switching every trace off leaves the axes and the legend on screen** — by design. The scale also
+> stays put while you switch traces, so the other lines do not jump around (the same behaviour as a
+> spreadsheet chart).
+
+> **Charts need no packages or data files of their own.** The chart control is bundled into your project
+> like the other helpers; nothing is added to the `.csproj` beyond what the project already had.
 
 ---
 
