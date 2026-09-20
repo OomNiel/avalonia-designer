@@ -1869,8 +1869,8 @@ function vbDateTimeConverter(): string {
 
 /**
  * The shared runtime helpers (`RuntimeStorage`, `DatabaseAdapter`) are namespace-level classes, so two files
- * declaring them cannot coexist: the second DataSet in a project fails with CS0101 (BC30179 in VB). Hit on
- * 2026-09-18 with MyDataSet.cs + dsTreeView.cs in OptimisedCSTest.
+ * declaring them cannot coexist: the second DataSet in a project fails with CS0101 (BC30179 in VB). Seen when
+ * a project held two generated DataSet files side by side.
  *
  * They belong to the project rather than to a DataSet, so exactly one generated file keeps them: the
  * alphabetically first that has them. Files without the helpers are never touched, and a lone copy stays put,
