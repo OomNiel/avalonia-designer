@@ -155,6 +155,7 @@ export const CHART_CURSOR_FIELDS: { key: string; attr: string; def: string }[] =
     { key: 'orientation', attr: 'Orientation', def: 'Both' },
     { key: 'style', attr: 'Style', def: 'Dash' },
     { key: 'color', attr: 'Color', def: '#FF8C00' },
+    { key: 'followTrace', attr: 'FollowTrace', def: 'True' },
     { key: 'xValues', attr: 'XValues', def: 'True' },
     { key: 'yValues', attr: 'YValues', def: 'True' },
     { key: 'x', attr: 'X', def: '' },

@@ -1813,12 +1813,14 @@ export function propertyDefsFor(
             kind: 'button',
             value: 'Edit cursors…',
             desc: 'Adds up to two draggable cursors and sets each one up: which lines it draws '
-                + '(vertical, horizontal or both), its dash style and colour, whether its readout '
-                + 'shows the X value, the trace value or both, and where it sits. The readout panel '
-                + 'follows the mouse or sits in the chart\'s top right corner, and the number of '
-                + 'decimals can be fixed. In the app: drag a cursor\'s line to move it, use the left '
-                + 'and right arrows to step it one sample, up/down to pick the trace the readout '
-                + 'reports, and right-click the chart for the cursor menu.'
+                + '(vertical, horizontal or both), its dash style and colour, whether the crossing '
+                + 'point follows the selected trace or is a free crosshair of your own, whether its '
+                + 'readout shows the X value, the trace value or both, and where it sits. The readout '
+                + 'panel follows the mouse or sits in the chart\'s top right corner, and the number of '
+                + 'decimals can be fixed. In the app: drag a cursor\'s line to move it (a following '
+                + 'cursor slides along its trace), use the left and right arrows to step it one '
+                + 'sample, up/down to pick the trace the readout reports, and right-click the chart '
+                + 'for the cursor menu.'
         });
     }
     // 'Items' (batch editor) for combo/list/items controls — opens a popup where you type

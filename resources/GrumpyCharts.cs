@@ -422,8 +422,18 @@ public sealed class ChartCursor
     /// <summary>The cursor's X position in data units. NaN = the middle of the X range.</summary>
     public double X { get; set; } = double.NaN;
 
-    /// <summary>The cursor's Y position in data units. NaN = the middle of the Y range.</summary>
+    /// <summary>The cursor's Y position in data units. NaN = the middle of the Y range. Ignored while
+    /// <see cref="FollowTrace"/> is on, because the crossing's Y then comes from the trace.</summary>
     public double Y { get; set; } = double.NaN;
+
+    /// <summary>
+    /// Follow the selected trace (on by default): the crossing point — the handle, the horizontal line
+    /// and the value in the readout — sits ON that series at the cursor's X, interpolated between
+    /// samples, instead of at the cursor's own <see cref="Y"/>. Dragging the horizontal line then slides
+    /// the point along the trace. Switch it off for a free crosshair whose Y is yours to place, which is
+    /// what a threshold line wants to be.
+    /// </summary>
+    public bool FollowTrace { get; set; } = true;
 
     /// <summary>
     /// Whether the cursor is switched on. The right-click menu switches cursors on and off while the
@@ -1596,8 +1606,9 @@ public abstract class ChartBase : Control
         var x = double.IsNaN(cursor.X) ? common.XRange.Mid : cursor.X;
         var step = SampleStep(traces[_selectedTrace].Data, x, common.XRange);
         cursor.X = x + (e.Key is Key.Right ? step : -step);
-        // The first keyboard move also places the line that the mouse has not touched yet.
-        if (double.IsNaN(cursor.Y)) cursor.Y = common.YRange.Mid;
+        // The first keyboard move also places the line that the mouse has not touched yet — but a
+        // FOLLOWING cursor has no Y of its own, so nothing is written for it.
+        if (!cursor.FollowTrace && double.IsNaN(cursor.Y)) cursor.Y = common.YRange.Mid;
         _selectedCursor = index;
         Focus();
         InvalidateVisual();
@@ -2330,6 +2341,15 @@ public abstract class ChartBase : Control
     private static List<Plot> VisiblePlots(List<Plot> plots)
         => plots.Where(p => p.Data.HasData && p.Visible).ToList();
 
+    /// <summary>The trace the readout reports and a following cursor rides. Clamped, so the index
+    /// survives traces being switched off, and null when the chart has nothing to show.</summary>
+    private Plot? SelectedTrace(List<Plot> traces)
+    {
+        if (traces.Count == 0) return null;
+        _selectedTrace = Math.Clamp(_selectedTrace, 0, traces.Count - 1);
+        return traces[_selectedTrace];
+    }
+
     /// <summary>Draws the cursors and their readout. A cursor is a crosshair the user drags: its
     /// lines sit at its X and Y, and the readout reports the selected trace where the cursor's X
     /// cuts it. The clickable parts are remembered while drawing, so a click always tests the
@@ -2341,11 +2361,21 @@ public abstract class ChartBase : Control
         if (common is null) return;
 
         var live = LiveCursorIndexes();
+        // The trace the readout reports — and the one a FOLLOWING cursor rides — is decided once, so
+        // the crossing point and the numbers can never disagree.
+        var traces = VisiblePlots(plots);
+        var trace = SelectedTrace(traces);
         foreach (var index in live)
         {
             var cursor = Cursors[index];
             var x = double.IsNaN(cursor.X) ? common.XRange.Mid : cursor.X;
-            var y = double.IsNaN(cursor.Y) ? common.YRange.Mid : cursor.Y;
+            // Following: the crossing's Y comes from the trace at the cursor's X (interpolated), so
+            // the handle, the horizontal line and the readout all sit on the drawn line. The cursor's
+            // own Y is then ignored — that is what makes it a free threshold line again when off.
+            var follows = cursor.FollowTrace && trace is not null;
+            var y = follows
+                ? ValueAt(trace!.Data, x) ?? (double.IsNaN(cursor.Y) ? common.YRange.Mid : cursor.Y)
+                : (double.IsNaN(cursor.Y) ? common.YRange.Mid : cursor.Y);
             var px = common.XRange.ToPixel(x, plot.X, plot.Width);
             var py = common.YRange.ToPixel(y, plot.Bottom, -plot.Height);
             var selected = index == _selectedCursor && live.Count > 1;
@@ -2394,9 +2424,10 @@ public abstract class ChartBase : Control
 
         var traces = VisiblePlots(plots);
         if (traces.Count == 0) return;
-        _selectedTrace = Math.Clamp(_selectedTrace, 0, traces.Count - 1);
-        var trace = traces[_selectedTrace];
+        var trace = SelectedTrace(traces);
+        if (trace is null) return;
         var x = double.IsNaN(cursor.X) ? common.XRange.Mid : cursor.X;
+        // The SAME value the crossing point was drawn at, so the number and the handle always agree.
         var value = ValueAt(trace.Data, x);
 
         // The marker on the trace itself ties the numbers to the line they came from.
@@ -2511,12 +2542,20 @@ public abstract class ChartBase : Control
     // ---- cursor input ----------------------------------------------------------------------
 
     /// <summary>Moves the cursor being dragged. The vertical line changes X, the horizontal line Y,
-    /// and the handle at the crossing point both at once — the same lines the user sees.</summary>
+    /// and the handle at the crossing point both at once — the same lines the user sees. A cursor that
+    /// FOLLOWS its trace has no Y of its own, so every grip moves it along the series instead: X comes
+    /// from the pointer and the crossing's height comes from the trace.</summary>
     private void DragCursorTo(Point point)
     {
         var cursor = _dragCursor;
         var common = _plots.FirstOrDefault(p => !p.PerSeries) ?? _plots.FirstOrDefault();
         if (cursor is null || common is null) return;
+        if (cursor.FollowTrace)
+        {
+            cursor.X = common.XRange.FromPixel(point.X, _plotRect.X, _plotRect.Width);
+            InvalidateVisual();
+            return;
+        }
         if (_dragMode is 1 or 3) cursor.X = common.XRange.FromPixel(point.X, _plotRect.X, _plotRect.Width);
         if (_dragMode is 2 or 3) cursor.Y = common.YRange.FromPixel(point.Y, _plotRect.Bottom, -_plotRect.Height);
         InvalidateVisual();

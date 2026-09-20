@@ -7501,11 +7501,14 @@ ${publishButtons}      <span class="sep"></span>
         <p class="modal-hint">Up to <b>two</b> cursors are drawn on the chart, each one a crosshair
           that can be dragged in the running app. A cursor always carries both an X and a Y position
           — <b>Orientation</b> only decides which lines are drawn — so a Horizontal cursor still
-          reports an X. The readout shows the <b>selected trace</b> (up/down arrows choose it),
-          interpolated between samples, with a column for each of the cursor's <b>X Values</b> /
-          <b>Y Values</b> switches. An empty position box means “the middle of the axis”. Left/right
-          arrows step the selected cursor one sample; the chart's right-click menu switches cursors
-          on and off at runtime (that state is not saved, so a fresh start shows every cursor).</p>
+          reports an X. <b>Follow trace</b> (on by default) makes the crossing point sit ON the
+          selected series at the cursor's X, interpolated between samples, so the handle, the
+          horizontal line and the readout all agree; switch it off for a free crosshair whose Y is
+          yours to place (a threshold line). The readout shows the <b>selected trace</b> (up/down
+          arrows choose it), with a column for each of the cursor's <b>X Values</b> / <b>Y Values</b>
+          switches. An empty position box means “the middle of the axis”. Left/right arrows step the
+          selected cursor one sample; the chart's right-click menu switches cursors on and off at
+          runtime (that state is not saved, so a fresh start shows every cursor).</p>
         <div class="grid-defs">
           <div class="grid-defs-col">
             <h4>Cursors</h4>

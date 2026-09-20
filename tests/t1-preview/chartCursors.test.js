@@ -252,6 +252,35 @@ module.exports = async (t) => {
             `pinned ${panelBox.minX}..${panelBox.maxX}@${panelBox.minY} vs `
             + `followed ${followed.minX}..${followed.maxX}@${followed.minY}`);
 
+        // --- Follow trace: the crossing's Y comes from the trace, not from the cursor ----------
+        // The trace is (0,4) (1,9) (2,6) (3,12) (4,8) (5,15), so at X=2.5 its value is 9 and the
+        // crossing sits near the TOP of the plot (row ~87 in this render; the plot's bottom edge
+        // measures at row ~205). Y="0" is deliberately WRONG: a cursor that honoured its own Y would
+        // draw its horizontal line along the plot's bottom edge instead.
+        const LINE_BAND = { x0: 56, x1: 236, y0: 60, y1: 250 };
+        const followsDefault = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Horizontal" X="2.5" Y="0" Color="#FF8C00"')), W, H);
+        const ownY = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Horizontal" X="2.5" Y="0" Color="#FF8C00" FollowTrace="False"')), W, H);
+        const band = (img) => peak(rowProfile(img, ORANGE, LINE_BAND), LINE_BAND.y0);
+        t.ok(band(followsDefault.img).at < 150, 'chart-cursors',
+            'by default the crossing follows the selected trace (the trace value at X=2.5, high up)',
+            `row=${band(followsDefault.img).at}`);
+        t.ok(band(ownY.img).at > 190, 'chart-cursors',
+            'FollowTrace=False puts it back at the cursor\'s own Y (Y=0 = the plot\'s bottom edge)',
+            `row=${band(ownY.img).at}`);
+        t.ok(band(ownY.img).at - band(followsDefault.img).at > 60, 'chart-cursors',
+            'the two are far apart, so the switch really changes the drawing',
+            `${band(followsDefault.img).at} vs ${band(ownY.img).at}`);
+        // While following, the cursor's own Y is IGNORED — so a wrong Y and a matching one draw the
+        // same picture. That is also what makes the readout agree with the crossing.
+        const followsWithRightY = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Horizontal" X="2.5" Y="9" Color="#FF8C00"')), W, H);
+        t.equal(ink(followsWithRightY.img, ORANGE, PANEL).n, ink(followsDefault.img, ORANGE, PANEL).n,
+            'chart-cursors', 'while following, the cursor\'s own Y does not change the readout');
+        t.equal(band(followsWithRightY.img).at, band(followsDefault.img).at, 'chart-cursors',
+            'nor where the crossing is drawn');
+
         // --- two cursors at once, each on its own lines and in its own colour ---
         const two = await renderPng(host, form('ReadoutPosition="TopRight"',
             cursor('Orientation="Both" X="1" Y="9" Color="#FF8C00"')

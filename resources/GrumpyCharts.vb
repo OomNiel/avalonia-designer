@@ -372,8 +372,18 @@ Namespace Global.AvaloniaCharts
         ''' <summary>The cursor's X position in data units. NaN = the middle of the X range.</summary>
         Public Property X As Double = Double.NaN
 
-        ''' <summary>The cursor's Y position in data units. NaN = the middle of the Y range.</summary>
+        ''' <summary>The cursor's Y position in data units. NaN = the middle of the Y range. Ignored while
+        ''' FollowTrace is on, because the crossing's Y then comes from the trace.</summary>
         Public Property Y As Double = Double.NaN
+
+        ''' <summary>
+        ''' Follow the selected trace (on by default): the crossing point — the handle, the horizontal
+        ''' line and the value in the readout — sits ON that series at the cursor's X, interpolated
+        ''' between samples, instead of at the cursor's own Y. Dragging the horizontal line then slides
+        ''' the point along the trace. Switch it off for a free crosshair whose Y is yours to place,
+        ''' which is what a threshold line wants to be.
+        ''' </summary>
+        Public Property FollowTrace As Boolean = True
 
         ''' <summary>
         ''' Whether the cursor is switched on. The right-click menu switches cursors on and off while
@@ -1862,8 +1872,9 @@ Namespace Global.AvaloniaCharts
             Else
                 cursor.X = x - amount
             End If
-            ' The first keyboard move also places the line that the mouse has not touched yet.
-            If Double.IsNaN(cursor.Y) Then cursor.Y = common.YRange.Mid
+            ' The first keyboard move also places the line that the mouse has not touched yet — but a
+            ' FOLLOWING cursor has no Y of its own, so nothing is written for it.
+            If Not cursor.FollowTrace AndAlso Double.IsNaN(cursor.Y) Then cursor.Y = common.YRange.Mid
             _selectedCursor = index
             Focus()
             InvalidateVisual()
@@ -2549,6 +2560,14 @@ Namespace Global.AvaloniaCharts
             Return plots.Where(Function(one) one.Data.HasData AndAlso one.Visible).ToList()
         End Function
 
+        ''' <summary>The trace the readout reports and a following cursor rides. Clamped, so the index
+        ''' survives traces being switched off, and Nothing when the chart has nothing to show.</summary>
+        Private Function SelectedTrace(traces As List(Of Plot)) As Plot
+            If traces.Count = 0 Then Return Nothing
+            _selectedTrace = Math.Clamp(_selectedTrace, 0, traces.Count - 1)
+            Return traces(_selectedTrace)
+        End Function
+
         ''' <summary>Draws the cursors and their readout. A cursor is a crosshair the user drags: its
         ''' lines sit at its X and Y, and the readout reports the selected trace where the cursor's X
         ''' cuts it. The clickable parts are remembered while drawing, so a click always tests the
@@ -2560,10 +2579,20 @@ Namespace Global.AvaloniaCharts
             If common Is Nothing Then Return
 
             Dim live = LiveCursorIndexes()
+            ' The trace the readout reports — and the one a FOLLOWING cursor rides — is decided once, so
+            ' the crossing point and the numbers can never disagree.
+            Dim traces = VisiblePlots(plots)
+            Dim trace = SelectedTrace(traces)
             For Each index In live
                 Dim cursor = Cursors(index)
                 Dim x = If(Double.IsNaN(cursor.X), common.XRange.Mid, cursor.X)
-                Dim y = If(Double.IsNaN(cursor.Y), common.YRange.Mid, cursor.Y)
+                ' Following: the crossing's Y comes from the trace at the cursor's X (interpolated), so
+                ' the handle, the horizontal line and the readout all sit on the drawn line. The cursor's
+                ' own Y is then ignored — that is what makes it a free threshold line again when off.
+                Dim follows = cursor.FollowTrace AndAlso trace IsNot Nothing
+                Dim followValue = If(follows, ValueAt(trace.Data, x), Nothing)
+                Dim y = If(followValue.HasValue, followValue.Value,
+                           If(Double.IsNaN(cursor.Y), common.YRange.Mid, cursor.Y))
                 Dim px = common.XRange.ToPixel(x, plot.X, plot.Width)
                 Dim py = common.YRange.ToPixel(y, plot.Bottom, -plot.Height)
                 Dim selected = index = _selectedCursor AndAlso live.Count > 1
@@ -2606,9 +2635,10 @@ Namespace Global.AvaloniaCharts
 
             Dim traces = VisiblePlots(plots)
             If traces.Count = 0 Then Return
-            _selectedTrace = Math.Clamp(_selectedTrace, 0, traces.Count - 1)
-            Dim trace = traces(_selectedTrace)
+            Dim trace = SelectedTrace(traces)
+            If trace Is Nothing Then Return
             Dim x = If(Double.IsNaN(cursor.X), common.XRange.Mid, cursor.X)
+            ' The SAME value the crossing point was drawn at, so the number and the handle always agree.
             Dim value = ValueAt(trace.Data, x)
 
             ' The marker on the trace itself ties the numbers to the line they came from.
@@ -2720,12 +2750,19 @@ Namespace Global.AvaloniaCharts
         ' ---- cursor input ---------------------------------------------------------------------
 
         ''' <summary>Moves the cursor being dragged. The vertical line changes X, the horizontal line Y,
-        ''' and the handle at the crossing point both at once — the same lines the user sees.</summary>
+        ''' and the handle at the crossing point both at once — the same lines the user sees. A cursor that
+        ''' FOLLOWS its trace has no Y of its own, so every grip moves it along the series instead: X comes
+        ''' from the pointer and the crossing's height comes from the trace.</summary>
         Private Sub DragCursorTo(point As Point)
             Dim cursor = _dragCursor
             Dim common = _plots.FirstOrDefault(Function(one) Not one.PerSeries)
             If common Is Nothing Then common = _plots.FirstOrDefault()
             If cursor Is Nothing OrElse common Is Nothing Then Return
+            If cursor.FollowTrace Then
+                cursor.X = common.XRange.FromPixel(point.X, _plotRect.X, _plotRect.Width)
+                InvalidateVisual()
+                Return
+            End If
             If _dragMode = 1 OrElse _dragMode = 3 Then
                 cursor.X = common.XRange.FromPixel(point.X, _plotRect.X, _plotRect.Width)
             End If

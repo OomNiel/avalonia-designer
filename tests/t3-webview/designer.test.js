@@ -2742,6 +2742,24 @@ module.exports = async (t) => {
         t.equal([...cSetting('Decimals').options].map((o) => o.value).join(','), '-1,0,1,2,3,4,5,6',
             'cursor', 'with automatic plus 0…6');
 
+        // --- Follow trace: on by default, and it stands the Y position box down ---
+        t.equal(cField('Follow trace').value, 'True', 'cursor',
+            'the crossing follows the selected trace by default');
+        t.equal(cField('Y position').disabled, true, 'cursor',
+            'and the Y position box is disabled — a following cursor has no Y of its own');
+        const follow = cField('Follow trace');
+        follow.value = 'False';
+        follow.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        t.equal(cField('Y position').disabled, false, 'cursor',
+            'switching the follow off enables the Y position box (a free crosshair)');
+        t.ok(cList()[0].indexOf('follows the trace') < 0, 'cursor',
+            'and the list summary stops saying it follows the trace', cList()[0]);
+        const followBack = cField('Follow trace');
+        followBack.value = 'True';
+        followBack.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        t.ok(cList()[0].includes('follows the trace'), 'cursor',
+            'switching it back on says so again', cList()[0]);
+
         // A second cursor, then the cap: no third one, and Add says so.
         $('cursorAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal(cRows().length, 2, 'cursor', '+ Add cursor adds one');
@@ -2780,6 +2798,7 @@ module.exports = async (t) => {
         t.equal(cs.cursors[0].orientation, 'Horizontal', 'cursor', 'with the edited orientation');
         t.equal(cs.cursors[0].xValues, 'True', 'cursor', 'the edited switch');
         t.equal(cs.cursors[0].x, '4', 'cursor', 'and the edited position');
+        t.equal(cs.cursors[0].followTrace, 'True', 'cursor', 'the follow switch keeps its value');
         t.equal(cs.cursors[0].src, '0', 'cursor',
             'keeping the element index, so the writer updates the cursor in place');
         t.equal(cs.cursors[0].style, 'Long', 'cursor', 'the untouched style keeps its value');

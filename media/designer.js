@@ -5166,13 +5166,14 @@
     /** The one-line summary shown for a cursor in the list. */
     function cursorItemText(row, i) {
         const where = 'X ' + (row.x === '' ? 'middle' : row.x) + ', Y ' + (row.y === '' ? 'middle' : row.y);
-        return 'Cursor ' + (i + 1) + '  ·  ' + row.orientation + '  ·  ' + row.style + '  ·  ' + where;
+        const follows = row.followTrace === 'False' ? '' : '  ·  follows the trace';
+        return 'Cursor ' + (i + 1) + '  ·  ' + row.orientation + '  ·  ' + row.style + '  ·  ' + where + follows;
     }
     /** A brand-new cursor: the control's own defaults, in the next of two cursor colours. */
     function cursorSeedRow(index) {
         return {
             src: '-1', orientation: 'Both', style: 'Dash', color: CURSOR_PALETTE[index % CURSOR_PALETTE.length],
-            xValues: 'True', yValues: 'True', x: '', y: ''
+            followTrace: 'True', xValues: 'True', yValues: 'True', x: '', y: ''
         };
     }
     function renderCursorEditor() {
@@ -5227,6 +5228,14 @@
                 seriesSelect(CURSOR_STYLES, row.style, (v) => { row.style = v; repaint(); }),
                 'The dash pattern of this cursor\u2019s lines. Long and Short are longer and shorter dashes than Dash.'));
             els.cursorFields.appendChild(seriesField('Colour', seriesColor(row.color, (v) => { row.color = v; recolour(v); })));
+            // 'Follow trace' decides whether the crossing point's Y is the trace's value (on) or the
+            // user's own (off) — so while it is on, the Y position below has nothing to say and is
+            // switched off, both here and by the control itself.
+            const follows = row.followTrace !== 'False';
+            els.cursorFields.appendChild(seriesField('Follow trace',
+                axisPairs([['True', 'On'], ['False', 'Off']], follows ? 'True' : 'False',
+                    (v) => { row.followTrace = v; renderCursorEditor(); }),
+                'On: the crossing point sits ON the selected trace at the cursor\u2019s X, interpolated between samples, and dragging its horizontal line slides the point along the series. Off: a free crosshair whose Y you place yourself \u2014 a threshold line.'));
             els.cursorFields.appendChild(seriesField('X Values',
                 axisPairs([['True', 'On'], ['False', 'Off']], row.xValues === 'False' ? 'False' : 'True',
                     (v) => { row.xValues = v; }),
@@ -5238,9 +5247,14 @@
             els.cursorFields.appendChild(seriesField('X position',
                 seriesText(row.x, (v) => { row.x = v; repaint(); }),
                 'Where the cursor sits, in DATA units (not pixels) \u2014 e.g. 12.5 on an X axis running 0\u20265. Empty = the middle of the axis.'));
-            els.cursorFields.appendChild(seriesField('Y position',
-                seriesText(row.y, (v) => { row.y = v; repaint(); }),
-                'Where the cursor\u2019s horizontal line sits, in DATA units. Empty = the middle of the axis.'));
+            const yPos = seriesText(row.y, (v) => { row.y = v; repaint(); },
+                follows
+                    ? 'Not used while this cursor follows its trace: the crossing\u2019s Y is the trace\u2019s value.'
+                    : 'Where the cursor\u2019s horizontal line sits, in DATA units. Empty = the middle of the axis.');
+            yPos.disabled = follows;
+            if (follows) yPos.title = 'Not used while this cursor follows its trace.';
+            els.cursorFields.appendChild(seriesField('Y position', yPos,
+                'Where the cursor\u2019s horizontal line sits, in DATA units. Empty = the middle of the axis. Ignored while Follow trace is on.'));
         }
         els.cursorSettings.appendChild(seriesField('Readout',
             labelledSelect(READOUT_POSITIONS, cursorEdit.settings.readoutPosition,
@@ -5257,6 +5271,7 @@
             orientation: CURSOR_ORIENTATIONS.some((pair) => pair[0] === c.orientation) ? c.orientation : 'Both',
             style: CURSOR_STYLES.includes(c.style) ? c.style : 'Dash',
             color: String(c.color || CURSOR_PALETTE[0]),
+            followTrace: c.followTrace === 'False' ? 'False' : 'True',
             xValues: c.xValues === 'False' ? 'False' : 'True',
             yValues: c.yValues === 'False' ? 'False' : 'True',
             x: String(c.x == null ? '' : c.x),

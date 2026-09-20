@@ -199,6 +199,65 @@ module.exports = async (t) => {
     t.ok(!/IsChecked/.test(between(cs, 'private void ShowCursorMenu', 'private static FormattedText MakeText')),
         'runtime', 'the menu carries its state in the item text (Avalonia 11.0 has no MenuItem.IsChecked)');
 
+    // --- 12. Follow trace: the crossing sits on the selected trace unless it is switched off ---
+    const followField = CHART_CURSOR_FIELDS.find((f) => f.key === 'followTrace');
+    t.ok(followField && followField.attr === 'FollowTrace' && followField.def === 'True', 'follow',
+        'the follow switch is a cursor field whose XAML attribute is FollowTrace, on by default');
+    t.ok(/public bool FollowTrace \{ get; set; \} = true;/.test(cursorClass), 'follow',
+        'the C# cursor carries it (default true, so the new behaviour is what you get)');
+    t.ok(/Public Property FollowTrace As Boolean = True/.test(vb), 'follow',
+        'and so does the VB twin');
+    // The drawing must DERIVE the crossing's Y from the trace — with the same value the readout uses,
+    // which is what keeps the number and the drawn crossing in agreement.
+    const draw = between(cs, 'private void DrawCursors', 'private void DrawCursorReadout');
+    t.ok(/cursor\.FollowTrace \&\& trace is not null/.test(draw), 'follow',
+        'the C# drawing follows the trace only when the cursor asks for it AND there is a trace');
+    t.ok(/ValueAt\(trace!\.Data, x\)/.test(draw), 'follow',
+        'and takes the crossing Y from the trace, interpolated at the cursor X');
+    const vbDraw = between(vb, 'Private Sub DrawCursors', 'Private Sub DrawCursorReadout');
+    t.ok(/cursor\.FollowTrace AndAlso trace IsNot Nothing/.test(vbDraw) && /ValueAt\(trace\.Data, x\)/.test(vbDraw),
+        'follow', 'the VB twin derives it the same way');
+    // One trace choice for both, so they cannot drift apart.
+    for (const [name, source] of [['C#', cs], ['VB', vb]]) {
+        t.ok(/SelectedTrace/.test(source), 'follow', `${name} picks the traced series through one helper`);
+    }
+    // Dragging a following cursor slides it along the trace: X from the pointer, Y untouched.
+    const drag = between(cs, 'private void DragCursorTo', 'private void CopyReadout');
+    t.ok(/if \(cursor\.FollowTrace\)[\s\S]*?cursor\.X = common\.XRange\.FromPixel[\s\S]*?return;/.test(drag),
+        'follow', 'dragging a following cursor moves X only (any grip, including the horizontal line)');
+    const vbDrag = between(vb, 'Private Sub DragCursorTo', 'Private Sub CopyReadout');
+    t.ok(/If cursor\.FollowTrace Then/.test(vbDrag) && /cursor\.X = common\.XRange\.FromPixel/.test(vbDrag),
+        'follow', 'and the VB twin does too');
+    // A following cursor has no Y of its own, so the keyboard must not invent one.
+    t.ok(/!cursor\.FollowTrace && double\.IsNaN\(cursor\.Y\)/.test(cs), 'follow',
+        'the arrow keys do not write a Y for a following cursor');
+
+    // The editor offers the switch and stands the Y position box down while it is on.
+    t.ok(/seriesField\('Follow trace'/.test(js), 'follow', 'the Cursor editor has a Follow trace row');
+    t.ok(/yPos\.disabled = follows/.test(js), 'follow',
+        'and disables the Y position box while the crossing follows the trace');
+    t.ok(/row\.followTrace = v; renderCursorEditor\(\)/.test(js), 'follow',
+        'changing it redraws the editor, so the Y box follows the switch');
+
+    // Reading and writing the attribute.
+    const followChart = chartModel('');
+    const followDefaults = chartCursorsOf(followChart.el);
+    writeChartCursors(followChart.model, followChart.el, followDefaults.settings, [{ src: '-1' }]);
+    const followWritten = followChart.model.serialize(true);
+    t.ok(!/FollowTrace/.test(followWritten), 'follow',
+        'a cursor that follows the trace writes no attribute at all (it is the default)');
+    writeChartCursors(followChart.model, followChart.el, followDefaults.settings,
+        [{ src: '0', followTrace: 'False' }]);
+    t.ok(/FollowTrace="False"/.test(followChart.model.serialize(true)), 'follow',
+        'switching it off IS written out');
+    t.equal(chartCursorsOf(followChart.el).cursors[0].followTrace, 'False', 'follow',
+        'and reads back as off');
+    const handFollow = chartModel(`<charts:GrumpyXYPlot.Cursors>
+        <charts:ChartCursor X="1" FollowTrace="False" Y="0"/>
+      </charts:GrumpyXYPlot.Cursors>`);
+    t.equal(chartCursorsOf(handFollow.el).cursors[0].followTrace, 'False', 'read',
+        'a hand-written FollowTrace="False" is read and preserved');
+
     // --- 8. the host reads the property element (or the designer preview shows nothing) ---
     const host = read('host/XamlRenderer.cs');
     t.ok(/EndsWith\("\.Cursors"/.test(host), 'host', 'the host renderer looks for the .Cursors property element');
