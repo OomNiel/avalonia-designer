@@ -265,22 +265,33 @@ listing when that release is uploaded — a repo-only README edit does not.
 > API's own `digest`, all `3d913e3df7c97fd2970320fbbbab2579865344b44807fb46d139e77f95ab517c`, **1,046,409
 > bytes**. Installed locally as `grumpy.avalonia-designer@0.11.0`.
 >
-> **NOT YET UPLOADED to the Marketplace.** That step goes through the publisher portal (part E), leaving
-> *Pre-release* unchecked, then verify with the `flags: 914` query that the version is `0.11.0` and
-> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. The listing will change its **name** with
-> that upload — from *Avalonia Designer for VS Code* to *Grumpy's WYSIWYG Designer for VS Code* — while its
-> **unique identifier stays** `grumpy.avalonia-designer`, so existing installs keep updating normally.
+> **PUBLISHED to the Marketplace on 2026-09-20.** Verified the same evening through the listing index:
+> `Grumpy.avalonia-designer`, name **"Grumpy's WYSIWYG Designer for VS Code"**, version **`0.11.0`**,
+> **`preRelease: false`** — the stable channel, which matters: `0.9.0` went out as a pre-release once by
+> accident, and a pre-release would *not* change the stable listing's name — and published sha256
+> **`3d913e3df7c97fd2970320fbbbab2579865344b44807fb46d139e77f95ab517c`**, i.e. byte for byte the artefact that
+> was tagged, released on GitHub and audited here. The **ID is unchanged**, so the existing installs (20 at the
+> time of writing) carry over and update normally — the rename arrived as an ordinary update, not as a new
+> listing.
 >
-> **Why the Extensions view still says "Avalonia Designer for VS Code" (asked 2026-09-20).** VS Code merges the
+> **"Published" and "served" are two different moments (learned the same evening).** The Marketplace *search*
+> endpoint (`filterType: 10`) showed `0.11.0` with the new name minutes after the upload was accepted, while
+> the **by-ID** endpoint VS Code uses for the Extensions view (`filterType: 7` with `IncludeLatestVersionOnly`)
+> **kept serving `0.10.10` and the old name** until its cache expired. A **Verifying** state in the portal is
+> the same gap seen from the other side. So: check both before concluding an upload failed, and expect the
+> Extensions view header to flip on its own (a window reload after that shows it) — nothing local can hurry it.
+>
+> **Why the Extensions view showed the OLD name before that upload (asked 2026-09-20).** VS Code merges the
 > installed package with the *gallery* metadata: the row and detail **header** show the **listing's**
 > `displayName`, next to the listing's own download count and rating (19 installs, 4 stars), while the DETAILS
 > tab renders the README **from the installed VSIX** — which already carries the donation link and the
 > *"Formerly …"* line. So the header changes **only when `0.11.0` is uploaded**; nothing local can force it, and
 > a window reload, a reinstall and a machine reboot all leave it exactly there (all three were tried, in that
-> order). The local copy being *newer* than the listing is also why the row offers no **Update** button. The
-> listing was checked the same way the release assets are: a `extensionquery` POST with `filterType: 7` and
-> `flags: 914`, which returned *Grumpy.avalonia-designer*, name *Avalonia Designer for VS Code*, version
-> `0.10.10`, 19 installs.
+> order), until the upload landed. The local copy being *newer* than the listing was also why the row offered no
+> **Update** button. The listing was checked the same way the release assets are: a `extensionquery` POST with
+> `filterType: 7` and `flags: 914` — before the upload it returned *Grumpy.avalonia-designer*, name *Avalonia
+> Designer for VS Code*, version `0.10.10`, 19 installs; the search endpoint with `filterType: 10` returns the
+> version currently being accepted, which is how `0.11.0` was confirmed while the by-ID call still lagged.
 >
 > **Still on disk, both superseded by the above:** `avalonia-designer-0.10.11.vsix` (1,035,659 bytes,
 > `20cfa4ce…`, the released one — its docs predate the cursor chapter) and `avalonia-designer-0.10.10.vsix`
