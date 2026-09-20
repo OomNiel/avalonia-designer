@@ -7542,8 +7542,9 @@ ${publishButtons}      <span class="sep"></span>
         <p class="modal-hint">The legend bar lists every series by name, in its own colour, with a
           tick box that switches that trace on and off. <b>Position</b> chooses which side of the
           drawing area it takes — it wraps onto more rows (bottom/top) or columns (left/right) to fit
-          what it must show. A chart with no series elements draws a single unnamed line, so it has
-          no legend.</p>
+          what it must show. <b>Margin</b> adds space between the frame and the entries inside it, on
+          all four sides, so a framed legend does not look cramped. A chart with no series elements
+          draws a single unnamed line, so it has no legend.</p>
         <div id="legendBody" class="series-fields"></div>
         <div class="modal-buttons">
           <button id="legendCancel" type="button" class="modal-btn">Cancel</button>

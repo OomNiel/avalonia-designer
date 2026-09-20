@@ -896,6 +896,11 @@ public abstract class ChartBase : Control
     public static readonly StyledProperty<CornerRadius> LegendCornerRadiusProperty =
         AvaloniaProperty.Register<ChartBase, CornerRadius>(nameof(LegendCornerRadius), new CornerRadius(4));
 
+    /// <summary>Breathing room between the legend frame and the entries inside it, in pixels, added to
+    /// the small built-in padding on all four sides (0 = the padding the bar has always had).</summary>
+    public static readonly StyledProperty<double> LegendMarginProperty =
+        AvaloniaProperty.Register<ChartBase, double>(nameof(LegendMargin), 0d);
+
     // ---- cursors -----------------------------------------------------------------------------
     /// <summary>Where the cursor readout is drawn: following the mouse pointer (the default) or in the
     /// top right corner of the drawing area. Also switchable at runtime from the chart's right-click
@@ -1080,6 +1085,7 @@ public abstract class ChartBase : Control
             ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
             LegendPositionProperty, LegendBackColorProperty, LegendShowFrameProperty,
             LegendBorderBrushProperty, LegendBorderThicknessProperty, LegendCornerRadiusProperty,
+            LegendMarginProperty,
             ReadoutPositionProperty, CursorDecimalsProperty,
             MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
             LineColorProperty, LineThicknessProperty, LineStyleProperty,
@@ -1222,6 +1228,10 @@ public abstract class ChartBase : Control
 
     /// <summary>Corner rounding of the legend frame.</summary>
     public CornerRadius LegendCornerRadius { get => GetValue(LegendCornerRadiusProperty); set => SetValue(LegendCornerRadiusProperty, value); }
+
+    /// <summary>Breathing room between the legend frame and the entries inside it, in pixels, added on
+    /// all four sides (0 = the padding the bar has always had).</summary>
+    public double LegendMargin { get => GetValue(LegendMarginProperty); set => SetValue(LegendMarginProperty, value); }
 
     /// <summary>Fixed X minimum for the common axis (NaN = auto-fit).</summary>
     public double MinX { get => GetValue(MinXProperty); set => SetValue(MinXProperty, value); }
@@ -1994,7 +2004,10 @@ public abstract class ChartBase : Control
         _legend.Clear();
         if (!ShowLegend || Series.Count == 0) return default;
 
-        const double pad = 4, boxSize = 13, boxGap = 6, itemGap = 16, lineGap = 4;
+        const double boxSize = 13, boxGap = 6, itemGap = 16, lineGap = 4;
+        // The bar's own padding, plus whatever the user asked for: LegendMargin is the space between
+        // the frame and the entries (top, bottom and both sides), so 0 reproduces the old look exactly.
+        var pad = 4 + Math.Max(0, LegendMargin);
         var font = Math.Max(6, LegendFontSize);
         var vertical = LegendPosition is LegendPosition.Left or LegendPosition.Right;
         var available = vertical ? frameSize.Height : frameSize.Width;

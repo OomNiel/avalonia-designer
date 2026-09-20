@@ -75,11 +75,13 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // `XYSeries` (which the multi-series copies have).
             //
             // The marker is not only about new TYPES: a change in how an existing type DRAWS is just as
-            // invisible in an old copy, and a project that keeps the old file simply shows the old
-            // picture. So when the drawing changes, move the marker to a token the new code introduced
-            // — here `DrawnColor`, the field that remembers the colour a cursor was drawn in (a
-            // following cursor takes the followed series' colour, measured 2026-09-20).
-            marker: 'DrawnColor'
+            // invisible in an old copy, and so is a NEW ATTRIBUTE the editor writes into a form — XAML
+            // that names a property the old copy does not have fails to compile. So the marker moves
+            // with either. History: `PlotBackOpacityProperty` (the first release, detected nothing),
+            // `XYSeries` (multi-series), `ChartCursor` (cursors), `DrawnColor` (a following cursor takes
+            // the followed series' colour, 2026-09-20) and now `LegendMargin`, the legend's inner margin
+            // added the same day.
+            marker: 'LegendMargin'
         }
     ];
 }

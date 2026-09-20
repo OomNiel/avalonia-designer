@@ -839,6 +839,11 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly LegendCornerRadiusProperty As StyledProperty(Of Avalonia.CornerRadius) =
             AvaloniaProperty.Register(Of ChartBase, Avalonia.CornerRadius)(NameOf(LegendCornerRadius), New Avalonia.CornerRadius(4))
 
+        ''' <summary>Breathing room between the legend frame and the entries inside it, in pixels, added on
+        ''' all four sides (0 = the padding the bar has always had).</summary>
+        Public Shared ReadOnly LegendMarginProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(LegendMargin), 0.0)
+
         ' ---- cursors --------------------------------------------------------------------------
         ''' <summary>Where the cursor readout is drawn: following the mouse pointer (the default) or in
         ''' the top right corner of the drawing area. Also switchable at runtime from the chart's
@@ -1023,6 +1028,7 @@ Namespace Global.AvaloniaCharts
                 ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
                 LegendPositionProperty, LegendBackColorProperty, LegendShowFrameProperty,
                 LegendBorderBrushProperty, LegendBorderThicknessProperty, LegendCornerRadiusProperty,
+                LegendMarginProperty,
                 ReadoutPositionProperty, CursorDecimalsProperty,
                 MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
                 LineColorProperty, LineThicknessProperty, LineStyleProperty,
@@ -1415,6 +1421,17 @@ Namespace Global.AvaloniaCharts
             End Get
             Set(value As Avalonia.CornerRadius)
                 SetValue(LegendCornerRadiusProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Breathing room between the legend frame and the entries inside it, in pixels, added
+        ''' on all four sides (0 = the padding the bar has always had).</summary>
+        Public Property LegendMargin As Double
+            Get
+                Return GetValue(LegendMarginProperty)
+            End Get
+            Set(value As Double)
+                SetValue(LegendMarginProperty, value)
             End Set
         End Property
 
@@ -2015,7 +2032,10 @@ Namespace Global.AvaloniaCharts
             _legend.Clear()
             If Not ShowLegend OrElse _series.Count = 0 Then Return New Size(0, 0)
 
-            Const pad As Double = 4, boxSize As Double = 13, boxGap As Double = 6, itemGap As Double = 16, lineGap As Double = 4
+            Const boxSize As Double = 13, boxGap As Double = 6, itemGap As Double = 16, lineGap As Double = 4
+            ' The bar's own padding, plus whatever the user asked for: LegendMargin is the space between
+            ' the frame and the entries (top, bottom and both sides), so 0 reproduces the old look exactly.
+            Dim pad As Double = 4 + Math.Max(0, LegendMargin)
             Dim font = Math.Max(6, LegendFontSize)
             Dim vertical = LegendPosition = LegendPosition.Left OrElse LegendPosition = LegendPosition.Right
             Dim available = If(vertical, frameSize.Height, frameSize.Width)

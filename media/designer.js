@@ -5109,6 +5109,9 @@
         els.legendBody.appendChild(seriesField('Corner radius',
             seriesText(String(v.cornerRadius == null ? '4' : v.cornerRadius), (x) => { v.cornerRadius = x; }),
             'How round the frame\u2019s corners are (XAML CornerRadius, e.g. 4 or 4,8,4,8).'));
+        els.legendBody.appendChild(seriesField('Margin',
+            seriesNumber(String(v.margin == null ? '0' : v.margin), (x) => { v.margin = x; }),
+            'Space between the frame and the entries inside it, in pixels, added on all four sides \u2014 the frame grows with it, and the names move inwards. 0 keeps the small padding the bar has always had.'));
     }
     function openLegendEditor(name, info) {
         legendEdit = { name: name || null, values: Object.assign({}, info || {}) };

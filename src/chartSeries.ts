@@ -129,7 +129,8 @@ export const CHART_LEGEND_FIELDS: { key: string; attr: string; def: string }[] =
     { key: 'backColor', attr: 'LegendBackColor', def: 'Transparent' },
     { key: 'borderBrush', attr: 'LegendBorderBrush', def: '#C8C8C8' },
     { key: 'borderThickness', attr: 'LegendBorderThickness', def: '1' },
-    { key: 'cornerRadius', attr: 'LegendCornerRadius', def: '4' }
+    { key: 'cornerRadius', attr: 'LegendCornerRadius', def: '4' },
+    { key: 'margin', attr: 'LegendMargin', def: '0' }
 ];
 
 /** The sides the legend bar can take, in the order the editor offers them. */

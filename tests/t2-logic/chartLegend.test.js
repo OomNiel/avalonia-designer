@@ -140,4 +140,34 @@ module.exports = async (t) => {
     writeChartLegend(chart.model, chart.el, Object.assign({}, defaults, { showLegend: 'True' }));
     t.ok(!chart.model.serialize(true).includes('ShowLegend'), 'write',
         'and switching it back on removes the attribute again');
+
+    // --- 6. LegendMargin: space between the frame and the entries inside it -------------------
+    // Asked for 2026-09-20: a framed legend looked cramped. The margin is ADDED to the bar's own
+    // small padding on all four sides, so 0 leaves every existing form exactly as it was — and the
+    // setting has to reach the renderer of both languages, or it works in one of them only.
+    const margin = CHART_LEGEND_FIELDS.find((f) => f.attr === 'LegendMargin');
+    t.ok(margin, 'margin', 'the legend editor knows a LegendMargin field');
+    t.equal(margin ? margin.key : '', 'margin', 'margin', 'posted under the name the modal uses');
+    t.equal(margin ? margin.def : '', '0', 'margin',
+        'and defaults to 0, so a chart that never set it keeps its old look');
+    const spaced = chartModel('');
+    writeChartLegend(spaced.model, spaced.el,
+        Object.assign({}, chartLegendOf(spaced.el), { margin: '10' }));
+    t.ok(spaced.model.serialize(true).includes('LegendMargin="10"'), 'margin',
+        'a margin the user sets is written into the form');
+    t.equal(chartLegendOf(spaced.el).margin, '10', 'margin', 'and reads back');
+    const flat = chartModel('');
+    writeChartLegend(flat.model, flat.el, Object.assign({}, chartLegendOf(flat.el), { margin: '0' }));
+    t.ok(!flat.model.serialize(true).includes('LegendMargin'), 'margin',
+        'while the default 0 is left out, like every other legend value at its default');
+    const vb = read('resources/GrumpyCharts.vb');
+    for (const [name, src] of [['C#', cs], ['VB', vb]]) {
+        t.ok(/LegendMarginProperty/.test(src), 'margin', `${name}: the chart declares LegendMargin`);
+        t.ok(/(nameof|NameOf)\(LegendMargin\)/.test(src), 'margin',
+            `${name}: registered under the attribute name the writer uses`);
+        t.ok(/pad[^=]*=[^;]*Math\.Max\(0, LegendMargin\)/.test(src), 'margin',
+            `${name}: the legend layout adds it to the bar's own padding`);
+        t.ok(/LegendMarginProperty/.test(src.slice(src.indexOf('AffectsRender'))), 'margin',
+            `${name}: and it repaints the chart when it changes`);
+    }
 };

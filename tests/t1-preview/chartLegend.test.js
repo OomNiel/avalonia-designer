@@ -183,6 +183,48 @@ module.exports = async (t) => {
         t.equal(at(square.img, 3, 3), true, 'chart-legend', 'a square frame fills its corner');
         t.equal(at(rounded.img, 3, 3), false, 'chart-legend',
             'a rounded frame leaves the corner to the plate behind it');
+
+        // --- LegendMargin: breathing room between the frame and the entries ----------------------
+        // The frame is measured in its own backcolour (yellow), which exists nowhere else in these
+        // renders, so "the bar grew by twice the margin" and "the entries moved inwards" are plain
+        // pixel facts. A RIGHT legend is measured sideways: the bar is anchored to the right edge and
+        // the plot is chopped short of it, so ink inside the bar's own x-range is the bar's alone.
+        const barShot = (side, attrs) => renderPng(host, form('GridStyle="Dot" '
+            + `LegendPosition="${side}" LegendBackColor="#FFFF00" ${attrs}`, TWO), W, H);
+        const width = (b) => b.maxX - b.minX;
+        const height = (b) => b.maxY - b.minY;
+        const rightTight = await barShot('Right', 'LegendMargin="0"');
+        const rightRoomy = await barShot('Right', 'LegendMargin="10"');
+        const tightF = frameBox(rightTight.img);
+        const roomyF = frameBox(rightRoomy.img);
+        t.ok(width(roomyF) > width(tightF) + 15, 'chart-legend',
+            'LegendMargin widens the frame by about twice the margin',
+            `${width(tightF)} -> ${width(roomyF)} px`);
+        t.ok(Math.abs(tightF.maxX - roomyF.maxX) <= 2, 'chart-legend',
+            'while the edge it is anchored to stays where it was');
+        const entriesIn = (img, frame) => ink(img, 0, H, RED, Math.max(0, Math.round(frame.minX) + 2), W);
+        const gapX = (frame, text) => text.minX - frame.minX;
+        const tightGap = gapX(tightF, entriesIn(rightTight.img, tightF));
+        const roomyGap = gapX(roomyF, entriesIn(rightRoomy.img, roomyF));
+        t.ok(roomyGap > tightGap + 5, 'chart-legend',
+            'and the entries sit further from the frame — which is what the setting is for',
+            `gap ${tightGap} -> ${roomyGap} px`);
+        t.ok(roomyGap - tightGap <= 14, 'chart-legend',
+            'by about the margin, not by more', `${roomyGap - tightGap} px`);
+        // The same on the Bottom side, where the bar is anchored to the bottom and grows upwards.
+        const bottomTight = await barShot('Bottom', 'LegendMargin="0"');
+        const bottomRoomy = await barShot('Bottom', 'LegendMargin="10"');
+        const tightB = frameBox(bottomTight.img);
+        const roomyB = frameBox(bottomRoomy.img);
+        t.ok(height(roomyB) > height(tightB) + 15, 'chart-legend',
+            'and it grows a Bottom bar too', `${height(tightB)} -> ${height(roomyB)} px`);
+        t.ok(Math.abs(tightB.maxY - roomyB.maxY) <= 2, 'chart-legend',
+            'which still sits on the frame\'s bottom edge');
+        // The room comes off the plot, not out of thin air: the traces end higher up.
+        const plotBottom = (img, frame) => ink(img, 0, Math.max(1, Math.round(frame.minY) - 3), BLUE).maxY;
+        t.ok(plotBottom(bottomRoomy.img, roomyB) < plotBottom(bottomTight.img, tightB), 'chart-legend',
+            'and the plot gives up that room',
+            `plot bottom ${plotBottom(bottomTight.img, tightB)} -> ${plotBottom(bottomRoomy.img, roomyB)}`);
     } finally {
         host.close();
     }

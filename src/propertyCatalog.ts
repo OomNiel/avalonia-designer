@@ -1805,7 +1805,8 @@ export function propertyDefsFor(
             desc: 'Sets the legend bar up: switch it on or off, choose which side it sits on (bottom, '
                 + 'top, left or right — it wraps to fit its entries either way), its font size, and a '
                 + 'frame with its own backcolour, outline and rounded corners. Each entry carries a '
-                + 'tick box that switches that trace on and off.'
+                + 'tick box that switches that trace on and off. **Margin** adds space between the frame '
+                + 'and the entries inside it, on all four sides, so a framed legend does not look cramped.'
         });
         topActions.push({
             key: 'Cursors',
