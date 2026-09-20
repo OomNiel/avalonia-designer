@@ -12,7 +12,7 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
-## [0.10.11] - 2026-09-18 · *the prompt is written where you are, not at the top of the window*
+## [0.10.11] - 2026-09-18 · *the prompt is written where you are, not at the top of the window — and the charts arrive*
 
 Asked the morning after `0.10.10` was released: *"when writing the prompt for ai assist, place the prompt input
 box next to the current cursor position and make the prompt entry box a multi-line (at least 5 lines) input
@@ -21,6 +21,9 @@ design (`InputBoxOptions` has no `multiline`, no `rows`) and VS Code always draw
 with no API to anchor it at the caret. The Comments API is not an alternative either — a `CommentThread` has
 `canReply` and a `label`, but **no `input` and no submit event**, so a reply typed into one goes nowhere an
 extension can read.
+
+And one thing that has nothing to do with prompts: this version also carries **the charting tool** — two
+self-drawing charts with four editors and draggable cursors, written up in its own section below.
 
 ### Added — nine Toolbox controls, and a rule for a crash that compiles (2026-09-19)
 
@@ -152,6 +155,93 @@ extension can read.
   request has, what had to be dropped to fit, and the example wording — is shown where the typing happens, and
   cleared by itself.
 - Suite **4,868 → 4,915** assertions (`tests/t2-logic/aiPrompt.test.js` is new with **47**).
+
+### Added — the charting tool: two charts, four editors, and cursors (2026-09-20)
+
+Two **self-drawing** controls in a new Toolbox category, **Charts**: `GrumpyLinePlot` (Y values in sample
+order — the X axis is the sample number) and `GrumpyXYPlot` ((x, y) pairs, as a joined line, as markers or
+both). No packages, no image files, no chart engine: the control draws itself, so it scales to whatever space
+it is given and prints or screenshots like any other control. Both come from one bundled file,
+`GrumpyCharts.cs` (and its `.vb` twin), copied into the project like the other helpers.
+
+- **Data from the spreadsheet you already have.** `Spreadsheet` (an absolute path — the workbook is *not*
+  copied into the project), `X Column`/`Y Column`, `Names Row`, `First Data Row`, `Live Update` (re-reads
+  when the file changes on disk, including the save-to-temp-and-rename dance that Excel, LibreOffice and
+  VS Code all use) and `Browse Button`, which draws a small **"…"** picker in the chart's top-right corner
+  — also automatically while the chart has no data at all, since that is exactly when it is wanted. Typed-in
+  values (`Values`, `Points (x,y)`) still work for a static chart, and `SetValues` / `AddPoint` / `Reload`
+  are there for code.
+- **The Series editor — one row per series.** Title (empty = the sheet's column header), the columns that
+  series reads (`Common` axis, or `Per series` with its own pair), line colour/thickness/style,
+  marker/marker size/join points, and visibility — plus add, delete and reorder. A chart with no series
+  elements keeps drawing its single line from the chart-level rows; **saving series takes over those
+  styling rows**, which is the intended hand-off rather than a loss: from then on each series owns them.
+- **The Axis editor.** Every axis with its position (left/right for an X, top/bottom for a Y), visibility,
+  colour, major and minor ticks and their size, tick labels and their size, and a name. A *Per series* axis
+  starts as a copy of the common one and the axes on a side **stack outward**, so two scales side by side
+  stay readable. The old chart-level axis rows disappear from the Properties list once this editor is
+  saved — the Axis objects are the single source of truth from then on, and the editor says so.
+- **The Legend editor, and the bar it configures.** The legend lists every series by name in that series'
+  own colour with a tick box, and clicking a box *or* a name switches that trace off and on. Position
+  bottom/top/left/right (wrapping onto more rows or columns to fit), entry font size, and a frame with a
+  backcolour, outline colour, thickness and corner radius. It takes its space from the plot but never more
+  than 60 % of it, and a chart with no series elements draws no legend — its single unnamed line has nothing
+  to name.
+- **Cursors — up to two, draggable, with the distance between them.** A cursor is a line a user drags across
+  the plot with a readout naming the value it sits on. `Orientation` (both/vertical/horizontal) decides
+  which lines are drawn — a cursor always carries **both** an X and a Y, so a horizontal one still reports
+  an X — `X Values`/`Y Values` decide which numbers its row shows, `Style` and `Colour` are its own, and
+  `X`/`Y` are where it starts (empty = the middle of the axis). **Follow trace** (a cross cursor's setting,
+  **on by default**) puts the crossing *on the selected series* at the cursor's X, interpolated between
+  samples, so the handle, the line and the numbers can never disagree; switch it off for a free crosshair
+  whose Y is yours to place — a threshold line. At run time: **←/→** steps the selected cursor one sample at
+  a time (the X axis' own step, so it lands on samples), **↑/↓** chooses the trace the values are read from
+  (its marker is drawn on the crossing in that trace's colour), dragging the **handle** slides the point
+  along the trace, and the **right-click menu** switches each cursor on and off, picks *readout: follow the
+  mouse* or *readout: top right corner*, adds, removes or re-centres cursors, and copies the readout as
+  text. With **two** cursors on, the readout gains a second row — `ΔX`/`ΔY`, the absolute difference between
+  them, in the *other* cursor's colour under a hairline. Which cursors are switched on is runtime state and
+  is deliberately not saved: a fresh start shows every cursor that exists.
+- **`ReadoutPosition` and `CursorDecimals`** — where the readout lives (beside the pointer, or pinned into
+  the chart's top-right corner where it never covers the data) and how many decimals it shows (**-1** = as
+  many as the axis labels use).
+- Suite **4,915 → 6,153** assertions, and **1,221** of them are the chart work: `tests/t1-preview/`
+  `chartColors` (4), `chartSeries` (8), `chartAxes` (9), `chartLegend` (31), `chartCursors` (37);
+  `tests/t2-logic/` `chartSeries` (67), `chartAxes` (71), `chartLegend` (41), `chartCursors` (126),
+  `chartWorkbook` (30) and `bundledComponents` (36, extended); plus the webview drives in
+  `tests/t3-webview/designer.test.js` (813). Both twins compile 0 errors / 0 warnings on Avalonia **12.1.1
+  and 11.0.10**, the VB one under `Option Strict On`.
+- **A bundled file is validated by the XAML compiler, so the compiler is part of the test rig.**
+  `GrumpyCharts` is built here by the host, a 12.1.1 probe and an 11.0.10 probe, plus the VB twin — a new
+  element or enum is only really checked when a real project compiles it. The 11.0.10 probe deliberately
+  avoids `Values=`/`Points=` because that version's compiled XAML cannot convert a string to `double[]`.
+
+### Changed — a workbook Excel has open can be read (2026-09-20)
+
+- **The workbook no longer has to be closed.** Reported from Windows, where a sheet left open in Excel is
+  the *normal* state: `ZipFile.OpenRead` asks for `FileShare.Read`, Excel refuses, and the chart drew
+  nothing and showed a raw IO error. The reader now asks for `FileShare.ReadWrite | FileShare.Delete` and
+  retries four times at 120 ms — which is what Excel, LibreOffice and VS Code need. When it really cannot
+  read the file it says which case it is, naming the file every time: *is open in another program — close
+  the workbook in Excel (or save it again) and this chart reloads by itself*, *was not found — check the
+  Spreadsheet path*, or the underlying reason.
+
+### Fixed — four things the chart work exposed (2026-09-20)
+
+- **The spreadsheet Browse button did nothing.** Clicking **Browse…** in the Properties panel was a
+  no-op — the row was drawn and the handler never reached the file dialog.
+- **A named colour was parsed as `#White` and fell back to transparent.** The host's colour reader assumed
+  `#RRGGBB`, so `White`, `Teal`, `DarkOrange` and friends silently resolved to **Transparent** — which is
+  exactly how a chart plate, an axis or a line can vanish while the code looks right. It now accepts colour
+  names as well as hex.
+- **An old `GrumpyCharts` copy was no longer detected.** The staleness marker watched for the element the
+  *previous* chart feature introduced, so a project whose bundled file predated the cursors was not
+  refreshed on save and then failed with *Unable to resolve type ChartCursor*. The marker is now
+  `ChartCursor`, and the designer refreshes the file and says when it did.
+- **A cursor's crossing and its readout could disagree.** The crossing sat at the cursor's own Y while the
+  readout reported the trace's value — the two halves of the feature drawn from different numbers. There is
+  now one place that chooses the trace (`SelectedTrace`) and one value both are computed from, which is also
+  what made *Follow trace* possible.
 
 ### Notes
 

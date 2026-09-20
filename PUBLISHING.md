@@ -233,7 +233,7 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.10.11` (2026-09-18) — built, installed and audited; ready for its own release when the user says so.**
+> **`0.10.11` (2026-09-18 → released 2026-09-20) — built, installed, audited; released on GitHub, not yet uploaded.**
 > Three fixes, all from the same day's reports. (1) The prompt for the AI assist is now typed **in the editor, at
 > the caret**, between two marker comments, sent by a code lens (`Ctrl+Alt+Enter`) or cancelled by the other one —
 > see `NOTES.md` §136; neither half of the request was possible with `showInputBox` (single-line, pinned to the top
@@ -265,16 +265,47 @@ listing when that release is uploaded — a repo-only README edit does not.
 > File group. Plus: the `;` rule places the semicolon at the compiler's own column and falls through to the
 > model when it cannot act; the 30B step-up hands the 7B back; and the log is clamped by trimming the oldest
 > lines instead of deleting the whole file — see `NOTES.md` §139.
+> (6) **Then the charting tool (2026-09-20):** the bundled `GrumpyCharts` control set — a **Line Plot** and
+> an **X, Y Plot**, both self-drawing, fed by an `.xlsx` workbook (or typed-in values) that is re-read on
+> save — with a **Series**, an **Axis** and a **Legend** editor, a legend bar whose entries switch traces on
+> and off, and up to **two draggable cursors** with a value readout, *follow trace*, arrow-key stepping and a
+> `ΔX`/`ΔY` row once both are on. Plus the fix that made a workbook Excel has open readable
+> (`FileShare.ReadWrite`, four retries at 120 ms, three classified messages), the host's named-colour bug
+> (`"White"` was parsed as `#White` and silently became **transparent**), the `ChartCursor` staleness marker
+> that refreshes a project's older bundled file on save, and the single `SelectedTrace` that stopped a
+> cursor's crossing and its readout disagreeing — see §141. **This is the build that was released**
+> (1,035,659 bytes, `20cfa4ce…`); the artefact packaged before the charts (935,035 bytes, `c1d8edd0…`) is
+> recorded as superseded below.
 >
-> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **935,035 bytes**, sha256
-> `c1d8edd0cc396fdc0d143da2ac006f962630c574e98a8828d1299a6f5f95c841` — the **final** build of `0.10.11`
-> (the earlier builds of this version were installed on this machine but never released, and are all
-> superseded by this one), built by `npm run package` after a green suite (**5,364 assertions, 0 failed**;
-> the property-compliance reset run is what verifies every catalog property against Avalonia 12.1.1), manifest
-> `Version="0.10.11"` with **no `PreRelease` attribute**, and
-> audited the same way as `0.10.9` (extract the VSIX, grep it for the user name, host name, project folders and
-> server alias — none present). **THIS is the file to upload** once `0.10.10` has gone out; `0.10.10` remains the
-> file for the *imminent* upload, frozen below.
+> Plain VSIX — `avalonia-designer-0.10.11.vsix`, **1,035,659 bytes**, sha256
+> `20cfa4cedcd0c1e4c33770a0fb11e24c9e2833974a488c1c57e0c1958e64fbb9` — the **released** build of `0.10.11`,
+> built by `npm run package` after a green suite (**6,153 assertions, 0 failed**) and audited **twice**: once
+> before tagging, where the grep found the project name `OptimisedCSTest` in a comment of the *compiled*
+> `out/dataSetGenerator.js` (the same class of leak as `0.10.9`) — scrubbed, recompiled, repackaged — and again
+> on the final file (user name, host name, project folders, server alias: none present). Manifest
+> `Version="0.10.11"` with **no `PreRelease` attribute**. Tag `v0.10.11` → commit **`0512884`**, pushed; the
+> GitHub release is ***Latest*** and not a pre-release (`draft=false`, `prerelease=false`, title *Avalonia
+> Designer for VS Code v0.10.11*), and the asset was verified **three ways** — the local build, a fresh
+> `gh release download`, and the API's own digest — all `20cfa4ce…`, 1,035,659 bytes. Installed locally as
+> `grumpy.avalonia-designer@0.10.11`.
+>
+> An **earlier** build of the same version number — `935,035 bytes`, sha256
+> `c1d8edd0cc396fdc0d143da2ac006f962630c574e98a8828d1299a6f5f95c841`, **5,364 assertions** — was packaged a
+> day earlier and is *superseded*. It carries everything listed below **except** the charting tool and the
+> workbook-sharing fix, both of which landed inside the same version number before the tag. **Never uploaded;
+> do not use it.**
+>
+> **`0.10.11` is released on GitHub and is still *not* uploaded to the Marketplace.** The listing carries
+> `0.9.4`, and `0.10.10` remains the file for the *imminent* upload (frozen below) — so there are two
+> candidate artefacts on this machine, on purpose, and the choice between them is made at the upload.
+>
+> **The docs ride inside the VSIX, so the released file carries the documentation of 2026-09-20 12:42** — the
+> chart chapter in `USER_MANUAL.md` §19.1–19.8 (placing, data, the Series/Axis/Legend editors, the spreadsheet
+> layout, the properties and the tips) plus its `CONTROLS.md` and `CHANGELOG.md` sections, but **not** the
+> later revision of the same day (the cursor subsection §19.8, the renumbered tips, the refreshed totals in
+> `TEST_PLAN.md` and `tests/README.md`). Those edits live in the repository and ship with the next version —
+> or with this one, if it is re-packaged before the upload, in which case the hash above changes and the two
+> must not be confused.
 >
 > **`0.10.10` (2026-09-17) — installed and tested on this machine; THIS is the file to upload.** Supersedes
 > `0.10.9` (released on GitHub the same evening, **never uploaded**: a `/home/<user>/…` path from a bug-hunt note

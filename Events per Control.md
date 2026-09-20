@@ -17,7 +17,11 @@ take and the class that declares the event, so a hand-written handler is copy-pa
   placed silently, but right-click → **Add event…** offers their events anyway.
 - The three bundled helpers (`chrome:PathPicker`, `chrome:GrumpyPanel`, `chrome:ChromeWindow`) are
   our own `AvaloniaChrome` types: they expose the events of their base class — `UserControl`,
-  `Border` and `Window` respectively — and nothing of their own.
+  `Border` and `Window` respectively — and nothing of their own. The two bundled charts
+  (`charts:GrumpyLinePlot`, `charts:GrumpyXYPlot`, namespace `AvaloniaCharts`) likewise expose only
+  what their base class `Control` provides — no events of their own; what looks like interaction
+  (the legend's tick boxes, the draggable cursors, the in-chart "…" picker) is handled inside the
+  control's own input methods, so there is no handler for the designer to wire.
 
 ## 0. Index
 

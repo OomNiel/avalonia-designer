@@ -171,13 +171,25 @@ into every new project next to the other helpers — no package, no image file, 
 - **Legend** (`Legend — Edit legend…`): on/off, side (Bottom/Top/Left/Right — it wraps to fit), name font
   size, and a frame with its own backcolour, outline and rounded corners. Clicking an entry switches that
   trace on and off at runtime; the trace keeps its place on the axis.
+- **Cursors** (`Cursors — Edit cursors…`): up to **two** draggable cursors with a value readout. Each has
+  `Orientation` (Both / Vertical / Horizontal — it only decides which lines are drawn, because a cursor
+  always carries both an X and a Y), `Style`, `Colour`, `XValues`/`YValues` (which numbers its readout row
+  shows), `FollowTrace` (on by default: the crossing sits **on the selected series** at the cursor's X,
+  interpolated between samples) and a starting `X`/`Y` (empty = the middle of the axis). The chart-level
+  `ReadoutPosition` (FollowMouse / TopRight) and `CursorDecimals` (**-1** = the axis labels' own precision)
+  live in the same editor. At runtime **←/→** step one sample, **↑/↓** choose the trace read from (its
+  marker is drawn on the crossing), dragging the handle slides the point along the trace, and the
+  right-click menu switches each cursor on and off, picks the readout placement, adds/removes/re-centres
+  cursors and copies the readout as text. With **two** cursors on, the readout gains a `ΔX`/`ΔY` row — the
+  absolute difference between them. Which cursors are *enabled* is runtime state and is not saved.
 - **Styling in Properties**: plot backcolour + opacity, border (colour/thickness/corner radius),
   gridlines (colour/thickness/style), the title (text/show/position/colour/size), the fixed scale
   overrides (`MinX`/`MaxX`/`MinY`/`MaxY`) and `DockPanel.Dock`.
 
-> **An old copy of the bundled chart file cannot compile the newer series/axis/legend XAML**
-> (`AVLN2000: Unable to resolve type XYSeries…`). The designer refreshes it for you: save the form once
-> after using a chart editor, and the project's `GrumpyCharts.cs`/`.vb` is updated — it tells you when.
+> **An old copy of the bundled chart file cannot compile the newer series/axis/legend/cursor XAML**
+> (`AVLN2000: Unable to resolve type XYSeries…`, or `… type ChartCursor …`). The designer refreshes it for
+> you: save the form once after using a chart editor, and the project's `GrumpyCharts.cs`/`.vb` is
+> updated — it tells you when.
 
 ---
 

@@ -3374,3 +3374,63 @@ section.
   *“What Code Fix and the AI cannot do”* section to USER_MANUAL §17 — the limitations the last three days
   kept proving, written down where a user will find them.
 
+### §141 — a chart that draws itself: what a self-drawing bundled control costs (2026-09-20, 0.10.11)
+
+Asked for in one line each, and each one bigger than it looked: *"add Line and X,Y plot controls"*, then
+*"add drag-able cursors … keyboard arrows … right click menu"*, then *"the intersection point of the x/y
+cursors must follow the selected series"*, then *"when 2 cursors are active add Abs(c1x - c2x)"*. The
+controls are one bundled file — `resources/GrumpyCharts.cs` and its `.vb` twin, kept line for line — and
+seven things about that shape cost real time:
+
+- **A bundled file is validated by the XAML compiler, so the compiler is part of the test rig.**
+  `GrumpyCharts` is compiled by the host, by a **12.1.1** probe and by an **11.0.10** probe, plus the VB
+  twin under `Option Strict On`. A new element or enum is only really checked when a real *project*
+  compiles it — building the extension's own host touches no form. The 11.0.10 probe deliberately avoids
+  `Values=`/`Points=`: that version's compiled XAML cannot convert a string to `double[]`, so a probe using
+  them would fail for a reason that has nothing to do with the feature under test.
+- **VB keywords as enum members.** `CursorStyle.Long` / `.Short` are VB **type** keywords and fail as
+  `BC31001` unless written `[Long]` / `[Short]`; the metadata name is unchanged, so one spelling serves
+  both twins and the XAML. The same family, each paid for once: a continuation line may not *begin* with
+  `&` (the operator ends the previous line), `Return a = b` parses as an assignment (write `Return (a = b)`),
+  and four `"` in a row is **two escaped quotes** rather than a closed literal — count the quotes on a line
+  with `awk '{print gsub(/"/,"&")}'`, and isolate a new block in a scratch `.vbproj` so the compiler names
+  the real line instead of a cascade.
+- **`MenuItem.IsChecked` does not exist in Avalonia 11.0** (it arrives in 11.1). The cursor menu carries its
+  state in the header instead — `"✓ Cursor 1"` against `"    Cursor 1"` — which also makes it assertable
+  without a visual tree. (`TopLevel.Clipboard.SetTextAsync` needed `using Avalonia.Input.Platform;`, the same
+  class of "compiles on the version the sample was written for".)
+- **Pixel assertions need hue, a stated box, and patience.** Three false negatives in one afternoon: a 1 px
+  cursor line anti-aliases, so matching its *exact* colour finds nothing (match by hue); the readout panel is
+  drawn in the trace's colour, so "how much orange is on the chart" has to measure a box that excludes it;
+  and anti-aliased **text** has warm fringes that any "orange-ish" matcher counts, so measure only the plot
+  interior. The rule that came out of it: a pixel test names the rectangle it measures, and a failure prints
+  the pixel counts it found rather than only "expected false".
+- **Two defects no property round-trip can reach.** (1) The host's colour converter prefixed `#` onto *any*
+  `Color` value, so `TitleColor="White"` became `#White`, `Color.Parse` threw and the catch returned
+  `Colors.Transparent` — the title was drawn **invisibly in the designer** while the app, which uses the real
+  XAML loader, was perfectly fine; the user reported it as "the title does not show in the designer".
+  (2) `ZipFile.OpenRead` asks for `FileShare.Read`, which **Excel refuses**, so a chart bound to a workbook
+  the user had open (the normal state on Windows) drew nothing and reported a raw IO error. The reader now
+  asks for `FileShare.ReadWrite | FileShare.Delete` and retries four times at 120 ms, and classifies the
+  failure into three messages that name the file. Both have their own test file, because neither is reachable
+  from the ordinary property tests.
+- **Two halves of one feature must be computed from one value.** The cursor's crossing sat at the cursor's own
+  Y while its readout reported the trace's value — the user saw the two disagree. The fix is not arithmetic
+  but structure: *one* place chooses the trace (`SelectedTrace`), both the crossing and the readout derive
+  from it, and `FollowTrace` then became possible as a consequence rather than as a separate feature.
+- **A staleness marker must name the newest element, not the last one.** The bundled-file check watched for
+  `XYSeries`, so a project whose `GrumpyCharts.cs` predated the cursors was not refreshed on save and then
+  failed with *Unable to resolve type ChartCursor*. The marker is `ChartCursor` now — and the rule with it:
+  when a bundled file gains a new *family* of elements, move the marker to it, because the old marker is
+  satisfied by a file that is still too old.
+- **A comment in the compiled output ships.** Before tagging, the VSIX was audited and the user's own test-app
+  name (`OptimisedCSTest`) turned up inside a **comment in `out/dataSetGenerator.js`** — the same class of
+  leak as `0.10.9`, so it was scrubbed, recompiled and repackaged *before* the tag. Grep the artefact, not the
+  source, and do it before the tag rather than after.
+- **Suite 4,915 → 6,153** — 1,221 of it the chart work, in ten new or extended files. **The docs pass of the
+  same day** (the chart chapter and its new cursor subsection in `USER_MANUAL.md`, `CONTROLS.md`, the
+  `CHANGELOG` section for this version, `README.md` §7 and `TEST_PLAN.md`) was written *after* the release, so
+  the released VSIX carries the chart chapter **without** the cursor section. `PUBLISHING.md` records which
+  documentation each artefact on disk actually contains — a doc that ships inside the package is part of the
+  artefact's identity, and the hash is the only thing that says so.
+

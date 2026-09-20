@@ -146,12 +146,24 @@ It also supports **“follow a column of a bound grid”**: a ComboBox or ListBo
 column of a table a DataGrid owns and update **live** as you add, edit or delete rows in the grid —
 without taking the table away from the grid's own editing, undo and save-back.
 
-## 7. Bundled helper controls, copied in and kept in sync
+## 7. Bundled helper controls and charts, copied in and kept in sync
 
 File and Folder **path pickers** (platform dialog via `TopLevel.StorageProvider`, no extra package),
 a cross-platform **dark titlebar** (`ChromeWindow`), `GrumpyPanel`, `AnchorHelper`, `ColumnFollower`
 and `ExifImageLoader`. Each is copied into your project the first time it is needed — and re-copied by
 **Code Fix…** for projects that predate it.
+
+Two **self-drawing charts** join them in the same bundled file style (`GrumpyCharts.cs` / `.vb`, no
+package, no chart engine, no image — the control draws itself, so it scales and prints): **Line Plot**,
+where the X axis is the sample number, and **X, Y Plot** for `(x, y)` pairs, as a line, as markers or
+both. Numbers come from a **spreadsheet** you point at (an absolute path — the workbook is not copied
+into your project and stays yours to edit) or from typed-in values; **Live Update** re-reads a sheet on
+save, including while Excel or LibreOffice has it open. Four editors in the Properties panel build the
+rest: **Series** (one line per series, its own columns and its own axis), **Axis** (sides, ticks, labels,
+colours and per-series scales), **Legend** (side, font size and a rounded frame; the entries switch
+traces on and off at runtime) and **Cursors** — up to two draggable cursors with a value readout, the
+arrow keys stepping a sample at a time, *follow trace* keeping the crossing on the selected series, and a
+`ΔX`/`ΔY` row once both are on. The whole walkthrough is **USER_MANUAL §19**.
 
 ## 8. A property grid that behaves like a real one
 
@@ -353,12 +365,12 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~5,059 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~6,153 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release
   workflow.
-- **~9,200 lines of documentation**: a 1,600-line beginner `USER_MANUAL.md`, a per-control
+- **~10,500 lines of documentation**: a 2,000-line beginner `USER_MANUAL.md`, a per-control
   `CONTROLS.md`, the generated `Events per Control.md`, a real `CHANGELOG.md`, a maintainer
   `PUBLISHING.md` and a developer `NOTES.md` with the gotchas written down.
 - A **generated** catalog rather than hand-maintained lists, so the code, the signatures and the

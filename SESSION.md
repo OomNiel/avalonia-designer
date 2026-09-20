@@ -17,9 +17,31 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-17)
+## Where the last session left off (2026-09-20)
 
-**Built, tested, packed and installed: `0.10.5`** — *two choices a novice can read, and a step up when they are
+**Built, tested, packed, released and installed: `0.10.11`** — *the prompt is written where you are, and the
+extension can chart your data*. Two feature sets in one version. (1) The AI-assist prompt is now typed **in the
+editor, at the caret**, between two marker comments and sent by a code lens (`Ctrl+Alt+Enter`), because neither
+`showInputBox` nor the Comments API could put a multi-line box where the caret is. (2) **The charting tool** —
+the reason the number grew: two **self-drawing** controls, `GrumpyLinePlot` and `GrumpyXYPlot` (no package, no
+chart engine), fed by an `.xlsx` workbook you point at (an absolute path, re-read on save) or by typed-in
+values, with four editors in the Properties panel: **Series** (one line per series, its own columns, its own
+axis), **Axis** (sides, ticks, labels, per-series scales), **Legend** (a bar whose entries switch traces on and
+off) and **Cursors** — up to two draggable cursors with a value readout, *follow trace* keeping the crossing on
+the selected series, `←/→` stepping one sample, `↑/↓` choosing the trace, a right-click menu for on/off, readout
+placement and copy, and a `ΔX`/`ΔY` row once both are on. Suite **6,153 passed / 0 failed** (1,221 of it the
+chart work). Tag `v0.10.11` → `0512884`, GitHub release live and marked *Latest*, VSIX
+`avalonia-designer-0.10.11.vsix` **1,035,659 bytes**, sha256 `20cfa4ce…`, installed locally. **Not yet uploaded
+to the Marketplace** — the listing still carries `0.9.4`. Read `NOTES.md` **§141** before touching the charts:
+VB `[Long]`/`[Short]`, `MenuItem.IsChecked` missing on 11.0, pixel tests that need a stated measurement box,
+the Excel `FileShare` refusal, and why a bundled file needs a real *project* probe (12.1.1 **and** 11.0.10) to
+be validated at all.
+
+*`0.10.6`…`0.10.10` were the AI-assist weeks — the model picker, the Code Fix loop and its triggers, the
+DataSet facts, the build-driven repair, the 30B step-up. They are recorded in `CHANGELOG.md` and `NOTES.md`
+§135–§140 rather than here.*
+
+**Previously: `0.10.5`** — *two choices a novice can read, and a step up when they are
 not enough*. The picker is now the 7B **twice** — GPU (Vulkan) as the default, CPU-only as the fallback, over
 **one** 4.4 GB download — with everything else folded under *Advanced…*; and when a **Code Fix…** run ends
 without a clean build the extension **asks** before unloading the 7B and starting the user's 30B unit, narrating

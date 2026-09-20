@@ -12,7 +12,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-18)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-20)
 
 ---
 
@@ -60,7 +60,8 @@
     - [The Legend editor — names, tick boxes and a frame](#195-the-legend-editor--names-tick-boxes-and-a-frame)
     - [The spreadsheet layout at a glance](#196-the-spreadsheet-layout-at-a-glance)
     - [Chart properties you set directly](#197-chart-properties-you-set-directly)
-    - [Tips, limits and fixes](#198-tips-limits-and-fixes)
+    - [Cursors — read values off the plot](#198-cursors--read-values-off-the-plot)
+    - [Tips, limits and fixes](#199-tips-limits-and-fixes)
 
 ---
 
@@ -1787,7 +1788,8 @@ give it and prints or screenshots like any other control.
 
 Both work the same way: numbers come from a **spreadsheet** (or are typed in), each **series** decides
 which columns it reads and how it is drawn, the **axes** describe the scales, and the **legend** lists
-the series with a tick box each.
+the series with a tick box each. Two more things to configure: up to two **cursors** your users can drag
+to read values off the plot (19.8).
 
 ### 19.1 Placing a chart
 
@@ -1798,9 +1800,9 @@ the series with a tick box each.
    drawing, not a mock-up).
 
 > **The designer preview is a picture of the control.** It updates live as you change anything, but a
-> click on the canvas selects the whole chart. The interactive parts — the legend's tick boxes and the
-> in-chart **"…"** file button — belong to the running app. Use the Properties panel and the three
-> editors below while designing.
+> click on the canvas selects the whole chart. The interactive parts — the legend's tick boxes, the
+> draggable cursors and the in-chart **"…"** file button — belong to the running app. Use the
+> Properties panel and the four editors below while designing.
 
 ### 19.2 Getting data into a chart
 
@@ -1932,7 +1934,8 @@ Row 1 (or **Names Row**) holds the column names; numbers start at **First Data R
 ### 19.7 Chart properties you set directly
 
 Everything below is in the Properties panel of a selected chart. The series, axis and legend settings are
-in their editors (19.3–19.5).
+in their editors (19.3–19.5) and the cursors in 19.8 — all four are opened from the **Series / Axis /
+Legend / Cursors — Edit …** rows at the top of the list.
 
 | Row | What it does |
 |---|---|
@@ -1945,7 +1948,56 @@ in their editors (19.3–19.5).
 | **Gridlines, Grid Colour, Grid Thickness, Grid Style** | Gridlines at the common axis' main ticks. |
 | **X Min / X Max / Y Min / Y Max** | Fixed scale limits. Leave empty to fit the data automatically. |
 
-### 19.8 Tips, limits and fixes
+### 19.8 Cursors — read values off the plot
+
+Click **Cursors — Edit cursors…** on a selected chart. A cursor is a line that can be dragged across the
+plot, with a small readout that names the value it sits on — the "what is this number?" question,
+answered without reading the axis. **Up to two cursors** can be active at once, and the second one is
+what turns the feature into a measuring instrument: with two on screen the readout also shows the
+**difference** between them.
+
+A cursor always carries **both** an X and a Y position. **Orientation** only decides which lines are
+drawn — vertical, horizontal, or both (a cross) — so even a purely horizontal cursor still reports the X
+it stands at.
+
+| In the editor | What it does |
+|---|---|
+| **Cursors** list | One row per cursor, showing its orientation, its line style and the values it reads. Click a row to edit it, **Delete** to remove it. |
+| **+ Add cursor** | Adds another cursor, up to the maximum of **two**. **Save** writes them all into the form. |
+| **Orientation** | **Both** (a cross with a handle), **Vertical** or **Horizontal**. |
+| **Style** | Solid, Dash, Dot, Long or Short. |
+| **Colour** | The cursor's own colour, from the picker. |
+| **X Values / Y Values** | Per cursor: whether its readout shows that value (the readout shows the *selected trace*, with a column per switch). Both off leaves a line you can still drag, with no numbers. |
+| **Follow trace** | A **cross** cursor's own setting, and **on by default**: the crossing point is placed *on the selected series* at the cursor's X, interpolated between samples, so the handle, the line and the readout can never disagree. Switch it off for a free crosshair whose Y is yours to place — a threshold line. |
+| **X / Y** | The cursor's starting position, in data units. An empty box means "the middle of the axis". |
+
+Two settings belong to the chart rather than to one cursor — they sit under **Readout** in the same
+editor:
+
+| Setting | What it does |
+|---|---|
+| **Readout** | **Follow the mouse** (the panel floats beside the pointer) or **Top right corner** (pinned into the chart's top-right corner, where it never covers the data you are pointing at). |
+| **Decimals** | How many decimals the readout shows; **-1** means *as many as the axis labels use*. |
+
+**While the app runs**
+
+| Action | What it does |
+|---|---|
+| Drag a cursor | Moves it. On a cross cursor the **handle** sits at the crossing; dragging the handle slides the point **along the trace**, so it stays on the line and the numbers follow it. Dragging a line moves that line. |
+| **← / →** | One sample per tap: the selected cursor moves by the X axis' own step, so it lands on samples rather than between them. |
+| **↑ / ↓** | Chooses the trace the X and Y values are read from. Its marker is drawn on the crossing in that trace's own colour, which is what ties the numbers to a line when several are on screen. |
+| Right-click the plot | **Cursor 1 / Cursor 2** (switch each on and off), **Readout: follow the mouse** / **Readout: top right corner**, **Add cursor** / **Remove cursor** / **Reset cursors to the middle**, and **Copy readout** (the numbers as text, for pasting into a note). |
+
+> **With two cursors switched on, the readout gains a second row:** `ΔX n   ΔY n` — the absolute
+difference between the two cursors, measured between the values their rows show, drawn in the *other*
+cursor's colour under a hairline. That is the "how wide is this peak" arithmetic, done for you.
+
+> **Cursors are drawn over the plot and change no data.** They are saved in the form as the chart's
+> `<chart>.Cursors` children, so they survive a resize, a re-bind or a re-read of the workbook. Which
+> cursors are *switched on* is runtime state and is deliberately not saved: a fresh start shows every
+> cursor that exists.
+
+### 19.9 Tips, limits and fixes
 
 > **The designer preview and the running app use different loaders.** The preview is drawn by the host
 > process, the app by Avalonia's own XAML loader. They are meant to agree, and rare differences are bugs
@@ -1964,6 +2016,17 @@ in their editors (19.3–19.5).
 > **Nothing drawn, or "No numbers found in column …".** Check the **Spreadsheet** path (it is absolute),
 > the **X/Y Column** letters and **First Data Row**, and that the sheet really has numbers in those
 > cells. A chart with no data at all offers the **"…"** picker instead of guessing.
+
+> **A workbook that is open in Excel is read anyway.** Excel refuses to share a file, so the reader asks
+> for shared access, retries briefly and only then gives up — which matters on Windows, where a workbook
+> left open in the background is the normal state. If it still cannot be read, the chart says which of
+> the three cases it is, naming the file every time: *"… is open in another program — close the workbook
+> in Excel (or save it again) and this chart reloads by itself"*, *"… was not found — check the
+> Spreadsheet path"*, or *"Cannot read …: <reason>"*.
+
+> **The cursors' on/off state is not saved.** A cursor you switch off in the running app comes back on
+> when the app restarts; **Enabled** is runtime state, like a legend tick box. The cursors themselves,
+> their orientation, colour and starting position are saved with the form.
 
 > **Switching every trace off leaves the axes and the legend on screen** — by design. The scale also
 > stays put while you switch traces, so the other lines do not jump around (the same behaviour as a

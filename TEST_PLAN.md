@@ -1,6 +1,11 @@
 # Test Script Plan — Avalonia Designer Extension
 
-Date: 2026-09-19 · Status: **full suite green on this machine — 5,364 passed / 0 failed / 0 skipped (~39 s)**
+Date: 2026-09-20 · Status: **full suite green on this machine — 6,153 passed / 0 failed / 0 skipped (51 s)**
+
+> 2026-09-20: **the charting tool** added 1,221 assertions (suite 4,915 → 6,153) across ten new or
+> extended files. It is the first bundled feature that is *drawn*, so the tests had to learn to measure
+> pixels, and the first that is both a property element and a list of little objects. The T5 matrix (45
+> controls) and the two Avalonia probes (12.1.1 and 11.0.10) are unchanged.
 
 > 2026-09-19: the T5 matrix now places, renders, bounds-checks, property-tests and VB-compiles **45**
 > placeable controls (the nine added that day included), which is where most of the growth from 5,059 to
@@ -328,6 +333,52 @@ fallback and in the normaliser.
 be renamed out from under the webview.
 
 Each step ends with the log green before the next begins.
+
+### 0.10.11 (2026-09-20) — the charting tool: ten files, and tests that measure pixels
+
+- `tests/t1-preview/chartColors.test.js` (new, **4**) — **why it exists**: `XamlRenderer.ConvertValue`
+  prefixed `#` onto any `Color` value, so `TitleColor="White"` became `#White`, `Color.Parse` threw and the
+  catch returned `Colors.Transparent` — the title was drawn **invisibly in the designer** while the running
+  app (which uses the real XAML loader) showed it perfectly. The file pins named colours as they arrive
+  through the host.
+- `tests/t1-preview/chartSeries.test.js` (**8**) — the series path end to end: `<charts:LineSeries>` /
+  `<charts:XYSeries>` children (and a per-series nested `<charts:Axis>`) reach the renderer through the
+  **real host**. A chart's series are child elements *holding objects*, so the ordinary recursion (panel
+  children, `ContentControl` content, item containers) never touches them — the host needed its own
+  `ApplyChartSeries`, and that is what this file holds in place.
+- `tests/t1-preview/chartAxes.test.js` (**9**) — an axis is a real object now, so its **position** must move
+  the whole gizmo (line, ticks, labels and name) to another side of the plot, and several per-series axes on
+  the same side must **stack** instead of drawing over each other (they used to all be drawn at the plot
+  edge).
+- `tests/t1-preview/chartLegend.test.js` (**31**) — the bar appears only for a chart that **has** series (a
+  single implicit line has no name to show), it takes its height **off** the plot rather than overdrawing it,
+  a switched-off trace vanishes without the others moving, and each name is drawn in its series' own colour.
+- `tests/t1-preview/chartCursors.test.js` (**37**) — the cursors as drawn: a cursor lands on the pixel column
+  its X maps to, its dash style is long/short/dotted as chosen, a chart with **three** cursor elements still
+  draws **two**, and the readout reports the **interpolated** trace value — with the Orientation rule that a
+  horizontal cursor still reports an X.
+- `tests/t2-logic/chartSeries.test.js` (**67**), `chartAxes.test.js` (**71**), `chartLegend.test.js` (**41**),
+  `chartCursors.test.js` (**126**) — the four editors, each asserted across the four places that can drift
+  apart: the catalog button, the modal markup, the fields the modal posts, and the property element the save
+  writes (plus the C# member the host maps it onto). The cursor file is the largest because a cursor is both a
+  property element *and* a list of objects, seven fields each plus two chart-level readout settings, and the
+  editor disables the Y box while *Follow trace* is on.
+- `tests/t2-logic/chartWorkbook.test.js` (**30**) — how the workbook reader **opens** the file and what it
+  says when it cannot: `FileShare.ReadWrite | FileShare.Delete`, four attempts 120 ms apart, the `IOException`
+  HResult classification (32/33), and the three messages — because a chart bound to a sheet that was open in
+  Excel drew nothing on Windows, and Linux never behaves that way, so the bug could not appear on this
+  machine.
+- `tests/t2-logic/bundledComponents.test.js` (**36**, extended) — the staleness marker is asserted to be
+  `ChartCursor`, so a project whose bundled file predates the cursors is refreshed on save instead of failing
+  to compile with *Unable to resolve type ChartCursor*.
+- `tests/t3-webview/designer.test.js` (**813**, extended) — the modal drives for all four editors (open, add,
+  edit, reorder, delete, save, Cancel, Escape, and the empty state that offers *Add cursor*), with the fields
+  the harness has to build asserted against the ids the webview asks for.
+- **The lesson this batch added to the plan:** a bundled file is validated by the **XAML compiler**, so the
+  compiler is part of the test rig. `GrumpyCharts` is built by the host, by a 12.1.1 probe and by an 11.0.10
+  probe, plus the VB twin under `Option Strict On` — a new element or enum is only really checked when a real
+  project compiles it. The 11.0.10 probe deliberately avoids `Values=`/`Points=`, because that version's
+  compiled XAML cannot convert a string to `double[]`.
 
 ### Status 2026-09-11 — full suite green (2176 passed / 0 failed / 0 skipped, 35 s)
 
