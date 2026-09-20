@@ -233,8 +233,28 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.11.0` (2026-09-20) — released on GitHub and marked *Latest*; ready for the Marketplace upload. THIS is
-> the file to upload.** Supersedes
+> **`0.11.1` (2026-09-20) — released on GitHub (*Latest*); the file for the Marketplace upload. THIS is the file
+> to upload.** Two small requests made at the end of the `0.11.0` session: **`Padding`** on a chart (a
+> `Thickness`: the room between the chart's border and everything it draws inside it — the title, the legend bar
+> and the plot area with its axis furniture. The border itself does not move and the chart's backcolour still
+> reaches it, so the band is chart, not form; `LegendMargin` is its sibling one level in) and the **Series
+> editor's spinner fields** — Line Thickness and Marker Size rendered 204 px wide with their right edge 35 px
+> past every other field, because a number input's automatic minimum size (spinner included) beat the 64 px
+> flex basis; they now share the text/select rule and end flush at 169 px. The `GrumpyCharts` staleness marker
+> moved to `Padding`, because a new *attribute* is as invisible to an old project copy as a new type is.
+> Suite **6,306 assertions, 0 failed** (**6,308** with `AVALONIA_COMPLIANCE_RESET=1` — the T5 audit skips a
+> control it has already verified). Docs ride inside: `CHANGELOG` `[0.11.1]`, `README` (three stale `0.10.11`
+> claims that the `0.11.0` docs pass had missed), `USER_MANUAL` §19.7, `CONTROLS`, `TEST_PLAN`, `NOTES` §143.
+>
+> Plain VSIX — `avalonia-designer-0.11.1.vsix`, **1,050,403 bytes**, sha256
+> `819f0cee3351ce25a4c324c11631ce01379d2d2750e4fc5a97a31707cbc042ec` — built by `npm run package` (**117
+> files**) *after* the docs pass, so the documentation inside it is current (that ordering is why the hash is
+> written here after packaging, not before). Manifest `Version="0.11.1"`, extension id unchanged
+> (`grumpy.avalonia-designer`) and **no `PreRelease` attribute** — the upload goes out on the normal channel.
+>
+> **`0.11.0` (2026-09-20) — released on GitHub and marked *Latest*; uploaded to the Marketplace and verified
+> live** (version `0.11.0`, `preRelease: false` and `Microsoft.VisualStudio.Services.VsixSha256` = `3d913e3d…`,
+> the same bytes as the released asset; the listing shows the new name). Supersedes
 > `0.10.11` (released on GitHub the same day, never uploaded) and everything before it. It carries the whole
 > charting tool, the nine Toolbox controls and the AI assist — **plus the documentation the released `0.10.11`
 > was missing** (the cursor chapter, `CONTROLS.md`, `README.md` §7 and the new PayPal donation link at the top
@@ -360,9 +380,9 @@ listing when that release is uploaded — a repo-only README edit does not.
 > workbook-sharing fix, both of which landed inside the same version number before the tag. **Never uploaded;
 > do not use it.**
 >
-> **`0.10.11` is released on GitHub and was never uploaded.** The Marketplace listing moved on to `0.10.10`
-> (published 2026-09-17 — queried 2026-09-20: **19 installs**, rating 4 stars, still the *old* name), and
-> **`0.11.0` is the upload candidate now**; `0.10.10` and `0.10.11` are both superseded for that purpose.
+> **`0.10.11` is released on GitHub and was never uploaded.** The Marketplace listing carried `0.10.10`
+> (published 2026-09-17) until **`0.11.0` went live on 2026-09-20** (verified: version, channel and hash, and
+> 20 installs at the time of the check). Both are superseded as upload candidates by **`0.11.1`** above.
 >
 > **The docs ride inside the VSIX, so the released file carries the documentation of 2026-09-20 12:42** — the
 > chart chapter in `USER_MANUAL.md` §19.1–19.8 (placing, data, the Series/Axis/Legend editors, the spreadsheet

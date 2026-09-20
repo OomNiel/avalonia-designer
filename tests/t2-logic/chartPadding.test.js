@@ -94,7 +94,7 @@ module.exports = async (t) => {
     t.ok(/Public Property Padding As Thickness/.test(vb), 'vb', 'VB exposes the CLR property');
 
     for (const [lang, source, token] of [['cs', cs, 'PaddingProperty, CornerRadiusProperty'],
-        ['vb', vb, 'PaddingProperty, CornerRadiusProperty']]) {
+    ['vb', vb, 'PaddingProperty, CornerRadiusProperty']]) {
         t.equal(count(source, token), 1, lang, `${lang} re-renders the chart when Padding changes (AffectsRender)`);
     }
     // The negative guard: a negative padding would otherwise push the content over the border.
@@ -116,7 +116,7 @@ module.exports = async (t) => {
         t.equal(count(source, 'DrawTitle(context, titleText, plot'), DRAW_SITES, lang,
             `${lang} places the title against the padded rect at every draw site`);
         t.equal(count(source, ', content)'), DRAW_SITES, lang,
-            `${lang} passes `+ '`content`' + ' as the title strip rect (not the frame)');
+            `${lang} passes ` + '`content`' + ' as the title strip rect (not the frame)');
         // The legend bar hugs the same inset, on whichever side it sits: all four anchor edges are
         // read off `content` now, and no legend rect is built from the frame any more.
         t.equal(count(source, 'content.X, content.Y, content.Width, legendSize.Height'), 1, lang,

@@ -1,7 +1,7 @@
 # Grumpy's WYSIWYG Designer — test suite
 
 Automated tests for Grumpy's WYSIWYG Designer VS Code extension (see `TEST_PLAN.md` for the full
-plan and log format). The suite runs end-to-end on this machine: **6197 passed / 0 failed /
+plan and log format). The suite runs end-to-end on this machine: **6306 passed / 0 failed /
 0 skipped** (2026-09-20, ~46 s) — `node tests/runner.js` from the workspace root.
 
 ## How to run

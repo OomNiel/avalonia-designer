@@ -17,7 +17,36 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-20)
+## Where the last session left off (2026-09-20, second session — 0.11.1)
+
+**Released: `0.11.1`** — *the chart frame gets its own room, and the spinner boxes line up*. Two small requests
+closed the day out. **`Padding`** is a new chart property (`Thickness`): the space between the chart's border
+and everything it draws inside — the title, the legend bar and the plot area with its axis furniture. The border
+itself does not move and the chart's backcolour still reaches it, so the band it opens is chart rather than
+form; `LegendMargin` (0.11.0) is its sibling one level in (that one is *inside* the legend frame). The second
+request was the Series editor's number fields: **Line Thickness** and **Marker Size** rendered 204 px wide with
+their right edge 35 px past every other field, because a number input's automatic minimum size — the spinner
+included — beat the 64 px flex basis; they now share the text/select rule and end flush at 169 px.
+
+- **`GrumpyCharts` staleness marker → `Padding`.** A new *attribute* is as invisible to an old project copy as a
+  new type, and compiled XAML rejects it — so saving the form refreshes that project's bundled file.
+- **Tests 6,306 / 0** (+85 assertions: `t1-preview/chartPadding` 24, `t2-logic/chartPadding` 56,
+  `bundledComponents` +2, the CSS guards +2, T5 audit +2). The T5 audit re-checked **both charts by itself**
+  because their property list changed and applies `Padding="6,6,6,6"` through the real writer in both twins.
+  With `AVALONIA_COMPLIANCE_RESET=1` the total is **6,308** — the audit skips a control it has already verified
+  (cache: the gitignored `tests/compliance.json`).
+- Both twins compile 0/0 — the host at 12.1.1, a probe at 11.0.10 and the VB twin under `Option Strict On` at
+  12.1.1, each with `Padding="10"` and `Padding="4,8,4,8"` used in a real form.
+- **Docs updated** (rule 7b was lifted for this request): `CHANGELOG` `[0.11.1]`, `README` (it still claimed
+  `0.10.11` in three places, which the `0.11.0` docs pass had missed), `USER_MANUAL` §19.7 (`Padding` row),
+  `CONTROLS`, `TEST_PLAN` (+ its 0.11.1 subsection), `tests/README`, `NOTES` §143, `SESSION`, `PUBLISHING`.
+- **Open for the next session:** the Marketplace carries **`0.11.0`**; `0.11.1` is the file to upload (portal
+  *Update*, *Pre-release* unchecked, then confirm with `flags: 914`). The root `avalonia-designer-0.11.0.vsix`
+  is a **local rebuild** of that version — different bytes from what was published — and the published bytes
+  (`3d913e3d…`) exist only on GitHub/the gallery. The Series-editor layout harness lives at
+  `tests/out/field-harness.html` (gitignored) if a future field needs the same check.
+
+## Where the session before left off (2026-09-20, first session — 0.11.0)
 
 **Packed for publication and installed: `0.11.0`** — *the cursors belong to their series, and the charting tool
 is written down*. The code change is one sentence from the user: *"the cursors must inherrit the color of the

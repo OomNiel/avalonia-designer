@@ -43,7 +43,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.11`**, so the command above installs it (add `--force` to reinstall, or to
+The current version is **`0.11.1`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -52,11 +52,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.10.11.vsix --force
+code --install-extension avalonia-designer-0.11.1.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.10.11` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.11.1` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -176,8 +176,10 @@ rest: **Series** (one line per series, its own columns and its own axis), **Axis
 colours and per-series scales), **Legend** (side, font size and a rounded frame; the entries switch
 traces on and off at runtime) and **Cursors** — up to two draggable cursors with a value readout, the
 arrow keys stepping a sample at a time, *follow trace* keeping the crossing on the selected series, each
-cursor drawn in the colour of the series it follows, and a `ΔX`/`ΔY` row once both are on. The whole
-walkthrough is **USER_MANUAL §19**.
+cursor drawn in the colour of the series it follows, and a `ΔX`/`ΔY` row once both are on. The chart's own
+frame rows are in the same panel — backcolour and opacity, the border, and **Padding**, the room between
+that border and the chart frame (it pushes the title, the legend bar and the plot inward; leave it empty and
+nothing moves). The whole walkthrough is **USER_MANUAL §19**.
 
 ## 8. A property grid that behaves like a real one
 

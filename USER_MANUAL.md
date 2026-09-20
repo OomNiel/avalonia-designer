@@ -1945,6 +1945,7 @@ Legend / Cursors — Edit …** rows at the top of the list.
 | **Title, Show Title, Title Position, Title Colour, Title Size** | The chart title and where it sits (Top, Bottom, Left, Right). |
 | **Plot Backcolour, Plot Opacity** | The chart's own background — it fills the whole control, so the title and axis labels do not depend on the form behind it. |
 | **Border, Border Colour, Border Thickness, Corner Radius** | The frame around the chart. |
+| **Padding** | The room between that border and the chart frame, on all four sides: it pushes the title, the legend bar and the plot area (with its axis labels) inward by that much. One value (`10`) or four (`4,8,4,8`). Empty keeps the chart's own small gap — and 0 is the same picture, so nothing you drew earlier moves. |
 | **Gridlines, Grid Colour, Grid Thickness, Grid Style** | Gridlines at the common axis' main ticks. |
 | **X Min / X Max / Y Min / Y Max** | Fixed scale limits. Leave empty to fit the data automatically. |
 

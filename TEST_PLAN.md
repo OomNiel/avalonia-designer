@@ -1,6 +1,12 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-20 · Status: **full suite green on this machine — 6,197 passed / 0 failed / 0 skipped (46 s)**
+Date: 2026-09-20 · Status: **full suite green on this machine — 6,306 passed / 0 failed / 0 skipped (51 s)**
+
+> 2026-09-20 (later): **`0.11.1`** added 82 assertions — a chart **`Padding`** and the Series editor's
+> spinner-field width fix. Two new files (`t1-preview/chartPadding` 24, `t2-logic/chartPadding` 56) plus
+> `bundledComponents` +2 and the T5 property audit +2, which re-checked **both charts on its own** because
+> their property list changed. **The total reads 6,308 with `AVALONIA_COMPLIANCE_RESET=1`**: the audit skips
+> a control it has already verified (cache: the gitignored `tests/compliance.json`).
 
 > 2026-09-20: **the charting tool** added 1,221 assertions (suite 4,915 → 6,153) across ten new or
 > extended files. It is the first bundled feature that is *drawn*, so the tests had to learn to measure
@@ -413,6 +419,37 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.11.1 (2026-09-20) — a chart `Padding`, and the spinner boxes line up
+
+- `tests/t1-preview/chartPadding.test.js` (**24**) — pixels through the real host, for a property whose whole
+  job is to move things. Every band gets a colour of its own (border magenta, grid green, title cyan, legend
+  bar painted in its own yellow, chart on a navy form) so each claim is measured on its own: the border does
+  **not** move while the plot frame comes in by exactly the padding on all four edges; `Padding="0,30"` moves
+  only the vertical ones; an **unset** Padding and `Padding="0"` render identically (every existing form is
+  untouched); the band is the chart's own backcolour, not a hole to the form behind it; the title follows the
+  padding and stays centred over the narrower plot; the legend bar insets with it and is **not** stretched.
+  - **The ruler is the grid, not the trace.** A gridline is drawn from one plot edge to the other, so the
+    grid's ink bounds *are* the plot rect. A trace is no good for this: its lowest data point sits wherever the
+    axis range puts it, so it does not move by the padding at all — the first version of this file asserted a
+    25 px move and measured 11.
+  - Gridlines are drawn **solid and 2 px** in this file and matched by colour *dominance*: a dotted 1 px line is
+    almost entirely antialiased, so a strict colour matcher finds nothing (the first run measured zero green).
+- `tests/t2-logic/chartPadding.test.js` (**56**) — the seam, in both languages: the catalog row (both charts,
+  text kind so a four-value `Thickness` survives, blank when unset, in the *Layout & size* group), both twins
+  declaring the property, registering it `AffectsRender`, clamping negatives and **using** it (the legend, the
+  title and the plot come off the padded `content` rect, while the plate and the border stay on `frame`, and the
+  `…` browse button stays in the corner), the host reading it by reflection, and the XAML round-trip for one,
+  two and four-value forms (including that clearing the row removes the attribute).
+- `tests/t2-logic/bundledComponents.test.js` (**39**, +2) — the marker moved to `Padding`, with a new fixture
+  for the copy that has `LegendMargin` but no `Padding` (still stale: it cannot compile the new attribute).
+- **T5 re-audited the charts unprompted** (`property-audit` 0 → 2, `vb-all-controls` 1473 → 1475): a control
+  whose listed properties change is re-checked automatically, so the new row was applied as
+  `Padding="6,6,6,6"` through the real writer and read back from the host in **both** twins. That is the
+  cheapest independent proof that the property exists, parses a four-value `Thickness` and reports its value.
+- The layout fix is guarded by assertions on `media/designer.css` in `t3-webview/designer.test.js` (+2, 815):
+  jsdom cannot see layout, so the source is pinned instead — the number fields must sit in the same rule as the
+  text/select fields with `min-width: 0`, and the fixed `64px` basis must never return.
 
 ### Status 2026-09-11 — full suite green (2176 passed / 0 failed / 0 skipped, 35 s)
 

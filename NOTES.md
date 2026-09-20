@@ -3479,3 +3479,61 @@ three places a change like this usually misses:
   rename loses its DataSet editor and the protection around hand-written code; it now takes both, and
   `tests/t2-logic/rebrand.test.js` proves it and scans the shipped surface for leftovers.
 
+### §143 — a property that only moves things, and a field that would not shrink (2026-09-20, 0.11.1)
+
+**Asked:** *"Also add a Padding property to insert space between the border and the chart frame"*, then *"In the
+Series editor, reduce the Line Thickness and Marker size input Up/Down spinner boxes to line up with the rest of
+the input boxes - they are too wide when including the spinner controls."* Two unrelated-looking requests, one
+shared lesson: **when the effect is geometric, measure it — and check that the thing you measure is a ruler.**
+
+**`Padding` (a `Thickness` on `ChartBase`, both twins).** The render already kept a hard-coded 8 px gap between
+the frame and the plot (`plot = frame.Deflate(8)`), so the work was to name that band and let the user widen it:
+`pad` (each side clamped at 0) is cut out of the frame into `content`, and everything positioned off the frame
+moved onto it — `plot = content.Deflate(8)`, `MeasureLegend(content.Size, plots)`, all four legend anchors,
+`DrawTitle(…, content)` (its 4th parameter was renamed `outer`, because it is the rect the title strip hangs
+off, not the frame). **What deliberately stayed on `frame`:** the plate fill and `DrawFrame`, so the padding
+opens no hole in the chart's own background, and the `…` browse button, which is chrome and belongs in the
+corner. Zero padding is byte-identical to the old render — `Rect.Deflate` with a all-zero `Thickness` returns
+the same rect — and the whole t1-preview chart suite (written before this existed) is what proves it.
+
+**The editor row came free.** `Padding` is already the *generic* description in `PROP_META` ("space between the
+control edge and its content"), it already sits in the *Layout & size* section group, and `DEFAULTS.Padding` is
+already empty — so the only editor-side change was one row in each chart's property list, `kind: 'text'` to
+match all twenty other `Padding` rows (a `Thickness`, so `"8,4,8,8"` must survive typing). The host needed
+nothing either: `XamlRenderer.EffectiveValues` already reads `Padding` **by reflection**, so the panel can show
+the effective value of a control that has one.
+
+**The marker moved to `Padding`, and that is the point of the marker.** A new *attribute* the designer writes
+into a form is as invisible to an old copy of `GrumpyCharts.cs`/`.vb` as a new type is: compiled XAML rejects
+`Padding="10"` outright. This was the **third** move in two days (`DrawnColor`, then `LegendMargin`, now
+`Padding`), so the rule in `bundledComponents.ts` names both cases explicitly and the test carries one fixture
+per era — including the copy that has `LegendMargin` but not `Padding`, which must still read as stale.
+
+**The spinner fields: `min-width: auto` beat the flex basis.** `.series-field input[type='number']` asked for
+`flex: 0 0 64px`, but a number input's *automatic minimum size* is its intrinsic ~20-character width — the
+spinner is part of that width — and `flex-shrink: 0` means the floor wins. Measured in the real stylesheet:
+**204 px wide, right edge 682, while every other field in the row ended at 647**. The first six digits of the
+cause were already in the file: the text and select fields next to them say `flex: 1 1 auto; min-width: 0`. The
+number fields now share that rule (the duplicate block is gone, not patched), 204 → **169 px**, everything flush.
+**Guarding it:** jsdom cannot see layout, so `t3-webview/designer.test.js` asserts the *source* (the shared rule
+with `min-width: 0`, and that `0 0 64px` never returns), and the geometry was verified in a browser harness
+built from the real `media/designer.css` — the visual claim was settled by looking, and the regression is held
+by the stylesheet.
+
+**Found while documenting the release:** `README.md` still named **`0.10.11`** in three places while the
+Marketplace was already serving `0.11.0` — the `0.11.0` docs pass updated the CHANGELOG, the manual and
+CONTROLS but not the README's version claims. Worth a grep for the previous version number *in every doc* at
+release time, not just the one being edited.
+
+**Release mechanics that bit twice in one day:** `avalonia-designer-0.11.0.vsix` in the project root is now a
+**local rebuild** of that version (1,048,493 bytes) rather than the bytes that were published (1,046,409 /
+`3d913e3d…`) — the file name is the version, so a rebuilt artefact of an already-spent version is
+indistinguishable from the released one by name alone. The independent confirmation is that a version number can
+never be reused: shipping this work means `0.11.1`, which is why the root file was superseded rather than
+re-uploaded.
+
+**Suite:** 6,221 → **6,306** (+85: 24 + 56 new, +2 `bundledComponents`, +2 the audit, +2 the CSS guards — the
+audit's `+2` never lingers, because a verified control is recorded compliant and skipped with a note;
+`AVALONIA_COMPLIANCE_RESET=1` restores 6,308). Both twins compile 0/0 at 12.1.1 and 11.0.10, the VB one under
+`Option Strict On`, each using `Padding="10"` and `Padding="4,8,4,8"` in a real form.
+

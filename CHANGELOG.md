@@ -6,11 +6,65 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.11.0` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.11.1` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.11.1] - 2026-09-20 · *the chart frame gets its own room, and the spinner boxes line up*
+
+Two small requests at the end of the `0.11.0` session: *"Also add a Padding property to insert space between
+the border and the chart frame"* and *"In the Series editor, reduce the Line Thickness and Marker size input
+Up/Down spinner boxes to line up with the rest of the input boxes - they are too wide when including the
+spinner controls."*
+
+### Added — `Padding` on a chart: the room between its border and its frame (2026-09-20)
+
+- **`Padding`** is a `Thickness` on both chart controls, so `Padding="10"` and `Padding="4,8,4,8"` both work.
+  It is the space between the chart's **border** and everything the chart draws inside it — the title, the
+  legend bar and the plot area with the axis furniture around it. The Properties panel carries it as a
+  **Padding** row in *Layout & size*, next to **Border Thickness**, and leaving it empty means "do not
+  disturb the chart": the renderer keeps the small gap it has always had there (that gap now sits *inside*
+  your padding, so nothing moves and nothing is double-counted).
+- **The border does not move.** The padding is taken out of the inside, never added around the outside, and
+  the chart's own backcolour still reaches the border — so the band it opens up is chart, not form. Negative
+  values are clamped to 0, so content can never be pushed over its border; the little **"…"** open-workbook
+  button stays in the chart's corner, because it is chrome rather than chart content.
+- **`LegendMargin` (0.11.0) is its sibling one level in:** `Padding` sits outside the legend frame,
+  `LegendMargin` inside it. A chart can have both.
+- **The bundled-file staleness marker moved to `Padding`.** A new *attribute* is as invisible to an old copy of
+  `GrumpyCharts.cs`/`.vb` as a new type is — compiled XAML rejects a property the old copy does not have — so
+  saving a form refreshes that project's copy. The rule in `bundledComponents.ts` now names both cases.
+
+### Fixed — the Series editor's spinner boxes overflowed their row (2026-09-20)
+
+- **Line Thickness** and **Marker Size** — and the same number rows in the Axis and Legend editors (the two
+  tick sizes, the label size, the legend's name size, its frame thickness and its margin) — were drawn
+  **204 px wide, their right edge 35 px past every other field** in the list.
+- The rule asked for a 64 px basis, but a number input's *automatic minimum size* is its intrinsic
+  ~20-character width — **the spinner is part of that width** — and `flex-shrink: 0` let that floor win, so the
+  box rendered at its content width instead of the requested one.
+- They now share the text and select fields' rule (`flex: 1 1 auto; min-width: 0`), so every single-control row
+  ends on the same right edge: **204 px → 169 px**, right edge **682 → 647** in the measured stylesheet. That is
+  also how the Properties panel has always behaved, which is what these fields now match.
+- Layout is invisible to jsdom, so the guard is an assertion on `media/designer.css` itself (the shared rule,
+  and that the fixed 64 px basis never returns). The geometry was measured, and looked at, in a browser harness
+  built from the real stylesheet.
+
+### Notes
+
+- Suite **6,306 passed / 0 failed / 0 skipped**: +56 in `tests/t2-logic/chartPadding.test.js`, +24 in
+  `tests/t1-preview/chartPadding.test.js` (pixels through the real host), +2 in `t2-logic/bundledComponents`
+  and +2 in the T5 property audit — which re-checked **both** charts because their property list changed,
+  applying `Padding="6,6,6,6"` through the real writer and reading it back from the host, in both twins.
+- **The total dips by 2 while the audit's compliance cache is warm** (`tests/compliance.json`, local and
+  gitignored): the two charts were verified, recorded as compliant, and are now skipped with a note.
+  `AVALONIA_COMPLIANCE_RESET=1 npm test` re-audits everything and reads **6,308**.
+- Both twins compile 0 warnings / 0 errors — the host at Avalonia 12.1.1, a probe at 11.0.10 and the VB twin
+  under `Option Strict On` at 12.1.1, each with `Padding="10"` and `Padding="4,8,4,8"` used in a real form.
+- Documented in `USER_MANUAL` §19.7, `CONTROLS.md` and the chart's own help text in the Properties panel. The
+  Series-editor fix is a stylesheet rule and needs no user-facing text.
 
 ## [0.11.0] - 2026-09-20 · *the cursors belong to their series, and the charting tool is written down*
 

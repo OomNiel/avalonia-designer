@@ -185,9 +185,11 @@ into every new project next to the other helpers — no package, no image file, 
   colour** (its `Colour` then applies to a cursor that does not follow — a threshold line), so its line,
   its crossing and its readout panel all belong visibly to the trace they read. Which cursors are *enabled*
   is runtime state and is not saved.
-- **Styling in Properties**: plot backcolour + opacity, border (colour/thickness/corner radius),
-  gridlines (colour/thickness/style), the title (text/show/position/colour/size), the fixed scale
-  overrides (`MinX`/`MaxX`/`MinY`/`MaxY`) and `DockPanel.Dock`.
+- **Styling in Properties**: plot backcolour + opacity, border (colour/thickness/corner radius) and
+  `Padding` — the room between that border and the chart frame, which pushes the title, the legend bar and
+  the plot area (with its axis furniture) inward; one value or four (`4,8,4,8`), and leaving it empty keeps
+  the chart's own small gap. Then gridlines (colour/thickness/style), the title (text/show/position/colour/
+  size), the fixed scale overrides (`MinX`/`MaxX`/`MinY`/`MaxY`) and `DockPanel.Dock`.
 
 > **An old copy of the bundled chart file cannot compile the newer series/axis/legend/cursor XAML**
 > (`AVLN2000: Unable to resolve type XYSeries…`, or `… type ChartCursor …`). The designer refreshes it for
