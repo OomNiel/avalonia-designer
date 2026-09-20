@@ -271,6 +271,17 @@ listing when that release is uploaded — a repo-only README edit does not.
 > that upload — from *Avalonia Designer for VS Code* to *Grumpy's WYSIWYG Designer for VS Code* — while its
 > **unique identifier stays** `grumpy.avalonia-designer`, so existing installs keep updating normally.
 >
+> **Why the Extensions view still says "Avalonia Designer for VS Code" (asked 2026-09-20).** VS Code merges the
+> installed package with the *gallery* metadata: the row and detail **header** show the **listing's**
+> `displayName`, next to the listing's own download count and rating (19 installs, 4 stars), while the DETAILS
+> tab renders the README **from the installed VSIX** — which already carries the donation link and the
+> *"Formerly …"* line. So the header changes **only when `0.11.0` is uploaded**; nothing local can force it, and
+> a window reload, a reinstall and a machine reboot all leave it exactly there (all three were tried, in that
+> order). The local copy being *newer* than the listing is also why the row offers no **Update** button. The
+> listing was checked the same way the release assets are: a `extensionquery` POST with `filterType: 7` and
+> `flags: 914`, which returned *Grumpy.avalonia-designer*, name *Avalonia Designer for VS Code*, version
+> `0.10.10`, 19 installs.
+>
 > **Still on disk, both superseded by the above:** `avalonia-designer-0.10.11.vsix` (1,035,659 bytes,
 > `20cfa4ce…`, the released one — its docs predate the cursor chapter) and `avalonia-designer-0.10.10.vsix`
 > (905,176 bytes, `ec4acc0e…`, frozen). Neither is a candidate for the upload any more; delete them once
@@ -338,9 +349,9 @@ listing when that release is uploaded — a repo-only README edit does not.
 > workbook-sharing fix, both of which landed inside the same version number before the tag. **Never uploaded;
 > do not use it.**
 >
-> **`0.10.11` is released on GitHub and is still *not* uploaded to the Marketplace.** The listing carries
-> `0.9.4`, and `0.10.10` remains the file for the *imminent* upload (frozen below) — so there are two
-> candidate artefacts on this machine, on purpose, and the choice between them is made at the upload.
+> **`0.10.11` is released on GitHub and was never uploaded.** The Marketplace listing moved on to `0.10.10`
+> (published 2026-09-17 — queried 2026-09-20: **19 installs**, rating 4 stars, still the *old* name), and
+> **`0.11.0` is the upload candidate now**; `0.10.10` and `0.10.11` are both superseded for that purpose.
 >
 > **The docs ride inside the VSIX, so the released file carries the documentation of 2026-09-20 12:42** — the
 > chart chapter in `USER_MANUAL.md` §19.1–19.8 (placing, data, the Series/Axis/Legend editors, the spreadsheet
@@ -354,7 +365,8 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `0.10.9` (released on GitHub the same evening, **never uploaded**: a `/home/<user>/…` path from a bug-hunt note
 > had reached the package as a compiled comment, so it was rebuilt, audited and then superseded by a new version
 > rather than by replacing a released asset — see `NOTES.md` §135) and everything before it. `0.10.8`…`0.10.0`
-> were installed and tested but never published, and the listing still carries `0.9.4`, so `0.10.10` is the first
+> were installed and tested but never published, and the listing still carried `0.9.4` at that moment (**it has
+since moved on: the listing carries `0.10.10` today — see the `0.11.0` block**), so `0.10.10` was the first
 > version from this line to go out. It carries everything: the AI assist, the compiler as the second half of the
 > code check, the build-driven repair loop, the host check, the Start / Stop controls for the user's own
 > `llama-server`, the Remove Model fix, the model list as two entries over one download, the 30B step-up —
