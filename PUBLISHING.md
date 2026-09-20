@@ -1,6 +1,6 @@
 # Publishing the extension (maintainer guide)
 
-How to publish **Avalonia Designer for VS Code** to the Visual Studio Marketplace: create the
+How to publish **Grumpy's WYSIWYG Designer for VS Code** to the Visual Studio Marketplace: create the
 publisher, create the access token, store it for CI, and push a release.
 
 > **This document is for whoever maintains the extension** — it is *not* shipped inside the VSIX
@@ -242,17 +242,20 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `DrawnColor` so old project copies are refreshed on save, and the help text says so — `NOTES.md` §142.
 > Suite **6,178 assertions, 0 failed**.
 >
-> Plain VSIX — `avalonia-designer-0.11.0.vsix`, **1,045,148 bytes**, sha256
-> `64e0f13fdfcbf5bd1f0298011fbc6ff7430ea2bda17f3c65b9d66121560005f6` — built by `npm run package` (**117 files**)
-> after the docs pass and the version bump in `package.json`, manifest `Version="0.11.0"` with **no
-> `PreRelease` attribute**, and audited by unpacking the package and grepping it: user name, host name,
-> `/home/…`, `/tmp/…`, server alias and local project names. That grep found one hit — the name of a local test
-> project inside a comment of the *compiled* `out/bundledComponents.js`, added that day — so it was reworded,
-> recompiled and **repackaged**, and the hash above is the repackaged file. The only hits left are the
-> **verbatim user quote** in `CHANGELOG.md` (*"My test program is OptimisedCSTest."*) and the two phrases in
-> the bundled `ChromeWindow.cs`/`.vb` headers naming the user's own other projects (LinuxHelper / DataSafe) —
-> both left alone on purpose: history is quoted rather than edited, and bundled resources are the user's own
-> library code.
+> Plain VSIX — `avalonia-designer-0.11.0.vsix`, **1,046,409 bytes**, sha256
+> `3d913e3df7c97fd2970320fbbbab2579865344b44807fb46d139e77f95ab517c` — built by `npm run package` (**117 files**)
+> after the docs pass and the version bump in `package.json`, and **repackaged the same day after the rename**
+> (a first build of 1,045,148 bytes / `64e0f13f…` exists in this file's history and is superseded — nothing was
+> uploaded, so the number was not spent on it). Manifest now carries **`displayName` "Grumpy's WYSIWYG Designer
+> for VS Code"** with the **extension id unchanged** (`grumpy.avalonia-designer`, which is what keeps settings,
+> shortcuts and the 4.4 GB of downloaded models working), `Version="0.11.0"` and **no `PreRelease` attribute**.
+> Audited twice by unpacking the package and grepping it: the leak check (user name, host name, `/home/…`,
+> `/tmp/…`, server alias, local project names) found **one** hit in the first build — the name of a local test
+> project inside a comment of the *compiled* `out/bundledComponents.js`, added that day — which was reworded,
+> recompiled and repackaged; the audit of this file is **clean**, and the only "Avalonia Designer" left inside
+> the package is the three deliberate ones: the generated-file marker in `out/dataSetEditor.js` (the recogniser
+> that accepts files written before the rename), the README's single *"Formerly …"* line, and the `CHANGELOG`'s
+> history plus its rename note.
 >
 > **Not tagged, not released, not uploaded.** The upload goes through the publisher portal (leave
 > *Pre-release* unchecked), then verify with the `flags: 914` query that the version is `0.11.0` and
@@ -523,7 +526,7 @@ The response also proves *what* was published, which is worth checking every tim
    Marketplace rejects the upload, and the latest version cannot be deleted.
 2. Create the GitHub release with that tag —
    `git tag -a v0.10.1 -m "<one-line summary>"`, push the tag, then
-   `gh release create v0.10.1 --title "Avalonia Designer for VS Code v0.10.1"
+   `gh release create v0.10.1 --title "Grumpy's WYSIWYG Designer for VS Code v0.10.1"
    --notes-file <file> --latest avalonia-designer-0.10.1.vsix`. Notes house style: an intro block
    ("Install:" + the `sha256` + a one-paragraph summary + `Test suite: N passed / 0 failed /
    0 skipped.`), then `### Added / ### Changed / ### Fixed / ### Notes`. **Set both flags explicitly:**

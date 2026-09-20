@@ -1,4 +1,4 @@
-﻿/* ModelHost — a tiny local model server for the Avalonia Designer AI assist.
+﻿/* ModelHost — a tiny local model server for the Grumpy's WYSIWYG Designer AI assist.
  *
  * WHY THIS EXISTS (NOTES.md §92)
  * The feature has to work for a developer who has no AI at all: no Copilot, no LM Studio, no Ollama.

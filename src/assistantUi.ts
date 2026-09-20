@@ -1976,7 +1976,7 @@ export class AssistantCodeActionProvider implements vscode.CodeActionProvider {
         const seen = new Set<number>();
         const actions: vscode.CodeAction[] = [];
         for (const d of context.diagnostics) {
-            if (d.source !== 'Avalonia Designer') continue;
+            if (d.source !== 'Grumpy\'s WYSIWYG Designer') continue;
             const line = d.range.start.line + 1;
             const span = all.find((m) => m.line <= line && line <= m.endLine);
             if (!span || seen.has(span.start)) continue;

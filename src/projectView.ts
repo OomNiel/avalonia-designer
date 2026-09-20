@@ -3,7 +3,7 @@ import { createNewProject, openLastProject, lastProjectPath, onLastProjectChange
 import * as logger from './logger';
 
 /**
- * "New Project" sidebar view (inside the Avalonia Designer Activity Bar container) —
+ * "New Project" sidebar view (inside the Grumpy's WYSIWYG Designer Activity Bar container) —
  * quick-launch buttons for creating a new C# or VB.NET Avalonia project and for
  * reopening the most recent project.
  */
@@ -115,7 +115,7 @@ export class ProjectViewProvider implements vscode.WebviewViewProvider {
 <body>
   <h1>New Avalonia project</h1>
   <p>Create a ready-to-run project (net10.0, Avalonia 12, custom title bar) with a
-     pre-designed main form, then open it in the <b>Avalonia Designer</b> to edit it visually.</p>
+     pre-designed main form, then open it in <b>Grumpy's WYSIWYG Designer</b> to edit it visually.</p>
   <button id="createCs">Create C# Project…</button>
   <button id="createVb">Create VB.NET Project…</button>
   <button id="open" class="secondary">Open Created Project</button>

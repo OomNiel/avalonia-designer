@@ -1168,7 +1168,7 @@ public class XamlRenderer
             var window = new Window { Width = w, Height = h, Title = "Designer error" };
             var tb = new TextBlock
             {
-                Text = "Avalonia Designer could not render this XAML.\n\n" + ex.Message,
+                Text = "Grumpy's WYSIWYG Designer could not render this XAML.\n\n" + ex.Message,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(16),
                 Foreground = Brushes.Maroon

@@ -233,7 +233,7 @@ export function publishBuildDiagnostics(diagnosticsList: CompilerDiagnostic[]): 
             d.message,
             d.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning
         );
-        item.source = 'Avalonia Designer (build)';
+        item.source = 'Grumpy\'s WYSIWYG Designer (build)';
         item.code = d.code;
         const list = byFile.get(d.file) ?? [];
         list.push(item);

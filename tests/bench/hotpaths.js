@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Hot-path benchmark for the Avalonia Designer extension host.
+/* Hot-path benchmark for Grumpy's WYSIWYG Designer extension host.
  *
  * Not part of the test suite (the runner only discovers `*.test.js`). Run it by hand:
  *

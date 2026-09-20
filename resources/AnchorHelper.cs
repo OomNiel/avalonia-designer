@@ -10,7 +10,7 @@ namespace AvaloniaChrome;
 /// <summary>
 /// WinForms-style anchoring for controls placed on a free-placement Canvas.
 ///
-/// Usage (set via the Avalonia Designer's <b>Anchor</b> property, or by hand):
+/// Usage (set via the <b>Anchor</b> property in Grumpy's WYSIWYG Designer, or by hand):
 ///   <![CDATA[<Button Canvas.Left="40" Canvas.Top="20" chrome:AnchorHelper.Anchor="Left,Bottom"/>]]>
 ///
 /// The control keeps a fixed distance from the anchored edges of its container as the

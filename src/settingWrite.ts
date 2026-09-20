@@ -49,7 +49,7 @@ export async function updateSetting(cfg: vscode.WorkspaceConfiguration, key: str
     const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
     await cfg.update(key, value, targetFor(where, hasWorkspace));
     if (where !== 'global') {
-        // Said out loud (Output → Avalonia Designer): a shadowed write looks exactly like a load that did nothing.
+        // Said out loud (Output → Grumpy's WYSIWYG Designer): a shadowed write looks exactly like a load that did nothing.
         log(`Setting "${key}" written to the ${where} settings — a value there would have overridden the user setting.`);
     }
 }

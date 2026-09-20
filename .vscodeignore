@@ -33,7 +33,7 @@ SESSION.md
 .poolside/**
 # NOTE: GrumpyWhite.png is the Activity Bar container icon
 # (package.json -> contributes.viewsContainers.activitybar[].icon). It MUST ship — excluding it
-# makes the Avalonia Designer icon vanish from the sidebar with no error anywhere. Guarded by
+# makes the Grumpy's WYSIWYG Designer icon vanish from the sidebar with no error anywhere. Guarded by
 # tests/t2-logic/packaging.test.js.
 # Source artwork for the two icons above: the same badge, kept for future re-exports. Grumpy.png is
 # the version with the background outside the ring removed, GrumpyWhite.png the white glyph derived

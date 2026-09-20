@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Avalonia Designer test runner.
+/* Grumpy's WYSIWYG Designer test runner.
  * Discovers tests/**\/*.test.js, runs each (an async fn receiving a test context `t`),
  * records PASS/FAIL/SKIP per action and writes:
  *   tests/out/log.jsonl   — one JSON line per action
@@ -131,7 +131,7 @@ async function main() {
     fs.writeFileSync(LOG_PATH, all.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
 
     const md = [];
-    md.push('# Avalonia Designer — test report', '');
+    md.push('# Grumpy\'s WYSIWYG Designer — test report', '');
     md.push(`Run: ${summary.runAt} · ${(summary.durationMs / 1000).toFixed(1)}s · **${summary.passed} passed / ${summary.failed} failed / ${summary.skipped} skipped**`, '');
     for (const layer of summary.layers) {
         md.push(`## ${layer}`, '');

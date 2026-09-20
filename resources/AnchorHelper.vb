@@ -15,7 +15,7 @@ Namespace Global.AvaloniaChrome
 
     ''' <summary>
     ''' WinForms-style anchoring for controls placed on a free-placement Canvas.
-    ''' Usage (via the Avalonia Designer's Anchor property, or by hand):
+    ''' Usage (via the Anchor property in Grumpy's WYSIWYG Designer, or by hand):
     '''   &lt;Button Canvas.Left="40" Canvas.Top="20" chrome:AnchorHelper.Anchor="Left,Bottom"/&gt;
     ''' The control keeps a fixed distance from the anchored edges of its container as the
     ''' container resizes: one edge = the control moves with that edge; two OPPOSITE edges

@@ -1,6 +1,6 @@
-# Test Script Plan — Avalonia Designer Extension
+# Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-20 · Status: **full suite green on this machine — 6,178 passed / 0 failed / 0 skipped (46–75 s; the run length depends on what else the machine is doing)**
+Date: 2026-09-20 · Status: **full suite green on this machine — 6,197 passed / 0 failed / 0 skipped (46 s)**
 
 > 2026-09-20: **the charting tool** added 1,221 assertions (suite 4,915 → 6,153) across ten new or
 > extended files. It is the first bundled feature that is *drawn*, so the tests had to learn to measure
@@ -404,6 +404,15 @@ fixtures remember the copy that **has** cursors and is nevertheless stale: a cha
 *draws* has to refresh a project's bundled file exactly as a new element does.
 - The help text is pinned too: the Cursors modal has to say the cursor takes the series' colour, and the
 Colour row's tooltip has to say when its own colour applies.
+- `tests/t2-logic/rebrand.test.js` (**19**) — the **name**, after the rename to *Grumpy's WYSIWYG Designer for
+VS Code*: the manifest's `displayName`, the Settings section and the Activity Bar container carry it, the
+**extension id stays `grumpy.avalonia-designer`** (settings, keybindings and the 4.4 GB model folder hang off
+that), the **strings that must agree** — output channel, both Problems sources and the assistant's matcher — are
+compared **with each other** rather than with a literal, and the **whole shipped surface is scanned for the old
+name** with exactly two exceptions (the DataSet recogniser, which must accept files written before the rename,
+and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
+still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
+instead of being found by a user.
 
 ### Status 2026-09-11 — full suite green (2176 passed / 0 failed / 0 skipped, 35 s)
 

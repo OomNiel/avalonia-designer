@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Grumpy.png" width="128" height="128" alt="Avalonia Designer">
+  <img src="Grumpy.png" width="128" height="128" alt="Grumpy's WYSIWYG Designer">
 </p>
 
 <h3 align="center">
@@ -12,7 +12,10 @@
   </a>
 </p>
 
-# Avalonia Designer for VS Code
+# Grumpy's WYSIWYG Designer for VS Code
+
+> **Formerly *Avalonia Designer for VS Code*.** The extension id is unchanged — `grumpy.avalonia-designer` — so
+> your settings, shortcuts and downloaded models keep working, and searching for the old name still finds it.
 
 A **WYSIWYG form designer for the [Avalonia](https://avaloniaui.net) UI framework** that lives inside
 VS Code: drop controls on a design surface, set their properties in a friendly panel, and let the
@@ -33,7 +36,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 
 ## Install
 
-**From the Visual Studio Marketplace** — search for *Avalonia Designer* in the Extensions view
+**From the Visual Studio Marketplace** — search for *Grumpy's WYSIWYG Designer* in the Extensions view
 (`Ctrl+Shift+X`), or:
 
 ```bash

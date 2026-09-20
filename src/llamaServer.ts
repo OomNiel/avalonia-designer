@@ -252,7 +252,7 @@ class OwnLlamaServer {
             const child = this.proc;
             if (!child || child.exitCode !== null) {
                 throw new Error(`llama-server stopped while loading${lastLine ? `: ${lastLine}` : ''}`
-                    + `. See View → Output → "Avalonia Designer" for its own messages.`);
+                    + `. See View → Output → "Grumpy's WYSIWYG Designer" for its own messages.`);
             }
             const verdict = await this.health(port);
             if (verdict === 'ok') break;
@@ -283,7 +283,7 @@ class OwnLlamaServer {
             await delay(500);
         }
         const id = await this.modelId(port);
-        if (!id) throw new Error('llama-server is up but reports no model — see the "Avalonia Designer" output.');
+        if (!id) throw new Error('llama-server is up but reports no model — see the "Grumpy\'s WYSIWYG Designer" output.');
         return id;
     }
 
@@ -433,7 +433,7 @@ export function llamaServerStatusLines(
 export function llamaServerMissingMessage(lookup: LlamaBinaryLookup): string {
     if (lookup.configuredMissing) {
         return `The "llamaServerPath" setting points at ${lookup.configured}, which is not there. Fix or clear `
-            + 'that setting (Settings → Avalonia Designer → Assistant) and try again.';
+            + 'that setting (Settings → Grumpy\'s WYSIWYG Designer → Assistant) and try again.';
     }
     return 'No `llama-server` was found on this machine (checked PATH and the usual build folders). Install '
         + 'llama.cpp (https://github.com/ggml-org/llama.cpp) or set "llamaServerPath" to the binary, then try again.';

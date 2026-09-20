@@ -1,4 +1,4 @@
-# Session — Avalonia Designer for VS Code
+# Session — Grumpy's WYSIWYG Designer for VS Code
 
 > The original 2026-08-22 build-session transcript was removed (2026-08-31) — it is superseded
 > by the docs below, which are the durable, current references for continuing development.
@@ -29,9 +29,13 @@ without reading the name, and its own **Colour** row applies to a free crosshair
 have kept the old picture and looked like a fix that never arrived. The same release writes the charting tool
 down in full — `USER_MANUAL` §19.8 (cursors, with the tips moved to §19.9), `CONTROLS.md`, `README.md` §7 —
 and the README now opens with the **PayPal donation link** (*"If you enjoy using this extension, please
-contribute and consider making a donation."*), which the Marketplace listing shows too. Suite **6,178 passed /
+contribute and consider making a donation."*), which the Marketplace listing shows too. **The extension was
+renamed the same day** — *Avalonia Designer for VS Code* → **Grumpy's WYSIWYG Designer for VS Code** — display
+name only: the id, the settings keys, the keybindings and the 4.4 GB model folder are untouched, so nothing has
+to be reinstalled or migrated, and the README keeps one *"Formerly …"* line for people who know the old name.
+Suite **6,197 passed /
 0 failed** (was 6,153), PROBLEMS clean, both twins 0/0 on Avalonia 12.1.1 and 11.0.10, and the VSIX is
-`avalonia-designer-0.11.0.vsix` — 1,045,148 bytes, sha256 `64e0f13f…`, audited (a local project name in a
+`avalonia-designer-0.11.0.vsix` — 1,046,409 bytes, sha256 `3d913e3d…`, audited (a local project name in a
 shipped comment was caught and scrubbed *before* packaging). Read `NOTES.md` §142.
 
 **Previously: `0.10.11`** — *the prompt is written where you are, and the

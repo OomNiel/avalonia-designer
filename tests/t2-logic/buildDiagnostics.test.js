@@ -172,7 +172,8 @@ module.exports = async (t) => {
         t.equal(col.all().size, 2, 'problems', 'grouped by the files the compiler named');
         const form = col.get(vscode.Uri.file(FORM));
         t.equal(form.length, 2, 'problems', 'both findings in the form are published');
-        t.equal(form[0].source, 'Avalonia Designer (build)', 'problems', 'marked as coming from the build');
+        t.equal(form[0].source, 'Grumpy\'s WYSIWYG Designer (build)', 'problems',
+            'marked as coming from the build');
         t.equal(form[0].code, 'CS1002', 'problems', 'with the code, so the PROBLEMS list can be filtered by it');
         t.equal(form[0].message, '; expected', 'problems', "and the compiler's message");
         bd.publishBuildDiagnostics([]);

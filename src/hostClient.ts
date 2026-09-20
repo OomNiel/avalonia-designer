@@ -132,7 +132,7 @@ export class HostClient {
                 const p = this.pending.get(msg.id)!;
                 this.pending.delete(msg.id);
                 if (msg.error) {
-                    // Log it in OUR channel (View → Output → "Avalonia Designer") first: an
+                    // Log it in OUR channel (View → Output → "Grumpy's WYSIWYG Designer") first: an
                     // unhandled rejection would otherwise dump a raw [Extension Host] stack into
                     // the shared output pane instead of a readable one-line error.
                     logError(`PreviewerHost: ${String(msg.error)}`);

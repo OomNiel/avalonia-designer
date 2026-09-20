@@ -2055,7 +2055,7 @@ export function publishIssues(axamlUri: vscode.Uri, result: CheckResult, issues:
             `${issue.title}\n${issue.detail}`,
             issue.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning
         );
-        d.source = 'Avalonia Designer';
+        d.source = 'Grumpy\'s WYSIWYG Designer';
         d.code = issue.kind;
         const list = byFile.get(file) ?? [];
         list.push(d);

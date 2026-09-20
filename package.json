@@ -1,6 +1,6 @@
 {
     "name": "avalonia-designer",
-    "displayName": "Avalonia Designer for VS Code",
+    "displayName": "Grumpy's WYSIWYG Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox — with an optional local AI assist that writes handlers and repairs code from a sentence, on your own machine.",
     "version": "0.11.0",
     "publisher": "grumpy",
@@ -215,7 +215,7 @@
             "activitybar": [
                 {
                     "id": "avaloniaDesigner",
-                    "title": "Avalonia Designer",
+                    "title": "Grumpy's WYSIWYG Designer",
                     "icon": "GrumpyWhite.png"
                 }
             ]
@@ -226,13 +226,13 @@
                     "type": "webview",
                     "id": "avaloniaDesigner.projects",
                     "name": "New Project",
-                    "contextualTitle": "Avalonia Designer",
+                    "contextualTitle": "Grumpy's WYSIWYG Designer",
                     "icon": "media/project.svg"
                 },
                 {
                     "id": "avaloniaDesigner.toolbox",
                     "name": "Toolbox",
-                    "contextualTitle": "Avalonia Designer Toolbox",
+                    "contextualTitle": "Grumpy's WYSIWYG Designer Toolbox",
                     "icon": "media/toolbox.svg"
                 }
             ]
@@ -359,7 +359,7 @@
             ]
         },
         "configuration": {
-            "title": "Avalonia Designer",
+            "title": "Grumpy's WYSIWYG Designer",
             "properties": {
                 "avaloniaDesigner.dotGrid.enabled": {
                     "type": "boolean",

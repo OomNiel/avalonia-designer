@@ -5494,7 +5494,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             new Promise<EscalationResult>((resolve) => setTimeout(() => resolve({
                 ok: false,
                 message: 'the 30B did not become ready within 5 minutes — the log has every step it reported '
-                    + '(View → Output → Avalonia Designer)'
+                    + '(View → Output → Grumpy\'s WYSIWYG Designer)'
             }), ESCALATION_DEADLINE_MS))
         ]);
         if (!up.ok) {
@@ -5531,7 +5531,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     /**
      * **View Log** (asked 2026-09-18): open the extension's own log in an editor tab.
      *
-     * The same lines also go to *View → Output → Avalonia Designer*, but that channel is per-window and dies
+     * The same lines also go to *View → Output → Grumpy's WYSIWYG Designer*, but that channel is per-window and dies
      * with the window, while this file is what a report gets read against — and it is half a megabyte of detail
      * nobody should have to hunt for in a file manager. The caret is put on the last line, because the newest
      * lines are the ones being asked about.
@@ -5945,7 +5945,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         this.sendHistoryState(doc, panel);
         this._onDidChangeCustomDocument.fire({
             document: doc,
-            label: 'Avalonia Designer edit',
+            label: 'Grumpy\'s WYSIWYG Designer edit',
             undo: () => {
                 doc.model = new XamlModel(before);
                 void this.render(doc, panel);
@@ -6752,7 +6752,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     /** Arms a toolbox tool in the most recently focused designer (click tool, then click the canvas to place). */
     async armToolInActiveDesigner(tag: string): Promise<void> {
         if (!this.lastActivePanel) {
-            void vscode.window.showInformationMessage('Open an .axaml file in the Avalonia Designer first.');
+            void vscode.window.showInformationMessage('Open an .axaml file in Grumpy\'s WYSIWYG Designer first.');
             return;
         }
         await this.lastActivePanel.webview.postMessage({ type: 'armTool', tag });
@@ -6775,7 +6775,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     async clearActiveCanvas(): Promise<void> {
         const active = this.activeDocAndPanel();
         if (!active) {
-            void vscode.window.showInformationMessage('Open an .axaml file in the Avalonia Designer first.');
+            void vscode.window.showInformationMessage('Open an .axaml file in Grumpy\'s WYSIWYG Designer first.');
             return;
         }
         const { doc, panel } = active;
@@ -6825,8 +6825,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             await cfg.update('askEventOnPlace', false, vscode.ConfigurationTarget.Global);
             await cfg.update('autoWireDefaultEvent', wired, vscode.ConfigurationTarget.Global);
             void vscode.window.showInformationMessage(wired
-                ? 'Avalonia Designer: new controls will wire their default event without asking (Settings → Avalonia Designer → Ask Event On Place).'
-                : 'Avalonia Designer: new controls will be placed without an event handler (Settings → Avalonia Designer → Ask Event On Place).');
+                ? 'Grumpy\'s WYSIWYG Designer: new controls will wire their default event without asking (Settings → Grumpy\'s WYSIWYG Designer → Ask Event On Place).'
+                : 'Grumpy\'s WYSIWYG Designer: new controls will be placed without an event handler (Settings → Grumpy\'s WYSIWYG Designer → Ask Event On Place).');
         } catch { /* settings are read-only in some hosts — the dialog simply asks again */ }
     }
 
@@ -7118,7 +7118,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
       <button id="btnNewForm" title="Create a new Avalonia form">+ New Form</button>
       <button id="btnRefresh" title="Reload the form from disk and re-read the database preview (e.g. rows added while the app was running)">Refresh</button>
       <button id="btnCodeFix" title="Check the code-behind against the form and the DataSet: missing VB accessors, duplicate methods, leftover handlers of deleted controls, broken Data-Image / ItemsSource bindings, missing Imports or bundled helper files — with a one-click fix per problem">🩺 Code Fix…</button>
-      <button id="btnViewLog" title="Open the Avalonia Designer log in an editor tab: every Code Fix step, each model request and why anything was refused">📄 View Log</button>
+      <button id="btnViewLog" title="Open the designer log in an editor tab: every Code Fix step, each model request and why anything was refused">📄 View Log</button>
       <button id="btnBackup" title="Save everything that is unsaved, then copy this whole project into the parent folder as &lt;Project&gt;_&lt;date&gt;_&lt;time&gt; (no bin/obj, caches or .git)">💾 Project Backup</button>
 ${publishButtons}      <span class="sep"></span>
       <button class="tbg-head" data-grp="zoom" data-tip="Zoom: zoom out / in and fit the form to the window" aria-expanded="true">Zoom</button>

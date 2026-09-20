@@ -574,7 +574,9 @@ module.exports = async (t) => {
         t.ok(/AssistantCodeActionProvider/.test(ext) && /registerCodeActionsProvider/.test(ext), 'wiring',
             'the code action provider is registered');
         const ui = read('src/assistantUi.ts');
-        t.ok(/d\.source !== 'Avalonia Designer'/.test(ui), 'wiring',
+        // The source is written with its apostrophe escaped ('Grumpy\'s …'), so the pattern allows the
+        // backslash to be there or not — a rename must not have to rewrite this test again.
+        t.ok(/d\.source !== 'Grumpy\\?'s WYSIWYG Designer'/.test(ui), 'wiring',
             'the AI action only offers itself on our own findings');
         t.ok(/m\.line <= line && line <= m\.endLine/.test(ui), 'wiring',
             'and only for a line inside a method (outside one the rule-based fix wins)');

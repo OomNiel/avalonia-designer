@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
-/** A single shared output channel ("Avalonia Designer") for extension diagnostics.
- *  Visible in: View → Output → "Avalonia Designer" (more reliable than console.log,
+/** A single shared output channel ("Grumpy's WYSIWYG Designer") for extension diagnostics.
+ *  Visible in: View → Output → "Grumpy's WYSIWYG Designer" (more reliable than console.log,
  *  which only lands in the Extension Host output, not the exthost.log file). */
 let channel: vscode.OutputChannel | undefined;
 
@@ -93,7 +93,7 @@ export function trimMirror(): void {
         const kb = (n: number): number => Math.round(n / 1024);
         const marker = `[${new Date().toISOString()}] --- trimmed: the oldest ${kb(all.length - tail.length)} KB `
             + `were dropped to stay under ${kb(MIRROR_LIMITS.maxBytes)} KB; the newest ${kb(tail.length)} KB are `
-            + `kept. The same lines are in View → Output → Avalonia Designer for this window. ---\n`;
+            + `kept. The same lines are in View → Output → Grumpy's WYSIWYG Designer for this window. ---\n`;
         // Written beside the file and renamed over it, so a crash cannot leave half a log behind.
         const tmp = `${mirror}.tmp`;
         fs.writeFileSync(tmp, marker + tail, 'utf8');
@@ -104,7 +104,7 @@ export function trimMirror(): void {
 }
 
 export function log(msg: string): void {
-    if (!channel) channel = vscode.window.createOutputChannel('Avalonia Designer');
+    if (!channel) channel = vscode.window.createOutputChannel('Grumpy\'s WYSIWYG Designer');
     const ts = new Date().toISOString().slice(11, 19);
     channel.appendLine(`[${ts}] ${msg}`);
     appendToMirror(msg);

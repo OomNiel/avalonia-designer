@@ -1,10 +1,10 @@
-# Avalonia Designer for VS Code — User Manual
+# Grumpy's WYSIWYG Designer for VS Code — User Manual
 
 > This manual was generated with AI assistance and is curated by the extension owner. The project is a
 > "Work In Progress". Many features will be added, bug fixes and weird events happening will be addressed as
 > time allows.
 
-> The Avalonia Designer lets you **build Avalonia forms visually** — drag controls from a
+> Grumpy's WYSIWYG Designer lets you **build Avalonia forms visually** — drag controls from a
 > toolbox onto a design surface, set their properties in a friendly panel, and let the extension
 > generate the XAML **and** the code-behind for you.
 >
@@ -113,7 +113,7 @@ this extension. No CLI templates and no extra tools: just answer a few questions
 whole project is generated for you (including a main form with the **default title bar** — you can
 switch to the extension's custom title bar from the Toolbox at any time).
 
-1. Click the **Avalonia Designer** icon in the Activity Bar (the toolbox icon). The sidebar
+1. Click the **Grumpy's WYSIWYG Designer** icon in the Activity Bar (the toolbox icon). The sidebar
    shows two views — **New Project** at the top, then **Toolbox** below — so open the **New Project**
    view and click **Create C# Project…** or **Create VB.NET Project…**.
    (Or run **Avalonia: New Project…** from the Command Palette.)
@@ -137,7 +137,7 @@ The extension writes a full project for you:
 
 When creation finishes, choose **Open Project** to open it in a new window. The **first time** a
 new project's folder is opened, the terminal opens automatically and runs `dotnet build` for
-you — so you immediately see whether it compiles. Then use the **Avalonia Designer** toolbox to
+you — so you immediately see whether it compiles. Then use the **Toolbox** view to
 edit `MainWindow.axaml` visually. The **Open Created Project** button (or **Avalonia: Open
 Created Project**) reopens your most recent project any time.
 
@@ -149,7 +149,7 @@ Created Project**) reopens your most recent project any time.
 ## 3. Installation & first run
 
 **From the Visual Studio Marketplace (recommended)** — open the Extensions view (`Ctrl+Shift+X`),
-search for *Avalonia Designer*, and install it. Or from a terminal:
+search for *Grumpy's WYSIWYG Designer*, and install it. Or from a terminal:
 
 ```bash
 code --install-extension grumpy.avalonia-designer
@@ -335,7 +335,7 @@ the package appears — and goes grey again as soon as you edit the form.
 
 ## 5. The Toolbox
 
-The Toolbox is the sidebar view **"Avalonia Designer → Toolbox"**. It lists the controls you can
+The Toolbox is the sidebar view **"Grumpy's WYSIWYG Designer → Toolbox"**. It lists the controls you can
 place:
 
 | Control | What it is |
@@ -1109,7 +1109,7 @@ decided on yet.
 **When a model answers badly**, the extension tells you what happened rather than changing nothing
 quietly: the message names the reason (*empty answer*, *answered with prose instead of code*, or *the code
 block was cut off*), **Show the raw answer** opens exactly what the model said in a read-only tab, and the
-same text goes to the *Avalonia Designer* output channel. A model that rambles or repeats itself is
+same text goes to the *Grumpy's WYSIWYG Designer* output channel. A model that rambles or repeats itself is
 usually a sign of a model too small for the job — try the 7B, or a code-specialised one.
 
 #### No model server? Let the extension bring its own
@@ -1259,7 +1259,7 @@ runtime.
 > `--threads`, `--n-gpu-layers`, `--alias`) and nothing else. If your build refuses one of them it exits
 > immediately, and the extension starts it once more without the cosmetic `--alias` rather than reporting a
 > version problem; a failure that is *not* about our arguments (a missing file, a bad quantisation) is reported
-> with the command line, which is also what goes to the *Avalonia Designer* log.
+> with the command line, which is also what goes to the *Grumpy's WYSIWYG Designer* log.
 
 #### House rules — teach it how *your* code is written
 

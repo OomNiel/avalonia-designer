@@ -1,4 +1,4 @@
-# Avalonia Designer for VS Code — Developer Notes (lean)
+# Grumpy's WYSIWYG Designer for VS Code — Developer Notes (lean)
 
 > Lean quick-reference for continuing development.
 > **Archives (read-only reference):**
@@ -98,7 +98,7 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 │   ├── formTemplates.ts / newForm.ts / projectScaffold.ts / projectCreator.ts / projectView.ts
 │   ├── projectParser.ts      detects C# vs VB.NET from nearest .csproj/.vbproj
 │   ├── hostClient.ts         WebSocket client + PreviewerHostManager
-│   └── logger.ts             Output channel "Avalonia Designer" (reliable diagnostics)
+│   └── logger.ts             Output channel "Grumpy's WYSIWYG Designer" (reliable diagnostics)
 ├── host/                     C# Previewer Host (net8.0, Avalonia 12.1.1)
 │   ├── Program.cs            HttpListener WebSocket server (sync serve on main thread)
 │   ├── XamlRenderer.cs       XAML → PNG + control bounds (+ gridCells) — 3 load strategies
@@ -1017,7 +1017,7 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   closed, so every window reload leaked a process (22 found reparented to `systemd`, ~600 MB). The
   host now exits on client disconnect (+90 s watchdog when no client ever connects), `dispose()`
   kills the child before dropping the socket and `deactivate()` disposes the shared manager.
-- §73 **Host errors stay in our channel** — `hostClient` logs `msg.error` to the "Avalonia Designer"
+- §73 **Host errors stay in our channel** — `hostClient` logs `msg.error` to the "Grumpy's WYSIWYG Designer"
   channel before rejecting, so a host failure no longer shows up as an unhandled-rejection stack in
   the Extension Host output.
 - §74 **Test-suite findings (2026-09-10)** — the T3 jsdom fixture missed `btnRefresh`, so
@@ -1420,7 +1420,7 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   - **Settings** `avaloniaDesigner.assistant.{backend,endpoint,model,timeoutSeconds,maxTokens,temperature}`
     — `backend` defaults to **`off`**, so nothing changes for anyone until they ask. Two commands (*AI:
     Implement in Function…*, *AI: Status and Hardware Check*) plus a `CodeActionProvider` that offers
-    *✨ Fix with AI…* only on diagnostics whose `source === 'Avalonia Designer'` **and** whose line is
+    *✨ Fix with AI…* only on diagnostics whose `source === 'Grumpy's WYSIWYG Designer'` **and** whose line is
     inside a method — every structural finding keeps its exact rule-based fix.
 - §91 **Why tier 2 is a .NET sidecar, and what the small models can actually do (2026-09-14).** The
   feasibility dig behind §90, recorded because it decides the next step:
@@ -2477,7 +2477,7 @@ now logs model/endpoint/prompt size/budget/window *before* it is sent, every out
 thinking length and finish reason (including `answer=0, reasoning=0`, which used to leave nothing), and the
 sidecar's last output lines are kept in a 40-line ring so an empty answer can quote them — "chat template not
 usable, falling back to the default" is the line that explains a model answering with nothing, and it lived
-only in View → Output → *Avalonia Designer*.
+only in View → Output → *Grumpy's WYSIWYG Designer*.
 
 **The switch** (asked in the same message): *"Put a tickbox in the Settings panel where the user can select to
 either display the diff (current method), or have the system Apply the new code directly"*. Done as
@@ -3465,7 +3465,17 @@ three places a change like this usually misses:
 - **Two pre-existing mentions of the user's own other projects** (`ChromeWindow.cs`/`.vb` say "as used by
   LinuxHelper / DataSafe") are still shipped in the bundled resource and were *not* touched: bundled
   resources are library code the user owns, so scrubbing them is their call, not mine.
-- **Suite 6,153 → 6,178**, PROBLEMS clean, both twins 0/0 on Avalonia 12.1.1 and 11.0.10. The docs pass of
-  the same release (USER_MANUAL §19.8, CONTROLS, README with the donation link, TEST_PLAN) rides inside the
-  VSIX, which is why `0.11.0` is the file to upload rather than the already-released `0.10.11`.
+- **Suite 6,153 → 6,178** (6,197 with the rename test below), PROBLEMS clean, both twins 0/0 on Avalonia
+  12.1.1 and 11.0.10.
+- **Renamed the same day: *Avalonia Designer for VS Code* → *Grumpy's WYSIWYG Designer for VS Code***, display
+  name only. The ID (`grumpy.avalonia-designer`) is what settings keys, keybindings, the icon's place and the
+  **4.4 GB model folder under `globalStorage/`** hang off, so it does **not** move — which is why the rename is
+  cheap and reversible, and why the Marketplace listing keeps its identity (searching the old name still finds
+  it). What did move: `displayName`, the Settings section and Activity-Bar container titles, the output channel,
+  both Problems sources, the assistant's matcher for its own findings, the code-action label, the generated-file
+  markers, the host's *"could not render this XAML"* message, the issue template, and every current reference in
+  the docs — 23 code strings, five manifest fields and the shipped manuals. **The one trap:** the DataSet
+  recogniser (`isGeneratedDataSetFile`) must accept the **old** wording too, or a project written before the
+  rename loses its DataSet editor and the protection around hand-written code; it now takes both, and
+  `tests/t2-logic/rebrand.test.js` proves it and scans the shipped surface for leftovers.
 

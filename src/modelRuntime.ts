@@ -250,7 +250,7 @@ class ModelServer {
         child.stdout?.on('data', (d: Buffer) => {
             stdout += d.toString();
             rememberSidecar(d);
-            // Straight into View → Output → "Avalonia Designer": the first thing to look at when the
+            // Straight into View → Output → "Grumpy's WYSIWYG Designer": the first thing to look at when the
             // runtime will not start, and the only place the model's own load messages appear.
             log(`ModelHost: ${d.toString().trim()}`);
         });
@@ -290,7 +290,7 @@ class ModelServer {
         const deadline = Date.now() + LOAD_TIMEOUT_MS;
         for (; ;) {
             if (child.exitCode !== null) {
-                throw new Error('The model runtime stopped while loading — see the "Avalonia Designer" output for the reason.');
+                throw new Error('The model runtime stopped while loading — see the "Grumpy\'s WYSIWYG Designer" output for the reason.');
             }
             const health = await readHealth(port).catch(() => undefined);
             if (health) {
@@ -369,7 +369,7 @@ export function stopModelServer(): void {
 /**
  * The runtime's own last words, kept so a *failed request* can quote them.
  *
- * They already go to View → Output → "Avalonia Designer", which is the right place to read them and the
+ * They already go to View → Output → "Grumpy's WYSIWYG Designer", which is the right place to read them and the
  * wrong place to find them when a report arrives: the 2026-09-16 "0 characters" report could not say
  * whether the chat template had been rejected, because that line lived only in the output channel.
  * Bounded (the last 40 lines), because a load can be chatty and this is a breadcrumb, not a log file.

@@ -1360,7 +1360,7 @@
             if (at >= 0) els.aiModel.selectedIndex = at + 1; // +1: the placeholder is index 0
             if (els.aiModel.value !== wanted) {
                 setAiProgress(`the picker cannot show "${wanted}" — the list the extension sent has no such ` +
-                    'entry; press Refresh list, and report this with View → Output → "Avalonia Designer"');
+                    'entry; press Refresh list, and report this with View → Output → "Grumpy\'s WYSIWYG Designer"');
             }
         } else if (!wanted) {
             // No selection is a *state*, not a fault: a built-in backend with nothing pinned, and the moment
@@ -1605,7 +1605,7 @@
         clearTimeout(aiWatchdog);
         aiWatchdog = setTimeout(() => {
             if (els.aiProgress.textContent && !els.aiProgress.hidden) {
-                els.aiProgress.textContent += '  —  the extension has not reported back yet (View → Output → "Avalonia Designer")';
+                els.aiProgress.textContent += '  —  the extension has not reported back yet (View → Output → "Grumpy\'s WYSIWYG Designer")';
             }
         }, 10000);
     }
@@ -3177,7 +3177,7 @@
                 const text = String(msg.message || '');
                 // A failure stays in the progress line, where the user is looking, instead of only in the
                 // designer's status bar at the bottom of the window. It also no longer vanishes.
-                setAiProgress(msg.ok ? '' : (text ? '✗ ' + text : '✗ the load failed — see Output → Avalonia Designer'));
+                setAiProgress(msg.ok ? '' : (text ? '✗ ' + text : '✗ the load failed — see Output → Grumpy\'s WYSIWYG Designer'));
                 els.status.textContent = (msg.ok ? '' : '✗ ') + text;
                 // The state rides along with the outcome, so the panel shows the model that is actually in use
                 // even if the separate `aiState` message never lands (reported 2026-09-15: the picker reverted

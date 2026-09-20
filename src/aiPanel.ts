@@ -608,7 +608,7 @@ async function startLoad(
         progress('importing it into LM Studio (a symbolic link, your file stays where it is)…');
         const imported = await importModelFile(key, { onProgress: report });
         if (!imported.ok || !imported.key) {
-            return { ok: false, message: imported.message ?? 'The import did not add a model — see the Avalonia Designer output.' };
+            return { ok: false, message: imported.message ?? 'The import did not add a model — see the "Grumpy\'s WYSIWYG Designer" output.' };
         }
         const refreshed = await discover();
         const model = chatModels(refreshed).find((m) => m.key === imported.key);
