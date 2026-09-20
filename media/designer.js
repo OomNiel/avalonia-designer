@@ -4734,7 +4734,7 @@
             if (item) item.querySelector('.series-swatch').style.background = normalizeHex(v) || '#2D7DD2';
         };
         els.seriesFields.appendChild(seriesField('Title', seriesText(row.title, (v) => { row.title = v; repaint(); },
-            'The name you see in this editor. Charts do not draw a legend yet.')));
+            'The name shown in the legend and in this editor. Empty uses the spreadsheet column header, or “Series n” when there is none.')));
         if (row.type === 'Line') {
             const yIn = seriesText(row.yColumn, (v) => { row.yColumn = v; repaint(); },
                 'The spreadsheet column with this line’s values. Empty = the column shown in grey. A line plot’s X is the sample number (0, 1, 2…).');

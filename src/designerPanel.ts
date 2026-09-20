@@ -7447,8 +7447,12 @@ ${publishButtons}      <span class="sep"></span>
         <p class="modal-hint">Each series is one line on the chart. <b>Common</b> shares the chart's
           X/Y columns and its scale; <b>Per series</b> uses this series' own columns and its own
           axis. A line plot reads X from the sample number (0, 1, 2…), so only its Y column is used.
-          An empty column box means “use the default”: the X/Y pairs run B/C, D/E, F/G …, and a
-          series on the common axis shares the chart's X column.</p>
+          The column letters are the columns of an <b>.xlsx</b> spreadsheet file — choose it with the
+          <b>Spreadsheet</b> row in the Properties panel (Browse…). A spreadsheet is currently the
+          only way to <b>bind</b> data to a chart, so the columns only mean something once a workbook
+          is picked. (The <b>Values</b> / <b>Points</b> rows hold numbers typed into the panel, which
+          are fixed, not a binding.) An empty column box means “use the default”: the X/Y pairs run
+          B/C, D/E, F/G …, and a series on the common axis shares the chart's X column.</p>
         <div class="grid-defs">
           <div class="grid-defs-col">
             <h4>Lines</h4>
