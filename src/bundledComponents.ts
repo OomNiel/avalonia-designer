@@ -65,13 +65,15 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             kind: 'GrumpyCharts',
             file: vb ? 'GrumpyCharts.vb' : 'GrumpyCharts.cs',
             bundled: /BUNDLED RESOURCE/,
-            // The chart set holds SERIES and AXIS objects now (`XYSeries`/`LineSeries` child elements,
-            // `Axis`). A copy from before that cannot compile the XAML this designer writes — saving a
-            // form with two series failed with "AVLN2000: Unable to resolve type XYSeries from
-            // namespace using:AvaloniaCharts" (ChartTestCS, 2026-09-20) — so the marker has to be one
-            // of the NEW types, not the older `PlotBackOpacityProperty` (which every copy since the
-            // first release has, and which therefore detected nothing).
-            marker: 'XYSeries'
+            // The chart set holds SERIES, AXIS and CURSOR objects now (`XYSeries`/`LineSeries` child
+            // elements, `Axis`, and `ChartCursor` inside the `.Cursors` property element). A copy from
+            // before any of those cannot compile the XAML this designer writes — saving a form with two
+            // series failed with "AVLN2000: Unable to resolve type XYSeries from namespace
+            // using:AvaloniaCharts" (ChartTestCS, 2026-09-20) — so the marker has to be the NEWEST type,
+            // not the older `PlotBackOpacityProperty` (which every copy since the first release has, and
+            // which therefore detected nothing) nor `XYSeries` (which the multi-series copies have).
+            // Each time the control gains a type the designer can write into a form, move it here.
+            marker: 'ChartCursor'
         }
     ];
 }

@@ -1433,7 +1433,7 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
         // Everything the designer edits through a popup editor (`kind: 'button'`) — whether it is
         // pushed as a "top action" (DataGrid Rows/Columns, SplitPanel Split Layout/Splitters) or
         // lives in the control's own list (Items, Grid.Defs, MenuItems, StatusItems).
-        keys: ['Rows', 'Columns', 'Series', 'Axis', 'Legend', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
+        keys: ['Rows', 'Columns', 'Series', 'Axis', 'Legend', 'Cursors', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
     },
     {
         id: 'layout', label: 'Layout & size',
@@ -1806,6 +1806,19 @@ export function propertyDefsFor(
                 + 'top, left or right — it wraps to fit its entries either way), its font size, and a '
                 + 'frame with its own backcolour, outline and rounded corners. Each entry carries a '
                 + 'tick box that switches that trace on and off.'
+        });
+        topActions.push({
+            key: 'Cursors',
+            label: 'Cursors',
+            kind: 'button',
+            value: 'Edit cursors…',
+            desc: 'Adds up to two draggable cursors and sets each one up: which lines it draws '
+                + '(vertical, horizontal or both), its dash style and colour, whether its readout '
+                + 'shows the X value, the trace value or both, and where it sits. The readout panel '
+                + 'follows the mouse or sits in the chart\'s top right corner, and the number of '
+                + 'decimals can be fixed. In the app: drag a cursor\'s line to move it, use the left '
+                + 'and right arrows to step it one sample, up/down to pick the trace the readout '
+                + 'reports, and right-click the chart for the cursor menu.'
         });
     }
     // 'Items' (batch editor) for combo/list/items controls — opens a popup where you type

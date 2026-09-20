@@ -776,6 +776,21 @@ public class XamlRenderer
                 chart.YAxis = ReadAxis(child);
                 continue;
             }
+            // …and the chart's cursors: <charts:GrumpyLinePlot.Cursors><charts:ChartCursor …/>…
+            if (child.Name.LocalName.EndsWith(".Cursors", StringComparison.Ordinal))
+            {
+                foreach (var cursorElem in child.Elements())
+                {
+                    var cursor = new AvaloniaCharts.ChartCursor();
+                    foreach (var attr in cursorElem.Attributes())
+                    {
+                        if (attr.Name.LocalName.StartsWith("xmlns")) continue;
+                        ApplyProperty(cursor, attr.Name.LocalName, attr.Value);
+                    }
+                    chart.Cursors.Add(cursor);
+                }
+                continue;
+            }
 
             AvaloniaCharts.ChartSeries? series = child.Name.LocalName switch
             {

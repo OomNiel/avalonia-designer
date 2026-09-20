@@ -37,6 +37,8 @@ Imports Avalonia
 Imports Avalonia.Collections
 Imports Avalonia.Controls
 Imports Avalonia.Input
+Imports Avalonia.Input.Platform
+Imports Avalonia.Interactivity
 Imports Avalonia.Media
 Imports Avalonia.Metadata
 Imports Avalonia.Platform.Storage
@@ -113,6 +115,45 @@ Namespace Global.AvaloniaCharts
         Common
         ''' <summary>Use this series' own X/Y columns and its own axis.</summary>
         PerSeries
+    End Enum
+
+    ''' <summary>
+    ''' Which parts of a cursor are DRAWN. A cursor always carries both an X and a Y position (the
+    ''' mouse moves it in both directions); this only decides which lines are visible: Vertical is the
+    ''' crosshair minus its horizontal line, Horizontal is the crosshair minus its vertical line.
+    ''' </summary>
+    Public Enum CursorOrientation
+        ''' <summary>Draw the crosshair: the vertical line and the horizontal line.</summary>
+        Both
+        ''' <summary>Draw the vertical line only.</summary>
+        Vertical
+        ''' <summary>Draw the horizontal line only.</summary>
+        Horizontal
+    End Enum
+
+    ''' <summary>The dash pattern of a cursor's lines.</summary>
+    Public Enum CursorStyle
+        ''' <summary>An unbroken line.</summary>
+        Solid
+        ''' <summary>Dashes (the default).</summary>
+        Dash
+        ''' <summary>Dots.</summary>
+        Dot
+        ''' <summary>Long dashes.</summary>
+        ' Bracketed: 'Long' and 'Short' are Visual Basic type keywords, and a keyword cannot be an
+        ' enum member's name. The METADATA name is still "Long"/"Short", so the XAML written by the
+        ' Cursor Editor (Style="Long") loads into both twins unchanged.
+        [Long]
+        ''' <summary>Short dashes.</summary>
+        [Short]
+    End Enum
+
+    ''' <summary>Where the cursor readout — the selected trace and its values — is drawn.</summary>
+    Public Enum CursorReadout
+        ''' <summary>In a small panel that follows the mouse pointer (the default).</summary>
+        FollowMouse
+        ''' <summary>In the top right corner of the drawing area, out of the way.</summary>
+        TopRight
     End Enum
 
     ''' <summary>Reads Values="4,9,6,12" from XAML into a Double array.</summary>
@@ -300,6 +341,45 @@ Namespace Global.AvaloniaCharts
                 .Name = Name
             }
         End Function
+    End Class
+
+    ''' <summary>
+    ''' One cursor of a chart: a crosshair the user can drag, with a readout of the selected trace's
+    ''' values where it crosses. Up to two cursors are drawn (see Cursors on the chart); the Cursor
+    ''' Editor adds and removes them and sets these properties.
+    ''' A cursor carries BOTH an X and a Y position even when only one line is drawn, so a Horizontal
+    ''' cursor still reports a meaningful X. Both are in DATA units (not pixels), so a cursor stays on
+    ''' the same value when the chart is resized or the data changes. Double.NaN means "not placed
+    ''' yet" — the renderer puts it in the middle of the axis.
+    ''' </summary>
+    Public NotInheritable Class ChartCursor
+        ''' <summary>Which lines are drawn: Both (the crosshair), Vertical or Horizontal.</summary>
+        Public Property Orientation As CursorOrientation = CursorOrientation.Both
+
+        ''' <summary>The dash pattern of this cursor's lines.</summary>
+        Public Property Style As CursorStyle = CursorStyle.Dash
+
+        ''' <summary>Colour of this cursor's lines, its handle and the heading of its readout.</summary>
+        Public Property Color As Color = Colors.DarkOrange
+
+        ''' <summary>Show the cursor's X value in the readout.</summary>
+        Public Property XValues As Boolean = True
+
+        ''' <summary>Show the selected trace's Y value (interpolated at the cursor) in the readout.</summary>
+        Public Property YValues As Boolean = True
+
+        ''' <summary>The cursor's X position in data units. NaN = the middle of the X range.</summary>
+        Public Property X As Double = Double.NaN
+
+        ''' <summary>The cursor's Y position in data units. NaN = the middle of the Y range.</summary>
+        Public Property Y As Double = Double.NaN
+
+        ''' <summary>
+        ''' Whether the cursor is switched on. The right-click menu switches cursors on and off while
+        ''' the app runs: that is a RUNTIME state, so it is not written back to the form (a fresh start
+        ''' shows every cursor in the XAML as on).
+        ''' </summary>
+        Public Property Enabled As Boolean = True
     End Class
 
     ''' <summary>One series of points, plus the axis names and any reason there is no data.</summary>
@@ -544,6 +624,17 @@ Namespace Global.AvaloniaCharts
     Public MustInherit Class ChartBase
         Inherits Control
 
+        ''' <summary>
+        ''' The chart takes the keyboard so its cursors can be driven without a mouse: ←/→ move the
+        ''' selected cursor by one sample, ↑/↓ pick the trace the readout reports. Those keys are only
+        ''' swallowed while at least one cursor is switched on, so a chart without cursors stays out of
+        ''' the way of the window around it.
+        ''' </summary>
+        Protected Sub New()
+            Focusable = True
+            AddHandler Cursors.CollectionChanged, Sub(sender As Object, e As Specialized.NotifyCollectionChangedEventArgs) InvalidateVisual()
+        End Sub
+
         ' ---- frame ----------------------------------------------------------------------------
         Public Shared ReadOnly ShowBorderProperty As StyledProperty(Of Boolean) =
             AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(ShowBorder), True)
@@ -685,6 +776,129 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly LegendCornerRadiusProperty As StyledProperty(Of Avalonia.CornerRadius) =
             AvaloniaProperty.Register(Of ChartBase, Avalonia.CornerRadius)(NameOf(LegendCornerRadius), New Avalonia.CornerRadius(4))
 
+        ' ---- cursors --------------------------------------------------------------------------
+        ''' <summary>Where the cursor readout is drawn: following the mouse pointer (the default) or in
+        ''' the top right corner of the drawing area. Also switchable at runtime from the chart's
+        ''' right-click menu. In the designer there is no mouse, so a following readout is drawn in
+        ''' that corner.</summary>
+        Public Shared ReadOnly ReadoutPositionProperty As StyledProperty(Of CursorReadout) =
+            AvaloniaProperty.Register(Of ChartBase, CursorReadout)(NameOf(ReadoutPosition), CursorReadout.FollowMouse)
+
+        ''' <summary>Decimals in the cursor readout: -1 (the default) fits the numbers, 0…6 fixes them.</summary>
+        Public Shared ReadOnly CursorDecimalsProperty As StyledProperty(Of Integer) =
+            AvaloniaProperty.Register(Of ChartBase, Integer)(NameOf(CursorDecimals), -1)
+
+        ''' <summary>Where the cursor readout is drawn.</summary>
+        Public Property ReadoutPosition As CursorReadout
+            Get
+                Return GetValue(ReadoutPositionProperty)
+            End Get
+            Set(value As CursorReadout)
+                SetValue(ReadoutPositionProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Decimals in the readout (0…6), or -1 to let it choose.</summary>
+        Public Property CursorDecimals As Integer
+            Get
+                Return GetValue(CursorDecimalsProperty)
+            End Get
+            Set(value As Integer)
+                SetValue(CursorDecimalsProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>
+        ''' The chart's cursors — the crosshairs the user drags. Written as a property element, up to
+        ''' two are drawn:
+        ''' &lt;charts:GrumpyLinePlot.Cursors&gt;&lt;charts:ChartCursor …/&gt;&lt;/charts:GrumpyLinePlot.Cursors&gt;.
+        ''' The Cursor Editor adds and removes them; the right-click menu switches them on and off while
+        ''' the app runs.
+        ''' </summary>
+        Public ReadOnly Property Cursors As AvaloniaList(Of ChartCursor) = New AvaloniaList(Of ChartCursor)()
+
+        ''' <summary>Adds a cursor in the middle of the plot (False when there are already two).</summary>
+        Public Function AddCursor() As Boolean
+            If Cursors.Count >= MaxCursors Then Return False
+            Cursors.Add(New ChartCursor())
+            _selectedCursor = Cursors.Count - 1
+            InvalidateVisual()
+            Return True
+        End Function
+
+        ''' <summary>Removes the selected cursor (False when there is none).</summary>
+        Public Function RemoveCursor() As Boolean
+            If Cursors.Count = 0 Then Return False
+            Cursors.RemoveAt(Math.Clamp(_selectedCursor, 0, Cursors.Count - 1))
+            _selectedCursor = Math.Clamp(_selectedCursor, 0, Math.Max(0, Cursors.Count - 1))
+            InvalidateVisual()
+            Return True
+        End Function
+
+        ''' <summary>Puts every cursor back in the middle of the axis.</summary>
+        Public Sub ResetCursors()
+            For Each one In Cursors
+                one.X = Double.NaN
+                one.Y = Double.NaN
+            Next
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Moves one cursor to a data position (the values the readout reports).</summary>
+        Public Sub MoveCursor(index As Integer, x As Double, y As Double)
+            If index < 0 OrElse index >= Cursors.Count Then Return
+            Cursors(index).X = x
+            Cursors(index).Y = y
+            _selectedCursor = index
+            InvalidateVisual()
+        End Sub
+
+        ' ---- cursor runtime state -------------------------------------------------------------
+        ''' <summary>How many cursors a chart draws: two, so they can be compared.</summary>
+        Friend Const MaxCursors As Integer = 2
+
+        ''' <summary>Where each enabled cursor ended up in the last Render, for hit-testing. Rebuilt on
+        ''' every render, so a click always tests against what is actually on screen.</summary>
+        Private ReadOnly _cursorHits As New List(Of CursorHit)()
+
+        ''' <summary>The cursor the mouse and the arrow keys act on (the last one clicked).</summary>
+        Private _selectedCursor As Integer
+
+        ''' <summary>Which visible trace the readout reports; Up/Down walk the list.</summary>
+        Private _selectedTrace As Integer
+
+        ''' <summary>The last pointer position in control coordinates, and whether there has been one.</summary>
+        Private _pointer As Point
+        Private _hasPointer As Boolean
+
+        ''' <summary>What a drag is moving: 1 = X only (the vertical line), 2 = Y only (the horizontal
+        ''' line), 3 = both (the crosshair's middle).</summary>
+        Private _dragMode As Integer
+
+        ''' <summary>The cursor a drag is moving.</summary>
+        Private _dragCursor As ChartCursor
+
+        ''' <summary>The text of the readout as last drawn, for "Copy readout".</summary>
+        Private _readoutText As String = String.Empty
+
+        ''' <summary>The rectangle the readout was drawn in (kept for tests and future hit-testing).</summary>
+        Private _readoutRect As Rect
+
+        ''' <summary>One cursor's clickable parts, in control coordinates.</summary>
+        Private NotInheritable Class CursorHit
+            Friend Cursor As ChartCursor
+            Friend Index As Integer
+            ''' <summary>A band around the vertical line (empty when it is not drawn).</summary>
+            Friend Vertical As Rect
+            ''' <summary>A band around the horizontal line (empty when it is not drawn).</summary>
+            Friend Horizontal As Rect
+            ''' <summary>The square at the crossing point where both lines meet.</summary>
+            Friend Handle As Rect
+        End Class
+
+        ''' <summary>How close to a cursor line a click counts (each side, in pixels).</summary>
+        Private Const CursorGrab As Double = 5.0
+
         ' ---- scaling overrides (the common axis) ----------------------------------------------
         Public Shared ReadOnly MinXProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(MinX), Double.NaN)
@@ -735,6 +949,7 @@ Namespace Global.AvaloniaCharts
                 ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
                 LegendPositionProperty, LegendBackColorProperty, LegendShowFrameProperty,
                 LegendBorderBrushProperty, LegendBorderThicknessProperty, LegendCornerRadiusProperty,
+                ReadoutPositionProperty, CursorDecimalsProperty,
                 MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
                 LineColorProperty, LineThicknessProperty, LineStyleProperty,
                 MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty)
@@ -1475,9 +1690,43 @@ Namespace Global.AvaloniaCharts
         End Property
 
         ''' <summary>Clicking the drawn "…" button loads a file.</summary>
+        ''' <summary>Clicking the drawn "…" button loads a file; a cursor line is grabbed and dragged; a
+        ''' click on the legend switches a trace; a right-click opens the cursor menu.</summary>
         Protected Overrides Sub OnPointerPressed(e As PointerPressedEventArgs)
             MyBase.OnPointerPressed(e)
             Dim position = e.GetPosition(Me)
+
+            If e.GetCurrentPoint(Me).Properties.IsRightButtonPressed Then
+                ShowCursorMenu()
+                e.Handled = True
+                Return
+            End If
+
+            ' The cursors are on top, so they get the click first: the vertical line moves X, the
+            ' horizontal line moves Y, the handle at the crossing point moves both.
+            For i = _cursorHits.Count - 1 To 0 Step -1
+                Dim oneHit = _cursorHits(i)
+                Dim mode = 0
+                If oneHit.Handle.Width > 0 AndAlso oneHit.Handle.Contains(position) Then
+                    mode = 3
+                ElseIf oneHit.Vertical.Width > 0 AndAlso oneHit.Vertical.Contains(position) Then
+                    mode = 1
+                ElseIf oneHit.Horizontal.Height > 0 AndAlso oneHit.Horizontal.Contains(position) Then
+                    mode = 2
+                End If
+                If mode = 0 Then Continue For
+                _selectedCursor = oneHit.Index
+                _dragCursor = oneHit.Cursor
+                _dragMode = mode
+                _pointer = position
+                _hasPointer = True
+                Focus()
+                e.Pointer.Capture(Me)
+                InvalidateVisual()
+                e.Handled = True
+                Return
+            Next
+
             ' The legend is interactive: clicking an entry (its tick box OR its name) switches that
             ' trace on and off. The rects are the ones the last Render laid out.
             For Each entry In _legend
@@ -1493,6 +1742,79 @@ Namespace Global.AvaloniaCharts
 #Enable Warning BC42358
                 e.Handled = True
             End If
+        End Sub
+
+        ''' <summary>Drags the grabbed cursor, and keeps a mouse-following readout with the pointer.</summary>
+        Protected Overrides Sub OnPointerMoved(e As PointerEventArgs)
+            MyBase.OnPointerMoved(e)
+            Dim position = e.GetPosition(Me)
+            Dim moved = Not _hasPointer OrElse position <> _pointer
+            _pointer = position
+            _hasPointer = True
+            If _dragMode <> 0 Then
+                DragCursorTo(position)
+                Return
+            End If
+            ' Only a chart that is reporting at the pointer needs redrawing while the mouse moves.
+            If moved AndAlso ReadoutPosition = CursorReadout.FollowMouse AndAlso LiveCursorIndexes().Count > 0 Then
+                InvalidateVisual()
+            End If
+        End Sub
+
+        Protected Overrides Sub OnPointerReleased(e As PointerReleasedEventArgs)
+            MyBase.OnPointerReleased(e)
+            If _dragMode = 0 Then Return
+            _dragMode = 0
+            _dragCursor = Nothing
+            e.Pointer.Capture(Nothing)
+            InvalidateVisual()
+            e.Handled = True
+        End Sub
+
+        ''' <summary>
+        ''' The cursor keys. With a cursor switched on, the left/right arrows move the selected cursor
+        ''' one sample along X and up/down choose which trace the readout reports. Without a cursor the
+        ''' keys are left alone, so the chart does not swallow the arrow keys of the window around it.
+        ''' </summary>
+        Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
+            MyBase.OnKeyDown(e)
+            Dim live = LiveCursorIndexes()
+            If live.Count = 0 Then Return
+            If e.Key <> Key.Left AndAlso e.Key <> Key.Right AndAlso e.Key <> Key.Up AndAlso e.Key <> Key.Down Then Return
+
+            Dim traces = VisiblePlots(_plots)
+            If traces.Count = 0 Then Return
+            _selectedTrace = Math.Clamp(_selectedTrace, 0, traces.Count - 1)
+
+            If e.Key = Key.Up OrElse e.Key = Key.Down Then
+                If e.Key = Key.Up Then
+                    _selectedTrace = (_selectedTrace - 1 + traces.Count) Mod traces.Count
+                Else
+                    _selectedTrace = (_selectedTrace + 1) Mod traces.Count
+                End If
+                InvalidateVisual()
+                e.Handled = True
+                Return
+            End If
+
+            Dim index = If(live.Contains(_selectedCursor), _selectedCursor, live(0))
+            Dim cursor = Cursors(index)
+            Dim common = _plots.FirstOrDefault(Function(one) Not one.PerSeries)
+            If common Is Nothing Then common = _plots.FirstOrDefault()
+            If common Is Nothing Then Return
+            Dim x = If(Double.IsNaN(cursor.X), common.XRange.Mid, cursor.X)
+            Dim amount = SampleStep(traces(_selectedTrace).Data, x, common.XRange)
+            If e.Key = Key.Right Then
+                cursor.X = x + amount
+            Else
+                cursor.X = x - amount
+            End If
+            ' The first keyboard move also places the line that the mouse has not touched yet.
+            If Double.IsNaN(cursor.Y) Then cursor.Y = common.YRange.Mid
+            _selectedCursor = index
+            Focus()
+            InvalidateVisual()
+            e.Handled = True
         End Sub
 
         ' ---- live update ----------------------------------------------------------------------
@@ -1569,6 +1891,12 @@ Namespace Global.AvaloniaCharts
         ' ---- drawing --------------------------------------------------------------------------
 
         Private _browseRect As Rect
+        ''' <summary>The plot rectangle of the last render, so a dragged cursor can be converted back
+        ''' into data units with the same mapping the renderer used.</summary>
+        Private _plotRect As Rect
+        ''' <summary>The series of the last render (the input handlers read the same data the picture
+        ''' shows, without re-reading the workbook).</summary>
+        Private _plots As New List(Of Plot)()
         Private ReadOnly _legend As New List(Of LegendEntry)()
         Private _legendRect As Rect
 
@@ -1735,6 +2063,7 @@ Namespace Global.AvaloniaCharts
             context.DrawRectangle(plate, Nothing, New RoundedRect(frame, radius))
 
             Dim plots = BuildPlots()
+            _plots = plots
             _lastPlotCount = plots.Where(Function(p) p.Data.HasData).Count()
             Dim withError = plots.FirstOrDefault(Function(p) p.Data.Error IsNot Nothing)
             Dim seriesError = If(withError IsNot Nothing, withError.Data.Error, Nothing)
@@ -1832,6 +2161,7 @@ Namespace Global.AvaloniaCharts
             Dim bottomGutter As Double = If(xOnTop, 0, commonXHeight) + bottomBlocksHeight
             plotRect = Chop(plotRect, leftGutter, topGutter, rightGutter, bottomGutter)
             If plotRect.Width <= 4 OrElse plotRect.Height <= 4 Then Return
+            _plotRect = plotRect
 
             ' Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry
             ' its own tint without touching the rest of the chart).
@@ -1911,6 +2241,10 @@ Namespace Global.AvaloniaCharts
                     DrawMarkers(context, dataPoints, one)
                 Next
             End Using
+
+            ' The cursors sit on top of the data, and their readout on top of that, so a cursor is never
+            ' buried by a line that happens to cross it.
+            DrawCursors(context, plotRect, plots)
 
             ' Frame + title last, so nothing can overdraw them.
             DrawFrame(context, frame, radius, frameWidth)
@@ -2146,6 +2480,268 @@ Namespace Global.AvaloniaCharts
             context.DrawText(dots, New Point(rect.X + (boxSize - dots.Width) / 2, rect.Y + (boxSize - dots.Height) / 2))
         End Sub
 
+        ' ---- cursors --------------------------------------------------------------------------
+
+        ''' <summary>The indexes of the cursors that are drawn: the first two of the chart, switched on.</summary>
+        Private Function LiveCursorIndexes() As List(Of Integer)
+            Dim live As New List(Of Integer)()
+            For i = 0 To Math.Min(Cursors.Count, MaxCursors) - 1
+                If Cursors(i).Enabled Then live.Add(i)
+            Next
+            Return live
+        End Function
+
+        ''' <summary>The series the cursor can read: the ones that are actually drawn.</summary>
+        Private Shared Function VisiblePlots(plots As List(Of Plot)) As List(Of Plot)
+            Return plots.Where(Function(one) one.Data.HasData AndAlso one.Visible).ToList()
+        End Function
+
+        ''' <summary>Draws the cursors and their readout. A cursor is a crosshair the user drags: its
+        ''' lines sit at its X and Y, and the readout reports the selected trace where the cursor's X
+        ''' cuts it. The clickable parts are remembered while drawing, so a click always tests the
+        ''' picture that is on screen.</summary>
+        Private Sub DrawCursors(context As DrawingContext, plot As Rect, plots As List(Of Plot))
+            _cursorHits.Clear()
+            Dim common = plots.FirstOrDefault(Function(one) Not one.PerSeries)
+            If common Is Nothing Then common = plots.FirstOrDefault()
+            If common Is Nothing Then Return
+
+            Dim live = LiveCursorIndexes()
+            For Each index In live
+                Dim cursor = Cursors(index)
+                Dim x = If(Double.IsNaN(cursor.X), common.XRange.Mid, cursor.X)
+                Dim y = If(Double.IsNaN(cursor.Y), common.YRange.Mid, cursor.Y)
+                Dim px = common.XRange.ToPixel(x, plot.X, plot.Width)
+                Dim py = common.YRange.ToPixel(y, plot.Bottom, -plot.Height)
+                Dim selected = index = _selectedCursor AndAlso live.Count > 1
+                Dim pen = MakeCursorPen(cursor.Color, If(selected, 2.0, 1.0), cursor.Style)
+
+                Dim hit As New CursorHit With {.Cursor = cursor, .Index = index}
+                ' The crossing point is clamped into the plot, so a cursor parked outside the axis
+                ' shows as a line along the edge instead of vanishing — and the lines are then inside
+                ' the plot by construction, which is why they need no clip.
+                Dim cx = Math.Clamp(px, plot.X, plot.Right)
+                Dim cy = Math.Clamp(py, plot.Y, plot.Bottom)
+                If cursor.Orientation <> CursorOrientation.Horizontal Then
+                    context.DrawLine(pen, New Point(cx, plot.Y), New Point(cx, plot.Bottom))
+                    hit.Vertical = New Rect(cx - CursorGrab, plot.Y, CursorGrab * 2, plot.Height)
+                End If
+                If cursor.Orientation <> CursorOrientation.Vertical Then
+                    context.DrawLine(pen, New Point(plot.X, cy), New Point(plot.Right, cy))
+                    hit.Horizontal = New Rect(plot.X, cy - CursorGrab, plot.Width, CursorGrab * 2)
+                End If
+                If cursor.Orientation = CursorOrientation.Both Then
+                    context.DrawRectangle(New SolidColorBrush(cursor.Color), Nothing, New Rect(cx - 3, cy - 3, 6, 6))
+                    hit.Handle = New Rect(cx - CursorGrab, cy - CursorGrab, CursorGrab * 2, CursorGrab * 2)
+                End If
+                _cursorHits.Add(hit)
+            Next
+
+            DrawCursorReadout(context, plot, plots, common)
+        End Sub
+
+        ''' <summary>Draws the readout of the selected cursor: the tag (C1/C2), the name of the trace it
+        ''' reports — in that trace's colour — and the values, in the cursor's colour. The columns follow
+        ''' the cursor's own X/Y Values switches. It follows the mouse or sits in the top right corner;
+        ''' with no mouse (in the designer) it is drawn in that corner too, so it can always be seen.</summary>
+        Private Sub DrawCursorReadout(context As DrawingContext, plot As Rect, plots As List(Of Plot), common As Plot)
+            _readoutText = String.Empty
+            Dim live = LiveCursorIndexes()
+            If live.Count = 0 Then Return
+            Dim index = If(live.Contains(_selectedCursor), _selectedCursor, live(0))
+            Dim cursor = Cursors(index)
+
+            Dim traces = VisiblePlots(plots)
+            If traces.Count = 0 Then Return
+            _selectedTrace = Math.Clamp(_selectedTrace, 0, traces.Count - 1)
+            Dim trace = traces(_selectedTrace)
+            Dim x = If(Double.IsNaN(cursor.X), common.XRange.Mid, cursor.X)
+            Dim value = ValueAt(trace.Data, x)
+
+            ' The marker on the trace itself ties the numbers to the line they came from.
+            If value.HasValue Then
+                Dim tx = common.XRange.ToPixel(x, plot.X, plot.Width)
+                Dim ty = trace.YRange.ToPixel(value.Value, plot.Bottom, -plot.Height)
+                Using context.PushClip(plot)
+                    context.DrawEllipse(New SolidColorBrush(trace.LineColor), Nothing, New Point(tx, ty), 3.5, 3.5)
+                End Using
+            End If
+
+            Dim parts As New List(Of String)()
+            If cursor.XValues Then parts.Add("X " & FormatCursor(x))
+            If cursor.YValues Then parts.Add("Y " & If(value.HasValue, FormatCursor(value.Value), "–"))
+            Dim name = LegendName(trace, plots.IndexOf(trace))
+            Dim tag = "C" & (index + 1)
+
+            Dim head = MakeText(tag & "  " & name, 11, trace.LineColor)
+            Dim body = If(parts.Count > 0, MakeText(String.Join("   ", parts), 11, cursor.Color), Nothing)
+            Dim width = Math.Min(Math.Max(head.Width, If(body Is Nothing, 0.0, body.Width)) + 12, Math.Max(20, plot.Width - 8))
+            Dim height = head.Height + If(body Is Nothing, 0.0, body.Height + 2) + 10
+
+            ' Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot
+            ' and clear of the "…" file picker in the top right corner.
+            Dim follow = ReadoutPosition = CursorReadout.FollowMouse AndAlso _hasPointer
+            Dim rx = If(follow, _pointer.X + 14, plot.Right - 6 - width)
+            Dim ry = If(follow, _pointer.Y + 14, plot.Y + 6)
+            rx = Math.Clamp(rx, plot.X + 4, Math.Max(plot.X + 4, plot.Right - 4 - width))
+            ry = Math.Clamp(ry, plot.Y + 4, Math.Max(plot.Y + 4, plot.Bottom - 4 - height))
+            Dim rect As New Rect(rx, ry, width, height)
+            If _browseRect.Width > 0 AndAlso rect.Intersects(_browseRect) Then
+                rect = New Rect(rect.X, Math.Min(_browseRect.Bottom + 6, Math.Max(plot.Y + 4, plot.Bottom - 4 - height)),
+                                rect.Width, rect.Height)
+            End If
+            _readoutRect = rect
+
+            context.DrawRectangle(New SolidColorBrush(PlotBackColor, 0.92),
+                                  New Pen(New SolidColorBrush(cursor.Color), 1),
+                                  New RoundedRect(rect, New Avalonia.CornerRadius(3)))
+            context.DrawText(head, New Point(rect.X + 6, rect.Y + 5))
+            If body IsNot Nothing Then context.DrawText(body, New Point(rect.X + 6, rect.Y + 5 + head.Height + 2))
+
+            _readoutText = tag & " " & name & If(parts.Count > 0, ": " & String.Join(", ", parts), String.Empty)
+        End Sub
+
+        ''' <summary>The trace's Y at x: linearly interpolated between the two samples around it (the
+        ''' cursors move freely, so the value in between is a real reading). Outside the trace's own X
+        ''' range the nearest end value is reported; Nothing when the trace has no data.</summary>
+        Private Shared Function ValueAt(data As ChartData, x As Double) As Double?
+            If Not data.HasData Then Return Nothing
+            Dim xs = data.Xs
+            Dim ys = data.Ys
+            If xs.Length = 1 Then Return ys(0)
+            For i = 1 To xs.Length - 1
+                Dim lo = Math.Min(xs(i - 1), xs(i))
+                Dim hi = Math.Max(xs(i - 1), xs(i))
+                If x < lo OrElse x > hi Then Continue For
+                If hi = lo Then Return ys(i)
+                Dim f = (x - xs(i - 1)) / (xs(i) - xs(i - 1))
+                Return ys(i - 1) + f * (ys(i) - ys(i - 1))
+            Next
+            Dim ascending = xs(0) < xs(xs.Length - 1)
+            If x < xs(0) Then Return If(ascending, ys(0), ys(ys.Length - 1))
+            Return If(ascending, ys(ys.Length - 1), ys(0))
+        End Function
+
+        ''' <summary>How far one sample is at x — the distance between the two samples around it, which
+        ''' is what the ←/→ keys step by. Falls back to an axis tick when there is only one sample.</summary>
+        Private Shared Function SampleStep(data As ChartData, x As Double, range As AxisRange) As Double
+            Dim xs = data.Xs
+            If xs.Length < 2 Then Return range.TickStep
+            For i = 1 To xs.Length - 1
+                If x <= Math.Max(xs(i - 1), xs(i)) Then Return Math.Abs(xs(i) - xs(i - 1))
+            Next
+            Return Math.Abs(xs(xs.Length - 1) - xs(xs.Length - 2))
+        End Function
+
+        ''' <summary>A readout number: trimmed of trailing zeros, or exactly CursorDecimals decimals
+        ''' when that is set to 0…6.</summary>
+        Private Function FormatCursor(value As Double) As String
+            Dim decimals = Math.Clamp(CursorDecimals, -1, 6)
+            Dim text = If(decimals < 0,
+                          value.ToString("0.####", CultureInfo.CurrentCulture),
+                          value.ToString("0." & New String("0"c, decimals), CultureInfo.CurrentCulture))
+            Return If(text = "-0", "0", text)
+        End Function
+
+        Private Shared Function MakeCursorPen(color As Color, thickness As Double, style As CursorStyle) As IPen
+            Dim pen As New Pen(New SolidColorBrush(color), Math.Max(0.5, thickness), DashForCursor(style))
+            pen.LineCap = If(style = CursorStyle.Dot, PenLineCap.Round, PenLineCap.Flat)
+            Return pen
+        End Function
+
+        Private Shared Function DashForCursor(style As CursorStyle) As IDashStyle
+            Select Case style
+                Case CursorStyle.Dash
+                    Return New DashStyle(New Double() {4, 3}, 0)
+                Case CursorStyle.Dot
+                    Return New DashStyle(New Double() {0.01, 3}, 0)
+                Case CursorStyle.Long
+                    Return New DashStyle(New Double() {10, 5}, 0)
+                Case CursorStyle.Short
+                    Return New DashStyle(New Double() {2, 2}, 0)
+                Case Else
+                    Return Nothing
+            End Select
+        End Function
+
+        ' ---- cursor input ---------------------------------------------------------------------
+
+        ''' <summary>Moves the cursor being dragged. The vertical line changes X, the horizontal line Y,
+        ''' and the handle at the crossing point both at once — the same lines the user sees.</summary>
+        Private Sub DragCursorTo(point As Point)
+            Dim cursor = _dragCursor
+            Dim common = _plots.FirstOrDefault(Function(one) Not one.PerSeries)
+            If common Is Nothing Then common = _plots.FirstOrDefault()
+            If cursor Is Nothing OrElse common Is Nothing Then Return
+            If _dragMode = 1 OrElse _dragMode = 3 Then
+                cursor.X = common.XRange.FromPixel(point.X, _plotRect.X, _plotRect.Width)
+            End If
+            If _dragMode = 2 OrElse _dragMode = 3 Then
+                cursor.Y = common.YRange.FromPixel(point.Y, _plotRect.Bottom, -_plotRect.Height)
+            End If
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Copies the readout to the clipboard, so a reading can be pasted elsewhere.</summary>
+        Private Async Sub CopyReadout()
+            Dim top = TopLevel.GetTopLevel(Me)
+            If top Is Nothing OrElse _readoutText.Length = 0 Then Return
+            Dim clipboard = top.Clipboard
+            If clipboard Is Nothing Then Return
+            Await clipboard.SetTextAsync(_readoutText)
+        End Sub
+
+        ''' <summary>The chart's right-click menu: which cursors are switched on, where the readout sits,
+        ''' and add / remove / reset / copy. Nothing here is written back to the form — the saved defaults
+        ''' are the ones the Cursor Editor sets, and a restart starts from those again.
+        ''' The state is carried in the item's TEXT (a leading tick) rather than in a check box: menu item
+        ''' ticks arrived in Avalonia 11.1, and the bundled control still has to build on 11.0.</summary>
+        Private Sub ShowCursorMenu()
+            Dim items As New List(Of Object)()
+            For i = 0 To Math.Min(Cursors.Count, MaxCursors) - 1
+                Dim index = i
+                Dim toggle As New MenuItem With {.Header = If(Cursors(i).Enabled, "✓ ", "    ") & "Cursor " & (i + 1)}
+                AddHandler toggle.Click, Sub(sender As Object, e As RoutedEventArgs)
+                                             Cursors(index).Enabled = Not Cursors(index).Enabled
+                                             _selectedCursor = index
+                                             InvalidateVisual()
+                                         End Sub
+                items.Add(toggle)
+            Next
+            If items.Count > 0 Then items.Add(New Separator())
+
+            Dim followItem As New MenuItem With {.Header = If(ReadoutPosition = CursorReadout.FollowMouse, "✓ ", "    ") & "Readout: follow the mouse"}
+            AddHandler followItem.Click, Sub(sender As Object, e As RoutedEventArgs)
+                                             ReadoutPosition = CursorReadout.FollowMouse
+                                             InvalidateVisual()
+                                         End Sub
+            Dim cornerItem As New MenuItem With {.Header = If(ReadoutPosition = CursorReadout.TopRight, "✓ ", "    ") & "Readout: top right corner"}
+            AddHandler cornerItem.Click, Sub(sender As Object, e As RoutedEventArgs)
+                                             ReadoutPosition = CursorReadout.TopRight
+                                             InvalidateVisual()
+                                         End Sub
+            items.Add(followItem)
+            items.Add(cornerItem)
+            items.Add(New Separator())
+
+            Dim addItem As New MenuItem With {.Header = "Add cursor", .IsEnabled = Cursors.Count < MaxCursors}
+            AddHandler addItem.Click, Sub(sender As Object, e As RoutedEventArgs) AddCursor()
+            Dim removeItem As New MenuItem With {.Header = "Remove cursor", .IsEnabled = Cursors.Count > 0}
+            AddHandler removeItem.Click, Sub(sender As Object, e As RoutedEventArgs) RemoveCursor()
+            Dim resetItem As New MenuItem With {.Header = "Reset cursors to the middle", .IsEnabled = Cursors.Count > 0}
+            AddHandler resetItem.Click, Sub(sender As Object, e As RoutedEventArgs) ResetCursors()
+            Dim copyItem As New MenuItem With {.Header = "Copy readout", .IsEnabled = _readoutText.Length > 0}
+            AddHandler copyItem.Click, Sub(sender As Object, e As RoutedEventArgs) CopyReadout()
+            items.Add(addItem)
+            items.Add(removeItem)
+            items.Add(resetItem)
+            items.Add(New Separator())
+            items.Add(copyItem)
+
+            Dim menu As New ContextMenu With {.ItemsSource = items, .PlacementTarget = Me}
+            menu.Open(Me)
+        End Sub
+
         ''' <summary>Resolves the common axis' names: the explicit properties win, then the sheet's headers.</summary>
         Private Shared Function MakeText(text As String, size As Double, color As Color) As FormattedText
             Return New FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
@@ -2254,6 +2850,19 @@ Namespace Global.AvaloniaCharts
         Friend Function ToPixel(value As Double, origin As Double, length As Double) As Double
             Return origin + (value - _min) / (_max - _min) * length
         End Function
+
+        ''' <summary>The pixel position back in data units (what a cursor drag needs).</summary>
+        Friend Function FromPixel(pixel As Double, origin As Double, length As Double) As Double
+            If length = 0 Then Return _min
+            Return _min + (pixel - origin) / length * (_max - _min)
+        End Function
+
+        ''' <summary>The middle of the range: where a cursor that has never been placed sits.</summary>
+        Friend ReadOnly Property Mid As Double
+            Get
+                Return (_min + _max) / 2
+            End Get
+        End Property
     End Class
 
     ''' <summary>

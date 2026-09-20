@@ -89,6 +89,7 @@ using Avalonia;
 using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Media;
 using Avalonia.Metadata;
 using Avalonia.Platform.Storage;
@@ -171,6 +172,45 @@ public enum AxisMode
     Common,
     /// <summary>Use this series' own X/Y columns and its own axis (see <see cref="ChartSeries.XAxis"/>).</summary>
     PerSeries
+}
+
+/// <summary>
+/// Which parts of a cursor are DRAWN. A cursor always carries both an X and a Y position (the mouse
+/// moves it in both directions); this only decides which lines are visible: <c>Vertical</c> is the
+/// crosshair minus its horizontal line, <c>Horizontal</c> is the crosshair minus its vertical line.
+/// </summary>
+public enum CursorOrientation
+{
+    /// <summary>Draw the crosshair: the vertical line and the horizontal line.</summary>
+    Both,
+    /// <summary>Draw the vertical line only.</summary>
+    Vertical,
+    /// <summary>Draw the horizontal line only.</summary>
+    Horizontal
+}
+
+/// <summary>The dash pattern of a cursor's lines.</summary>
+public enum CursorStyle
+{
+    /// <summary>An unbroken line.</summary>
+    Solid,
+    /// <summary>Dashes (the default).</summary>
+    Dash,
+    /// <summary>Dots.</summary>
+    Dot,
+    /// <summary>Long dashes.</summary>
+    Long,
+    /// <summary>Short dashes.</summary>
+    Short
+}
+
+/// <summary>Where the cursor readout — the selected trace and its values — is drawn.</summary>
+public enum CursorReadout
+{
+    /// <summary>In a small panel that follows the mouse pointer (the default).</summary>
+    FollowMouse,
+    /// <summary>In the top right corner of the drawing area, out of the way.</summary>
+    TopRight
 }
 
 /// <summary>Reads <c>Values="4,9,6,12"</c> from XAML into a <see cref="double"/> array.</summary>
@@ -347,6 +387,49 @@ public sealed class Axis
         ShowAxisName = ShowAxisName,
         Name = Name
     };
+}
+
+/// <summary>
+/// One cursor of a chart: a crosshair the user can drag, with a readout of the selected trace's
+/// values where it crosses. Up to two cursors are drawn (see <see cref="ChartBase.Cursors"/>); the
+/// Cursor Editor adds and removes them and sets these properties.
+/// <para>
+/// A cursor carries BOTH an X and a Y position even when only one line is drawn, so a
+/// <see cref="CursorOrientation.Horizontal"/> cursor still reports a meaningful X. Both are in DATA
+/// units (not pixels), so a cursor stays on the same value when the chart is resized or the data
+/// changes. <see cref="double.NaN"/> means "not placed yet" — the renderer puts it in the middle of
+/// the axis.
+/// </para>
+/// </summary>
+public sealed class ChartCursor
+{
+    /// <summary>Which lines are drawn: Both (the crosshair), Vertical or Horizontal.</summary>
+    public CursorOrientation Orientation { get; set; } = CursorOrientation.Both;
+
+    /// <summary>The dash pattern of this cursor's lines.</summary>
+    public CursorStyle Style { get; set; } = CursorStyle.Dash;
+
+    /// <summary>Colour of this cursor's lines, its handle and the heading of its readout.</summary>
+    public Color Color { get; set; } = Colors.DarkOrange;
+
+    /// <summary>Show the cursor's X value in the readout.</summary>
+    public bool XValues { get; set; } = true;
+
+    /// <summary>Show the selected trace's Y value (interpolated at the cursor) in the readout.</summary>
+    public bool YValues { get; set; } = true;
+
+    /// <summary>The cursor's X position in data units. NaN = the middle of the X range.</summary>
+    public double X { get; set; } = double.NaN;
+
+    /// <summary>The cursor's Y position in data units. NaN = the middle of the Y range.</summary>
+    public double Y { get; set; } = double.NaN;
+
+    /// <summary>
+    /// Whether the cursor is switched on. The right-click menu switches cursors on and off while the
+    /// app runs: that is a RUNTIME state, so it is not written back to the form (a fresh start shows
+    /// every cursor in the XAML as on).
+    /// </summary>
+    public bool Enabled { get; set; } = true;
 }
 
 /// <summary>One series of points, plus the axis names and any reason there is no data.</summary>
@@ -586,6 +669,18 @@ internal sealed class Plot
 /// </summary>
 public abstract class ChartBase : Control
 {
+    /// <summary>
+    /// The chart takes the keyboard so its cursors can be driven without a mouse: ←/→ move the
+    /// selected cursor by one sample, ↑/↓ pick the trace the readout reports. Those keys are only
+    /// swallowed while at least one cursor is switched on, so a chart without cursors stays out of
+    /// the way of the window around it.
+    /// </summary>
+    protected ChartBase()
+    {
+        Focusable = true;
+        Cursors.CollectionChanged += (_, _) => InvalidateVisual();
+    }
+
     // ---- frame ------------------------------------------------------------------------------
     public static readonly StyledProperty<bool> ShowBorderProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowBorder), true);
@@ -736,6 +831,127 @@ public abstract class ChartBase : Control
     public static readonly StyledProperty<CornerRadius> LegendCornerRadiusProperty =
         AvaloniaProperty.Register<ChartBase, CornerRadius>(nameof(LegendCornerRadius), new CornerRadius(4));
 
+    // ---- cursors -----------------------------------------------------------------------------
+    /// <summary>Where the cursor readout is drawn: following the mouse pointer (the default) or in the
+    /// top right corner of the drawing area. Also switchable at runtime from the chart's right-click
+    /// menu. In the designer there is no mouse, so a following readout is drawn in that corner.</summary>
+    public static readonly StyledProperty<CursorReadout> ReadoutPositionProperty =
+        AvaloniaProperty.Register<ChartBase, CursorReadout>(nameof(ReadoutPosition), CursorReadout.FollowMouse);
+
+    /// <summary>Decimals in the cursor readout: −1 (the default) fits the numbers, 0…6 fixes them.</summary>
+    public static readonly StyledProperty<int> CursorDecimalsProperty =
+        AvaloniaProperty.Register<ChartBase, int>(nameof(CursorDecimals), -1);
+
+    /// <summary>Where the cursor readout is drawn.</summary>
+    public CursorReadout ReadoutPosition
+    {
+        get => GetValue(ReadoutPositionProperty);
+        set => SetValue(ReadoutPositionProperty, value);
+    }
+
+    /// <summary>Decimals in the readout (0…6), or −1 to let it choose.</summary>
+    public int CursorDecimals
+    {
+        get => GetValue(CursorDecimalsProperty);
+        set => SetValue(CursorDecimalsProperty, value);
+    }
+
+    /// <summary>
+    /// The chart's cursors — the crosshairs the user drags. Written as a property element, up to two
+    /// are drawn: <c>&lt;charts:GrumpyLinePlot.Cursors&gt;&lt;charts:ChartCursor …/&gt;&lt;/charts:GrumpyLinePlot.Cursors&gt;</c>.
+    /// The Cursor Editor adds and removes them; the right-click menu switches them on and off while
+    /// the app runs.
+    /// </summary>
+    public AvaloniaList<ChartCursor> Cursors { get; } = new();
+
+    /// <summary>Adds a cursor in the middle of the plot (false when there are already two).</summary>
+    public bool AddCursor()
+    {
+        if (Cursors.Count >= MaxCursors) return false;
+        Cursors.Add(new ChartCursor());
+        _selectedCursor = Cursors.Count - 1;
+        InvalidateVisual();
+        return true;
+    }
+
+    /// <summary>Removes the selected cursor (false when there is none).</summary>
+    public bool RemoveCursor()
+    {
+        if (Cursors.Count == 0) return false;
+        Cursors.RemoveAt(Math.Clamp(_selectedCursor, 0, Cursors.Count - 1));
+        _selectedCursor = Math.Clamp(_selectedCursor, 0, Math.Max(0, Cursors.Count - 1));
+        InvalidateVisual();
+        return true;
+    }
+
+    /// <summary>Puts every cursor back in the middle of the axis.</summary>
+    public void ResetCursors()
+    {
+        foreach (var cursor in Cursors)
+        {
+            cursor.X = double.NaN;
+            cursor.Y = double.NaN;
+        }
+        InvalidateVisual();
+    }
+
+    /// <summary>Moves one cursor to a data position (the values the readout reports).</summary>
+    public void MoveCursor(int index, double x, double y)
+    {
+        if (index < 0 || index >= Cursors.Count) return;
+        Cursors[index].X = x;
+        Cursors[index].Y = y;
+        _selectedCursor = index;
+        InvalidateVisual();
+    }
+
+    // ---- cursor runtime state ----------------------------------------------------------------
+    /// <summary>How many cursors a chart draws: two, so they can be compared.</summary>
+    internal const int MaxCursors = 2;
+
+    /// <summary>Where each enabled cursor ended up in the last Render, for hit-testing. Rebuilt on
+    /// every render, so a click always tests against what is actually on screen.</summary>
+    private readonly List<CursorHit> _cursorHits = new();
+
+    /// <summary>The cursor the mouse and the arrow keys act on (the last one clicked).</summary>
+    private int _selectedCursor;
+
+    /// <summary>Which visible trace the readout reports; Up/Down walk the list.</summary>
+    private int _selectedTrace;
+
+    /// <summary>The last pointer position in control coordinates, and whether there has been one.</summary>
+    private Point _pointer;
+    private bool _hasPointer;
+
+    /// <summary>What a drag is moving: 1 = X only (the vertical line), 2 = Y only (the horizontal
+    /// line), 3 = both (the crosshair's middle).</summary>
+    private int _dragMode;
+
+    /// <summary>The text of the readout as last drawn, for "Copy readout".</summary>
+    private string _readoutText = string.Empty;
+
+    /// <summary>The rectangle the readout was drawn in (kept for tests and future hit-testing).</summary>
+    private Rect _readoutRect;
+
+    /// <summary>The cursor a drag is moving, and which of its lines the drag grabbed.</summary>
+    private ChartCursor? _dragCursor;
+
+    /// <summary>One cursor's clickable parts, in control coordinates.</summary>
+    private sealed class CursorHit
+    {
+        internal ChartCursor Cursor = null!;
+        internal int Index;
+        /// <summary>A band around the vertical line (empty when it is not drawn).</summary>
+        internal Rect Vertical;
+        /// <summary>A band around the horizontal line (empty when it is not drawn).</summary>
+        internal Rect Horizontal;
+        /// <summary>The square at the crossing point where both lines meet.</summary>
+        internal Rect Handle;
+    }
+
+    /// <summary>How close to a cursor line a click counts (each side, in pixels).</summary>
+    private const double CursorGrab = 5d;
+
     // ---- scaling overrides (the common axis) -------------------------------------------------
     public static readonly StyledProperty<double> MinXProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(MinX), double.NaN);
@@ -788,6 +1004,7 @@ public abstract class ChartBase : Control
             ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
             LegendPositionProperty, LegendBackColorProperty, LegendShowFrameProperty,
             LegendBorderBrushProperty, LegendBorderThicknessProperty, LegendCornerRadiusProperty,
+            ReadoutPositionProperty, CursorDecimalsProperty,
             MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
             LineColorProperty, LineThicknessProperty, LineStyleProperty,
             MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty);
@@ -1210,11 +1427,41 @@ public abstract class ChartBase : Control
 
     private int _lastPlotCount;
 
-    /// <summary>Clicking the drawn "…" button loads a file.</summary>
+    /// <summary>Clicking the drawn "…" button loads a file; a cursor line is grabbed and dragged; a
+    /// click on the legend switches a trace; a right-click opens the cursor menu.</summary>
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
         var position = e.GetPosition(this);
+
+        if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed)
+        {
+            ShowCursorMenu();
+            e.Handled = true;
+            return;
+        }
+
+        // The cursors are on top, so they get the click first: the vertical line moves X, the
+        // horizontal line moves Y, the handle at the crossing point moves both.
+        for (var i = _cursorHits.Count - 1; i >= 0; i--)
+        {
+            var hit = _cursorHits[i];
+            var mode = hit.Handle.Width > 0 && hit.Handle.Contains(position) ? 3
+                : hit.Vertical.Width > 0 && hit.Vertical.Contains(position) ? 1
+                : hit.Horizontal.Height > 0 && hit.Horizontal.Contains(position) ? 2 : 0;
+            if (mode == 0) continue;
+            _selectedCursor = hit.Index;
+            _dragCursor = hit.Cursor;
+            _dragMode = mode;
+            _pointer = position;
+            _hasPointer = true;
+            Focus();
+            e.Pointer.Capture(this);
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+
         // The legend is interactive: clicking an entry (its tick box OR its name) switches that trace
         // on and off. The rects are the ones the last Render laid out.
         foreach (var entry in _legend)
@@ -1230,6 +1477,76 @@ public abstract class ChartBase : Control
             _ = BrowseForFile();
             e.Handled = true;
         }
+    }
+
+    /// <summary>Drags the grabbed cursor, and keeps a mouse-following readout with the pointer.</summary>
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+        var position = e.GetPosition(this);
+        var moved = !_hasPointer || position != _pointer;
+        _pointer = position;
+        _hasPointer = true;
+        if (_dragMode != 0)
+        {
+            DragCursorTo(position);
+            return;
+        }
+        // Only a chart that is reporting at the pointer needs redrawing while the mouse moves.
+        if (moved && ReadoutPosition is CursorReadout.FollowMouse && LiveCursorIndexes().Count > 0) InvalidateVisual();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+        if (_dragMode == 0) return;
+        _dragMode = 0;
+        _dragCursor = null;
+        e.Pointer.Capture(null);
+        InvalidateVisual();
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// The cursor keys. With a cursor switched on, ←/→ move the selected cursor one sample along X
+    /// and ↑/↓ choose which trace the readout reports. Without a cursor the keys are left alone, so
+    /// the chart does not swallow the arrow keys of the window around it.
+    /// </summary>
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        var live = LiveCursorIndexes();
+        if (live.Count == 0) return;
+        if (e.Key is not (Key.Left or Key.Right or Key.Up or Key.Down)) return;
+
+        var traces = VisiblePlots(_plots);
+        if (traces.Count == 0) return;
+        _selectedTrace = Math.Clamp(_selectedTrace, 0, traces.Count - 1);
+
+        if (e.Key is Key.Up or Key.Down)
+        {
+            _selectedTrace = e.Key == Key.Up
+                ? (_selectedTrace - 1 + traces.Count) % traces.Count
+                : (_selectedTrace + 1) % traces.Count;
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+
+        var index = live.Contains(_selectedCursor) ? _selectedCursor : live[0];
+        var cursor = Cursors[index];
+        var common = _plots.FirstOrDefault(p => !p.PerSeries) ?? _plots.FirstOrDefault();
+        if (common is null) return;
+        var x = double.IsNaN(cursor.X) ? common.XRange.Mid : cursor.X;
+        var step = SampleStep(traces[_selectedTrace].Data, x, common.XRange);
+        cursor.X = x + (e.Key is Key.Right ? step : -step);
+        // The first keyboard move also places the line that the mouse has not touched yet.
+        if (double.IsNaN(cursor.Y)) cursor.Y = common.YRange.Mid;
+        _selectedCursor = index;
+        Focus();
+        InvalidateVisual();
+        e.Handled = true;
     }
     // ---- live update ------------------------------------------------------------------------
 
@@ -1315,6 +1632,12 @@ public abstract class ChartBase : Control
     // ---- drawing ----------------------------------------------------------------------------
 
     private Rect _browseRect;
+    /// <summary>The plot rectangle of the last render, so a dragged cursor can be converted back
+    /// into data units with the same mapping the renderer used.</summary>
+    private Rect _plotRect;
+    /// <summary>The series of the last render (the input handlers read the same data the picture
+    /// shows, without re-reading the workbook).</summary>
+    private List<Plot> _plots = new();
 
     /// <inheritdoc/>
     public override void Render(DrawingContext context)
@@ -1334,6 +1657,7 @@ public abstract class ChartBase : Control
         context.DrawRectangle(plate, null, new RoundedRect(frame, radius));
 
         var plots = BuildPlots();
+        _plots = plots;
         _lastPlotCount = plots.Count(p => p.Data.HasData);
         var outer = plots.FirstOrDefault(p => p.Data.Error is not null) ?? plots.FirstOrDefault();
         var seriesError = outer?.Data.Error;
@@ -1414,6 +1738,7 @@ public abstract class ChartBase : Control
             (yOnRight ? commonYWidth : 0) + rightBlocks.Sum(p => YBlockWidth(p.YAxis!, p.YRange, null, p.Data.YTitle)),
             (xOnTop ? 0 : commonXHeight) + bottomBlocks.Sum(p => XBlockHeight(p.XAxis!, p.XRange, null, p.Data.XTitle)));
         if (plot.Width <= 4 || plot.Height <= 4) return;
+        _plotRect = plot;
 
         // Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry its
         // own tint without touching the rest of the chart).
@@ -1501,6 +1826,10 @@ public abstract class ChartBase : Control
                 DrawMarkers(context, points, p);
             }
         }
+
+        // The cursors sit on top of the data, and their readout on top of that, so a cursor is never
+        // buried by a line that happens to cross it.
+        DrawCursors(context, plot, plots);
 
         // Frame + title last, so nothing can overdraw them.
         DrawFrame(context, frame, radius, frameWidth);
@@ -1929,6 +2258,290 @@ public abstract class ChartBase : Control
         context.DrawText(dots, new Point(rect.X + (boxSize - dots.Width) / 2, rect.Y + (boxSize - dots.Height) / 2));
     }
 
+    // ---- cursors ---------------------------------------------------------------------------
+
+    /// <summary>The indexes of the cursors that are drawn: the first two of the chart, switched on.</summary>
+    private List<int> LiveCursorIndexes()
+    {
+        var live = new List<int>();
+        for (var i = 0; i < Math.Min(Cursors.Count, MaxCursors); i++)
+        {
+            if (Cursors[i].Enabled) live.Add(i);
+        }
+        return live;
+    }
+
+    /// <summary>The series the cursor can read: the ones that are actually drawn.</summary>
+    private static List<Plot> VisiblePlots(List<Plot> plots)
+        => plots.Where(p => p.Data.HasData && p.Visible).ToList();
+
+    /// <summary>Draws the cursors and their readout. A cursor is a crosshair the user drags: its
+    /// lines sit at its X and Y, and the readout reports the selected trace where the cursor's X
+    /// cuts it. The clickable parts are remembered while drawing, so a click always tests the
+    /// picture that is on screen.</summary>
+    private void DrawCursors(DrawingContext context, Rect plot, List<Plot> plots)
+    {
+        _cursorHits.Clear();
+        var common = plots.FirstOrDefault(p => !p.PerSeries) ?? plots.FirstOrDefault();
+        if (common is null) return;
+
+        var live = LiveCursorIndexes();
+        foreach (var index in live)
+        {
+            var cursor = Cursors[index];
+            var x = double.IsNaN(cursor.X) ? common.XRange.Mid : cursor.X;
+            var y = double.IsNaN(cursor.Y) ? common.YRange.Mid : cursor.Y;
+            var px = common.XRange.ToPixel(x, plot.X, plot.Width);
+            var py = common.YRange.ToPixel(y, plot.Bottom, -plot.Height);
+            var selected = index == _selectedCursor && live.Count > 1;
+            var pen = MakeCursorPen(cursor.Color, selected ? 2d : 1d, cursor.Style);
+
+            var hit = new CursorHit { Cursor = cursor, Index = index };
+            // The crossing point is clamped into the plot, so a cursor parked outside the axis shows as
+            // a line along the edge instead of vanishing — and the lines are then inside the plot by
+            // construction, which is why they need no clip.
+            var cx = Math.Clamp(px, plot.X, plot.Right);
+            var cy = Math.Clamp(py, plot.Y, plot.Bottom);
+            if (cursor.Orientation is not CursorOrientation.Horizontal)
+            {
+                context.DrawLine(pen, new Point(cx, plot.Y), new Point(cx, plot.Bottom));
+                hit.Vertical = new Rect(cx - CursorGrab, plot.Y, CursorGrab * 2, plot.Height);
+            }
+            if (cursor.Orientation is not CursorOrientation.Vertical)
+            {
+                context.DrawLine(pen, new Point(plot.X, cy), new Point(plot.Right, cy));
+                hit.Horizontal = new Rect(plot.X, cy - CursorGrab, plot.Width, CursorGrab * 2);
+            }
+            // The crossing point carries a handle: it shows where the two lines meet (that is what
+            // the readout refers to) and it is the grip that moves both lines at once.
+            if (cursor.Orientation is CursorOrientation.Both)
+            {
+                context.DrawRectangle(new SolidColorBrush(cursor.Color), null, new Rect(cx - 3, cy - 3, 6, 6));
+                hit.Handle = new Rect(cx - CursorGrab, cy - CursorGrab, CursorGrab * 2, CursorGrab * 2);
+            }
+            _cursorHits.Add(hit);
+        }
+
+        DrawCursorReadout(context, plot, plots, common);
+    }
+
+    /// <summary>Draws the readout of the selected cursor: the tag (C1/C2), the name of the trace it
+    /// reports — in that trace's colour — and the values, in the cursor's colour. The columns follow
+    /// the cursor's own X/Y Values switches. It follows the mouse or sits in the top right corner;
+    /// with no mouse (in the designer) it is drawn in that corner too, so it can always be seen.</summary>
+    private void DrawCursorReadout(DrawingContext context, Rect plot, List<Plot> plots, Plot common)
+    {
+        _readoutText = string.Empty;
+        var live = LiveCursorIndexes();
+        if (live.Count == 0) return;
+        var index = live.Contains(_selectedCursor) ? _selectedCursor : live[0];
+        var cursor = Cursors[index];
+
+        var traces = VisiblePlots(plots);
+        if (traces.Count == 0) return;
+        _selectedTrace = Math.Clamp(_selectedTrace, 0, traces.Count - 1);
+        var trace = traces[_selectedTrace];
+        var x = double.IsNaN(cursor.X) ? common.XRange.Mid : cursor.X;
+        var value = ValueAt(trace.Data, x);
+
+        // The marker on the trace itself ties the numbers to the line they came from.
+        if (value is not null)
+        {
+            var tx = common.XRange.ToPixel(x, plot.X, plot.Width);
+            var ty = trace.YRange.ToPixel(value.Value, plot.Bottom, -plot.Height);
+            using (context.PushClip(plot))
+            {
+                context.DrawEllipse(new SolidColorBrush(trace.LineColor), null, new Point(tx, ty), 3.5, 3.5);
+            }
+        }
+
+        var parts = new List<string>();
+        if (cursor.XValues) parts.Add("X " + FormatCursor(x));
+        if (cursor.YValues) parts.Add("Y " + (value is null ? "–" : FormatCursor(value.Value)));
+        var name = LegendName(trace, plots.IndexOf(trace));
+        var tag = "C" + (index + 1);
+
+        var head = MakeText(tag + "  " + name, 11, trace.LineColor);
+        var body = parts.Count > 0 ? MakeText(string.Join("   ", parts), 11, cursor.Color) : null;
+        var width = Math.Min(Math.Max(head.Width, body?.Width ?? 0) + 12, Math.Max(20, plot.Width - 8));
+        var height = head.Height + (body is null ? 0 : body.Height + 2) + 10;
+
+        // Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot
+        // and clear of the "…" file picker in the top right corner.
+        var follow = ReadoutPosition is CursorReadout.FollowMouse && _hasPointer;
+        var rx = follow ? _pointer.X + 14 : plot.Right - 6 - width;
+        var ry = follow ? _pointer.Y + 14 : plot.Y + 6;
+        rx = Math.Clamp(rx, plot.X + 4, Math.Max(plot.X + 4, plot.Right - 4 - width));
+        ry = Math.Clamp(ry, plot.Y + 4, Math.Max(plot.Y + 4, plot.Bottom - 4 - height));
+        var rect = new Rect(rx, ry, width, height);
+        if (_browseRect.Width > 0 && rect.Intersects(_browseRect))
+        {
+            rect = new Rect(rect.X, Math.Min(_browseRect.Bottom + 6, Math.Max(plot.Y + 4, plot.Bottom - 4 - height)),
+                            rect.Width, rect.Height);
+        }
+        _readoutRect = rect;
+
+        context.DrawRectangle(new SolidColorBrush(PlotBackColor, 0.92),
+            new Pen(new SolidColorBrush(cursor.Color), 1), new RoundedRect(rect, new CornerRadius(3)));
+        context.DrawText(head, new Point(rect.X + 6, rect.Y + 5));
+        if (body is not null) context.DrawText(body, new Point(rect.X + 6, rect.Y + 5 + head.Height + 2));
+
+        _readoutText = tag + " " + name + (parts.Count > 0 ? ": " + string.Join(", ", parts) : string.Empty);
+    }
+
+    /// <summary>The trace's Y at <paramref name="x"/>: linearly interpolated between the two samples
+    /// around it (the cursors move freely, so the value in between is a real reading). Outside the
+    /// trace's own X range the nearest end value is reported; null when the trace has no data.</summary>
+    private static double? ValueAt(ChartData data, double x)
+    {
+        if (!data.HasData) return null;
+        var xs = data.Xs;
+        var ys = data.Ys;
+        if (xs.Length == 1) return ys[0];
+        for (var i = 1; i < xs.Length; i++)
+        {
+            var lo = Math.Min(xs[i - 1], xs[i]);
+            var hi = Math.Max(xs[i - 1], xs[i]);
+            if (x < lo || x > hi) continue;
+            if (hi == lo) return ys[i];
+            var f = (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
+            return ys[i - 1] + f * (ys[i] - ys[i - 1]);
+        }
+        var ascending = xs[0] < xs[xs.Length - 1];
+        return x < xs[0] ? (ascending ? ys[0] : ys[ys.Length - 1])
+                         : (ascending ? ys[ys.Length - 1] : ys[0]);
+    }
+
+    /// <summary>How far one sample is at <paramref name="x"/> — the distance between the two samples
+    /// around it, which is what the ←/→ keys step by. Falls back to an axis tick when there is only
+    /// one sample.
+    /// </summary>
+    private static double SampleStep(ChartData data, double x, AxisRange range)
+    {
+        var xs = data.Xs;
+        if (xs.Length < 2) return range.TickStep;
+        for (var i = 1; i < xs.Length; i++)
+        {
+            if (x <= Math.Max(xs[i - 1], xs[i])) return Math.Abs(xs[i] - xs[i - 1]);
+        }
+        return Math.Abs(xs[xs.Length - 1] - xs[xs.Length - 2]);
+    }
+
+    /// <summary>A readout number: trimmed of trailing zeros, or exactly
+    /// <see cref="CursorDecimals"/> decimals when that is set to 0…6.</summary>
+    private string FormatCursor(double value)
+    {
+        var decimals = Math.Clamp(CursorDecimals, -1, 6);
+        var text = decimals < 0
+            ? value.ToString("0.####", CultureInfo.CurrentCulture)
+            : value.ToString("0." + new string('0', decimals), CultureInfo.CurrentCulture);
+        return text == "-0" ? "0" : text;
+    }
+
+    private static IPen MakeCursorPen(Color color, double thickness, CursorStyle style)
+        => new Pen(new SolidColorBrush(color), Math.Max(0.5, thickness), DashForCursor(style))
+        {
+            LineCap = style == CursorStyle.Dot ? PenLineCap.Round : PenLineCap.Flat
+        };
+
+    private static IDashStyle? DashForCursor(CursorStyle style) => style switch
+    {
+        CursorStyle.Dash => new DashStyle(new double[] { 4, 3 }, 0),
+        CursorStyle.Dot => new DashStyle(new double[] { 0.01, 3 }, 0),
+        CursorStyle.Long => new DashStyle(new double[] { 10, 5 }, 0),
+        CursorStyle.Short => new DashStyle(new double[] { 2, 2 }, 0),
+        _ => null
+    };
+
+    // ---- cursor input ----------------------------------------------------------------------
+
+    /// <summary>Moves the cursor being dragged. The vertical line changes X, the horizontal line Y,
+    /// and the handle at the crossing point both at once — the same lines the user sees.</summary>
+    private void DragCursorTo(Point point)
+    {
+        var cursor = _dragCursor;
+        var common = _plots.FirstOrDefault(p => !p.PerSeries) ?? _plots.FirstOrDefault();
+        if (cursor is null || common is null) return;
+        if (_dragMode is 1 or 3) cursor.X = common.XRange.FromPixel(point.X, _plotRect.X, _plotRect.Width);
+        if (_dragMode is 2 or 3) cursor.Y = common.YRange.FromPixel(point.Y, _plotRect.Bottom, -_plotRect.Height);
+        InvalidateVisual();
+    }
+
+    /// <summary>Copies the readout to the clipboard, so a reading can be pasted elsewhere.</summary>
+    private void CopyReadout()
+    {
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard is null || _readoutText.Length == 0) return;
+        _ = clipboard.SetTextAsync(_readoutText);
+    }
+
+    /// <summary>The chart's right-click menu: which cursors are switched on, where the readout sits,
+    /// and add / remove / reset / copy. Nothing here is written back to the form — the saved defaults
+    /// are the ones the Cursor Editor sets, and a restart starts from those again.
+    /// <para>
+    /// The state is carried in the item's TEXT (a leading tick) rather than in a check box: menu item
+    /// ticks arrived in Avalonia 11.1, and the bundled control still has to build on 11.0.
+    /// </para></summary>
+    private void ShowCursorMenu()
+    {
+        var items = new List<object>();
+        for (var i = 0; i < Math.Min(Cursors.Count, MaxCursors); i++)
+        {
+            var index = i;
+            var toggle = new MenuItem
+            {
+                Header = (Cursors[i].Enabled ? "✓ " : "    ") + "Cursor " + (i + 1)
+            };
+            toggle.Click += (_, _) =>
+            {
+                Cursors[index].Enabled = !Cursors[index].Enabled;
+                _selectedCursor = index;
+                InvalidateVisual();
+            };
+            items.Add(toggle);
+        }
+        if (items.Count > 0) items.Add(new Separator());
+
+        var followItem = new MenuItem
+        {
+            Header = (ReadoutPosition is CursorReadout.FollowMouse ? "✓ " : "    ") + "Readout: follow the mouse"
+        };
+        followItem.Click += (_, _) =>
+        {
+            ReadoutPosition = CursorReadout.FollowMouse;
+            InvalidateVisual();
+        };
+        var cornerItem = new MenuItem
+        {
+            Header = (ReadoutPosition is CursorReadout.TopRight ? "✓ " : "    ") + "Readout: top right corner"
+        };
+        cornerItem.Click += (_, _) =>
+        {
+            ReadoutPosition = CursorReadout.TopRight;
+            InvalidateVisual();
+        };
+        items.Add(followItem);
+        items.Add(cornerItem);
+        items.Add(new Separator());
+
+        var addItem = new MenuItem { Header = "Add cursor", IsEnabled = Cursors.Count < MaxCursors };
+        addItem.Click += (_, _) => AddCursor();
+        var removeItem = new MenuItem { Header = "Remove cursor", IsEnabled = Cursors.Count > 0 };
+        removeItem.Click += (_, _) => RemoveCursor();
+        var resetItem = new MenuItem { Header = "Reset cursors to the middle", IsEnabled = Cursors.Count > 0 };
+        resetItem.Click += (_, _) => ResetCursors();
+        var copyItem = new MenuItem { Header = "Copy readout", IsEnabled = _readoutText.Length > 0 };
+        copyItem.Click += (_, _) => CopyReadout();
+        items.Add(addItem);
+        items.Add(removeItem);
+        items.Add(resetItem);
+        items.Add(new Separator());
+        items.Add(copyItem);
+
+        var menu = new ContextMenu { ItemsSource = items, PlacementTarget = this };
+        menu.Open(this);
+    }
+
     private static FormattedText MakeText(string text, double size, Color color)
         => new(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
             new Typeface(FontFamily.Default), Math.Max(6, size), new SolidColorBrush(color));
@@ -2032,6 +2645,13 @@ internal sealed class AxisRange
     /// <summary>One value's pixel position along an axis drawn from <paramref name="origin"/> by <paramref name="length"/>.</summary>
     internal double ToPixel(double value, double origin, double length)
         => origin + (value - _min) / (_max - _min) * length;
+
+    /// <summary>The pixel position back in data units (what a cursor drag needs).</summary>
+    internal double FromPixel(double pixel, double origin, double length)
+        => length == 0 ? _min : _min + (pixel - origin) / length * (_max - _min);
+
+    /// <summary>The middle of the range: where a cursor that has never been placed sits.</summary>
+    internal double Mid => (_min + _max) / 2;
 }
 
 /// <summary>

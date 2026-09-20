@@ -135,6 +135,126 @@ export const CHART_LEGEND_FIELDS: { key: string; attr: string; def: string }[] =
 /** The sides the legend bar can take, in the order the editor offers them. */
 export const LEGEND_POSITIONS = ['Bottom', 'Top', 'Left', 'Right'];
 
+/** How many cursors a chart draws. Two, so two readings can be compared. */
+export const MAX_CURSORS = 2;
+
+/** Which parts of a cursor are DRAWN. A cursor always carries both an X and a Y position; this only
+ *  decides which lines are visible (Vertical = the crosshair minus its horizontal line). */
+export const CURSOR_ORIENTATIONS = ['Both', 'Vertical', 'Horizontal'];
+
+/** A cursor's dash pattern. */
+export const CURSOR_STYLES = ['Solid', 'Dash', 'Dot', 'Long', 'Short'];
+
+/** Where the cursor readout is drawn. */
+export const READOUT_POSITIONS = ['FollowMouse', 'TopRight'];
+
+/** Cursor fields (key = message/UI name, attr = XAML attribute, def = the renderer's default when the
+ *  attribute is absent). `x`/`y` are DATA positions: empty means "not placed yet", which the renderer
+ *  draws in the middle of its axis. */
+export const CHART_CURSOR_FIELDS: { key: string; attr: string; def: string }[] = [
+    { key: 'orientation', attr: 'Orientation', def: 'Both' },
+    { key: 'style', attr: 'Style', def: 'Dash' },
+    { key: 'color', attr: 'Color', def: '#FF8C00' },
+    { key: 'xValues', attr: 'XValues', def: 'True' },
+    { key: 'yValues', attr: 'YValues', def: 'True' },
+    { key: 'x', attr: 'X', def: '' },
+    { key: 'y', attr: 'Y', def: '' }
+];
+
+/** The chart-level cursor settings (a flat attribute map, like the legend's). */
+export const CHART_CURSOR_CHART_FIELDS: { key: string; attr: string; def: string }[] = [
+    { key: 'readoutPosition', attr: 'ReadoutPosition', def: 'FollowMouse' },
+    { key: 'decimals', attr: 'CursorDecimals', def: '-1' }
+];
+
+/** The `<charts:GrumpyLinePlot.Cursors>` property element of a chart, if it has one. NOT the content
+ *  property: a chart's child elements are its series, so cursors live in their own property element. */
+function cursorProperty(el: Element): Element | undefined {
+    for (let i = 0; i < el.childNodes.length; i++) {
+        const kid = el.childNodes[i] as Element;
+        if (kid.nodeType !== 1) continue;
+        if (kid.tagName.endsWith('.Cursors')) return kid;
+    }
+    return undefined;
+}
+
+/** The chart's `<charts:ChartCursor …/>` elements, in document order. */
+export function chartCursorChildren(el: Element): Element[] {
+    const prop = cursorProperty(el);
+    const out: Element[] = [];
+    if (!prop) return out;
+    for (let i = 0; i < prop.childNodes.length; i++) {
+        const kid = prop.childNodes[i] as Element;
+        if (kid.nodeType === 1 && localName(kid.tagName) === 'ChartCursor') out.push(kid);
+    }
+    return out;
+}
+
+/** What the Cursor editor needs: the chart-level settings plus one entry per cursor element. */
+export interface ChartCursorsInfo {
+    settings: Record<string, string>;
+    cursors: Record<string, string>[];
+}
+
+export function chartCursorsOf(el: Element): ChartCursorsInfo {
+    const settings: Record<string, string> = {};
+    for (const f of CHART_CURSOR_CHART_FIELDS) settings[f.key] = readAttr(el, f.attr, f.def);
+    return {
+        settings,
+        cursors: chartCursorChildren(el).map((kid, i) => ({
+            src: String(i),
+            ...CHART_CURSOR_FIELDS.reduce((acc, f) => {
+                acc[f.key] = readAttr(kid, f.attr, f.def);
+                return acc;
+            }, {} as Record<string, string>)
+        }))
+    };
+}
+
+/** Rewrites a chart's cursors: the chart-level readout settings plus the `<charts:ChartCursor>` list.
+ *  An entry keeps its element (matched by `src`), so a cursor that is edited in place never loses
+ *  anything this editor does not know about. An empty list removes the property element entirely —
+ *  a chart with no cursors has no cursor XAML at all. */
+export function writeChartCursors(
+    model: XamlModel,
+    el: Element,
+    settings: Record<string, unknown>,
+    cursors: unknown[]
+): void {
+    for (const f of CHART_CURSOR_CHART_FIELDS) {
+        writeAttr(model, el, f.attr, String(settings[f.key] ?? f.def), f.def);
+    }
+
+    const before = chartCursorChildren(el);
+    const existing = cursorProperty(el);
+    // A new cursor needs the property element to exist first, so create it up front when there are
+    // cursors to write; an empty list deletes the property element instead.
+    const created = cursors.length > 0 && !existing;
+    const host = cursors.length > 0
+        ? existing ?? model.createElement(`<${el.tagName}.Cursors/>`)
+        : existing;
+    if (!host) return;
+
+    const keep: Element[] = [];
+    for (const raw of cursors) {
+        const it = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+        const src = parseInt(String(it.src ?? '-1'), 10);
+        const node = Number.isInteger(src) && src >= 0 && src < before.length && before[src]
+            ? before[src]
+            : model.createElement('<charts:ChartCursor/>');
+        for (const f of CHART_CURSOR_FIELDS) writeAttr(model, node, f.attr, String(it[f.key] ?? f.def), f.def);
+        keep.push(node);
+    }
+
+    if (keep.length === 0) {
+        el.removeChild(host);
+        return;
+    }
+    for (const node of keep) host.appendChild(node);   // appendChild MOVES, so this reorders them
+    for (const node of before) if (!keep.includes(node)) host.removeChild(node);
+    if (created) el.appendChild(host);
+}
+
 /** A chart's current legend settings (attribute, else the renderer's default). */
 export function chartLegendOf(el: Element): Record<string, string> {
     const out: Record<string, string> = {};

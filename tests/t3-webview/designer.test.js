@@ -49,6 +49,8 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'seriesAdd', 'seriesDel', 'seriesUp', 'seriesDown', 'seriesSave', 'seriesCancel',
     'axisModal', 'axisTitle', 'axisList', 'axisFields', 'axisHead', 'axisAdd', 'axisDel', 'axisSave', 'axisCancel',
     'legendModal', 'legendTitle', 'legendBody', 'legendSave', 'legendCancel',
+    'cursorModal', 'cursorTitle', 'cursorList', 'cursorFields', 'cursorSettings', 'cursorHead',
+    'cursorAdd', 'cursorDel', 'cursorSave', 'cursorCancel',
     'codeModal', 'codeHint', 'codeBody', 'codeRecheck', 'codeFixAll', 'codeClose',
     'cellHighlight',
     'btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'dotGrid',
@@ -2667,6 +2669,161 @@ module.exports = async (t) => {
             .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         $('legendCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal($('legendModal').hidden, true, 'legend', 'Cancel closes the editor');
+    }
+
+    // --- 'Cursors' editor: up to two draggable crosshairs, each with its own orientation, style,
+    //     colour and readout columns, plus the chart-level readout settings ---
+    {
+        msg(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'Chart1', type: 'GrumpyXYPlot', x: 60, y: 60, w: 300, h: 180, parent: 'Body' }
+        ]));
+        msg({
+            type: 'properties', name: 'Chart1', properties: [
+                { key: 'Cursors', label: 'Cursors', kind: 'button', value: 'Edit cursors…' }
+            ],
+            cursorInfo: {
+                settings: { readoutPosition: 'FollowMouse', decimals: '-1' },
+                cursors: [
+                    { src: '0', orientation: 'Vertical', style: 'Long', color: 'Teal', xValues: 'False',
+                        yValues: 'True', x: '2.5', y: '' }
+                ]
+            },
+            info: null
+        });
+        const cbtn = $('propsBody').querySelector('.prop-button');
+        t.ok(!!cbtn, 'cursor', 'Cursors renders as a property button');
+        $('cursorModal').hidden = true;
+        cbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('cursorModal').hidden, false, 'cursor', 'Cursors opens the editor');
+        t.equal($('cursorTitle').textContent, 'Cursors — Chart1', 'cursor', 'the title names the chart');
+        const cFields = () => [...$('cursorFields').querySelectorAll('.series-field')];
+        const cField = (caption) => {
+            const row = cFields().find((f) => f.textContent.trim().startsWith(caption));
+            return row ? row.querySelector('input, select') : null;
+        };
+        const cColour = (caption) => {
+            const row = cFields().find((f) => f.textContent.trim().startsWith(caption));
+            return row ? row.querySelector('input[type=text]') : null;
+        };
+        const cRows = () => [...$('cursorList').querySelectorAll('.series-item')];
+        const cList = () => cRows().map((r) => r.querySelector('.series-item-label').textContent);
+
+        // The chart's existing cursor is pre-filled, attribute for attribute.
+        t.equal(cRows().length, 1, 'cursor', 'the chart\'s cursor is listed');
+        t.ok(cList()[0].startsWith('Cursor 1'), 'cursor', 'as "Cursor 1"', cList()[0]);
+        t.ok(cList()[0].includes('2.5'), 'cursor', 'with its position in the summary', cList()[0]);
+        t.equal(cField('Orientation').value, 'Vertical', 'cursor', 'its orientation is shown');
+        t.equal(cField('Style').value, 'Long', 'cursor', 'and its style');
+        t.equal(cColour('Colour').value, 'Teal', 'cursor', 'and a NAMED colour is left alone');
+        t.equal(cField('X Values').value, 'False', 'cursor', 'and its readout switches');
+        t.equal(cField('X position').value, '2.5', 'cursor', 'and its X position');
+        t.equal(cField('Y position').value, '', 'cursor', 'an empty Y reads as empty (the middle)');
+        t.equal($('cursorAdd').disabled, false, 'cursor', '+ Add cursor is offered while there is one');
+        t.equal($('cursorDel').disabled, false, 'cursor', 'and Delete is live');
+        // The orientation picker offers the three shapes, the readout picker the two positions.
+        t.equal([...cField('Orientation').options].map((o) => o.value).join(','), 'Both,Vertical,Horizontal',
+            'cursor', 'all three orientations are offered');
+        t.equal([...cField('Style').options].map((o) => o.value).join(','), 'Solid,Dash,Dot,Long,Short',
+            'cursor', 'and all five dash styles');
+        const cSettings = () => [...$('cursorSettings').querySelectorAll('.series-field')];
+        const cSetting = (caption) => {
+            const row = cSettings().find((f) => f.textContent.trim().startsWith(caption));
+            return row ? row.querySelector('select') : null;
+        };
+        t.equal(cSetting('Readout').value, 'FollowMouse', 'cursor',
+            'the readout starts following the mouse');
+        t.equal([...cSetting('Readout').options].map((o) => o.value).join(','), 'FollowMouse,TopRight',
+            'cursor', 'both readout positions are offered');
+        t.equal(cSetting('Decimals').value, '-1', 'cursor', 'and the decimals start automatic');
+        t.equal([...cSetting('Decimals').options].map((o) => o.value).join(','), '-1,0,1,2,3,4,5,6',
+            'cursor', 'with automatic plus 0…6');
+
+        // A second cursor, then the cap: no third one, and Add says so.
+        $('cursorAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(cRows().length, 2, 'cursor', '+ Add cursor adds one');
+        t.equal($('cursorAdd').disabled, true, 'cursor', 'and stops at two cursors (the cap)');
+        $('cursorAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(cRows().length, 2, 'cursor', 'clicking Add again does nothing');
+        t.ok(cList()[1].includes('Cursor 2'), 'cursor', 'the second one is listed as Cursor 2');
+        $('cursorDel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(cRows().length, 1, 'cursor', 'Delete removes the selected cursor');
+        t.equal($('cursorAdd').disabled, false, 'cursor', 'and Add is available again');
+
+        // Edit the remaining cursor and save: everything lands in the message.
+        const orient = cField('Orientation');
+        orient.value = 'Horizontal';
+        orient.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        const xvals = cField('X Values');
+        xvals.value = 'True';
+        xvals.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        const xpos = cField('X position');
+        xpos.value = '4';
+        xpos.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        const readout = cSetting('Readout');
+        readout.value = 'TopRight';
+        readout.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        const decimals = cSetting('Decimals');
+        decimals.value = '2';
+        decimals.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        posted.length = 0;
+        $('cursorSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const cs = posted[posted.length - 1];
+        t.equal(cs.type, 'saveChartCursors', 'cursor', 'Save posts saveChartCursors');
+        t.equal(cs.name, 'Chart1', 'cursor', 'carries the chart name');
+        t.equal(cs.settings.readoutPosition, 'TopRight', 'cursor', 'the readout position is carried');
+        t.equal(cs.settings.decimals, '2', 'cursor', 'and the decimals');
+        t.equal(cs.cursors.length, 1, 'cursor', 'one cursor is carried');
+        t.equal(cs.cursors[0].orientation, 'Horizontal', 'cursor', 'with the edited orientation');
+        t.equal(cs.cursors[0].xValues, 'True', 'cursor', 'the edited switch');
+        t.equal(cs.cursors[0].x, '4', 'cursor', 'and the edited position');
+        t.equal(cs.cursors[0].src, '0', 'cursor',
+            'keeping the element index, so the writer updates the cursor in place');
+        t.equal(cs.cursors[0].style, 'Long', 'cursor', 'the untouched style keeps its value');
+        t.equal(String(cs.cursors[0].color).toLowerCase(), 'teal', 'cursor', 'and so does the colour');
+        t.equal($('cursorModal').hidden, true, 'cursor', 'Save closes the editor');
+
+        // A chart with no cursors: the editor opens EMPTY (opening it must not add one), and
+        // Add/Delete work from there.
+        msg({
+            type: 'properties', name: 'Chart1', properties: [
+                { key: 'Cursors', label: 'Cursors', kind: 'button', value: 'Edit cursors…' }
+            ],
+            cursorInfo: { settings: { readoutPosition: 'TopRight', decimals: '-1' }, cursors: [] },
+            info: null
+        });
+        $('propsBody').querySelector('.prop-button')
+            .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('cursorModal').hidden, false, 'cursor', 'the editor opens for a chart with no cursors');
+        t.equal(cRows().length, 0, 'cursor', 'with an EMPTY list (nothing is added by opening it)');
+        t.equal($('cursorDel').disabled, true, 'cursor', 'so Delete has nothing to remove');
+        t.ok(/no cursors/i.test($('cursorFields').textContent), 'cursor', 'and the empty state says so');
+        t.equal(cSetting('Readout').value, 'TopRight', 'cursor',
+            'the saved readout position is pre-filled');
+        $('cursorAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(cRows().length, 1, 'cursor', 'Add works from the empty state');
+        t.equal(cField('Orientation').value, 'Both', 'cursor', 'a new cursor starts as a crosshair');
+        t.equal(cField('Style').value, 'Dash', 'cursor', 'with a dashed line');
+        t.equal(cColour('Colour').value.toLowerCase(), '#ff8c00', 'cursor',
+            'and the first cursor colour');
+        $('cursorAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(cColour('Colour').value.toLowerCase(), '#8000ff', 'cursor',
+            'the second cursor takes another colour, so two can be told apart');
+        // Deleting down to zero is allowed: a chart with no cursors is a real state.
+        $('cursorDel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        $('cursorDel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(cRows().length, 0, 'cursor', 'the last cursor can be deleted (unlike a series)');
+        posted.length = 0;
+        $('cursorSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(posted[posted.length - 1].cursors.length, 0, 'cursor',
+            'saving an empty list posts an empty list (the writer removes the property element)');
+
+        // Cancel throws the edits away.
+        $('propsBody').querySelector('.prop-button')
+            .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        $('cursorCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('cursorModal').hidden, true, 'cursor', 'Cancel closes the editor');
     }
 
     // --- foldable toolbar categories: click a heading to fold its buttons away, click again to

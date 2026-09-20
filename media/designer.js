@@ -209,6 +209,16 @@
         seriesDown: $('seriesDown'),
         seriesSave: $('seriesSave'),
         seriesCancel: $('seriesCancel'),
+        cursorModal: $('cursorModal'),
+        cursorTitle: $('cursorTitle'),
+        cursorList: $('cursorList'),
+        cursorFields: $('cursorFields'),
+        cursorSettings: $('cursorSettings'),
+        cursorHead: $('cursorHead'),
+        cursorAdd: $('cursorAdd'),
+        cursorDel: $('cursorDel'),
+        cursorSave: $('cursorSave'),
+        cursorCancel: $('cursorCancel'),
         axisModal: $('axisModal'),
         axisTitle: $('axisTitle'),
         axisList: $('axisList'),
@@ -2825,6 +2835,8 @@
                     if (p.key === 'Axis') openAxisEditor(msg.name, msg.chartAxes || {});
                     // 'Legend' opens the legend editor (side, font, frame, backcolour).
                     if (p.key === 'Legend') openLegendEditor(msg.name, msg.legendInfo || {});
+                    // 'Cursors' opens the cursor editor (up to two draggable crosshairs).
+                    if (p.key === 'Cursors') openCursorEditor(msg.name, msg.cursorInfo || {});
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -3736,6 +3748,7 @@
             if (!els.seriesModal.hidden) closeSeriesEditor();
             if (!els.axisModal.hidden) closeAxisEditor();
             if (!els.legendModal.hidden) closeLegendEditor();
+            if (!els.cursorModal.hidden) closeCursorEditor();
             if (!els.codeModal.hidden) closeCodeFixes();
         }
     });
@@ -5113,6 +5126,179 @@
     els.legendCancel.addEventListener('click', closeLegendEditor);
     els.legendModal.addEventListener('click', (e) => {
         if (e.target === els.legendModal) closeLegendEditor(); // click outside the box
+    });
+
+    /* Cursor editor (GrumpyCharts) — up to two draggable cursors, each with its own orientation,
+       dash style, colour and readout columns. The cursors are child elements of the chart but live in
+       their OWN property element (`<charts:GrumpyLinePlot.Cursors>`), because the content property
+       already holds the series. A cursor with an empty X/Y sits in the middle of the axis, so a newly
+       added one is visible immediately.
+       Unlike the series list this one CAN be emptied: deleting the last cursor removes the property
+       element, i.e. a chart with no cursors at all — that is why the editor opens with no rows for a
+       chart that has none instead of seeding one (opening an editor must never change the form).
+       The mouse, the arrow keys and the right-click menu belong to the running app (the designer
+       preview is a picture), so these fields set the SAVED state and the app's menu toggles the live
+       one; the runtime state is deliberately not written back. */
+    const MAX_CURSORS = 2;
+    const CURSOR_ORIENTATIONS = [['Both', 'Both (crosshair)'], ['Vertical', 'Vertical line only'],
+        ['Horizontal', 'Horizontal line only']];
+    const CURSOR_STYLES = ['Solid', 'Dash', 'Dot', 'Long', 'Short'];
+    const READOUT_POSITIONS = [['FollowMouse', 'Follow the mouse'], ['TopRight', 'Top right corner']];
+    const CURSOR_DECIMALS = [['-1', 'Automatic']].concat(
+        [0, 1, 2, 3, 4, 5, 6].map((n) => [String(n), n === 1 ? '1 decimal' : n + ' decimals']));
+    // Two cursors must be tellable apart at a glance, so the second one starts on another colour.
+    const CURSOR_PALETTE = ['#FF8C00', '#8000FF'];
+    let cursorEdit = null; // { name, rows: [...], sel, settings } while the modal is open
+
+    /** A select whose option VALUES are XAML words but whose labels read like English. */
+    function labelledSelect(pairs, value, onChange) {
+        const sel = document.createElement('select');
+        for (const pair of pairs) {
+            const o = document.createElement('option');
+            o.value = pair[0];
+            o.textContent = pair[1];
+            sel.appendChild(o);
+        }
+        sel.value = pairs.some((pair) => pair[0] === value) ? value : pairs[0][0];
+        sel.addEventListener('change', () => onChange(sel.value));
+        return sel;
+    }
+    /** The one-line summary shown for a cursor in the list. */
+    function cursorItemText(row, i) {
+        const where = 'X ' + (row.x === '' ? 'middle' : row.x) + ', Y ' + (row.y === '' ? 'middle' : row.y);
+        return 'Cursor ' + (i + 1) + '  ·  ' + row.orientation + '  ·  ' + row.style + '  ·  ' + where;
+    }
+    /** A brand-new cursor: the control's own defaults, in the next of two cursor colours. */
+    function cursorSeedRow(index) {
+        return {
+            src: '-1', orientation: 'Both', style: 'Dash', color: CURSOR_PALETTE[index % CURSOR_PALETTE.length],
+            xValues: 'True', yValues: 'True', x: '', y: ''
+        };
+    }
+    function renderCursorEditor() {
+        if (!cursorEdit) return;
+        const rows = cursorEdit.rows;
+        if (cursorEdit.sel > rows.length - 1) cursorEdit.sel = Math.max(0, rows.length - 1);
+        if (cursorEdit.sel < 0) cursorEdit.sel = 0;
+        els.cursorList.innerHTML = '';
+        els.cursorFields.innerHTML = '';
+        els.cursorSettings.innerHTML = '';
+        rows.forEach((row, i) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'series-item' + (i === cursorEdit.sel ? ' active' : '');
+            const swatch = document.createElement('span');
+            swatch.className = 'series-swatch';
+            swatch.style.background = normalizeHex(row.color) || CURSOR_PALETTE[0];
+            item.appendChild(swatch);
+            const label = document.createElement('span');
+            label.className = 'series-item-label';
+            label.textContent = cursorItemText(row, i);
+            item.appendChild(label);
+            item.addEventListener('click', () => { cursorEdit.sel = i; renderCursorEditor(); });
+            els.cursorList.appendChild(item);
+        });
+        els.cursorDel.disabled = rows.length === 0;
+        els.cursorAdd.disabled = rows.length >= MAX_CURSORS;
+        els.cursorHead.textContent = rows.length
+            ? 'Cursor ' + (cursorEdit.sel + 1) + ' of ' + rows.length
+            : 'Details';
+        const row = rows[cursorEdit.sel];
+        if (!row) {
+            const empty = document.createElement('p');
+            empty.className = 'modal-hint';
+            empty.textContent = 'This chart has no cursors. “Add cursor” places one, in the middle of '
+                + 'the axis.';
+            els.cursorFields.appendChild(empty);
+        } else {
+            // Keep the list's summary of the SELECTED cursor in step as its fields change.
+            const repaint = () => {
+                const item = els.cursorList.children[cursorEdit.sel];
+                if (item) item.querySelector('.series-item-label').textContent = cursorItemText(row, cursorEdit.sel);
+            };
+            const recolour = (v) => {
+                const item = els.cursorList.children[cursorEdit.sel];
+                if (item) item.querySelector('.series-swatch').style.background = normalizeHex(v) || CURSOR_PALETTE[0];
+            };
+            els.cursorFields.appendChild(seriesField('Orientation',
+                labelledSelect(CURSOR_ORIENTATIONS, row.orientation, (v) => { row.orientation = v; repaint(); }),
+                'Both draws the crosshair, Vertical only its vertical line and Horizontal only its horizontal one. Either way the cursor keeps both positions, so a Horizontal cursor still has an X for its readout and for the arrow keys.'));
+            els.cursorFields.appendChild(seriesField('Style',
+                seriesSelect(CURSOR_STYLES, row.style, (v) => { row.style = v; repaint(); }),
+                'The dash pattern of this cursor\u2019s lines. Long and Short are longer and shorter dashes than Dash.'));
+            els.cursorFields.appendChild(seriesField('Colour', seriesColor(row.color, (v) => { row.color = v; recolour(v); })));
+            els.cursorFields.appendChild(seriesField('X Values',
+                axisPairs([['True', 'On'], ['False', 'Off']], row.xValues === 'False' ? 'False' : 'True',
+                    (v) => { row.xValues = v; }),
+                'Show the cursor\u2019s X value in the readout. Off leaves that column out.'));
+            els.cursorFields.appendChild(seriesField('Y Values',
+                axisPairs([['True', 'On'], ['False', 'Off']], row.yValues === 'False' ? 'False' : 'True',
+                    (v) => { row.yValues = v; }),
+                'Show the value of the trace the cursor crosses, interpolated between the samples. Off leaves that column out.'));
+            els.cursorFields.appendChild(seriesField('X position',
+                seriesText(row.x, (v) => { row.x = v; repaint(); }),
+                'Where the cursor sits, in DATA units (not pixels) \u2014 e.g. 12.5 on an X axis running 0\u20265. Empty = the middle of the axis.'));
+            els.cursorFields.appendChild(seriesField('Y position',
+                seriesText(row.y, (v) => { row.y = v; repaint(); }),
+                'Where the cursor\u2019s horizontal line sits, in DATA units. Empty = the middle of the axis.'));
+        }
+        els.cursorSettings.appendChild(seriesField('Readout',
+            labelledSelect(READOUT_POSITIONS, cursorEdit.settings.readoutPosition,
+                (v) => { cursorEdit.settings.readoutPosition = v; }),
+            'Where the readout panel is drawn. A following panel has no mouse in this preview, so it is drawn in the top right corner here. The app\u2019s right-click menu switches this at runtime too.'));
+        els.cursorSettings.appendChild(seriesField('Decimals',
+            labelledSelect(CURSOR_DECIMALS, cursorEdit.settings.decimals,
+                (v) => { cursorEdit.settings.decimals = v; }),
+            'How many decimals the readout shows. Automatic trims trailing zeros (12, 3.5, 0.001).'));
+    }
+    function openCursorEditor(name, info) {
+        const rows = ((info && info.cursors) || []).map((c) => ({
+            src: String(c.src == null ? '-1' : c.src),
+            orientation: CURSOR_ORIENTATIONS.some((pair) => pair[0] === c.orientation) ? c.orientation : 'Both',
+            style: CURSOR_STYLES.includes(c.style) ? c.style : 'Dash',
+            color: String(c.color || CURSOR_PALETTE[0]),
+            xValues: c.xValues === 'False' ? 'False' : 'True',
+            yValues: c.yValues === 'False' ? 'False' : 'True',
+            x: String(c.x == null ? '' : c.x),
+            y: String(c.y == null ? '' : c.y)
+        }));
+        cursorEdit = {
+            name: name || null,
+            rows: rows,
+            sel: 0,
+            settings: Object.assign({ readoutPosition: 'FollowMouse', decimals: '-1' }, (info && info.settings) || {})
+        };
+        els.cursorTitle.textContent = 'Cursors' + (cursorEdit.name ? ' \u2014 ' + cursorEdit.name : '');
+        renderCursorEditor();
+        els.cursorModal.hidden = false;
+    }
+    function closeCursorEditor() { els.cursorModal.hidden = true; cursorEdit = null; }
+    els.cursorAdd.addEventListener('click', () => {
+        if (!cursorEdit || cursorEdit.rows.length >= MAX_CURSORS) return;
+        cursorEdit.rows.push(cursorSeedRow(cursorEdit.rows.length));
+        cursorEdit.sel = cursorEdit.rows.length - 1;
+        renderCursorEditor();
+    });
+    els.cursorDel.addEventListener('click', () => {
+        if (!cursorEdit || cursorEdit.rows.length === 0) return;
+        cursorEdit.rows.splice(cursorEdit.sel, 1);
+        cursorEdit.sel = Math.max(0, cursorEdit.sel - 1);
+        renderCursorEditor();
+    });
+    els.cursorSave.addEventListener('click', () => {
+        if (cursorEdit) {
+            post({
+                type: 'saveChartCursors',
+                name: cursorEdit.name,
+                settings: cursorEdit.settings,
+                cursors: cursorEdit.rows
+            });
+        }
+        closeCursorEditor();
+    });
+    els.cursorCancel.addEventListener('click', closeCursorEditor);
+    els.cursorModal.addEventListener('click', (e) => {
+        if (e.target === els.cursorModal) closeCursorEditor(); // click outside the box
     });
 
     /* Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay

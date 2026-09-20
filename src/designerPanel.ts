@@ -3,7 +3,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './xamlModel';
 import {
-    isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend
+    isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
+    chartCursorsOf, writeChartCursors
 } from './chartSeries';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
@@ -3363,6 +3364,22 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'saveChartCursors': {
+                    // 'Cursors' editor on either chart: the chart-level readout settings are flat
+                    // attributes, the cursors themselves live in their own property element.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || !isChartTag(localName(el.tagName))) return;
+                    const before = doc.model.serialize(true);
+                    writeChartCursors(doc.model, el,
+                        (msg.settings ?? {}) as Record<string, unknown>,
+                        Array.isArray(msg.cursors) ? msg.cursors : []);
+                    // The cursors need the project's bundled chart file to be current.
+                    this.ensureGrumpyChartsHelper(doc);
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
+                    return;
+                }
                 case 'saveGridDefs': {
                     // 'Rows & Columns' editor for a Grid: replace the RowDefinitions /
                     // ColumnDefinitions with the sizes typed in the popup.
@@ -4954,12 +4971,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             msg.dgRows = dgRowsOf(el);
             msg.dgCols = dgColsOf(el);
         }
-        // The same for a chart's series, axes and legend (the 'Series'/'Axis'/'Legend' editors pre-fill
-        // from these).
+        // The same for a chart's series, axes, legend and cursors (the 'Series'/'Axis'/'Legend'/
+        // 'Cursors' editors pre-fill from these).
         if (isChartTag(localName(el.tagName))) {
             msg.chartSeries = chartSeriesOf(el);
             msg.chartAxes = chartAxesOf(el);
             msg.legendInfo = chartLegendOf(el);
+            msg.cursorInfo = chartCursorsOf(el);
         }
         await panel.webview.postMessage(msg);
     }
@@ -7474,6 +7492,39 @@ ${publishButtons}      <span class="sep"></span>
         <div class="modal-buttons">
           <button id="seriesCancel" type="button" class="modal-btn">Cancel</button>
           <button id="seriesSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="cursorModal" class="modal" hidden>
+      <div class="modal-box modal-wide">
+        <h3 id="cursorTitle">Cursors</h3>
+        <p class="modal-hint">Up to <b>two</b> cursors are drawn on the chart, each one a crosshair
+          that can be dragged in the running app. A cursor always carries both an X and a Y position
+          — <b>Orientation</b> only decides which lines are drawn — so a Horizontal cursor still
+          reports an X. The readout shows the <b>selected trace</b> (up/down arrows choose it),
+          interpolated between samples, with a column for each of the cursor's <b>X Values</b> /
+          <b>Y Values</b> switches. An empty position box means “the middle of the axis”. Left/right
+          arrows step the selected cursor one sample; the chart's right-click menu switches cursors
+          on and off at runtime (that state is not saved, so a fresh start shows every cursor).</p>
+        <div class="grid-defs">
+          <div class="grid-defs-col">
+            <h4>Cursors</h4>
+            <div id="cursorList" class="grid-def-list"></div>
+            <div class="series-buttons">
+              <button id="cursorAdd" type="button" class="modal-btn">+ Add cursor</button>
+              <button id="cursorDel" type="button" class="modal-btn warning">Delete</button>
+            </div>
+          </div>
+          <div class="grid-defs-col">
+            <h4 id="cursorHead">Details</h4>
+            <div id="cursorFields" class="series-fields"></div>
+            <h4>Readout</h4>
+            <div id="cursorSettings" class="series-fields"></div>
+          </div>
+        </div>
+        <div class="modal-buttons">
+          <button id="cursorCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="cursorSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>
