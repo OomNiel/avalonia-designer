@@ -708,6 +708,13 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly BorderThicknessProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(BorderThickness), 1.0)
 
+        ''' <summary>Space between the border and everything the chart draws inside it — the title, the
+        ''' legend bar and the plot area with the axis furniture around it — in pixels, on all four sides
+        ''' (one, two or four values, like every other Padding). Default 0 keeps the 8 px gap the chart has
+        ''' always had between its border and the plot.</summary>
+        Public Shared ReadOnly PaddingProperty As StyledProperty(Of Thickness) =
+            AvaloniaProperty.Register(Of ChartBase, Thickness)(NameOf(Padding), New Thickness(0))
+
         ' Fully qualified: the type is named exactly like the property.
         Public Shared ReadOnly CornerRadiusProperty As StyledProperty(Of Avalonia.CornerRadius) =
             AvaloniaProperty.Register(Of ChartBase, Avalonia.CornerRadius)(NameOf(CornerRadius), New Avalonia.CornerRadius(4))
@@ -1015,7 +1022,8 @@ Namespace Global.AvaloniaCharts
 
         Shared Sub New()
             AffectsRender(Of ChartBase)(
-                ShowBorderProperty, BorderBrushProperty, BorderThicknessProperty, CornerRadiusProperty,
+                ShowBorderProperty, BorderBrushProperty, BorderThicknessProperty,
+                PaddingProperty, CornerRadiusProperty,
                 PlotBackColorProperty, PlotBackOpacityProperty,
                 ShowGridProperty, GridColorProperty, GridThicknessProperty, GridStyleProperty,
                 ShowAxesProperty, AxisColorProperty,
@@ -1059,6 +1067,17 @@ Namespace Global.AvaloniaCharts
             End Get
             Set(value As Double)
                 SetValue(BorderThicknessProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Space between the border and the chart frame — the title, the legend bar and the plot
+        ''' area — on all four sides.</summary>
+        Public Property Padding As Thickness
+            Get
+                Return GetValue(PaddingProperty)
+            End Get
+            Set(value As Thickness)
+                SetValue(PaddingProperty, value)
             End Set
         End Property
 
@@ -2151,6 +2170,14 @@ Namespace Global.AvaloniaCharts
             Dim frame = New Rect(size).Deflate(frameWidth / 2)
             Dim radius = CornerRadius
 
+            ' Padding: the breathing room the user asked for between the border and everything the chart
+            ' draws inside it. Clamped at 0 so a negative value cannot push the content over the border;
+            ' 0 (the default) leaves the legend and the plot exactly where they have always been. The
+            ' plate and the border itself stay on the frame - only what is drawn ON the plate moves in.
+            Dim pad As New Thickness(Math.Max(0, Padding.Left), Math.Max(0, Padding.Top),
+                                     Math.Max(0, Padding.Right), Math.Max(0, Padding.Bottom))
+            Dim content = frame.Deflate(pad)
+
             ' The chart's OWN plate comes first, filling the whole interior - not just the plot area,
             ' so the title and the axis labels sit on the chart's colour, not on the form's.
             Dim opacity = Math.Clamp(PlotBackOpacity, 0, 100) / 100.0
@@ -2167,9 +2194,9 @@ Namespace Global.AvaloniaCharts
             Dim titleText As FormattedText = Nothing
             If wantTitle Then titleText = MakeText(Title, TitleFontSize, TitleColor)
 
-            ' Work out the plot rectangle: the frame, minus the breathing room, minus the title and
+            ' Work out the plot rectangle: the content, minus the breathing room, minus the title and
             ' the axis furniture around it.
-            Dim plotRect = frame.Deflate(8)
+            Dim plotRect = content.Deflate(8)
             If titleText IsNot Nothing Then
                 Dim strip = titleText.Height + 6
                 Select Case TitlePosition
@@ -2186,20 +2213,20 @@ Namespace Global.AvaloniaCharts
 
             ' The legend bar runs along the side it is set to and takes its size off the plot: entries
             ' flow across (Top/Bottom) or down (Left/Right) and WRAP, so the bar grows to fit its list.
-            Dim legendSize = MeasureLegend(frame.Size, plots)
+            Dim legendSize = MeasureLegend(content.Size, plots)
             If legendSize.Width > 0 AndAlso legendSize.Height > 0 Then
                 Select Case LegendPosition
                     Case LegendPosition.Top
-                        _legendRect = New Rect(frame.X, frame.Y, frame.Width, legendSize.Height)
+                        _legendRect = New Rect(content.X, content.Y, content.Width, legendSize.Height)
                         plotRect = Chop(plotRect, 0, legendSize.Height + 4, 0, 0)
                     Case LegendPosition.Left
-                        _legendRect = New Rect(frame.X, frame.Y, legendSize.Width, frame.Height)
+                        _legendRect = New Rect(content.X, content.Y, legendSize.Width, content.Height)
                         plotRect = Chop(plotRect, legendSize.Width + 4, 0, 0, 0)
                     Case LegendPosition.Right
-                        _legendRect = New Rect(frame.Right - legendSize.Width, frame.Y, legendSize.Width, frame.Height)
+                        _legendRect = New Rect(content.Right - legendSize.Width, content.Y, legendSize.Width, content.Height)
                         plotRect = Chop(plotRect, 0, 0, legendSize.Width + 4, 0)
                     Case Else
-                        _legendRect = New Rect(frame.X, frame.Bottom - legendSize.Height, frame.Width, legendSize.Height)
+                        _legendRect = New Rect(content.X, content.Bottom - legendSize.Height, content.Width, legendSize.Height)
                         plotRect = Chop(plotRect, 0, 0, 0, legendSize.Height + 4)
                 End Select
             End If
@@ -2208,7 +2235,7 @@ Namespace Global.AvaloniaCharts
             If commonPlot Is Nothing Then commonPlot = plots.FirstOrDefault()
             If commonPlot Is Nothing Then
                 DrawFrame(context, frame, radius, frameWidth)
-                DrawTitle(context, titleText, plotRect, frame)
+                DrawTitle(context, titleText, plotRect, content)
                 DrawLegend(context)
                 DrawMessage(context, plotRect, Nothing)
                 DrawBrowseButton(context, frame)
@@ -2264,7 +2291,7 @@ Namespace Global.AvaloniaCharts
 
             If _lastPlotCount = 0 Then
                 DrawFrame(context, frame, radius, frameWidth)
-                DrawTitle(context, titleText, plotRect, frame)
+                DrawTitle(context, titleText, plotRect, content)
                 DrawLegend(context)
                 DrawMessage(context, plotRect, seriesError)
                 DrawBrowseButton(context, frame)
@@ -2343,7 +2370,7 @@ Namespace Global.AvaloniaCharts
 
             ' Frame + title last, so nothing can overdraw them.
             DrawFrame(context, frame, radius, frameWidth)
-            DrawTitle(context, titleText, plotRect, frame)
+            DrawTitle(context, titleText, plotRect, content)
             DrawLegend(context)
             DrawBrowseButton(context, frame)
         End Sub
@@ -2520,21 +2547,24 @@ Namespace Global.AvaloniaCharts
             context.DrawRectangle(Nothing, New Pen(New SolidColorBrush(BorderBrush), thickness), New RoundedRect(frame, radius))
         End Sub
 
-        Private Sub DrawTitle(context As DrawingContext, title As FormattedText, plotRect As Rect, frame As Rect)
+        ''' <summary>Draws the title in its strip: centred over the plot for Top/Bottom, rotated along the
+        ''' inner edge of <paramref name="outer"/> for Left/Right. That rect is the chart's content - the
+        ''' frame minus the Padding - so the padding pushes the title inwards along with the plot.</summary>
+        Private Sub DrawTitle(context As DrawingContext, title As FormattedText, plotRect As Rect, outer As Rect)
             If title Is Nothing Then Return
             Select Case TitlePosition
                 Case ChartTitlePosition.Top
-                    context.DrawText(title, New Point(plotRect.X + (plotRect.Width - title.Width) / 2, frame.Y + 4))
+                    context.DrawText(title, New Point(plotRect.X + (plotRect.Width - title.Width) / 2, outer.Y + 4))
                 Case ChartTitlePosition.Bottom
                     context.DrawText(title, New Point(plotRect.X + (plotRect.Width - title.Width) / 2, plotRect.Bottom + 4))
                 Case ChartTitlePosition.Left
                     Dim leftY = plotRect.Y + plotRect.Height / 2 + title.Width / 2
-                    Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) * Matrix.CreateTranslation(frame.X + 4, leftY))
+                    Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) * Matrix.CreateTranslation(outer.X + 4, leftY))
                         context.DrawText(title, New Point(0, 0))
                     End Using
                 Case ChartTitlePosition.Right
                     Dim rightY = plotRect.Y + plotRect.Height / 2 + title.Width / 2
-                    Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) * Matrix.CreateTranslation(frame.Right - 4 - title.Height, rightY))
+                    Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) * Matrix.CreateTranslation(outer.Right - 4 - title.Height, rightY))
                         context.DrawText(title, New Point(0, 0))
                     End Using
             End Select

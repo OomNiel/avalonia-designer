@@ -102,14 +102,15 @@ public class PathPicker : UserControl { public bool ShowIcon { get; set; } }`;
     // old chart file, and saving a form with two series into it does not compile:
     //   "AVLN2000: Unable to resolve type XYSeries from namespace using:AvaloniaCharts" (ChartTestCS).
     // The same day they gained CURSORS (`ChartCursor` inside the `.Cursors` property element), a following
-    // cursor began to be DRAWN in the colour of the series it follows, and the legend gained a MARGIN.
-    // None of those three is a new type in the filesystem sense, and all three are invisible to a copy that
+    // cursor began to be DRAWN in the colour of the series it follows, the legend gained a MARGIN, and the
+    // chart gained PADDING (the room between its border and its frame).
+    // None of those is a new type in the filesystem sense, and all of them are invisible to a copy that
     // lacks them — a XAML attribute the old copy has no property for does not even compile. So the marker is
     // the newest token the current file has: not the pre-series `PlotBackOpacityProperty` (every copy ever
     // shipped has it, so it detected nothing), not `XYSeries` (the multi-series copies have it), and no
-    // longer `ChartCursor` or `DrawnColor` either.
+    // longer `ChartCursor`, `DrawnColor` or `LegendMargin` either.
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'LegendMargin', 'spec',
+    t.equal(chartSpec.marker, 'Padding', 'spec',
         'the GrumpyCharts marker is the newest token in the current bundled file');
     const oldCsCharts = `// GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb).
 public sealed class ChartSeries { public double[] Xs = Array.Empty<double>(); }
@@ -124,7 +125,8 @@ public sealed class Axis { public AxisPosition Position { get; set; } }`;
 public sealed class ChartCursor { public CursorOrientation Orientation { get; set; } }`;
     const curCsCharts = `${cursorEraCsCharts}
 public sealed class CursorHit { internal Color DrawnColor = Colors.Transparent; }
-public sealed class ChartBase { public static readonly StyledProperty<double> LegendMarginProperty = null!; }`;
+public sealed class ChartBase { public static readonly StyledProperty<double> LegendMarginProperty = null!; }
+public sealed class ChartShell { public static readonly StyledProperty<Thickness> PaddingProperty = null!; }`;
     t.equal(isStaleBundledCopy(oldCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'a chart file from before the series classes is stale (this broke ChartTestCS)');
     t.equal(isStaleBundledCopy(seriesEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
@@ -137,6 +139,11 @@ public sealed class ChartBase { public static readonly StyledProperty<double> Le
 public sealed class CursorHit { internal Color DrawnColor = Colors.Transparent; }`;
     t.equal(isStaleBundledCopy(colourEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'and one with the cursor colour rule but no legend margin');
+    // New enough for the legend margin, still without the Padding the Properties panel writes now.
+    const marginEraCsCharts = `${colourEraCsCharts}
+public sealed class ChartBase { public static readonly StyledProperty<double> LegendMarginProperty = null!; }`;
+    t.equal(isStaleBundledCopy(marginEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with the legend margin but no chart Padding');
     t.equal(isStaleBundledCopy(curCsCharts, false, 'GrumpyCharts'), false, 'detect',
         'the current chart file is current');
     t.equal(isStaleBundledCopy(`${oldCsCharts}\n// hand-tweaked below`, false, 'GrumpyCharts'), true, 'detect',
@@ -151,7 +158,8 @@ End Class
 Public NotInheritable Class ChartCursor
 End Class
 Friend DrawnColor As Color = Colors.Transparent
-Friend LegendMargin As Double`;
+Friend LegendMargin As Double
+Friend Padding As Thickness`;
     t.equal(isStaleBundledCopy(oldVbCharts, true, 'GrumpyCharts'), true, 'detect',
         'a VB chart file from before the series classes is stale');
     t.equal(isStaleBundledCopy(curVbCharts, true, 'GrumpyCharts'), false, 'detect',

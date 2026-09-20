@@ -756,6 +756,13 @@ public abstract class ChartBase : Control
     public static readonly StyledProperty<double> BorderThicknessProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(BorderThickness), 1d);
 
+    /// <summary>Space between the border and everything the chart draws inside it — the title, the
+    /// legend bar and the plot area with the axis furniture around it — in pixels, on all four sides
+    /// (one, two or four values, like every other Padding). Default 0 keeps the 8 px gap the chart has
+    /// always had between its border and the plot.</summary>
+    public static readonly StyledProperty<Thickness> PaddingProperty =
+        AvaloniaProperty.Register<ChartBase, Thickness>(nameof(Padding), default);
+
     public static readonly StyledProperty<CornerRadius> CornerRadiusProperty =
         AvaloniaProperty.Register<ChartBase, CornerRadius>(nameof(CornerRadius), new CornerRadius(4));
 
@@ -1072,7 +1079,8 @@ public abstract class ChartBase : Control
     {
         // Any style or data change is a change to the picture.
         AffectsRender<ChartBase>(
-            ShowBorderProperty, BorderBrushProperty, BorderThicknessProperty, CornerRadiusProperty,
+            ShowBorderProperty, BorderBrushProperty, BorderThicknessProperty,
+            PaddingProperty, CornerRadiusProperty,
             PlotBackColorProperty, PlotBackOpacityProperty,
             ShowGridProperty, GridColorProperty, GridThicknessProperty, GridStyleProperty,
             ShowAxesProperty, AxisColorProperty,
@@ -1102,6 +1110,10 @@ public abstract class ChartBase : Control
 
     /// <summary>Border line thickness.</summary>
     public double BorderThickness { get => GetValue(BorderThicknessProperty); set => SetValue(BorderThicknessProperty, value); }
+
+    /// <summary>Space between the border and the chart frame — the title, the legend bar and the plot
+    /// area — on all four sides.</summary>
+    public Thickness Padding { get => GetValue(PaddingProperty); set => SetValue(PaddingProperty, value); }
 
     /// <summary>Corner rounding of the frame.</summary>
     public CornerRadius CornerRadius { get => GetValue(CornerRadiusProperty); set => SetValue(CornerRadiusProperty, value); }
@@ -1736,6 +1748,15 @@ public abstract class ChartBase : Control
         var frame = new Rect(size).Deflate(frameWidth / 2);
         var radius = CornerRadius;
 
+        // Padding: the breathing room the user asked for between the border and everything the chart
+        // draws inside it. Clamped at 0 so a negative value cannot push the content over the border;
+        // 0 (the default) leaves the legend and the plot exactly where they have always been. The
+        // plate and the border itself stay on the frame — only what is drawn ON the plate moves in.
+        var pad = new Thickness(
+            Math.Max(0, Padding.Left), Math.Max(0, Padding.Top),
+            Math.Max(0, Padding.Right), Math.Max(0, Padding.Bottom));
+        var content = frame.Deflate(pad);
+
         // The chart's OWN plate comes first, filling the whole interior - not just the plot area.
         // Everything drawn outside the plot (the title, the axis labels, the ticks) then sits on the
         // chart's colour instead of on whatever is behind the control.
@@ -1752,9 +1773,9 @@ public abstract class ChartBase : Control
         var wantTitle = ShowTitle && !string.IsNullOrWhiteSpace(Title);
         var titleText = wantTitle ? MakeText(Title!, TitleFontSize, TitleColor) : null;
 
-        // Work out the plot rectangle: the frame, minus the breathing room, minus the title and the
+        // Work out the plot rectangle: the content, minus the breathing room, minus the title and the
         // axis furniture around it.
-        var plot = frame.Deflate(8);
+        var plot = content.Deflate(8);
         if (titleText is not null)
         {
             var strip = titleText.Height + 6;
@@ -1769,15 +1790,15 @@ public abstract class ChartBase : Control
 
         // The legend bar runs along the side it is set to and takes its size off the plot: entries
         // flow across (Top/Bottom) or down (Left/Right) and WRAP, so the bar grows to fit its list.
-        var legendSize = MeasureLegend(frame.Size, plots);
+        var legendSize = MeasureLegend(content.Size, plots);
         if (legendSize.Width > 0 && legendSize.Height > 0)
         {
             _legendRect = LegendPosition switch
             {
-                LegendPosition.Top => new Rect(frame.X, frame.Y, frame.Width, legendSize.Height),
-                LegendPosition.Left => new Rect(frame.X, frame.Y, legendSize.Width, frame.Height),
-                LegendPosition.Right => new Rect(frame.Right - legendSize.Width, frame.Y, legendSize.Width, frame.Height),
-                _ => new Rect(frame.X, frame.Bottom - legendSize.Height, frame.Width, legendSize.Height)
+                LegendPosition.Top => new Rect(content.X, content.Y, content.Width, legendSize.Height),
+                LegendPosition.Left => new Rect(content.X, content.Y, legendSize.Width, content.Height),
+                LegendPosition.Right => new Rect(content.Right - legendSize.Width, content.Y, legendSize.Width, content.Height),
+                _ => new Rect(content.X, content.Bottom - legendSize.Height, content.Width, legendSize.Height)
             };
             plot = LegendPosition switch
             {
@@ -1793,7 +1814,7 @@ public abstract class ChartBase : Control
         if (common is null)
         {
             DrawFrame(context, frame, radius, frameWidth);
-            DrawTitle(context, titleText, plot, frame);
+            DrawTitle(context, titleText, plot, content);
             DrawLegend(context);
             DrawMessage(context, plot, null);
             DrawBrowseButton(context, frame);
@@ -1834,7 +1855,7 @@ public abstract class ChartBase : Control
         if (_lastPlotCount == 0)
         {
             DrawFrame(context, frame, radius, frameWidth);
-            DrawTitle(context, titleText, plot, frame);
+            DrawTitle(context, titleText, plot, content);
             DrawLegend(context);
             DrawMessage(context, plot, seriesError);
             DrawBrowseButton(context, frame);
@@ -1920,7 +1941,7 @@ public abstract class ChartBase : Control
 
         // Frame + title last, so nothing can overdraw them.
         DrawFrame(context, frame, radius, frameWidth);
-        DrawTitle(context, titleText, plot, frame);
+        DrawTitle(context, titleText, plot, content);
         DrawLegend(context);
         DrawBrowseButton(context, frame);
     }
@@ -2275,13 +2296,16 @@ public abstract class ChartBase : Control
             new RoundedRect(frame, radius));
     }
 
-    private void DrawTitle(DrawingContext context, FormattedText? title, Rect plot, Rect frame)
+    /// <summary>Draws the title in its strip: centred over the plot for Top/Bottom, rotated along the
+    /// inner edge of <paramref name="outer"/> for Left/Right. That rect is the chart's content — the
+    /// frame minus the Padding — so the padding pushes the title inwards along with the plot.</summary>
+    private void DrawTitle(DrawingContext context, FormattedText? title, Rect plot, Rect outer)
     {
         if (title is null) return;
         switch (TitlePosition)
         {
             case ChartTitlePosition.Top:
-                context.DrawText(title, new Point(plot.X + (plot.Width - title.Width) / 2, frame.Y + 4));
+                context.DrawText(title, new Point(plot.X + (plot.Width - title.Width) / 2, outer.Y + 4));
                 break;
             case ChartTitlePosition.Bottom:
                 context.DrawText(title, new Point(plot.X + (plot.Width - title.Width) / 2, plot.Bottom + 4));
@@ -2291,7 +2315,7 @@ public abstract class ChartBase : Control
                 // and reads upward, so the anchor sits half a text-width below centre.
                 var leftY = plot.Y + plot.Height / 2 + title.Width / 2;
                 using (context.PushTransform(Matrix.CreateRotation(-Math.PI / 2)
-                                             * Matrix.CreateTranslation(frame.X + 4, leftY)))
+                                             * Matrix.CreateTranslation(outer.X + 4, leftY)))
                 {
                     context.DrawText(title, new Point(0, 0));
                 }
@@ -2299,7 +2323,7 @@ public abstract class ChartBase : Control
             case ChartTitlePosition.Right:
                 var rightY = plot.Y + plot.Height / 2 + title.Width / 2;
                 using (context.PushTransform(Matrix.CreateRotation(-Math.PI / 2)
-                                             * Matrix.CreateTranslation(frame.Right - 4 - title.Height, rightY)))
+                                             * Matrix.CreateTranslation(outer.Right - 4 - title.Height, rightY)))
                 {
                     context.DrawText(title, new Point(0, 0));
                 }
