@@ -4750,6 +4750,10 @@
         els.seriesFields.appendChild(seriesField('Line Thickness', seriesNumber(row.lineThickness, (v) => { row.lineThickness = v; })));
         els.seriesFields.appendChild(seriesField('Line Style', seriesSelect(SERIES_LINE_STYLES, row.lineStyle,
             (v) => { row.lineStyle = v; })));
+        // Switched off = the trace is hidden (the legend's tick box does the same at runtime).
+        els.seriesFields.appendChild(seriesField('Visible', axisPairs([['True', 'On'], ['False', 'Off']],
+            row.visible === 'False' ? 'False' : 'True', (v) => { row.visible = v; }),
+            'On draws this trace. Off hides it, keeping its place on the axis so the other lines do not move.'));
         if (row.type !== 'Line') {
             els.seriesFields.appendChild(seriesField('Marker', seriesSelect(SERIES_MARKERS, row.markerStyle,
                 (v) => { row.markerStyle = v; })));
@@ -4773,7 +4777,7 @@
             defX: (template && template.defX) || 'B',
             defY: columnAfter('C', index * 2),
             lineColor: SERIES_PALETTE[index % SERIES_PALETTE.length], lineThickness: '2',
-            lineStyle: 'Solid', markerStyle: 'Dot', markerSize: '8', connected: 'True'
+            lineStyle: 'Solid', markerStyle: 'Dot', markerSize: '8', connected: 'True', visible: 'True'
         };
     }
     function openSeriesEditor(name, list) {
@@ -4791,7 +4795,8 @@
             lineStyle: String(s.lineStyle || 'Solid'),
             markerStyle: String(s.markerStyle || 'Dot'),
             markerSize: String(s.markerSize || '8'),
-            connected: String(s.connected || 'True')
+            connected: String(s.connected || 'True'),
+            visible: s.visible === 'False' ? 'False' : 'True'
         }));
         seriesEdit = { name: name || null, rows: rows.length ? rows : [seriesSeedRow('XY', 0)], sel: 0 };
         els.seriesTitle.textContent = 'Series' + (seriesEdit.name ? ' — ' + seriesEdit.name : '');
@@ -4836,7 +4841,7 @@
                     src: r.src, type: r.type, title: r.title, xColumn: r.xColumn, yColumn: r.yColumn,
                     axisMode: r.axisMode, lineColor: r.lineColor, lineThickness: r.lineThickness,
                     lineStyle: r.lineStyle, markerStyle: r.markerStyle, markerSize: r.markerSize,
-                    connected: r.connected
+                    connected: r.connected, visible: r.visible
                 }))
             });
         }
@@ -4990,8 +4995,7 @@
         const fontSize = seriesNumber(String(shown.tickLabelFontSize || '11'), (v) => { ensure().tickLabelFontSize = v; });
         fontSize.disabled = locked;
         els.axisFields.appendChild(seriesField('Label size', fontSize));
-        bool('Axis name', 'showAxisName', 'Show a name at the end of this axis.');
-        const nameIn = seriesText(String(shown.name == null ? '' : shown.name), (v) => { ensure().name = v; },
+        bool('Axis name', 'showAxisName', 'Show a name at the end of this axis.');        const nameIn = seriesText(String(shown.name == null ? '' : shown.name), (v) => { ensure().name = v; },
             'The axis name. Empty = the spreadsheet’s column header.');
         nameIn.disabled = locked;
         els.axisFields.appendChild(seriesField('Name', nameIn));

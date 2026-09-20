@@ -699,6 +699,10 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Values', label: 'Values', kind: 'text' },
         { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
         { key: 'ShowBrowse', label: 'Browse Button', kind: 'dropdown', options: BOOL },
+        // The legend bar lists every series by name with a tick box that switches its trace on and
+        // off (at runtime). A chart with no series elements draws one unnamed line, so no legend.
+        { key: 'ShowLegend', label: 'Legend', kind: 'dropdown', options: BOOL },
+        { key: 'LegendFontSize', label: 'Legend Size', kind: 'number' },
         // X/Y Column and the data rows below belong to the ONE implicit series this chart draws
         // when it has no explicit <charts:LineSeries> children. A line plot reads X from the sample
         // index (0, 1, 2…), so only Y Column matters. Line Colour / Thickness / Style and the marker
@@ -737,6 +741,9 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Points', label: 'Points (x,y)', kind: 'text' },
         { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
         { key: 'ShowBrowse', label: 'Browse Button', kind: 'dropdown', options: BOOL },
+        // See GrumpyLinePlot: the same legend rows, so either chart lists its series the same way.
+        { key: 'ShowLegend', label: 'Legend', kind: 'dropdown', options: BOOL },
+        { key: 'LegendFontSize', label: 'Legend Size', kind: 'number' },
         { key: 'XColumn', label: 'X Column', kind: 'text' },
         { key: 'YColumn', label: 'Y Column', kind: 'text' },
         { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
@@ -900,6 +907,8 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     Values: { desc: 'The Y values to plot, separated by commas (e.g. "4,9,6,12"). X is the sample number: 0, 1, 2…' },
     SourceFile: { desc: 'An .xlsx workbook to read the values from. Empty = use the inline data instead.' },
     ShowBrowse: { desc: 'Draw a "…" button in the chart corner that opens the file dialog to pick the workbook at runtime. It is drawn automatically while the chart has no data, so an empty chart always offers the picker.' },
+    ShowLegend: { desc: 'Draw a legend bar along the bottom of the chart: one entry per series, its name in the series colour and a tick box that switches that trace on and off while the app runs (the series keeps its place on the axis, so the other lines do not jump). A chart with no series elements draws a single unnamed line, so it shows no legend.' },
+    LegendFontSize: { kind: 'number', unit: 'px', desc: 'Font size of the series names in the legend bar.' },
     XColumn: { desc: 'Which spreadsheet column holds the X values (A, B, C…). Default B.' },
     YColumn: { desc: 'Which spreadsheet column holds the Y values. Default C (a line plot falls back to the X column when this one is empty).' },
     HeaderRow: { desc: 'The spreadsheet row holding the axis names. Default 1 (the top row).' },
@@ -1062,6 +1071,7 @@ const ADVANCED_KEYS = new Set([
     // them — a beginner only ever touches Values/Points, the title, the colours and the markers.
     'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow',
     'TitleFontSize', 'TickLabelFontSize', 'MajorTickLength', 'MinorTickLength', 'GridThickness',
+    'LegendFontSize',
     'MarkerSize', 'MinX', 'MaxX', 'MinY', 'MaxY'
 ]);
 
@@ -1249,6 +1259,8 @@ export const DEFAULTS: Record<string, string> = {
     Values: '',
     SourceFile: '',
     ShowBrowse: 'False',
+    ShowLegend: 'True',
+    LegendFontSize: '12',
     XColumn: 'B',
     YColumn: 'C',
     HeaderRow: '1',
@@ -1468,7 +1480,8 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'ShowAxes', 'AxisColor',
             'ShowMajorTicks', 'MajorTickLength', 'ShowMinorTicks', 'MinorTickLength',
             'ShowTickLabels', 'TickLabelFontSize', 'ShowAxisTitles',
-            'ShowTitle', 'TitleColor', 'TitlePosition', 'TitleFontSize', 'ShowBrowse'
+            'ShowTitle', 'TitleColor', 'TitlePosition', 'TitleFontSize', 'ShowBrowse',
+            'ShowLegend', 'LegendFontSize'
         ]
     },
     {

@@ -1,0 +1,140 @@
+/* T1 — the chart LEGEND bar: one entry per series, its name in the series' own colour, a tick box
+ * that switches that trace on and off, and a bar that grows vertically to fit whatever it lists.
+ *
+ * Why this exists: every part of that sentence is invisible to the ordinary property tests. The bar
+ * must only appear for a chart that HAS series (a single implicit line has no name to show), it must
+ * take its height OFF the plot rather than overdraw it, a hidden series must vanish from the plot
+ * while staying visible in the legend (otherwise there is no way to switch it back on), and a long
+ * list must WRAP instead of running off the chart. These are pixel facts, so this renders through the
+ * real host and counts ink per band:
+ *
+ *   plot band   = above the legend   (the traces themselves)
+ *   legend band = the bar's own rows (names + ticks)
+ *
+ * The workbook is `tests/fixtures/chartdata.xlsx` (B/C = "Time"/"Inside", D/E = "Time2"/"Outside").
+ */
+'use strict';
+const net = require('net');
+const fs = require('fs');
+const path = require('path');
+const { startHost, renderPng, HOST_BIN } = require('../helpers/host');
+
+const NS = 'xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" '
+    + 'xmlns:charts="using:AvaloniaCharts"';
+const FIXTURE = path.join(__dirname, '..', 'fixtures', 'chartdata.xlsx');
+const W = 300;    // the chart's own size, at 0,0 inside the form
+const H = 260;    // tall enough that one legend row (21px) or three (63px) stay clear of the plot
+const PLOT_Y = 180;   // ink above this is the plot, below it is the legend bar
+const LEGEND_Y = 185;
+
+function freePort() {
+    return new Promise((res) => {
+        const s = net.createServer();
+        s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); });
+    });
+}
+
+const form = (attrs, children) => `<Window ${NS} Title="legend" Width="${W}" Height="${H}">
+  <Canvas Name="Holder" Width="${W}" Height="${H}">
+    <charts:GrumpyXYPlot x:Name="Chart1" Width="${W}" Height="${H}" SourceFile="${FIXTURE}"
+      ShowTitle="False" ${attrs}>
+      ${children}
+    </charts:GrumpyXYPlot>
+  </Canvas>
+</Window>`;
+
+const TWO = `<charts:XYSeries Title="Inside" XColumn="B" YColumn="C" LineColor="#FF0000"/>
+      <charts:XYSeries Title="Outside" XColumn="D" YColumn="E" LineColor="#0000FF"/>`;
+
+/** Counts matching pixels in a band, and how far down (maxY) / up (minY) they reach. */
+function ink(img, y0, y1, match) {
+    const out = { n: 0, minY: Infinity, maxY: -Infinity };
+    for (let y = y0; y < y1; y++) {
+        for (let x = 0; x < W; x++) {
+            const i = (y * img.width + x) * 4;
+            if (!match(img.data[i], img.data[i + 1], img.data[i + 2])) continue;
+            out.n++;
+            out.minY = Math.min(out.minY, y);
+            out.maxY = Math.max(out.maxY, y);
+        }
+    }
+    return out;
+}
+const RED = (r, g, b) => r > 190 && g < 70 && b < 70;
+const BLUE = (r, g, b) => b > 190 && r < 70 && g < 70;
+const MAGENTA = (r, g, b) => r > 150 && b > 150 && g < 80;
+const TEAL = (r, g, b) => g > 120 && b > 120 && r < 80;
+const plot = (img, m) => ink(img, 0, PLOT_Y, m);
+const legend = (img, m) => ink(img, LEGEND_Y, H, m);
+
+module.exports = async (t) => {
+    t.section('chartLegend');
+
+    if (!fs.existsSync(HOST_BIN)) {
+        t.note('host binary missing — skipping (build the host first)');
+        return;
+    }
+    if (!fs.existsSync(FIXTURE)) {
+        t.fail('chart-legend', 'fixture', `missing workbook fixture: ${FIXTURE}`);
+        return;
+    }
+
+    const host = await startHost(await freePort());
+    try {
+        // --- with the legend on, both series are listed in their own colours ---
+        const on = await renderPng(host, form('GridStyle="Dot"', TWO), W, H);
+        t.ok(!on.frame.error, 'chart-legend', 'a chart with a legend renders', on.frame.error || '');
+        const onPlotRed = plot(on.img, RED);
+        const onLegendRed = legend(on.img, RED);
+        const onLegendBlue = legend(on.img, BLUE);
+        t.ok(onPlotRed.n > 100 && plot(on.img, BLUE).n > 100, 'chart-legend',
+            'both traces are drawn above the bar', `red=${onPlotRed.n}`);
+        t.ok(onLegendRed.n > 20, 'chart-legend', "the first series' name is written in its series colour",
+            `red=${onLegendRed.n}`);
+        t.ok(onLegendBlue.n > 20, 'chart-legend', "and so is the second one", `blue=${onLegendBlue.n}`);
+
+        // --- turning the legend off gives the space back to the plot ---
+        const off = await renderPng(host, form('GridStyle="Dot" ShowLegend="False"', TWO), W, H);
+        t.equal(legend(off.img, RED).n + legend(off.img, BLUE).n, 0, 'chart-legend',
+            'ShowLegend=False draws no legend ink at all');
+        t.ok(plot(off.img, RED).maxY > onPlotRed.maxY + 5, 'chart-legend',
+            'without the bar the plot is taller (the legend takes its height off the plot)',
+            `on maxY=${onPlotRed.maxY} off maxY=${plot(off.img, RED).maxY}`);
+
+        // --- a series switched off disappears from the plot but STAYS in the legend ---
+        const hidden = await renderPng(host, form('GridStyle="Dot"', `
+      <charts:XYSeries Title="Inside" XColumn="B" YColumn="C" LineColor="#FF0000" Visible="False"/>
+      <charts:XYSeries Title="Outside" XColumn="D" YColumn="E" LineColor="#0000FF"/>`), W, H);
+        t.equal(plot(hidden.img, RED).n, 0, 'chart-legend', 'a hidden trace is not drawn');
+        t.ok(plot(hidden.img, BLUE).n > 100, 'chart-legend', 'while the other one still is');
+        t.ok(legend(hidden.img, RED).n > 10, 'chart-legend',
+            'and it is still listed (its box is just empty) — otherwise it could never be switched back on',
+            `red=${legend(hidden.img, RED).n}`);
+
+        // --- a long list WRAPS: six entries need more rows, so the bar reaches further up and the
+        //     plot gives up more room ---
+        const colours = ['#FF0000', '#0000FF', '#008000', '#FFA500', '#800080', '#00AAAA'];
+        const many = await renderPng(host, form('GridStyle="Dot"', colours.map((c, i) =>
+            `<charts:XYSeries Title="Series number ${i + 1}" XColumn="${i === 1 ? 'D' : 'B'}" `
+            + `YColumn="${i % 2 === 0 ? 'C' : 'E'}" LineColor="${c}"/>`).join('\n      ')), W, H);
+        t.ok(!many.frame.error, 'chart-legend', 'a six-series chart renders', many.frame.error || '');
+        const teal = legend(many.img, TEAL);
+        t.ok(teal.n > 20, 'chart-legend', 'the last entry is listed too', `teal=${teal.n}`);
+        t.ok(teal.minY < H - 25, 'chart-legend',
+            'the entries wrapped onto more than one row (the last one sits well above the bar bottom)',
+            `teal y=${teal.minY}..${teal.maxY}`);
+        t.ok(plot(many.img, RED).maxY < onPlotRed.maxY, 'chart-legend',
+            'and the wrapped bar pushed the plot up',
+            `two-series maxY=${onPlotRed.maxY} six-series maxY=${plot(many.img, RED).maxY}`);
+
+        // --- a chart with no series elements has one unnamed line: nothing to list, so no bar ---
+        const implicit = await renderPng(host, form('GridStyle="Dot" Points="0,2 1,5 2,3" '
+            + 'LineColor="#FF00FF"', ''), W, H);
+        t.ok(plot(implicit.img, MAGENTA).n > 60, 'chart-legend', 'the single implicit line is drawn',
+            `magenta=${plot(implicit.img, MAGENTA).n}`);
+        t.equal(legend(implicit.img, MAGENTA).n, 0, 'chart-legend',
+            'but an unnamed single line shows no legend');
+    } finally {
+        host.close();
+    }
+};

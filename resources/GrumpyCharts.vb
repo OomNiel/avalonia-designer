@@ -190,6 +190,10 @@ Namespace Global.AvaloniaCharts
         ''' <summary>Join the points with a line (False = markers only).</summary>
         Public Property Connected As Boolean = True
 
+        ''' <summary>Draw this series at all. Off = its trace is switched off (the legend's tick box).
+        ''' The series keeps its place in the chart's scale, so toggling a trace does not move the axes.</summary>
+        Public Property Visible As Boolean = True
+
         ''' <summary>This series' own X axis (only used with AxisMode = PerSeries).</summary>
         Public Property XAxis As Axis = Nothing
 
@@ -511,6 +515,7 @@ Namespace Global.AvaloniaCharts
         Friend MarkerStyle As AvaloniaCharts.ChartMarkerStyle = AvaloniaCharts.ChartMarkerStyle.Dot
         Friend MarkerSize As Double = 8.0
         Friend Connected As Boolean = True
+        Friend Visible As Boolean = True
         Friend PerSeries As Boolean = False
         Friend XAxis As Axis = Nothing
         Friend YAxis As Axis = Nothing
@@ -632,6 +637,17 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly ShowBrowseProperty As StyledProperty(Of Boolean) =
             AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(ShowBrowse), False)
 
+        ' ---- legend -----------------------------------------------------------------------------
+        ''' <summary>Draw the legend bar along the bottom of the chart: one entry per series, its name in
+        ''' the series' own colour and a tick box that switches that trace on and off. A chart with no
+        ''' series elements draws one unnamed line, so it has nothing to list and shows no legend.</summary>
+        Public Shared ReadOnly ShowLegendProperty As StyledProperty(Of Boolean) =
+            AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(ShowLegend), True)
+
+        ''' <summary>Font size of the legend's series names.</summary>
+        Public Shared ReadOnly LegendFontSizeProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(LegendFontSize), 12.0)
+
         ' ---- scaling overrides (the common axis) ----------------------------------------------
         Public Shared ReadOnly MinXProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(MinX), Double.NaN)
@@ -679,7 +695,7 @@ Namespace Global.AvaloniaCharts
                 ShowAxisTitlesProperty, XAxisTitleProperty, YAxisTitleProperty,
                 ShowTitleProperty, TitleProperty, TitleColorProperty, TitlePositionProperty, TitleFontSizeProperty,
                 SourceFileProperty, XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
-                ShowBrowseProperty,
+                ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
                 MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
                 LineColorProperty, LineThicknessProperty, LineStyleProperty,
                 MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty)
@@ -994,6 +1010,26 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
+        ''' <summary>Draw the legend bar along the bottom of the chart.</summary>
+        Public Property ShowLegend As Boolean
+            Get
+                Return GetValue(ShowLegendProperty)
+            End Get
+            Set(value As Boolean)
+                SetValue(ShowLegendProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Font size of the legend's series names.</summary>
+        Public Property LegendFontSize As Double
+            Get
+                Return GetValue(LegendFontSizeProperty)
+            End Get
+            Set(value As Double)
+                SetValue(LegendFontSizeProperty, value)
+            End Set
+        End Property
+
         Public Property MinX As Double
             Get
                 Return GetValue(MinXProperty)
@@ -1233,6 +1269,7 @@ Namespace Global.AvaloniaCharts
                     .MarkerStyle = oneSeries.MarkerStyle,
                     .MarkerSize = oneSeries.MarkerSize,
                     .Connected = oneSeries.Connected,
+                    .Visible = oneSeries.Visible,
                     .PerSeries = oneSeries.PerSeries,
                     .XAxis = oneSeries.XAxis,
                     .YAxis = oneSeries.YAxis
@@ -1341,7 +1378,17 @@ Namespace Global.AvaloniaCharts
         ''' <summary>Clicking the drawn "…" button loads a file.</summary>
         Protected Overrides Sub OnPointerPressed(e As PointerPressedEventArgs)
             MyBase.OnPointerPressed(e)
-            If BrowseVisible AndAlso _browseRect.Contains(e.GetPosition(Me)) Then
+            Dim position = e.GetPosition(Me)
+            ' The legend is interactive: clicking an entry (its tick box OR its name) switches that
+            ' trace on and off. The rects are the ones the last Render laid out.
+            For Each entry In _legend
+                If Not entry.Item.Contains(position) Then Continue For
+                entry.Series.Visible = Not entry.Series.Visible
+                InvalidateVisual()
+                e.Handled = True
+                Return
+            Next
+            If BrowseVisible AndAlso _browseRect.Contains(position) Then
 #Disable Warning BC42358 ' deliberately fire-and-forget: a pointer event cannot await the dialog
                 BrowseForFile()
 #Enable Warning BC42358
@@ -1423,6 +1470,143 @@ Namespace Global.AvaloniaCharts
         ' ---- drawing --------------------------------------------------------------------------
 
         Private _browseRect As Rect
+        Private ReadOnly _legend As New List(Of LegendEntry)()
+        Private _legendRect As Rect
+
+        ''' <summary>One entry of the legend bar: the series it switches, and where it sits.</summary>
+        Private NotInheritable Class LegendEntry
+            Friend Series As ChartSeries
+            Friend Text As FormattedText
+            Friend LineColor As Color
+            ''' <summary>The whole clickable item (tick box + name), in control coordinates.</summary>
+            Friend Item As Rect
+            ''' <summary>The tick box on its own.</summary>
+            Friend Box As Rect
+        End Class
+
+        ''' <summary>One legend row's items. (The C# twin uses tuples here; Visual Basic has no
+        ''' For-Each deconstruction, so the twins carry a tiny class instead.)</summary>
+        Private NotInheritable Class LegendCell
+            Friend Plot As Plot
+            Friend Text As FormattedText
+        End Class
+
+        ''' <summary>The name a series shows in the legend: its own Title, else the spreadsheet's
+        ''' Y-column header, else "Series n".</summary>
+        Private Function LegendName(one As Plot, index As Integer) As String
+            If one.Definition IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(one.Definition.Title) Then
+                Return one.Definition.Title
+            End If
+            If Not String.IsNullOrWhiteSpace(one.Data.YTitle) Then Return one.Data.YTitle
+            Return $"Series {index + 1}"
+        End Function
+
+        ''' <summary>
+        ''' Lays the legend out across the given width and returns the height it needs, so the plot can
+        ''' give up that much room. Entries run left to right and wrap onto further rows, and the bar is
+        ''' as wide as the chart, so a long list grows DOWNWARD instead of being cut off. Returns 0 when
+        ''' there is nothing to list: a chart without series elements draws one unnamed line, and there
+        ''' is nothing to name or switch off.
+        ''' </summary>
+        Private Function MeasureLegend(width As Double, plots As List(Of Plot)) As Double
+            _legend.Clear()
+            If Not ShowLegend OrElse _series.Count = 0 Then Return 0
+
+            Const pad As Double = 2, boxSize As Double = 13, boxGap As Double = 6, itemGap As Double = 16, rowGap As Double = 4
+            Dim font = Math.Max(6, LegendFontSize)
+            Dim rows As New List(Of List(Of LegendCell))()
+            Dim row As New List(Of LegendCell)()
+            Dim rowWidth As Double = 0
+            Dim rowHeight As Double = 0
+            Dim inner = Math.Max(24, width - pad * 2)
+
+            For i = 0 To plots.Count - 1
+                Dim one = plots(i)
+                If one.Definition Is Nothing Then Continue For
+                Dim cell As New LegendCell With {.Plot = one, .Text = MakeText(LegendName(one, i), font, one.LineColor)}
+                Dim itemWidth = boxSize + boxGap + cell.Text.Width
+                ' Wrap: an item that does not fit goes on the next row (a single over-long name still
+                ' gets its own row and is clipped by the chart, like any other text).
+                If row.Count > 0 AndAlso rowWidth + itemGap + itemWidth > inner Then
+                    rows.Add(row)
+                    row = New List(Of LegendCell)()
+                    rowWidth = 0
+                    rowHeight = 0
+                End If
+                If row.Count > 0 Then rowWidth += itemGap
+                row.Add(cell)
+                rowWidth += itemWidth
+                rowHeight = Math.Max(rowHeight, Math.Max(boxSize, cell.Text.Height))
+            Next
+            If row.Count > 0 Then rows.Add(row)
+            If rows.Count = 0 Then Return 0
+
+            Dim height = pad * 2 + rowGap * (rows.Count - 1)
+            For Each entries In rows
+                Dim rowH As Double = 0
+                For Each cell In entries
+                    rowH = Math.Max(rowH, Math.Max(boxSize, cell.Text.Height))
+                Next
+                height += rowH
+            Next
+
+            ' Keep the layout in LOCAL coordinates; Render translates it into _legendRect once it knows
+            ' where the bar lands (it is bottom-anchored in the frame).
+            Dim y = pad
+            For Each entries In rows
+                Dim rowH As Double = 0
+                For Each cell In entries
+                    rowH = Math.Max(rowH, Math.Max(boxSize, cell.Text.Height))
+                Next
+                Dim x = pad
+                For Each cell In entries
+                    Dim itemWidth = boxSize + boxGap + cell.Text.Width
+                    _legend.Add(New LegendEntry With {
+                        .Series = cell.Plot.Definition,
+                        .Text = cell.Text,
+                        .LineColor = cell.Plot.LineColor,
+                        .Item = New Rect(x, y, itemWidth, rowH),
+                        .Box = New Rect(x, y + (rowH - boxSize) / 2, boxSize, boxSize)
+                    })
+                    x += itemWidth + itemGap
+                Next
+                y += rowH + rowGap
+            Next
+            Return height
+        End Function
+
+        ''' <summary>Draws the legend bar: the tick box for each series (ticked when its trace is on)
+        ''' and its name, in the series' own colour.</summary>
+        Private Sub DrawLegend(context As DrawingContext)
+            If _legend.Count = 0 Then Return
+            ' The entries were measured in local coordinates; the bar is anchored to the frame's bottom.
+            For i = 0 To _legend.Count - 1
+                Dim entry = _legend(i)
+                entry.Item = New Rect(entry.Item.X + _legendRect.X, entry.Item.Y + _legendRect.Y,
+                                      entry.Item.Width, entry.Item.Height)
+                entry.Box = New Rect(entry.Box.X + _legendRect.X, entry.Box.Y + _legendRect.Y,
+                                     entry.Box.Width, entry.Box.Height)
+            Next
+
+            Using context.PushClip(_legendRect)
+                Dim framePen = MakePen(Color.Parse("#9AA0A6"), 1, ChartLineStyle.Solid)
+                For Each entry In _legend
+                    context.DrawRectangle(Nothing, framePen, New RoundedRect(entry.Box, New Avalonia.CornerRadius(2)))
+                    If entry.Series.Visible Then
+                        ' A tick in the series' own colour, so a ticked box matches its line exactly.
+                        Dim tick = MakePen(entry.LineColor, 2, ChartLineStyle.Solid)
+                        Dim b = entry.Box
+                        context.DrawLine(tick,
+                            New Point(b.X + b.Width * 0.2, b.Y + b.Height * 0.55),
+                            New Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78))
+                        context.DrawLine(tick,
+                            New Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78),
+                            New Point(b.X + b.Width * 0.8, b.Y + b.Height * 0.22))
+                    End If
+                    context.DrawText(entry.Text, New Point(entry.Box.Right + 6, entry.Item.Y + (entry.Item.Height - entry.Text.Height) / 2))
+                Next
+            End Using
+        End Sub
 
         Public Overrides Sub Render(context As DrawingContext)
             Dim size = Bounds.Size
@@ -1464,11 +1648,20 @@ Namespace Global.AvaloniaCharts
                 End Select
             End If
 
+            ' The legend bar runs along the bottom of the chart and takes its height off the plot:
+            ' entries flow left to right and WRAP, so the bar grows vertically to fit what it must show.
+            Dim legendHeight = MeasureLegend(frame.Width, plots)
+            If legendHeight > 0 Then
+                _legendRect = New Rect(frame.X, frame.Bottom - legendHeight, frame.Width, legendHeight)
+                plotRect = Chop(plotRect, 0, 0, 0, legendHeight + 4)
+            End If
+
             Dim commonPlot = plots.FirstOrDefault(Function(p) Not p.PerSeries)
             If commonPlot Is Nothing Then commonPlot = plots.FirstOrDefault()
             If commonPlot Is Nothing Then
                 DrawFrame(context, frame, radius, frameWidth)
                 DrawTitle(context, titleText, plotRect, frame)
+                DrawLegend(context)
                 DrawMessage(context, plotRect, Nothing)
                 DrawBrowseButton(context, frame)
                 Return
@@ -1523,6 +1716,7 @@ Namespace Global.AvaloniaCharts
             If _lastPlotCount = 0 Then
                 DrawFrame(context, frame, radius, frameWidth)
                 DrawTitle(context, titleText, plotRect, frame)
+                DrawLegend(context)
                 DrawMessage(context, plotRect, seriesError)
                 DrawBrowseButton(context, frame)
                 Return
@@ -1577,7 +1771,7 @@ Namespace Global.AvaloniaCharts
             ' The data itself, in order, clipped to the plot area.
             Using context.PushClip(plotRect)
                 For Each one In plots
-                    If Not one.Data.HasData Then Continue For
+                    If Not one.Data.HasData OrElse Not one.Visible Then Continue For
                     Dim dataPoints = one.Data.Xs.Select(
                         Function(v, i)
                             Return New Point(one.XRange.ToPixel(v, plotRect.X, plotRect.Width),
@@ -1597,6 +1791,7 @@ Namespace Global.AvaloniaCharts
             ' Frame + title last, so nothing can overdraw them.
             DrawFrame(context, frame, radius, frameWidth)
             DrawTitle(context, titleText, plotRect, frame)
+            DrawLegend(context)
             DrawBrowseButton(context, frame)
         End Sub
 

@@ -94,6 +94,10 @@ module.exports = async (t) => {
         // The data rows the editor still needs must stay: X/Y Column + the spreadsheet fields.
         t.ok(keyOf(props, 'SourceFile') && keyOf(props, 'YColumn'), 'catalog',
             `${tag} still lists the spreadsheet + Y Column rows`);
+        // The legend bar and its font size are chart properties (the per-series switch is the
+        // editor's 'Visible' row).
+        t.ok(keyOf(props, 'ShowLegend') && keyOf(props, 'LegendFontSize'), 'catalog',
+            `${tag} lists the legend rows`);
     }
 
     // --- 2. the webview opens it, the extension saves it ---
@@ -208,6 +212,17 @@ module.exports = async (t) => {
     writeChartSeries(line.model, line.el, chartSeriesOf(line.el));
     t.equal(seriesTags(line.model).join(','), 'LineSeries', 'write',
         'saving a line chart materialises LineSeries children');
+
+    // A series can be switched OFF: it keeps its place in the scale but is not drawn (the legend's
+    // tick box does the same at runtime).
+    const offSeries = chartModel('GrumpyXYPlot', '',
+        '<charts:XYSeries Title="Off" YColumn="C" Visible="False"/>');
+    t.equal(chartSeriesOf(offSeries.el)[0].visible, 'False', 'read', 'a hidden series reads back as off');
+    writeChartSeries(offSeries.model, offSeries.el, chartSeriesOf(offSeries.el));
+    t.ok(offSeries.model.serialize(true).includes('Visible="False"'), 'write',
+        'and is written back as off');
+    t.ok(!added.includes('Visible="True"'), 'write',
+        'a visible series does not carry the attribute at all (it is the default)');
 
     // --- 6c. the column pairing mirrors the C# renderer (B/C, D/E, F/G …) ---
     const xRule = /DefaultXColumn\(int index\) => SpreadsheetReader\.ColumnAfter\("([A-Z]+)", index \* (\d+)\)/.exec(cs);

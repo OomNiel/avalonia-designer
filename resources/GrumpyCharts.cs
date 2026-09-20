@@ -249,6 +249,10 @@ public abstract class ChartSeries
     /// <summary>Join the points with a line (False = markers only).</summary>
     public bool Connected { get; set; } = true;
 
+    /// <summary>Draw this series at all. Off = its trace is switched off (the legend's tick box).
+    /// The series keeps its place in the chart's scale, so toggling a trace does not move the axes.</summary>
+    public bool Visible { get; set; } = true;
+
     /// <summary>This series' own X axis (only used with AxisMode = PerSeries).</summary>
     public Axis? XAxis { get; set; }
 
@@ -553,6 +557,7 @@ internal sealed class Plot
     internal ChartMarkerStyle MarkerStyle = ChartMarkerStyle.Dot;
     internal double MarkerSize = 8d;
     internal bool Connected = true;
+    internal bool Visible = true;
     internal bool PerSeries;
     internal Axis? XAxis;
     internal Axis? YAxis;
@@ -682,6 +687,17 @@ public abstract class ChartBase : Control
     public static readonly StyledProperty<bool> ShowBrowseProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowBrowse), false);
 
+    // ---- legend ------------------------------------------------------------------------------
+    /// <summary>Draw the legend bar along the bottom of the chart: one entry per series, its name in
+    /// the series' own colour and a tick box that switches that trace on and off. A chart with no
+    /// series elements draws one unnamed line, so it has nothing to list and shows no legend.</summary>
+    public static readonly StyledProperty<bool> ShowLegendProperty =
+        AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowLegend), true);
+
+    /// <summary>Font size of the legend's series names.</summary>
+    public static readonly StyledProperty<double> LegendFontSizeProperty =
+        AvaloniaProperty.Register<ChartBase, double>(nameof(LegendFontSize), 12d);
+
     // ---- scaling overrides (the common axis) -------------------------------------------------
     public static readonly StyledProperty<double> MinXProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(MinX), double.NaN);
@@ -731,7 +747,7 @@ public abstract class ChartBase : Control
             ShowAxisTitlesProperty, XAxisTitleProperty, YAxisTitleProperty,
             ShowTitleProperty, TitleProperty, TitleColorProperty, TitlePositionProperty, TitleFontSizeProperty,
             SourceFileProperty, XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
-            ShowBrowseProperty,
+            ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
             MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
             LineColorProperty, LineThicknessProperty, LineStyleProperty,
             MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty);
@@ -849,6 +865,12 @@ public abstract class ChartBase : Control
 
     /// <summary>Draw the "…" file picker button.</summary>
     public bool ShowBrowse { get => GetValue(ShowBrowseProperty); set => SetValue(ShowBrowseProperty, value); }
+
+    /// <summary>Draw the legend bar along the bottom of the chart.</summary>
+    public bool ShowLegend { get => GetValue(ShowLegendProperty); set => SetValue(ShowLegendProperty, value); }
+
+    /// <summary>Font size of the legend's series names.</summary>
+    public double LegendFontSize { get => GetValue(LegendFontSizeProperty); set => SetValue(LegendFontSizeProperty, value); }
 
     /// <summary>Fixed X minimum for the common axis (NaN = auto-fit).</summary>
     public double MinX { get => GetValue(MinXProperty); set => SetValue(MinXProperty, value); }
@@ -1009,6 +1031,7 @@ public abstract class ChartBase : Control
                 MarkerStyle = series.MarkerStyle,
                 MarkerSize = series.MarkerSize,
                 Connected = series.Connected,
+                Visible = series.Visible,
                 PerSeries = series.PerSeries,
                 XAxis = series.XAxis,
                 YAxis = series.YAxis
@@ -1133,13 +1156,23 @@ public abstract class ChartBase : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (BrowseVisible && _browseRect.Contains(e.GetPosition(this)))
+        var position = e.GetPosition(this);
+        // The legend is interactive: clicking an entry (its tick box OR its name) switches that trace
+        // on and off. The rects are the ones the last Render laid out.
+        foreach (var entry in _legend)
+        {
+            if (!entry.Item.Contains(position)) continue;
+            entry.Series.Visible = !entry.Series.Visible;
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+        if (BrowseVisible && _browseRect.Contains(position))
         {
             _ = BrowseForFile();
             e.Handled = true;
         }
     }
-
     // ---- live update ------------------------------------------------------------------------
 
     private FileSystemWatcher? _watcher;
@@ -1265,11 +1298,20 @@ public abstract class ChartBase : Control
             };
         }
 
+        // The legend bar runs along the bottom of the chart and takes its height off the plot: entries
+        // flow left to right and WRAP, so the bar grows vertically to fit whatever it must show.
+        var legendHeight = MeasureLegend(frame.Width, plots);
+        _legendRect = legendHeight > 0
+            ? new Rect(frame.X, frame.Bottom - legendHeight, frame.Width, legendHeight)
+            : default;
+        if (legendHeight > 0) plot = Chop(plot, 0, 0, 0, legendHeight + 4);
+
         var common = plots.FirstOrDefault(p => !p.PerSeries) ?? plots.FirstOrDefault();
         if (common is null)
         {
             DrawFrame(context, frame, radius, frameWidth);
             DrawTitle(context, titleText, plot, frame);
+            DrawLegend(context);
             DrawMessage(context, plot, null);
             DrawBrowseButton(context, frame);
             return;
@@ -1309,6 +1351,7 @@ public abstract class ChartBase : Control
         {
             DrawFrame(context, frame, radius, frameWidth);
             DrawTitle(context, titleText, plot, frame);
+            DrawLegend(context);
             DrawMessage(context, plot, seriesError);
             DrawBrowseButton(context, frame);
             return;
@@ -1367,12 +1410,13 @@ public abstract class ChartBase : Control
             bottomUsed += XBlockHeight(p.XAxis!, p.XRange, null, p.Data.XTitle);
         }
 
-        // The data itself, in order, clipped to the plot area.
+        // The data itself, in order, clipped to the plot area. A series whose trace is switched off
+        // keeps its place in the scale but is not drawn.
         using (context.PushClip(plot))
         {
             foreach (var p in plots)
             {
-                if (!p.Data.HasData) continue;
+                if (!p.Data.HasData || !p.Visible) continue;
                 var points = p.Data.Xs.Select((_, i) => new Point(
                     p.XRange.ToPixel(p.Data.Xs[i], plot.X, plot.Width),
                     p.YRange.ToPixel(p.Data.Ys[i], plot.Bottom, -plot.Height))).ToArray();
@@ -1389,6 +1433,7 @@ public abstract class ChartBase : Control
         // Frame + title last, so nothing can overdraw them.
         DrawFrame(context, frame, radius, frameWidth);
         DrawTitle(context, titleText, plot, frame);
+        DrawLegend(context);
         DrawBrowseButton(context, frame);
     }
 
@@ -1430,6 +1475,139 @@ public abstract class ChartBase : Control
         var labelHeight = labels.Count > 0 ? MakeText("0", axis.TickLabelFontSize, axis.AxisColor).Height : 0;
         var name = AxisName(axis, chartTitle, fromSheet);
         return 4 + tickOut + labelHeight + (name is null ? 0 : name.Height + 6);
+    }
+
+    // ---- legend ----------------------------------------------------------------------------
+
+    /// <summary>One entry of the legend bar: the series it switches, and where it sits.</summary>
+    private sealed class LegendEntry
+    {
+        internal ChartSeries Series = null!;
+        internal FormattedText Text = null!;
+        internal Color Color;
+        /// <summary>The whole clickable item (tick box + name), in control coordinates.</summary>
+        internal Rect Item;
+        /// <summary>The tick box on its own.</summary>
+        internal Rect Box;
+    }
+
+    private readonly List<LegendEntry> _legend = new();
+    private Rect _legendRect;
+
+    /// <summary>The name a series shows in the legend: its own Title, else the spreadsheet's Y-column
+    /// header, else "Series n".</summary>
+    private string LegendName(Plot plot, int index)
+    {
+        if (plot.Definition is { Title: { } title } && !string.IsNullOrWhiteSpace(title)) return title;
+        if (!string.IsNullOrWhiteSpace(plot.Data.YTitle)) return plot.Data.YTitle;
+        return $"Series {index + 1}";
+    }
+
+    /// <summary>
+    /// Lays the legend out across <paramref name="width"/> and returns the height it needs, so the
+    /// plot can give up that much room. Entries run left to right and wrap onto further rows, and the
+    /// bar is as wide as the chart, so a long list grows DOWNWARD instead of being cut off. Returns 0
+    /// when there is nothing to list: a chart without series elements draws one unnamed line, and
+    /// there is nothing to name or switch off.
+    /// </summary>
+    private double MeasureLegend(double width, List<Plot> plots)
+    {
+        _legend.Clear();
+        if (!ShowLegend || Series.Count == 0) return 0;
+
+        const double pad = 2, boxSize = 13, boxGap = 6, itemGap = 16, rowGap = 4;
+        var font = Math.Max(6, LegendFontSize);
+        var rows = new List<List<(Plot Plot, FormattedText Text)>>();
+        var row = new List<(Plot, FormattedText)>();
+        var rowWidth = 0d;
+        var rowHeight = 0d;
+        var inner = Math.Max(24, width - pad * 2);
+
+        for (var i = 0; i < plots.Count; i++)
+        {
+            var plot = plots[i];
+            if (plot.Definition is null) continue;
+            var text = MakeText(LegendName(plot, i), font, plot.LineColor);
+            var itemWidth = boxSize + boxGap + text.Width;
+            // Wrap: an item that does not fit goes on the next row (a single over-long name still
+            // gets its own row and is clipped by the chart, like any other text).
+            if (row.Count > 0 && rowWidth + itemGap + itemWidth > inner)
+            {
+                rows.Add(row);
+                row = new List<(Plot, FormattedText)>();
+                rowWidth = 0;
+                rowHeight = 0;
+            }
+            if (row.Count > 0) rowWidth += itemGap;
+            row.Add((plot, text));
+            rowWidth += itemWidth;
+            rowHeight = Math.Max(rowHeight, Math.Max(boxSize, text.Height));
+        }
+        if (row.Count > 0) rows.Add(row);
+        if (rows.Count == 0) return 0;
+
+        var height = pad * 2 + rows.Sum(r => r.Max(e => Math.Max(boxSize, e.Text.Height))) + rowGap * (rows.Count - 1);
+        // Keep the layout in LOCAL coordinates; Render translates it into _legendRect once it knows
+        // where the bar lands (it is bottom-anchored in the frame).
+        var y = pad;
+        foreach (var entries in rows)
+        {
+            var rowH = entries.Max(e => Math.Max(boxSize, e.Text.Height));
+            var x = pad;
+            foreach (var (plot, text) in entries)
+            {
+                var itemWidth = boxSize + boxGap + text.Width;
+                _legend.Add(new LegendEntry
+                {
+                    Series = plot.Definition!,
+                    Text = text,
+                    Color = plot.LineColor,
+                    Item = new Rect(x, y, itemWidth, rowH),
+                    Box = new Rect(x, y + (rowH - boxSize) / 2, boxSize, boxSize)
+                });
+                x += itemWidth + itemGap;
+            }
+            y += rowH + rowGap;
+        }
+        return height;
+    }
+
+    /// <summary>Draws the legend bar: the tick box for each series (ticked when its trace is on) and
+    /// its name, in the series' own colour.</summary>
+    private void DrawLegend(DrawingContext context)
+    {
+        if (_legend.Count == 0) return;
+        // The entries were measured in local coordinates; the bar is anchored to the frame's bottom.
+        for (var i = 0; i < _legend.Count; i++)
+        {
+            var entry = _legend[i];
+            entry.Item = new Rect(entry.Item.X + _legendRect.X, entry.Item.Y + _legendRect.Y,
+                                  entry.Item.Width, entry.Item.Height);
+            entry.Box = new Rect(entry.Box.X + _legendRect.X, entry.Box.Y + _legendRect.Y,
+                                 entry.Box.Width, entry.Box.Height);
+        }
+
+        using (context.PushClip(_legendRect))
+        {
+            var framePen = MakePen(Color.Parse("#9AA0A6"), 1, ChartLineStyle.Solid);
+            foreach (var entry in _legend)
+            {
+                context.DrawRectangle(null, framePen, new RoundedRect(entry.Box, new CornerRadius(2)));
+                if (entry.Series.Visible)
+                {
+                    // A tick in the series' own colour, so a ticked box matches its line exactly.
+                    var tick = MakePen(entry.Color, 2, ChartLineStyle.Solid);
+                    var b = entry.Box;
+                    context.DrawLine(tick,
+                        new Point(b.X + b.Width * 0.20, b.Y + b.Height * 0.55),
+                        new Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78));
+                    context.DrawLine(tick,
+                        new Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78),
+                        new Point(b.X + b.Width * 0.80, b.Y + b.Height * 0.22));
+                }
+                context.DrawText(entry.Text, new Point(entry.Box.Right + 6, entry.Item.Y + (entry.Item.Height - entry.Text.Height) / 2));
+            }
+        }
     }
 
     /// <summary>Draws a Y axis: its line, ticks, labels and name, on the left or the right edge.

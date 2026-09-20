@@ -2417,6 +2417,8 @@ module.exports = async (t) => {
         t.ok(sItems()[0].className.indexOf('active') >= 0, 'series', 'the FIRST entry starts selected');
         t.ok(/Marker/.test($('seriesFields').textContent) === false, 'series',
             'a line series offers no marker fields');
+        // Every series carries a Visible switch (the legend's tick box is the runtime version of it).
+        t.ok(/Visible/.test($('seriesFields').textContent), 'series', 'the Visible switch is offered');
 
         // + Add series: a fresh entry, selected, in the next palette colour, with no Y column of its
         // own (empty = the chart's own column at render time).
@@ -2455,6 +2457,7 @@ module.exports = async (t) => {
         t.equal(sv.items[1].title, 'Delta', 'series', 'the new entry carries what was typed');
         t.equal(sv.items[1].yColumn, 'G', 'series', 'its Y column is carried');
         t.equal(sv.items[1].type, 'Line', 'series', 'the chart tag decides the series type');
+        t.equal(sv.items[1].visible, 'True', 'series', 'the Visible switch is carried in the save message');
         t.equal(sv.items[2].src, '1', 'series', 'the displaced entry follows in order');
         t.equal($('seriesModal').hidden, true, 'series', 'Save closes the editor');
 

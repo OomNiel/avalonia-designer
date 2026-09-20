@@ -29,7 +29,10 @@ export const CHART_SERIES_FIELDS: { key: string; attr: string; def: string }[] =
     { key: 'lineStyle', attr: 'LineStyle', def: 'Solid' },
     { key: 'markerStyle', attr: 'MarkerStyle', def: 'Dot' },
     { key: 'markerSize', attr: 'MarkerSize', def: '8' },
-    { key: 'connected', attr: 'Connected', def: 'True' }
+    { key: 'connected', attr: 'Connected', def: 'True' },
+    // Switched OFF = the trace is hidden (the legend's tick box at runtime, or this row). The line
+    // keeps its place in the chart's scale, so hiding one does not move the others.
+    { key: 'visible', attr: 'Visible', def: 'True' }
 ];
 
 /** The chart-level styling properties the Series editor owns. They drew the implicit series (and
