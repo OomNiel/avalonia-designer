@@ -233,7 +233,8 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.11.0` (2026-09-20) — packed, audited, ready to upload. THIS is the file to upload.** Supersedes
+> **`0.11.0` (2026-09-20) — released on GitHub and marked *Latest*; ready for the Marketplace upload. THIS is
+> the file to upload.** Supersedes
 > `0.10.11` (released on GitHub the same day, never uploaded) and everything before it. It carries the whole
 > charting tool, the nine Toolbox controls and the AI assist — **plus the documentation the released `0.10.11`
 > was missing** (the cursor chapter, `CONTROLS.md`, `README.md` §7 and the new PayPal donation link at the top
@@ -257,9 +258,18 @@ listing when that release is uploaded — a repo-only README edit does not.
 > that accepts files written before the rename), the README's single *"Formerly …"* line, and the `CHANGELOG`'s
 > history plus its rename note.
 >
-> **Not tagged, not released, not uploaded.** The upload goes through the publisher portal (leave
-> *Pre-release* unchecked), then verify with the `flags: 914` query that the version is `0.11.0` and
-> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above.
+> **Released on GitHub and marked *Latest*:** tag `v0.11.0` → commit **`036a8a4`**, pushed (the annotated tag
+> object is `e7cc634`). The release was created with `--latest` and the asset attached — `draft=false`,
+> `prerelease=false`, title *Grumpy's WYSIWYG Designer for VS Code v0.11.0*, `gh release list` shows it as the
+> repository's **Latest** — and verified **three ways**: the local build, a fresh `gh release download`, and the
+> API's own `digest`, all `3d913e3df7c97fd2970320fbbbab2579865344b44807fb46d139e77f95ab517c`, **1,046,409
+> bytes**. Installed locally as `grumpy.avalonia-designer@0.11.0`.
+>
+> **NOT YET UPLOADED to the Marketplace.** That step goes through the publisher portal (part E), leaving
+> *Pre-release* unchecked, then verify with the `flags: 914` query that the version is `0.11.0` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. The listing will change its **name** with
+> that upload — from *Avalonia Designer for VS Code* to *Grumpy's WYSIWYG Designer for VS Code* — while its
+> **unique identifier stays** `grumpy.avalonia-designer`, so existing installs keep updating normally.
 >
 > **Still on disk, both superseded by the above:** `avalonia-designer-0.10.11.vsix` (1,035,659 bytes,
 > `20cfa4ce…`, the released one — its docs predate the cursor chapter) and `avalonia-designer-0.10.10.vsix`
