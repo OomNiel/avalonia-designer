@@ -94,10 +94,11 @@ module.exports = async (t) => {
         // The data rows the editor still needs must stay: X/Y Column + the spreadsheet fields.
         t.ok(keyOf(props, 'SourceFile') && keyOf(props, 'YColumn'), 'catalog',
             `${tag} still lists the spreadsheet + Y Column rows`);
-        // The legend bar and its font size are chart properties (the per-series switch is the
-        // editor's 'Visible' row).
-        t.ok(keyOf(props, 'ShowLegend') && keyOf(props, 'LegendFontSize'), 'catalog',
-            `${tag} lists the legend rows`);
+        // The legend's own settings (on/off, side, font, frame) live in the 'Legend' editor — see
+        // chartLegend.test.js; the chart merely offers its button.
+        const legendRow = keyOf(props, 'Legend');
+        t.ok(legendRow && legendRow.kind === 'button', 'catalog',
+            `${tag} lists a 'Legend' editor button`);
     }
 
     // --- 2. the webview opens it, the extension saves it ---

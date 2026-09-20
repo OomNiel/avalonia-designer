@@ -890,6 +890,26 @@ public class XamlRenderer
         {
             try { return Thickness.Parse(value); } catch { return new Thickness(0); }
         }
+        if (tn == "Avalonia.CornerRadius")
+        {
+            // A corner radius is written as one number ("10") or as four ("4,8,4,8", also
+            // space-separated). Avalonia ships NEITHER a CornerRadius.Parse NOR a type converter for
+            // it, so the generic fallback below found nothing and the value was dropped on the floor:
+            // every rounded Border, Grid and chart showed SQUARE corners in the designer preview while
+            // the running app (real XAML loader) rounded them. Two values read as (TLeft, TRight,
+            // BRight, BLeft) = (a, b, a, b).
+            var parts = value.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var nums = parts.Select(p =>
+                double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : 0d)
+                .ToArray();
+            return nums.Length switch
+            {
+                0 => new CornerRadius(0),
+                1 => new CornerRadius(nums[0]),
+                2 => new CornerRadius(nums[0], nums[1], nums[0], nums[1]),
+                _ => new CornerRadius(nums[0], nums[1], nums[2], nums[3])
+            };
+        }
         if (tn == "Avalonia.Point")
         {
             // Line StartPoint/EndPoint ("x,y") — the programmatic builder would otherwise drop

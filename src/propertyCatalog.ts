@@ -699,10 +699,6 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Values', label: 'Values', kind: 'text' },
         { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
         { key: 'ShowBrowse', label: 'Browse Button', kind: 'dropdown', options: BOOL },
-        // The legend bar lists every series by name with a tick box that switches its trace on and
-        // off (at runtime). A chart with no series elements draws one unnamed line, so no legend.
-        { key: 'ShowLegend', label: 'Legend', kind: 'dropdown', options: BOOL },
-        { key: 'LegendFontSize', label: 'Legend Size', kind: 'number' },
         // X/Y Column and the data rows below belong to the ONE implicit series this chart draws
         // when it has no explicit <charts:LineSeries> children. A line plot reads X from the sample
         // index (0, 1, 2…), so only Y Column matters. Line Colour / Thickness / Style and the marker
@@ -741,9 +737,6 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Points', label: 'Points (x,y)', kind: 'text' },
         { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
         { key: 'ShowBrowse', label: 'Browse Button', kind: 'dropdown', options: BOOL },
-        // See GrumpyLinePlot: the same legend rows, so either chart lists its series the same way.
-        { key: 'ShowLegend', label: 'Legend', kind: 'dropdown', options: BOOL },
-        { key: 'LegendFontSize', label: 'Legend Size', kind: 'number' },
         { key: 'XColumn', label: 'X Column', kind: 'text' },
         { key: 'YColumn', label: 'Y Column', kind: 'text' },
         { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
@@ -1440,7 +1433,7 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
         // Everything the designer edits through a popup editor (`kind: 'button'`) — whether it is
         // pushed as a "top action" (DataGrid Rows/Columns, SplitPanel Split Layout/Splitters) or
         // lives in the control's own list (Items, Grid.Defs, MenuItems, StatusItems).
-        keys: ['Rows', 'Columns', 'Series', 'Axis', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
+        keys: ['Rows', 'Columns', 'Series', 'Axis', 'Legend', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
     },
     {
         id: 'layout', label: 'Layout & size',
@@ -1803,6 +1796,16 @@ export function propertyDefsFor(
             desc: 'Sets up the chart\'s two common axes (where each one sits, its colour, ticks, tick '
                 + 'labels, name and font size) and gives any Per-series line its own X and/or Y axis. '
                 + 'A per-series axis can be deleted again to leave that side to the common axis.'
+        });
+        topActions.push({
+            key: 'Legend',
+            label: 'Legend',
+            kind: 'button',
+            value: 'Edit legend…',
+            desc: 'Sets the legend bar up: switch it on or off, choose which side it sits on (bottom, '
+                + 'top, left or right — it wraps to fit its entries either way), its font size, and a '
+                + 'frame with its own backcolour, outline and rounded corners. Each entry carries a '
+                + 'tick box that switches that trace on and off.'
         });
     }
     // 'Items' (batch editor) for combo/list/items controls — opens a popup where you type

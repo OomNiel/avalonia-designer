@@ -34,7 +34,7 @@ const META_KEYS = new Set(['__name__', '__type__', '__theme__']);
 // bundled helper + namespace, and is compile-checked by T5.
 const MANAGED_KEYS = new Set([
     'Command', 'CommandParameter', 'SelectedItem', 'Items', 'ItemsSource', 'UndoRedoDepth',
-    'SplitLayout', 'SplitPanelPaneBorder', 'Splitters', 'Rows', 'Columns', 'Series', 'Axis',
+    'SplitLayout', 'SplitPanelPaneBorder', 'Splitters', 'Rows', 'Columns', 'Series', 'Axis', 'Legend',
     'MenuItems', 'StatusItems', 'Grid.Defs', 'chrome:AnchorHelper.Anchor',
     'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview'
 ]);

@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './xamlModel';
 import {
-    isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes
+    isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend
 } from './chartSeries';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
@@ -3334,6 +3334,18 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'saveChartLegend': {
+                    // 'Legend' editor on either chart: the legend is a flat set of chart attributes
+                    // (where it sits, its font size and its frame), so this is a plain property write.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || !isChartTag(localName(el.tagName))) return;
+                    const before = doc.model.serialize(true);
+                    writeChartLegend(doc.model, el, (msg.values ?? {}) as Record<string, unknown>);
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
+                    return;
+                }
                 case 'saveChartAxes': {
                     // 'Axis' editor on either chart: write the chart's own common X/Y axes and each
                     // series' optional own axes (a null entry deletes that per-series axis).
@@ -4942,10 +4954,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             msg.dgRows = dgRowsOf(el);
             msg.dgCols = dgColsOf(el);
         }
-        // The same for a chart's series and axes (the 'Series' and 'Axis' editors pre-fill from these).
+        // The same for a chart's series, axes and legend (the 'Series'/'Axis'/'Legend' editors pre-fill
+        // from these).
         if (isChartTag(localName(el.tagName))) {
             msg.chartSeries = chartSeriesOf(el);
             msg.chartAxes = chartAxesOf(el);
+            msg.legendInfo = chartLegendOf(el);
         }
         await panel.webview.postMessage(msg);
     }
@@ -7459,8 +7473,22 @@ ${publishButtons}      <span class="sep"></span>
         </div>
       </div>
     </div>
-    <div id="axisModal" class="modal" hidden>
-      <div class="modal-box modal-wide">
+    <div id="legendModal" class="modal" hidden>
+      <div class="modal-box modal-narrow">
+        <h3 id="legendTitle">Legend</h3>
+        <p class="modal-hint">The legend bar lists every series by name, in its own colour, with a
+          tick box that switches that trace on and off. <b>Position</b> chooses which side of the
+          drawing area it takes — it wraps onto more rows (bottom/top) or columns (left/right) to fit
+          what it must show. A chart with no series elements draws a single unnamed line, so it has
+          no legend.</p>
+        <div id="legendBody" class="series-fields"></div>
+        <div class="modal-buttons">
+          <button id="legendCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="legendSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="axisModal" class="modal" hidden>      <div class="modal-box modal-wide">
         <h3 id="axisTitle">Axes</h3>
         <p class="modal-hint">The <b>common</b> X and Y axes are what every series uses by default.
           A series set to <b>Per series</b> can have its own axes instead — add one per side it needs,

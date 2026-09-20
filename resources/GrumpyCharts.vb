@@ -82,9 +82,22 @@ Namespace Global.AvaloniaCharts
         Right
     End Enum
 
+    ''' <summary>Where the legend bar sits: across the bottom (the default), across the top, or down a
+    ''' side. A Top/Bottom legend spans the chart's width and wraps onto further rows; a Left/Right one
+    ''' fills the side and wraps onto further columns.</summary>
+    Public Enum LegendPosition
+        ''' <summary>Across the bottom of the drawing area.</summary>
+        Bottom
+        ''' <summary>Across the top of the drawing area.</summary>
+        Top
+        ''' <summary>Down the left-hand side, one entry per row.</summary>
+        Left
+        ''' <summary>Down the right-hand side.</summary>
+        Right
+    End Enum
+
     ''' <summary>Where an axis is drawn: Left/Right for a Y axis, Top/Bottom for an X axis.</summary>
-    Public Enum AxisPosition
-        ''' <summary>The left edge (a Y axis).</summary>
+    Public Enum AxisPosition        ''' <summary>The left edge (a Y axis).</summary>
         Left
         ''' <summary>The right edge (a Y axis).</summary>
         Right
@@ -648,6 +661,30 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly LegendFontSizeProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(LegendFontSize), 12.0)
 
+        ''' <summary>Where the legend bar sits. Top/Bottom span the chart's width; Left/Right fill a side.</summary>
+        Public Shared ReadOnly LegendPositionProperty As StyledProperty(Of LegendPosition) =
+            AvaloniaProperty.Register(Of ChartBase, LegendPosition)(NameOf(LegendPosition), AvaloniaCharts.LegendPosition.Bottom)
+
+        ''' <summary>The legend frame's backcolour (Transparent = whatever is behind it shows through).</summary>
+        Public Shared ReadOnly LegendBackColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of ChartBase, Color)(NameOf(LegendBackColor), Colors.Transparent)
+
+        ''' <summary>Draw a frame around the legend bar.</summary>
+        Public Shared ReadOnly LegendShowFrameProperty As StyledProperty(Of Boolean) =
+            AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(LegendShowFrame), True)
+
+        ''' <summary>Colour of the legend frame's outline.</summary>
+        Public Shared ReadOnly LegendBorderBrushProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of ChartBase, Color)(NameOf(LegendBorderBrush), Color.Parse("#C8C8C8"))
+
+        ''' <summary>Thickness of the legend frame's outline (0 = none).</summary>
+        Public Shared ReadOnly LegendBorderThicknessProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(LegendBorderThickness), 1.0)
+
+        ''' <summary>Corner rounding of the legend frame.</summary>
+        Public Shared ReadOnly LegendCornerRadiusProperty As StyledProperty(Of Avalonia.CornerRadius) =
+            AvaloniaProperty.Register(Of ChartBase, Avalonia.CornerRadius)(NameOf(LegendCornerRadius), New Avalonia.CornerRadius(4))
+
         ' ---- scaling overrides (the common axis) ----------------------------------------------
         Public Shared ReadOnly MinXProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(MinX), Double.NaN)
@@ -696,6 +733,8 @@ Namespace Global.AvaloniaCharts
                 ShowTitleProperty, TitleProperty, TitleColorProperty, TitlePositionProperty, TitleFontSizeProperty,
                 SourceFileProperty, XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
                 ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
+                LegendPositionProperty, LegendBackColorProperty, LegendShowFrameProperty,
+                LegendBorderBrushProperty, LegendBorderThicknessProperty, LegendCornerRadiusProperty,
                 MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
                 LineColorProperty, LineThicknessProperty, LineStyleProperty,
                 MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty)
@@ -1027,6 +1066,66 @@ Namespace Global.AvaloniaCharts
             End Get
             Set(value As Double)
                 SetValue(LegendFontSizeProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Where the legend bar sits.</summary>
+        Public Property LegendPosition As LegendPosition
+            Get
+                Return GetValue(LegendPositionProperty)
+            End Get
+            Set(value As LegendPosition)
+                SetValue(LegendPositionProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The legend frame's backcolour.</summary>
+        Public Property LegendBackColor As Color
+            Get
+                Return GetValue(LegendBackColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(LegendBackColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Draw a frame around the legend bar.</summary>
+        Public Property LegendShowFrame As Boolean
+            Get
+                Return GetValue(LegendShowFrameProperty)
+            End Get
+            Set(value As Boolean)
+                SetValue(LegendShowFrameProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Colour of the legend frame's outline.</summary>
+        Public Property LegendBorderBrush As Color
+            Get
+                Return GetValue(LegendBorderBrushProperty)
+            End Get
+            Set(value As Color)
+                SetValue(LegendBorderBrushProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Thickness of the legend frame's outline.</summary>
+        Public Property LegendBorderThickness As Double
+            Get
+                Return GetValue(LegendBorderThicknessProperty)
+            End Get
+            Set(value As Double)
+                SetValue(LegendBorderThicknessProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Corner rounding of the legend frame.</summary>
+        Public Property LegendCornerRadius As Avalonia.CornerRadius
+            Get
+                Return GetValue(LegendCornerRadiusProperty)
+            End Get
+            Set(value As Avalonia.CornerRadius)
+                SetValue(LegendCornerRadiusProperty, value)
             End Set
         End Property
 
@@ -1382,7 +1481,7 @@ Namespace Global.AvaloniaCharts
             ' The legend is interactive: clicking an entry (its tick box OR its name) switches that
             ' trace on and off. The rects are the ones the last Render laid out.
             For Each entry In _legend
-                If Not entry.Item.Contains(position) Then Continue For
+                If Not entry.Hit.Contains(position) Then Continue For
                 entry.Series.Visible = Not entry.Series.Visible
                 InvalidateVisual()
                 e.Handled = True
@@ -1479,7 +1578,7 @@ Namespace Global.AvaloniaCharts
             Friend Text As FormattedText
             Friend LineColor As Color
             ''' <summary>The whole clickable item (tick box + name), in control coordinates.</summary>
-            Friend Item As Rect
+            Friend Hit As Rect
             ''' <summary>The tick box on its own.</summary>
             Friend Box As Rect
         End Class
@@ -1502,77 +1601,82 @@ Namespace Global.AvaloniaCharts
         End Function
 
         ''' <summary>
-        ''' Lays the legend out across the given width and returns the height it needs, so the plot can
-        ''' give up that much room. Entries run left to right and wrap onto further rows, and the bar is
-        ''' as wide as the chart, so a long list grows DOWNWARD instead of being cut off. Returns 0 when
-        ''' there is nothing to list: a chart without series elements draws one unnamed line, and there
-        ''' is nothing to name or switch off.
+        ''' Lays the legend out and returns the size it needs, so the plot can give up that much room. A
+        ''' Top/Bottom bar spans the chart's width and wraps onto further ROWS; a Left/Right bar fills the
+        ''' chart's height and wraps onto further COLUMNS. Either way the bar grows to fit its list instead
+        ''' of running off the chart, and it keeps the plot at least 40% of the frame. Returns an empty
+        ''' size when there is nothing to list: a chart without series elements draws one unnamed line, and
+        ''' there is nothing to name or switch off.
         ''' </summary>
-        Private Function MeasureLegend(width As Double, plots As List(Of Plot)) As Double
+        Private Function MeasureLegend(frameSize As Size, plots As List(Of Plot)) As Size
             _legend.Clear()
-            If Not ShowLegend OrElse _series.Count = 0 Then Return 0
+            If Not ShowLegend OrElse _series.Count = 0 Then Return New Size(0, 0)
 
-            Const pad As Double = 2, boxSize As Double = 13, boxGap As Double = 6, itemGap As Double = 16, rowGap As Double = 4
+            Const pad As Double = 4, boxSize As Double = 13, boxGap As Double = 6, itemGap As Double = 16, lineGap As Double = 4
             Dim font = Math.Max(6, LegendFontSize)
-            Dim rows As New List(Of List(Of LegendCell))()
-            Dim row As New List(Of LegendCell)()
-            Dim rowWidth As Double = 0
-            Dim rowHeight As Double = 0
-            Dim inner = Math.Max(24, width - pad * 2)
+            Dim vertical = LegendPosition = LegendPosition.Left OrElse LegendPosition = LegendPosition.Right
+            Dim available = If(vertical, frameSize.Height, frameSize.Width)
+            ' Wrap once the entries fill 60% of the frame's own axis; whatever does not fit is clipped
+            ' by the bar (the plot is never squeezed out of existence).
+            Dim limit = Math.Max(24, available * 0.6 - pad * 2)
 
+            Dim items As New List(Of LegendCell)()
             For i = 0 To plots.Count - 1
                 Dim one = plots(i)
                 If one.Definition Is Nothing Then Continue For
-                Dim cell As New LegendCell With {.Plot = one, .Text = MakeText(LegendName(one, i), font, one.LineColor)}
-                Dim itemWidth = boxSize + boxGap + cell.Text.Width
-                ' Wrap: an item that does not fit goes on the next row (a single over-long name still
-                ' gets its own row and is clipped by the chart, like any other text).
-                If row.Count > 0 AndAlso rowWidth + itemGap + itemWidth > inner Then
-                    rows.Add(row)
-                    row = New List(Of LegendCell)()
-                    rowWidth = 0
-                    rowHeight = 0
-                End If
-                If row.Count > 0 Then rowWidth += itemGap
-                row.Add(cell)
-                rowWidth += itemWidth
-                rowHeight = Math.Max(rowHeight, Math.Max(boxSize, cell.Text.Height))
+                items.Add(New LegendCell With {
+                    .Plot = one,
+                    .Text = MakeText(LegendName(one, i), font, one.LineColor)
+                })
             Next
-            If row.Count > 0 Then rows.Add(row)
-            If rows.Count = 0 Then Return 0
+            If items.Count = 0 Then Return New Size(0, 0)
 
-            Dim height = pad * 2 + rowGap * (rows.Count - 1)
-            For Each entries In rows
-                Dim rowH As Double = 0
-                For Each cell In entries
-                    rowH = Math.Max(rowH, Math.Max(boxSize, cell.Text.Height))
-                Next
-                height += rowH
-            Next
-
-            ' Keep the layout in LOCAL coordinates; Render translates it into _legendRect once it knows
-            ' where the bar lands (it is bottom-anchored in the frame).
-            Dim y = pad
-            For Each entries In rows
-                Dim rowH As Double = 0
-                For Each cell In entries
-                    rowH = Math.Max(rowH, Math.Max(boxSize, cell.Text.Height))
-                Next
-                Dim x = pad
-                For Each cell In entries
-                    Dim itemWidth = boxSize + boxGap + cell.Text.Width
+            ' Flow the entries, keeping the layout in LOCAL coordinates: Render translates it into
+            ' _legendRect once it knows which side the bar lands on.
+            Dim x As Double = pad, y As Double = pad, lineExtent As Double = 0
+            For Each cell In items
+                Dim itemW = boxSize + boxGap + cell.Text.Width
+                Dim itemH = Math.Max(boxSize, cell.Text.Height)
+                If vertical Then
+                    If y > pad AndAlso y + itemH > limit Then
+                        x += lineExtent + itemGap
+                        y = pad
+                        lineExtent = 0
+                    End If
                     _legend.Add(New LegendEntry With {
                         .Series = cell.Plot.Definition,
                         .Text = cell.Text,
                         .LineColor = cell.Plot.LineColor,
-                        .Item = New Rect(x, y, itemWidth, rowH),
-                        .Box = New Rect(x, y + (rowH - boxSize) / 2, boxSize, boxSize)
+                        .Hit = New Rect(x, y, itemW, itemH),
+                        .Box = New Rect(x, y + (itemH - boxSize) / 2, boxSize, boxSize)
                     })
-                    x += itemWidth + itemGap
-                Next
-                y += rowH + rowGap
+                    y += itemH + lineGap
+                    lineExtent = Math.Max(lineExtent, itemW)
+                Else
+                    If x > pad AndAlso x + itemW > limit Then
+                        y += lineExtent + lineGap
+                        x = pad
+                        lineExtent = 0
+                    End If
+                    _legend.Add(New LegendEntry With {
+                        .Series = cell.Plot.Definition,
+                        .Text = cell.Text,
+                        .LineColor = cell.Plot.LineColor,
+                        .Hit = New Rect(x, y, itemW, itemH),
+                        .Box = New Rect(x, y + (itemH - boxSize) / 2, boxSize, boxSize)
+                    })
+                    x += itemW + itemGap
+                    lineExtent = Math.Max(lineExtent, itemH)
+                End If
             Next
-            Return height
+
+            ' The size the bar asks for: the wrap direction needs it, the other direction spans the frame.
+            Dim contentW = pad * 2 + If(vertical, x + lineExtent - pad, Math.Min(x - itemGap, limit))
+            Dim contentH = pad * 2 + If(vertical, Math.Min(y - lineGap, limit), y + lineExtent - pad)
+            If vertical Then
+                Return New Size(Math.Min(contentW, available * 0.6), contentH)
+            End If
+            Return New Size(contentW, Math.Min(contentH, available * 0.6))
         End Function
 
         ''' <summary>Draws the legend bar: the tick box for each series (ticked when its trace is on)
@@ -1582,13 +1686,21 @@ Namespace Global.AvaloniaCharts
             ' The entries were measured in local coordinates; the bar is anchored to the frame's bottom.
             For i = 0 To _legend.Count - 1
                 Dim entry = _legend(i)
-                entry.Item = New Rect(entry.Item.X + _legendRect.X, entry.Item.Y + _legendRect.Y,
-                                      entry.Item.Width, entry.Item.Height)
+                entry.Hit = New Rect(entry.Hit.X + _legendRect.X, entry.Hit.Y + _legendRect.Y,
+                                      entry.Hit.Width, entry.Hit.Height)
                 entry.Box = New Rect(entry.Box.X + _legendRect.X, entry.Box.Y + _legendRect.Y,
                                      entry.Box.Width, entry.Box.Height)
             Next
 
             Using context.PushClip(_legendRect)
+                If LegendShowFrame Then
+                    ' The frame: the bar's backcolour (Transparent leaves the plate showing) plus the
+                    ' rounded outline.
+                    Dim fill As New SolidColorBrush(LegendBackColor)
+                    Dim outline As IPen = Nothing
+                    If LegendBorderThickness > 0 Then outline = MakePen(LegendBorderBrush, LegendBorderThickness, ChartLineStyle.Solid)
+                    context.DrawRectangle(fill, outline, New RoundedRect(_legendRect, LegendCornerRadius))
+                End If
                 Dim framePen = MakePen(Color.Parse("#9AA0A6"), 1, ChartLineStyle.Solid)
                 For Each entry In _legend
                     context.DrawRectangle(Nothing, framePen, New RoundedRect(entry.Box, New Avalonia.CornerRadius(2)))
@@ -1603,7 +1715,7 @@ Namespace Global.AvaloniaCharts
                             New Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78),
                             New Point(b.X + b.Width * 0.8, b.Y + b.Height * 0.22))
                     End If
-                    context.DrawText(entry.Text, New Point(entry.Box.Right + 6, entry.Item.Y + (entry.Item.Height - entry.Text.Height) / 2))
+                    context.DrawText(entry.Text, New Point(entry.Box.Right + 6, entry.Hit.Y + (entry.Hit.Height - entry.Text.Height) / 2))
                 Next
             End Using
         End Sub
@@ -1648,12 +1760,24 @@ Namespace Global.AvaloniaCharts
                 End Select
             End If
 
-            ' The legend bar runs along the bottom of the chart and takes its height off the plot:
-            ' entries flow left to right and WRAP, so the bar grows vertically to fit what it must show.
-            Dim legendHeight = MeasureLegend(frame.Width, plots)
-            If legendHeight > 0 Then
-                _legendRect = New Rect(frame.X, frame.Bottom - legendHeight, frame.Width, legendHeight)
-                plotRect = Chop(plotRect, 0, 0, 0, legendHeight + 4)
+            ' The legend bar runs along the side it is set to and takes its size off the plot: entries
+            ' flow across (Top/Bottom) or down (Left/Right) and WRAP, so the bar grows to fit its list.
+            Dim legendSize = MeasureLegend(frame.Size, plots)
+            If legendSize.Width > 0 AndAlso legendSize.Height > 0 Then
+                Select Case LegendPosition
+                    Case LegendPosition.Top
+                        _legendRect = New Rect(frame.X, frame.Y, frame.Width, legendSize.Height)
+                        plotRect = Chop(plotRect, 0, legendSize.Height + 4, 0, 0)
+                    Case LegendPosition.Left
+                        _legendRect = New Rect(frame.X, frame.Y, legendSize.Width, frame.Height)
+                        plotRect = Chop(plotRect, legendSize.Width + 4, 0, 0, 0)
+                    Case LegendPosition.Right
+                        _legendRect = New Rect(frame.Right - legendSize.Width, frame.Y, legendSize.Width, frame.Height)
+                        plotRect = Chop(plotRect, 0, 0, legendSize.Width + 4, 0)
+                    Case Else
+                        _legendRect = New Rect(frame.X, frame.Bottom - legendSize.Height, frame.Width, legendSize.Height)
+                        plotRect = Chop(plotRect, 0, 0, 0, legendSize.Height + 4)
+                End Select
             End If
 
             Dim commonPlot = plots.FirstOrDefault(Function(p) Not p.PerSeries)

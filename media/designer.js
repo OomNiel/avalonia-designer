@@ -218,6 +218,11 @@
         axisDel: $('axisDel'),
         axisSave: $('axisSave'),
         axisCancel: $('axisCancel'),
+        legendModal: $('legendModal'),
+        legendTitle: $('legendTitle'),
+        legendBody: $('legendBody'),
+        legendSave: $('legendSave'),
+        legendCancel: $('legendCancel'),
         cellHighlight: $('cellHighlight'),
         rulerH: $('rulerH'),
         rulerV: $('rulerV'),
@@ -2818,6 +2823,8 @@
                     if (p.key === 'Series') openSeriesEditor(msg.name, msg.chartSeries || []);
                     // 'Axis' opens the common/per-series axis editor.
                     if (p.key === 'Axis') openAxisEditor(msg.name, msg.chartAxes || {});
+                    // 'Legend' opens the legend editor (side, font, frame, backcolour).
+                    if (p.key === 'Legend') openLegendEditor(msg.name, msg.legendInfo || {});
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -3728,6 +3735,7 @@
             if (!els.dgModal.hidden) closeDataGridEditor();
             if (!els.seriesModal.hidden) closeSeriesEditor();
             if (!els.axisModal.hidden) closeAxisEditor();
+            if (!els.legendModal.hidden) closeLegendEditor();
             if (!els.codeModal.hidden) closeCodeFixes();
         }
     });
@@ -4995,7 +5003,7 @@
         const fontSize = seriesNumber(String(shown.tickLabelFontSize || '11'), (v) => { ensure().tickLabelFontSize = v; });
         fontSize.disabled = locked;
         els.axisFields.appendChild(seriesField('Label size', fontSize));
-        bool('Axis name', 'showAxisName', 'Show a name at the end of this axis.');        const nameIn = seriesText(String(shown.name == null ? '' : shown.name), (v) => { ensure().name = v; },
+        bool('Axis name', 'showAxisName', 'Show a name at the end of this axis.'); const nameIn = seriesText(String(shown.name == null ? '' : shown.name), (v) => { ensure().name = v; },
             'The axis name. Empty = the spreadsheet’s column header.');
         nameIn.disabled = locked;
         els.axisFields.appendChild(seriesField('Name', nameIn));
@@ -5047,6 +5055,64 @@
     els.axisCancel.addEventListener('click', closeAxisEditor);
     els.axisModal.addEventListener('click', (e) => {
         if (e.target === els.axisModal) closeAxisEditor(); // click outside the box
+    });
+
+    /* Legend editor (GrumpyCharts) — the legend is a flat set of CHART ATTRIBUTES (unlike the series
+       and their axes, which are child elements), so this modal is a straight form: the extension
+       sends the current values in `msg.legendInfo` and writes them back on 'saveChartLegend'. */
+    let legendEdit = null; // { name, values } while the modal is open
+
+    function renderLegendEditor() {
+        els.legendBody.innerHTML = '';
+        if (!legendEdit) return;
+        const v = legendEdit.values;
+        const onOff = (caption, key, hint) => els.legendBody.appendChild(seriesField(caption,
+            axisPairs([['True', 'On'], ['False', 'Off']], String(v[key]), (x) => { v[key] = x; }), hint));
+        onOff('Legend', 'showLegend',
+            'Off hides the whole bar. A chart with no series elements has nothing to list either way.');
+        const position = document.createElement('select');
+        for (const side of ['Bottom', 'Top', 'Left', 'Right']) {
+            const o = document.createElement('option');
+            o.value = side;
+            o.textContent = side;
+            position.appendChild(o);
+        }
+        position.value = ['Bottom', 'Top', 'Left', 'Right'].indexOf(String(v.position)) >= 0 ? v.position : 'Bottom';
+        position.addEventListener('change', () => { v.position = position.value; });
+        els.legendBody.appendChild(seriesField('Position', position,
+            'Bottom and Top run the entries across and wrap onto more rows; Left and Right run them down and wrap onto more columns. The bar takes that space from the plot.'));
+        els.legendBody.appendChild(seriesField('Name size',
+            seriesNumber(String(v.fontSize || '12'), (x) => { v.fontSize = x; }),
+            'Font size of the series names in the bar.'));
+        onOff('Frame', 'showFrame', 'Draw a frame around the legend bar.');
+        const back = seriesColor(String(v.backColor || 'Transparent'), (x) => { v.backColor = x; });
+        els.legendBody.appendChild(seriesField('Backcolour', back,
+            'The frame\u2019s own background. Transparent leaves whatever is behind it showing through. A colour name (White, Teal…) or #RRGGBB.'));
+        const border = seriesColor(String(v.borderBrush || '#C8C8C8'), (x) => { v.borderBrush = x; });
+        els.legendBody.appendChild(seriesField('Frame colour', border, 'Colour of the frame\u2019s outline.'));
+        els.legendBody.appendChild(seriesField('Frame thickness',
+            seriesNumber(String(v.borderThickness == null ? '1' : v.borderThickness), (x) => { v.borderThickness = x; }),
+            'Outline thickness in pixels (0 = no outline, just the backcolour).'));
+        els.legendBody.appendChild(seriesField('Corner radius',
+            seriesText(String(v.cornerRadius == null ? '4' : v.cornerRadius), (x) => { v.cornerRadius = x; }),
+            'How round the frame\u2019s corners are (XAML CornerRadius, e.g. 4 or 4,8,4,8).'));
+    }
+    function openLegendEditor(name, info) {
+        legendEdit = { name: name || null, values: Object.assign({}, info || {}) };
+        els.legendTitle.textContent = 'Legend' + (legendEdit.name ? ' — ' + legendEdit.name : '');
+        renderLegendEditor();
+        els.legendModal.hidden = false;
+    }
+    function closeLegendEditor() { els.legendModal.hidden = true; legendEdit = null; }
+    els.legendSave.addEventListener('click', () => {
+        if (legendEdit) {
+            post({ type: 'saveChartLegend', name: legendEdit.name, values: legendEdit.values });
+        }
+        closeLegendEditor();
+    });
+    els.legendCancel.addEventListener('click', closeLegendEditor);
+    els.legendModal.addEventListener('click', (e) => {
+        if (e.target === els.legendModal) closeLegendEditor(); // click outside the box
     });
 
     /* Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay

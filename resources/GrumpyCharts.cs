@@ -137,10 +137,24 @@ public enum ChartTitlePosition
     Right
 }
 
+/// <summary>Where the legend bar sits: across the bottom (the default), across the top, or down a
+/// side. A Top/Bottom legend spans the chart's width and wraps onto further rows; a Left/Right one
+/// fills the side and wraps onto further columns.</summary>
+public enum LegendPosition
+{
+    /// <summary>Across the bottom of the drawing area.</summary>
+    Bottom,
+    /// <summary>Across the top of the drawing area.</summary>
+    Top,
+    /// <summary>Down the left-hand side, one entry per row.</summary>
+    Left,
+    /// <summary>Down the right-hand side.</summary>
+    Right
+}
+
 /// <summary>Where an axis is drawn: Left/Right for a Y axis, Top/Bottom for an X axis.</summary>
 public enum AxisPosition
-{
-    /// <summary>The left edge (a Y axis).</summary>
+{    /// <summary>The left edge (a Y axis).</summary>
     Left,
     /// <summary>The right edge (a Y axis).</summary>
     Right,
@@ -698,6 +712,30 @@ public abstract class ChartBase : Control
     public static readonly StyledProperty<double> LegendFontSizeProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(LegendFontSize), 12d);
 
+    /// <summary>Where the legend bar sits. Top/Bottom span the chart's width; Left/Right fill a side.</summary>
+    public static readonly StyledProperty<LegendPosition> LegendPositionProperty =
+        AvaloniaProperty.Register<ChartBase, LegendPosition>(nameof(LegendPosition), LegendPosition.Bottom);
+
+    /// <summary>The legend frame's backcolour (Transparent = whatever is behind it shows through).</summary>
+    public static readonly StyledProperty<Color> LegendBackColorProperty =
+        AvaloniaProperty.Register<ChartBase, Color>(nameof(LegendBackColor), Colors.Transparent);
+
+    /// <summary>Draw a frame around the legend bar.</summary>
+    public static readonly StyledProperty<bool> LegendShowFrameProperty =
+        AvaloniaProperty.Register<ChartBase, bool>(nameof(LegendShowFrame), true);
+
+    /// <summary>Colour of the legend frame's outline.</summary>
+    public static readonly StyledProperty<Color> LegendBorderBrushProperty =
+        AvaloniaProperty.Register<ChartBase, Color>(nameof(LegendBorderBrush), Color.Parse("#C8C8C8"));
+
+    /// <summary>Thickness of the legend frame's outline (0 = none).</summary>
+    public static readonly StyledProperty<double> LegendBorderThicknessProperty =
+        AvaloniaProperty.Register<ChartBase, double>(nameof(LegendBorderThickness), 1d);
+
+    /// <summary>Corner rounding of the legend frame.</summary>
+    public static readonly StyledProperty<CornerRadius> LegendCornerRadiusProperty =
+        AvaloniaProperty.Register<ChartBase, CornerRadius>(nameof(LegendCornerRadius), new CornerRadius(4));
+
     // ---- scaling overrides (the common axis) -------------------------------------------------
     public static readonly StyledProperty<double> MinXProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(MinX), double.NaN);
@@ -748,6 +786,8 @@ public abstract class ChartBase : Control
             ShowTitleProperty, TitleProperty, TitleColorProperty, TitlePositionProperty, TitleFontSizeProperty,
             SourceFileProperty, XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
             ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
+            LegendPositionProperty, LegendBackColorProperty, LegendShowFrameProperty,
+            LegendBorderBrushProperty, LegendBorderThicknessProperty, LegendCornerRadiusProperty,
             MinXProperty, MaxXProperty, MinYProperty, MaxYProperty,
             LineColorProperty, LineThicknessProperty, LineStyleProperty,
             MarkerStyleProperty, MarkerSizeProperty, ConnectedProperty);
@@ -871,6 +911,24 @@ public abstract class ChartBase : Control
 
     /// <summary>Font size of the legend's series names.</summary>
     public double LegendFontSize { get => GetValue(LegendFontSizeProperty); set => SetValue(LegendFontSizeProperty, value); }
+
+    /// <summary>Where the legend bar sits.</summary>
+    public LegendPosition LegendPosition { get => GetValue(LegendPositionProperty); set => SetValue(LegendPositionProperty, value); }
+
+    /// <summary>The legend frame's backcolour.</summary>
+    public Color LegendBackColor { get => GetValue(LegendBackColorProperty); set => SetValue(LegendBackColorProperty, value); }
+
+    /// <summary>Draw a frame around the legend bar.</summary>
+    public bool LegendShowFrame { get => GetValue(LegendShowFrameProperty); set => SetValue(LegendShowFrameProperty, value); }
+
+    /// <summary>Colour of the legend frame's outline.</summary>
+    public Color LegendBorderBrush { get => GetValue(LegendBorderBrushProperty); set => SetValue(LegendBorderBrushProperty, value); }
+
+    /// <summary>Thickness of the legend frame's outline.</summary>
+    public double LegendBorderThickness { get => GetValue(LegendBorderThicknessProperty); set => SetValue(LegendBorderThicknessProperty, value); }
+
+    /// <summary>Corner rounding of the legend frame.</summary>
+    public CornerRadius LegendCornerRadius { get => GetValue(LegendCornerRadiusProperty); set => SetValue(LegendCornerRadiusProperty, value); }
 
     /// <summary>Fixed X minimum for the common axis (NaN = auto-fit).</summary>
     public double MinX { get => GetValue(MinXProperty); set => SetValue(MinXProperty, value); }
@@ -1161,7 +1219,7 @@ public abstract class ChartBase : Control
         // on and off. The rects are the ones the last Render laid out.
         foreach (var entry in _legend)
         {
-            if (!entry.Item.Contains(position)) continue;
+            if (!entry.Hit.Contains(position)) continue;
             entry.Series.Visible = !entry.Series.Visible;
             InvalidateVisual();
             e.Handled = true;
@@ -1298,13 +1356,27 @@ public abstract class ChartBase : Control
             };
         }
 
-        // The legend bar runs along the bottom of the chart and takes its height off the plot: entries
-        // flow left to right and WRAP, so the bar grows vertically to fit whatever it must show.
-        var legendHeight = MeasureLegend(frame.Width, plots);
-        _legendRect = legendHeight > 0
-            ? new Rect(frame.X, frame.Bottom - legendHeight, frame.Width, legendHeight)
-            : default;
-        if (legendHeight > 0) plot = Chop(plot, 0, 0, 0, legendHeight + 4);
+        // The legend bar runs along the side it is set to and takes its size off the plot: entries
+        // flow across (Top/Bottom) or down (Left/Right) and WRAP, so the bar grows to fit its list.
+        var legendSize = MeasureLegend(frame.Size, plots);
+        if (legendSize.Width > 0 && legendSize.Height > 0)
+        {
+            _legendRect = LegendPosition switch
+            {
+                LegendPosition.Top => new Rect(frame.X, frame.Y, frame.Width, legendSize.Height),
+                LegendPosition.Left => new Rect(frame.X, frame.Y, legendSize.Width, frame.Height),
+                LegendPosition.Right => new Rect(frame.Right - legendSize.Width, frame.Y, legendSize.Width, frame.Height),
+                _ => new Rect(frame.X, frame.Bottom - legendSize.Height, frame.Width, legendSize.Height)
+            };
+            plot = LegendPosition switch
+            {
+                LegendPosition.Top => Chop(plot, 0, legendSize.Height + 4, 0, 0),
+                LegendPosition.Left => Chop(plot, legendSize.Width + 4, 0, 0, 0),
+                LegendPosition.Right => Chop(plot, 0, 0, legendSize.Width + 4, 0),
+                _ => Chop(plot, 0, 0, 0, legendSize.Height + 4)
+            };
+        }
+        else _legendRect = default;
 
         var common = plots.FirstOrDefault(p => !p.PerSeries) ?? plots.FirstOrDefault();
         if (common is null)
@@ -1486,7 +1558,7 @@ public abstract class ChartBase : Control
         internal FormattedText Text = null!;
         internal Color Color;
         /// <summary>The whole clickable item (tick box + name), in control coordinates.</summary>
-        internal Rect Item;
+        internal Rect Hit;
         /// <summary>The tick box on its own.</summary>
         internal Rect Box;
     }
@@ -1504,72 +1576,88 @@ public abstract class ChartBase : Control
     }
 
     /// <summary>
-    /// Lays the legend out across <paramref name="width"/> and returns the height it needs, so the
-    /// plot can give up that much room. Entries run left to right and wrap onto further rows, and the
-    /// bar is as wide as the chart, so a long list grows DOWNWARD instead of being cut off. Returns 0
-    /// when there is nothing to list: a chart without series elements draws one unnamed line, and
-    /// there is nothing to name or switch off.
+    /// Lays the legend out and returns the size it needs, so the plot can give up that much room. A
+    /// Top/Bottom bar spans the chart's width and wraps onto further ROWS; a Left/Right bar fills the
+    /// chart's height and wraps onto further COLUMNS. Either way the bar grows to fit its list instead
+    /// of running off the chart, and it keeps the plot at least 40% of the frame. Returns an empty size
+    /// when there is nothing to list: a chart without series elements draws one unnamed line, and there
+    /// is nothing to name or switch off.
     /// </summary>
-    private double MeasureLegend(double width, List<Plot> plots)
+    private Size MeasureLegend(Size frameSize, List<Plot> plots)
     {
         _legend.Clear();
-        if (!ShowLegend || Series.Count == 0) return 0;
+        if (!ShowLegend || Series.Count == 0) return default;
 
-        const double pad = 2, boxSize = 13, boxGap = 6, itemGap = 16, rowGap = 4;
+        const double pad = 4, boxSize = 13, boxGap = 6, itemGap = 16, lineGap = 4;
         var font = Math.Max(6, LegendFontSize);
-        var rows = new List<List<(Plot Plot, FormattedText Text)>>();
-        var row = new List<(Plot, FormattedText)>();
-        var rowWidth = 0d;
-        var rowHeight = 0d;
-        var inner = Math.Max(24, width - pad * 2);
+        var vertical = LegendPosition is LegendPosition.Left or LegendPosition.Right;
+        var available = vertical ? frameSize.Height : frameSize.Width;
+        // Wrap once the entries fill 60% of the frame's own axis; whatever does not fit is clipped by
+        // the bar (the plot is never squeezed out of existence).
+        var limit = Math.Max(24, available * 0.6 - pad * 2);
 
+        var items = new List<(ChartSeries Series, FormattedText Text, Color Color, double W, double H)>();
         for (var i = 0; i < plots.Count; i++)
         {
             var plot = plots[i];
             if (plot.Definition is null) continue;
             var text = MakeText(LegendName(plot, i), font, plot.LineColor);
-            var itemWidth = boxSize + boxGap + text.Width;
-            // Wrap: an item that does not fit goes on the next row (a single over-long name still
-            // gets its own row and is clipped by the chart, like any other text).
-            if (row.Count > 0 && rowWidth + itemGap + itemWidth > inner)
-            {
-                rows.Add(row);
-                row = new List<(Plot, FormattedText)>();
-                rowWidth = 0;
-                rowHeight = 0;
-            }
-            if (row.Count > 0) rowWidth += itemGap;
-            row.Add((plot, text));
-            rowWidth += itemWidth;
-            rowHeight = Math.Max(rowHeight, Math.Max(boxSize, text.Height));
+            items.Add((plot.Definition, text, plot.LineColor,
+                boxSize + boxGap + text.Width, Math.Max(boxSize, text.Height)));
         }
-        if (row.Count > 0) rows.Add(row);
-        if (rows.Count == 0) return 0;
+        if (items.Count == 0) return default;
 
-        var height = pad * 2 + rows.Sum(r => r.Max(e => Math.Max(boxSize, e.Text.Height))) + rowGap * (rows.Count - 1);
-        // Keep the layout in LOCAL coordinates; Render translates it into _legendRect once it knows
-        // where the bar lands (it is bottom-anchored in the frame).
-        var y = pad;
-        foreach (var entries in rows)
+        // Flow the entries, keeping the layout in LOCAL coordinates: Render translates it into
+        // _legendRect once it knows which side the bar lands on.
+        double x = pad, y = pad, lineExtent = 0;
+        foreach (var item in items)
         {
-            var rowH = entries.Max(e => Math.Max(boxSize, e.Text.Height));
-            var x = pad;
-            foreach (var (plot, text) in entries)
+            if (vertical)
             {
-                var itemWidth = boxSize + boxGap + text.Width;
+                if (y > pad && y + item.H > limit)
+                {
+                    x += lineExtent + itemGap;
+                    y = pad;
+                    lineExtent = 0;
+                }
                 _legend.Add(new LegendEntry
                 {
-                    Series = plot.Definition!,
-                    Text = text,
-                    Color = plot.LineColor,
-                    Item = new Rect(x, y, itemWidth, rowH),
-                    Box = new Rect(x, y + (rowH - boxSize) / 2, boxSize, boxSize)
+                    Series = item.Series,
+                    Text = item.Text,
+                    Color = item.Color,
+                    Hit = new Rect(x, y, item.W, item.H),
+                    Box = new Rect(x, y + (item.H - boxSize) / 2, boxSize, boxSize)
                 });
-                x += itemWidth + itemGap;
+                y += item.H + lineGap;
+                lineExtent = Math.Max(lineExtent, item.W);
             }
-            y += rowH + rowGap;
+            else
+            {
+                if (x > pad && x + item.W > limit)
+                {
+                    y += lineExtent + lineGap;
+                    x = pad;
+                    lineExtent = 0;
+                }
+                _legend.Add(new LegendEntry
+                {
+                    Series = item.Series,
+                    Text = item.Text,
+                    Color = item.Color,
+                    Hit = new Rect(x, y, item.W, item.H),
+                    Box = new Rect(x, y + (item.H - boxSize) / 2, boxSize, boxSize)
+                });
+                x += item.W + itemGap;
+                lineExtent = Math.Max(lineExtent, item.H);
+            }
         }
-        return height;
+
+        // The size the bar asks for: the wrap direction needs it, the other direction spans the frame.
+        var contentW = pad * 2 + (vertical ? x + lineExtent - pad : Math.Min(x - itemGap, limit));
+        var contentH = pad * 2 + (vertical ? Math.Min(y - lineGap, limit) : y + lineExtent - pad);
+        return vertical
+            ? new Size(Math.Min(contentW, available * 0.6), contentH)
+            : new Size(contentW, Math.Min(contentH, available * 0.6));
     }
 
     /// <summary>Draws the legend bar: the tick box for each series (ticked when its trace is on) and
@@ -1581,14 +1669,24 @@ public abstract class ChartBase : Control
         for (var i = 0; i < _legend.Count; i++)
         {
             var entry = _legend[i];
-            entry.Item = new Rect(entry.Item.X + _legendRect.X, entry.Item.Y + _legendRect.Y,
-                                  entry.Item.Width, entry.Item.Height);
+            entry.Hit = new Rect(entry.Hit.X + _legendRect.X, entry.Hit.Y + _legendRect.Y,
+                                  entry.Hit.Width, entry.Hit.Height);
             entry.Box = new Rect(entry.Box.X + _legendRect.X, entry.Box.Y + _legendRect.Y,
                                  entry.Box.Width, entry.Box.Height);
         }
 
         using (context.PushClip(_legendRect))
         {
+            if (LegendShowFrame)
+            {
+                // The frame: the bar's backcolour (Transparent leaves the plate showing) plus the
+                // rounded outline.
+                var fill = new SolidColorBrush(LegendBackColor);
+                var outline = LegendBorderThickness > 0
+                    ? MakePen(LegendBorderBrush, LegendBorderThickness, ChartLineStyle.Solid)
+                    : null;
+                context.DrawRectangle(fill, outline, new RoundedRect(_legendRect, LegendCornerRadius));
+            }
             var framePen = MakePen(Color.Parse("#9AA0A6"), 1, ChartLineStyle.Solid);
             foreach (var entry in _legend)
             {
@@ -1605,7 +1703,7 @@ public abstract class ChartBase : Control
                         new Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78),
                         new Point(b.X + b.Width * 0.80, b.Y + b.Height * 0.22));
                 }
-                context.DrawText(entry.Text, new Point(entry.Box.Right + 6, entry.Item.Y + (entry.Item.Height - entry.Text.Height) / 2));
+                context.DrawText(entry.Text, new Point(entry.Box.Right + 6, entry.Hit.Y + (entry.Hit.Height - entry.Text.Height) / 2));
             }
         }
     }

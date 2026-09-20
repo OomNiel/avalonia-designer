@@ -118,6 +118,38 @@ export function defaultSeriesColumns(index: number): { x: string; y: string } {
     return { x: columnAfter('B', index * 2), y: columnAfter('C', index * 2) };
 }
 
+/** Legend fields (key = message/UI name, attr = XAML attribute, def = the renderer's default when the
+ *  attribute is absent). The legend is NOT a child element — it is a handful of plain chart
+ *  attributes — so the writer is a flat attribute map, unlike the series and axes above. */
+export const CHART_LEGEND_FIELDS: { key: string; attr: string; def: string }[] = [
+    { key: 'showLegend', attr: 'ShowLegend', def: 'True' },
+    { key: 'position', attr: 'LegendPosition', def: 'Bottom' },
+    { key: 'fontSize', attr: 'LegendFontSize', def: '12' },
+    { key: 'showFrame', attr: 'LegendShowFrame', def: 'True' },
+    { key: 'backColor', attr: 'LegendBackColor', def: 'Transparent' },
+    { key: 'borderBrush', attr: 'LegendBorderBrush', def: '#C8C8C8' },
+    { key: 'borderThickness', attr: 'LegendBorderThickness', def: '1' },
+    { key: 'cornerRadius', attr: 'LegendCornerRadius', def: '4' }
+];
+
+/** The sides the legend bar can take, in the order the editor offers them. */
+export const LEGEND_POSITIONS = ['Bottom', 'Top', 'Left', 'Right'];
+
+/** A chart's current legend settings (attribute, else the renderer's default). */
+export function chartLegendOf(el: Element): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const f of CHART_LEGEND_FIELDS) out[f.key] = readAttr(el, f.attr, f.def);
+    return out;
+}
+
+/** Writes the legend settings onto the chart element, leaving out any value equal to the default so
+ *  a legend the user never restyled keeps a short, readable XAML element. */
+export function writeChartLegend(model: XamlModel, el: Element, values: Record<string, unknown>): void {
+    for (const f of CHART_LEGEND_FIELDS) {
+        writeAttr(model, el, f.attr, String(values[f.key] ?? f.def), f.def);
+    }
+}
+
 // ---------------------------------------------------------------- reading
 /** An attribute, or the renderer's default when it is absent or empty. */
 function readAttr(el: Element, key: string, def: string): string {

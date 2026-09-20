@@ -48,6 +48,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'seriesModal', 'seriesTitle', 'seriesList', 'seriesFields', 'seriesHead',
     'seriesAdd', 'seriesDel', 'seriesUp', 'seriesDown', 'seriesSave', 'seriesCancel',
     'axisModal', 'axisTitle', 'axisList', 'axisFields', 'axisHead', 'axisAdd', 'axisDel', 'axisSave', 'axisCancel',
+    'legendModal', 'legendTitle', 'legendBody', 'legendSave', 'legendCancel',
     'codeModal', 'codeHint', 'codeBody', 'codeRecheck', 'codeFixAll', 'codeClose',
     'cellHighlight',
     'btnDotGrid', 'btnSnapGrid', 'btnGridSettings', 'dotGrid',
@@ -2595,6 +2596,77 @@ module.exports = async (t) => {
         t.equal(del.series[0].y, null, 'axes', 'Delete sends null, which removes the axis element');
         $('axisCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal($('axisModal').hidden, true, 'axes', 'Cancel closes the editor');
+    }
+
+    // --- 'Legend' editor: the bar's on/off switch, which side it takes, and its frame ---
+    {
+        msg(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'Chart1', type: 'GrumpyXYPlot', x: 60, y: 60, w: 300, h: 180, parent: 'Body' }
+        ]));
+        msg({
+            type: 'properties', name: 'Chart1', properties: [
+                { key: 'Legend', label: 'Legend', kind: 'button', value: 'Edit legend…' }
+            ],
+            legendInfo: {
+                showLegend: 'True', position: 'Bottom', fontSize: '12', showFrame: 'True',
+                backColor: 'Transparent', borderBrush: '#C8C8C8', borderThickness: '1', cornerRadius: '4'
+            },
+            info: null
+        });
+        const lbtn = $('propsBody').querySelector('.prop-button');
+        t.ok(!!lbtn, 'legend', 'Legend renders as a property button');
+        $('legendModal').hidden = true;
+        lbtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('legendModal').hidden, false, 'legend', 'Legend opens the editor');
+        t.equal($('legendTitle').textContent, 'Legend — Chart1', 'legend', 'the title names the chart');
+        const lFields = () => [...$('legendBody').querySelectorAll('.series-field')];
+        const lField = (caption) => {
+            const row = lFields().find((f) => f.textContent.trim().startsWith(caption));
+            return row ? row.querySelector('input, select') : null;
+        };
+        // A colour row carries a swatch AND an authoritative text field — the text is the value.
+        const lColour = (caption) => {
+            const row = lFields().find((f) => f.textContent.trim().startsWith(caption));
+            return row ? row.querySelector('input[type=text]') : null;
+        };
+        t.equal(lField('Legend').value, 'True', 'legend', 'the bar starts switched on');
+        t.equal(lField('Position').value, 'Bottom', 'legend', 'on the bottom by default');
+        t.equal([...lField('Position').options].map((o) => o.value).join(','), 'Bottom,Top,Left,Right',
+            'legend', 'the four sides are offered');
+        t.equal(lField('Frame').value, 'True', 'legend', 'the frame is on by default');
+        t.equal(lColour('Backcolour').value, 'Transparent', 'legend', 'with a transparent backcolour');
+        t.equal(lField('Corner radius').value, '4', 'legend', 'and a rounded corner');
+        // Switch the bar off, move it to the right and give the frame a backcolour + radius.
+        const onOff = lField('Legend');
+        onOff.value = 'False';
+        onOff.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        const pos = lField('Position');
+        pos.value = 'Right';
+        pos.dispatchEvent(new s.window.Event('change', { bubbles: true }));
+        const back = lColour('Backcolour');
+        back.value = '#FFFF00';
+        back.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        const radius = lField('Corner radius');
+        radius.value = '12';
+        radius.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        posted.length = 0;
+        $('legendSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const lg = posted[posted.length - 1];
+        t.equal(lg.type, 'saveChartLegend', 'legend', 'Save posts saveChartLegend');
+        t.equal(lg.name, 'Chart1', 'legend', 'carries the chart name');
+        t.equal(lg.values.showLegend, 'False', 'legend', 'the on/off switch is carried');
+        t.equal(lg.values.position, 'Right', 'legend', 'the chosen side is carried');
+        t.equal(String(lg.values.backColor).toLowerCase(), '#ffff00', 'legend',
+            'the frame backcolour is carried');
+        t.equal(lg.values.cornerRadius, '12', 'legend', 'and the corner radius');
+        t.equal(lg.values.showFrame, 'True', 'legend', 'the untouched frame switch keeps its value');
+        t.equal($('legendModal').hidden, true, 'legend', 'Save closes the editor');
+        $('propsBody').querySelector('.prop-button')
+            .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        $('legendCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('legendModal').hidden, true, 'legend', 'Cancel closes the editor');
     }
 
     // --- foldable toolbar categories: click a heading to fold its buttons away, click again to
