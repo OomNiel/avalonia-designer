@@ -224,6 +224,15 @@ module.exports = async (t) => {
     t.ok(/#props\s*\{[^}]*overflow:\s*hidden/s.test(css), 'css', 'props panel does NOT scroll as a whole');
     t.ok(/#propsBody\s*\{[^}]*overflow-y:\s*auto/s.test(css), 'css', 'propsBody is the scrolling region');
     t.ok(/#propsToggleRow\s*\{[^}]*flex:\s*0\s+0\s+auto/s.test(css), 'css', 'Show advanced row stays pinned');
+    // The Series/Axis/Legend/Cursor editors: a spinner field (Line Thickness, Marker Size, tick
+    // lengths, legend margin …) must sit in the SAME rule as the text/select fields, stretch the same
+    // way and carry min-width: 0. A number input's automatic minimum size is its intrinsic
+    // ~20-character width (spinner included), so a fixed narrow flex-basis is ignored and the box
+    // overflows the right edge of the row — the fields no longer line up.
+    t.ok(/\.series-field input\[type='number'\][\s\S]{0,200}?\{[^}]*flex:\s*1\s+1\s+auto[^}]*min-width:\s*0/
+        .test(css), 'css', 'series number fields share the text/select width rule (rows line up)');
+    t.equal(/\.series-field input\[type='number'\]\s*\{[^}]*flex:\s*0\s+0\s+64px/.test(css), false, 'css',
+        'no fixed 64px basis on a series number field (it would overflow the row)');
 
     const s = setup();
     const { $, dispatch, msg, frame, posted, vscodeState } = s;

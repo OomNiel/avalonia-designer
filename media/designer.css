@@ -2315,21 +2315,15 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     opacity: 0.85;
 }
 
+/* Number fields share this rule with text/select so a spinner row (Line Thickness, Marker Size, tick
+   lengths, …) ends on the same right edge as every other field. The min-width: 0 matters: a number
+   input's automatic minimum size is its intrinsic ~20-character width (spinner included), which
+   otherwise wins over the flex basis and pushes the box past the right edge of the row. */
 .series-field input[type='text'],
+.series-field input[type='number'],
 .series-field select {
     flex: 1 1 auto;
     min-width: 0;
-    background: var(--panel-1);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 2px 5px;
-    font-family: inherit;
-    font-size: 12px;
-}
-
-.series-field input[type='number'] {
-    flex: 0 0 64px;
     background: var(--panel-1);
     color: var(--fg);
     border: 1px solid var(--border);
