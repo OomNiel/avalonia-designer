@@ -65,10 +65,13 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             kind: 'GrumpyCharts',
             file: vb ? 'GrumpyCharts.vb' : 'GrumpyCharts.cs',
             bundled: /BUNDLED RESOURCE/,
-            // The current chart set can draw the runtime "…" file picker (and grew the
-            // PlotBackOpacity property); older copies have neither, so chart colour/opacity rows
-            // would not take effect on a form whose copy predates them.
-            marker: 'PlotBackOpacityProperty'
+            // The chart set holds SERIES and AXIS objects now (`XYSeries`/`LineSeries` child elements,
+            // `Axis`). A copy from before that cannot compile the XAML this designer writes — saving a
+            // form with two series failed with "AVLN2000: Unable to resolve type XYSeries from
+            // namespace using:AvaloniaCharts" (ChartTestCS, 2026-09-20) — so the marker has to be one
+            // of the NEW types, not the older `PlotBackOpacityProperty` (which every copy since the
+            // first release has, and which therefore detected nothing).
+            marker: 'XYSeries'
         }
     ];
 }

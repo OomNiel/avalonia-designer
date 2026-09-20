@@ -169,12 +169,16 @@ module.exports = async (t) => {
 
     const plain = chartModel('', '<charts:XYSeries YColumn="C"/>');
     writeChartAxes(plain.model, plain.el,
-        axisValues({ position: 'Bottom', showAxis: 'True', axisColor: '#666666', majorTickLength: '6',
+        axisValues({
+            position: 'Bottom', showAxis: 'True', axisColor: '#666666', majorTickLength: '6',
             showMinorTicks: 'True', showTickLabels: 'True', tickLabelFontSize: '11', showAxisName: 'True',
-            name: '' }),
-        axisValues({ position: 'Left', showAxis: 'True', axisColor: '#666666', majorTickLength: '6',
+            name: ''
+        }),
+        axisValues({
+            position: 'Left', showAxis: 'True', axisColor: '#666666', majorTickLength: '6',
             showMinorTicks: 'True', showTickLabels: 'True', tickLabelFontSize: '11', showAxisName: 'True',
-            name: '' }),
+            name: ''
+        }),
         [{ x: null, y: null }]);
     const tidy = plain.model.serialize(true);
     t.ok(/<charts:GrumpyXYPlot\.XAxis>\s*<charts:Axis\/>/.test(tidy), 'write',

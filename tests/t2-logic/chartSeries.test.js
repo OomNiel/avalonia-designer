@@ -167,7 +167,7 @@ module.exports = async (t) => {
     const add = chartModel('GrumpyXYPlot', 'LineColor="#00AA00"', '<charts:XYSeries Title="One" YColumn="C"/>');
     writeChartSeries(add.model, add.el,
         [{ src: '0', type: 'XY', title: 'One', yColumn: 'C', lineColor: '#FF0000', lineThickness: '3' },
-         { src: '-1', type: 'XY', title: 'Two', yColumn: 'E', lineColor: '#0000FF' }]);
+        { src: '-1', type: 'XY', title: 'Two', yColumn: 'E', lineColor: '#0000FF' }]);
     const added = add.model.serialize(true);
     t.equal(seriesTags(add.model).length, 2, 'write', 'a new entry becomes a second element');
     t.ok(added.includes('Title="Two"') && added.includes('YColumn="E"'), 'write',

@@ -3327,6 +3327,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     if (!el || !isChartTag(localName(el.tagName))) return;
                     const before = doc.model.serialize(true);
                     writeChartSeries(doc.model, el, Array.isArray(msg.items) ? msg.items : []);
+                    // The series elements need the project's bundled chart file to be current.
+                    this.ensureGrumpyChartsHelper(doc);
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
                     await this.sendProperties(doc, panel, msg.name);
@@ -3342,6 +3344,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         (msg.commonX ?? null) as Record<string, unknown> | null,
                         (msg.commonY ?? null) as Record<string, unknown> | null,
                         Array.isArray(msg.series) ? msg.series : []);
+                    // The Axis objects need the project's bundled chart file to be current.
+                    this.ensureGrumpyChartsHelper(doc);
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
                     await this.sendProperties(doc, panel, msg.name);
@@ -4558,14 +4562,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             const src = path.join(this.context.extensionUri.fsPath, 'resources', file);
             if (!fs.existsSync(src)) return false;
             if (fs.existsSync(p)) {
-                // A copy older than the current bundled version (e.g. one without the plot-area
-                // opacity or the runtime “…” file picker) is refreshed; a customised copy is left
+                // A copy older than the current bundled version is refreshed; a customised copy is left
                 // alone, since isStaleBundledCopy only refreshes provable bundled boilerplate.
                 try {
                     if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'GrumpyCharts')) {
                         fs.copyFileSync(src, p);
                         void vscode.window.showInformationMessage(
-                            `Updated ${file} to the current bundled version (the charts gained the plot-area opacity and the file picker).`
+                            `Updated ${file} to the current bundled version (the charts gained multiple `
+                            + 'series and the axis objects this form uses).'
                         );
                         return true;
                     }
@@ -6685,6 +6689,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const text = withDesignerHeader(document.model.serialize(true));
         await vscode.workspace.fs.writeFile(document.uri, Buffer.from(text, 'utf8'));
         document.markSaved();
+        // A form that uses the chart controls needs THIS project's bundled chart set to be current:
+        // a project created before the charts gained multiple series keeps its old copy, and its build
+        // then fails on the <charts:XYSeries> elements the designer just saved (2026-09-20).
+        if (text.includes('charts:Grumpy')) this.ensureGrumpyChartsHelper(document);
     }
 
     async saveCustomDocumentAs(document: DesignerDocument, destination: vscode.Uri): Promise<void> {
