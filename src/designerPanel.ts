@@ -7508,7 +7508,9 @@ ${publishButtons}      <span class="sep"></span>
           arrows choose it), with a column for each of the cursor's <b>X Values</b> / <b>Y Values</b>
           switches. An empty position box means “the middle of the axis”. Left/right arrows step the
           selected cursor one sample; the chart's right-click menu switches cursors on and off at
-          runtime (that state is not saved, so a fresh start shows every cursor).</p>
+          runtime (that state is not saved, so a fresh start shows every cursor). With <b>two</b>
+          cursors switched on, the readout also adds the distance between them — the absolute
+          differences <b>ΔX</b> and <b>ΔY</b>, measured between the values the two cursor rows show.</p>
         <div class="grid-defs">
           <div class="grid-defs-col">
             <h4>Cursors</h4>

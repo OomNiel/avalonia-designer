@@ -1001,11 +1001,18 @@ public abstract class ChartBase : Control
     /// <summary>The cursor a drag is moving, and which of its lines the drag grabbed.</summary>
     private ChartCursor? _dragCursor;
 
-    /// <summary>One cursor's clickable parts, in control coordinates.</summary>
+    /// <summary>One cursor's clickable parts, in control coordinates, plus the values its readout
+    /// reports — kept so the panel can compare TWO cursors without recomputing anything.</summary>
     private sealed class CursorHit
     {
         internal ChartCursor Cursor = null!;
         internal int Index;
+        /// <summary>The cursor's X, in data units (the value its readout shows).</summary>
+        internal double X;
+        /// <summary>The Y its readout reports: the selected trace's value at that X, else the
+        /// cursor's own Y. NOT the height the horizontal line is drawn at — for a cursor that does
+        /// not follow its trace, the line is a threshold and the readout a reading.</summary>
+        internal double Y;
         /// <summary>A band around the vertical line (empty when it is not drawn).</summary>
         internal Rect Vertical;
         /// <summary>A band around the horizontal line (empty when it is not drawn).</summary>
@@ -2369,19 +2376,22 @@ public abstract class ChartBase : Control
         {
             var cursor = Cursors[index];
             var x = double.IsNaN(cursor.X) ? common.XRange.Mid : cursor.X;
-            // Following: the crossing's Y comes from the trace at the cursor's X (interpolated), so
-            // the handle, the horizontal line and the readout all sit on the drawn line. The cursor's
-            // own Y is then ignored — that is what makes it a free threshold line again when off.
-            var follows = cursor.FollowTrace && trace is not null;
-            var y = follows
-                ? ValueAt(trace!.Data, x) ?? (double.IsNaN(cursor.Y) ? common.YRange.Mid : cursor.Y)
-                : (double.IsNaN(cursor.Y) ? common.YRange.Mid : cursor.Y);
+            // Two values per cursor, and they are not the same thing:
+            //   readoutY — what the readout shows (and what the two-cursor delta subtracts): the
+            //              trace's value at the cursor's X, or the cursor's own Y with no trace.
+            //   drawnY   — how high the horizontal line is drawn: the same value while the cursor
+            //              follows its trace, but the cursor's own Y when it does not (a threshold).
+            var readoutValue = trace is null ? null : ValueAt(trace.Data, x);
+            var ownY = double.IsNaN(cursor.Y) ? common.YRange.Mid : cursor.Y;
+            var readoutY = readoutValue ?? ownY;
+            var drawnY = cursor.FollowTrace && readoutValue.HasValue ? readoutValue.Value : ownY;
+            var y = drawnY;
             var px = common.XRange.ToPixel(x, plot.X, plot.Width);
             var py = common.YRange.ToPixel(y, plot.Bottom, -plot.Height);
             var selected = index == _selectedCursor && live.Count > 1;
             var pen = MakeCursorPen(cursor.Color, selected ? 2d : 1d, cursor.Style);
 
-            var hit = new CursorHit { Cursor = cursor, Index = index };
+            var hit = new CursorHit { Cursor = cursor, Index = index, X = x, Y = readoutY };
             // The crossing point is clamped into the plot, so a cursor parked outside the axis shows as
             // a line along the edge instead of vanishing — and the lines are then inside the plot by
             // construction, which is why they need no clip.
@@ -2427,7 +2437,8 @@ public abstract class ChartBase : Control
         var trace = SelectedTrace(traces);
         if (trace is null) return;
         var x = double.IsNaN(cursor.X) ? common.XRange.Mid : cursor.X;
-        // The SAME value the crossing point was drawn at, so the number and the handle always agree.
+        // The SAME values the crossing was drawn from (see DrawCursors), so the numbers and the
+        // handle always agree.
         var value = ValueAt(trace.Data, x);
 
         // The marker on the trace itself ties the numbers to the line they came from.
@@ -2447,10 +2458,28 @@ public abstract class ChartBase : Control
         var name = LegendName(trace, plots.IndexOf(trace));
         var tag = "C" + (index + 1);
 
+        // With TWO cursors on the chart the panel also reports the distance between them, as plain
+        // absolute differences (the user's rule): |X1 − X2| and |Y1 − Y2|, from the values each
+        // cursor's own readout line shows. Drawn in the OTHER cursor's colour, because it is the pair
+        // that it describes, and only while both are switched on.
+        string? delta = null;
+        var deltaColor = cursor.Color;
+        if (_cursorHits.Count >= 2)
+        {
+            var first = _cursorHits[0];
+            var second = _cursorHits[1];
+            delta = "ΔX " + FormatCursor(Math.Abs(first.X - second.X))
+                  + "   ΔY " + FormatCursor(Math.Abs(first.Y - second.Y));
+            deltaColor = first.Index == index ? second.Cursor.Color : first.Cursor.Color;
+        }
+
         var head = MakeText(tag + "  " + name, 11, trace.LineColor);
         var body = parts.Count > 0 ? MakeText(string.Join("   ", parts), 11, cursor.Color) : null;
-        var width = Math.Min(Math.Max(head.Width, body?.Width ?? 0) + 12, Math.Max(20, plot.Width - 8));
-        var height = head.Height + (body is null ? 0 : body.Height + 2) + 10;
+        var deltaText = delta is null ? null : MakeText(delta, 11, deltaColor);
+        var width = Math.Min(Math.Max(Math.Max(head.Width, body?.Width ?? 0), deltaText?.Width ?? 0) + 12,
+                             Math.Max(20, plot.Width - 8));
+        var height = head.Height + (body is null ? 0 : body.Height + 2)
+                   + (deltaText is null ? 0 : deltaText.Height + 7) + 10;
 
         // Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot
         // and clear of the "…" file picker in the top right corner.
@@ -2471,8 +2500,18 @@ public abstract class ChartBase : Control
             new Pen(new SolidColorBrush(cursor.Color), 1), new RoundedRect(rect, new CornerRadius(3)));
         context.DrawText(head, new Point(rect.X + 6, rect.Y + 5));
         if (body is not null) context.DrawText(body, new Point(rect.X + 6, rect.Y + 5 + head.Height + 2));
+        if (deltaText is not null)
+        {
+            // A hairline over the pair's row, so "this line is about both cursors" is visible at a
+            // glance rather than only in its colour.
+            var lineY = rect.Y + 5 + head.Height + (body is null ? 0 : body.Height + 2) + 3;
+            context.DrawLine(new Pen(new SolidColorBrush(deltaColor, 0.5), 1),
+                new Point(rect.X + 6, lineY), new Point(rect.Right - 6, lineY));
+            context.DrawText(deltaText, new Point(rect.X + 6, lineY + 3));
+        }
 
-        _readoutText = tag + " " + name + (parts.Count > 0 ? ": " + string.Join(", ", parts) : string.Empty);
+        _readoutText = tag + " " + name + (parts.Count > 0 ? ": " + string.Join(", ", parts) : string.Empty)
+                     + (delta is null ? string.Empty : " | " + delta);
     }
 
     /// <summary>The trace's Y at <paramref name="x"/>: linearly interpolated between the two samples

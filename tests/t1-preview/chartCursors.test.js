@@ -281,6 +281,39 @@ module.exports = async (t) => {
         t.equal(band(followsWithRightY.img).at, band(followsDefault.img).at, 'chart-cursors',
             'nor where the crossing is drawn');
 
+        // --- the two-cursor delta row ---------------------------------------------------------
+        // With TWO cursors switched on, the panel adds |X1 − X2| and |Y1 − Y2|, drawn in the OTHER
+        // cursor's colour. Here the cursors are at X=1 and X=4 (ΔX 3) and the fixture's trace reads 9
+        // and 8 there (ΔY 1) — the exact figures were checked by eye on the render; the pixel facts
+        // that a test can hold onto are that the row exists, is in the other colour, and only appears
+        // while BOTH cursors are active.
+        // The text column of the panel: right of its left border, left of the second cursor's line at
+        // X=4 (x≈258), so only the panel's own text can put ink here.
+        const TEXT_COL = { x0: 242, x1: 256, y0: 0, y1: 130 };
+        const PANEL_ALL = { x0: 236, x1: W, y0: 0, y1: 130 };
+        const oneCursor = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Vertical" X="1" Color="#FF8C00"')), W, H);
+        const twoCursors = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Vertical" X="1" Color="#FF8C00"')
+            + cursor('Orientation="Vertical" X="4" Color="#8000FF"')), W, H);
+        const secondOff = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Vertical" X="1" Color="#FF8C00"')
+            + cursor('Orientation="Vertical" X="4" Color="#8000FF" Enabled="False"')), W, H);
+        t.equal(ink(oneCursor.img, PURPLE, TEXT_COL).n, 0, 'chart-cursors',
+            'with ONE cursor the panel reports no difference at all');
+        t.ok(ink(twoCursors.img, PURPLE, TEXT_COL).n > 20, 'chart-cursors',
+            'with TWO the difference row is drawn, in the other cursor\'s colour',
+            `purple in the text column=${ink(twoCursors.img, PURPLE, TEXT_COL).n}`);
+        t.ok(ink(twoCursors.img, ORANGE, PANEL_ALL).maxY > ink(oneCursor.img, ORANGE, PANEL_ALL).maxY + 5,
+            'chart-cursors', 'and the panel grew a line taller to hold it',
+            `${ink(oneCursor.img, ORANGE, PANEL_ALL).maxY} -> ${ink(twoCursors.img, ORANGE, PANEL_ALL).maxY}`);
+        // "When 2 cursors are ACTIVE" is the condition: a declared-but-switched-off second cursor
+        // changes nothing — no line, no difference row.
+        t.equal(ink(secondOff.img, PURPLE).n, 0, 'chart-cursors',
+            'a second cursor that is switched off draws nothing and adds no difference row');
+        t.equal(ink(secondOff.img, ORANGE, PANEL_ALL).maxY, ink(oneCursor.img, ORANGE, PANEL_ALL).maxY,
+            'chart-cursors', 'so the panel is exactly as tall as with a single cursor');
+
         // --- two cursors at once, each on its own lines and in its own colour ---
         const two = await renderPng(host, form('ReadoutPosition="TopRight"',
             cursor('Orientation="Both" X="1" Y="9" Color="#FF8C00"')

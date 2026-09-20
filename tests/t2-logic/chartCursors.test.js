@@ -210,12 +210,13 @@ module.exports = async (t) => {
     // The drawing must DERIVE the crossing's Y from the trace — with the same value the readout uses,
     // which is what keeps the number and the drawn crossing in agreement.
     const draw = between(cs, 'private void DrawCursors', 'private void DrawCursorReadout');
-    t.ok(/cursor\.FollowTrace \&\& trace is not null/.test(draw), 'follow',
-        'the C# drawing follows the trace only when the cursor asks for it AND there is a trace');
-    t.ok(/ValueAt\(trace!\.Data, x\)/.test(draw), 'follow',
+    t.ok(/cursor\.FollowTrace \&\& readoutValue\.HasValue/.test(draw), 'follow',
+        'the C# drawing follows the trace only when the cursor asks for it AND the trace has a value');
+    t.ok(/readoutValue = trace is null \? null : ValueAt\(trace\.Data, x\)/.test(draw), 'follow',
         'and takes the crossing Y from the trace, interpolated at the cursor X');
     const vbDraw = between(vb, 'Private Sub DrawCursors', 'Private Sub DrawCursorReadout');
-    t.ok(/cursor\.FollowTrace AndAlso trace IsNot Nothing/.test(vbDraw) && /ValueAt\(trace\.Data, x\)/.test(vbDraw),
+    t.ok(/cursor\.FollowTrace AndAlso readoutValue\.HasValue/.test(vbDraw)
+        && /ValueAt\(trace\.Data, x\)/.test(vbDraw),
         'follow', 'the VB twin derives it the same way');
     // One trace choice for both, so they cannot drift apart.
     for (const [name, source] of [['C#', cs], ['VB', vb]]) {
@@ -257,6 +258,35 @@ module.exports = async (t) => {
       </charts:GrumpyXYPlot.Cursors>`);
     t.equal(chartCursorsOf(handFollow.el).cursors[0].followTrace, 'False', 'read',
         'a hand-written FollowTrace="False" is read and preserved');
+
+    // --- 12b. the two-cursor difference rows (|X1 − X2| and |Y1 − Y2|) ---
+    const readoutCs = between(cs, 'private void DrawCursorReadout', 'private static double? ValueAt');
+    const readoutVb = between(vb, 'Private Sub DrawCursorReadout', 'Private Shared Function ValueAt');
+    for (const [name, body] of [['C#', readoutCs], ['VB', readoutVb]]) {
+        t.ok(/Count >= 2/.test(body), 'delta',
+            `${name} only reports a difference while TWO cursors are drawn (a switched-off one adds none)`);
+        t.ok(/Math\.Abs\(first\.X - second\.X\)/.test(body), 'delta',
+            `${name} reports the absolute X difference`);
+        t.ok(/Math\.Abs\(first\.Y - second\.Y\)/.test(body), 'delta',
+            `${name} and the absolute Y difference`);
+        t.ok(/ΔX /.test(body) && /ΔY /.test(body), 'delta',
+            `${name} labels them ΔX and ΔY`);
+    }
+    // The values subtracted are the ones each cursor's own readout line shows — recorded on the hit
+    // while drawing — so the difference can never contradict the rows above it.
+    t.ok(/X = x, Y = readoutY/.test(draw), 'delta',
+        'the C# records each cursor\'s readout value as it draws it');
+    t.ok(/\.X = x, \.Y = readoutY/.test(vbDraw), 'delta', 'and the VB twin does too');
+    // The delta row is drawn in the OTHER cursor's colour, and looks for that cursor explicitly.
+    t.ok(/first\.Index == index \? second\.Cursor\.Color : first\.Cursor\.Color/.test(readoutCs), 'delta',
+        'the C# difference row takes the colour of the cursor it is not reporting');
+    t.ok(/first\.Index = index, second\.Cursor\.Color, first\.Cursor\.Color/.test(readoutVb), 'delta',
+        'and the VB twin does the same');
+    // The pair's numbers travel with the copied readout too.
+    t.ok(/_readoutText = tag[\s\S]{0,220}delta/.test(readoutCs), 'delta',
+        'the C# copied readout carries the difference (Copy readout in the chart menu)');
+    t.ok(/_readoutText = tag[\s\S]{0,220}delta/.test(readoutVb), 'delta',
+        'and so does the VB one');
 
     // --- 8. the host reads the property element (or the designer preview shows nothing) ---
     const host = read('host/XamlRenderer.cs');

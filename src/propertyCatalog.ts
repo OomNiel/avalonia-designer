@@ -1820,7 +1820,8 @@ export function propertyDefsFor(
                 + 'decimals can be fixed. In the app: drag a cursor\'s line to move it (a following '
                 + 'cursor slides along its trace), use the left and right arrows to step it one '
                 + 'sample, up/down to pick the trace the readout reports, and right-click the chart '
-                + 'for the cursor menu.'
+                + 'for the cursor menu. With two cursors switched on, the readout also reports the '
+                + 'distance between them (|ΔX| and |ΔY|).'
         });
     }
     // 'Items' (batch editor) for combo/list/items controls — opens a popup where you type

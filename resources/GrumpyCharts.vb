@@ -947,10 +947,17 @@ Namespace Global.AvaloniaCharts
         ''' <summary>The rectangle the readout was drawn in (kept for tests and future hit-testing).</summary>
         Private _readoutRect As Rect
 
-        ''' <summary>One cursor's clickable parts, in control coordinates.</summary>
+        ''' <summary>One cursor's clickable parts, in control coordinates, plus the values its readout
+        ''' reports — kept so the panel can compare TWO cursors without recomputing anything.</summary>
         Private NotInheritable Class CursorHit
             Friend Cursor As ChartCursor
             Friend Index As Integer
+            ''' <summary>The cursor's X, in data units (the value its readout shows).</summary>
+            Friend X As Double
+            ''' <summary>The Y its readout reports: the selected trace's value at that X, else the
+            ''' cursor's own Y. NOT the height the horizontal line is drawn at — for a cursor that does
+            ''' not follow its trace, the line is a threshold and the readout a reading.</summary>
+            Friend Y As Double
             ''' <summary>A band around the vertical line (empty when it is not drawn).</summary>
             Friend Vertical As Rect
             ''' <summary>A band around the horizontal line (empty when it is not drawn).</summary>
@@ -2586,19 +2593,22 @@ Namespace Global.AvaloniaCharts
             For Each index In live
                 Dim cursor = Cursors(index)
                 Dim x = If(Double.IsNaN(cursor.X), common.XRange.Mid, cursor.X)
-                ' Following: the crossing's Y comes from the trace at the cursor's X (interpolated), so
-                ' the handle, the horizontal line and the readout all sit on the drawn line. The cursor's
-                ' own Y is then ignored — that is what makes it a free threshold line again when off.
-                Dim follows = cursor.FollowTrace AndAlso trace IsNot Nothing
-                Dim followValue = If(follows, ValueAt(trace.Data, x), Nothing)
-                Dim y = If(followValue.HasValue, followValue.Value,
-                           If(Double.IsNaN(cursor.Y), common.YRange.Mid, cursor.Y))
+                ' Two values per cursor, and they are not the same thing:
+                '   readoutY — what the readout shows (and what the two-cursor delta subtracts): the
+                '              trace's value at the cursor's X, or the cursor's own Y with no trace.
+                '   drawnY   — how high the horizontal line is drawn: the same value while the cursor
+                '              follows its trace, but the cursor's own Y when it does not (a threshold).
+                Dim readoutValue = If(trace Is Nothing, Nothing, ValueAt(trace.Data, x))
+                Dim ownY = If(Double.IsNaN(cursor.Y), common.YRange.Mid, cursor.Y)
+                Dim readoutY = If(readoutValue.HasValue, readoutValue.Value, ownY)
+                Dim drawnY = If(cursor.FollowTrace AndAlso readoutValue.HasValue, readoutValue.Value, ownY)
+                Dim y = drawnY
                 Dim px = common.XRange.ToPixel(x, plot.X, plot.Width)
                 Dim py = common.YRange.ToPixel(y, plot.Bottom, -plot.Height)
                 Dim selected = index = _selectedCursor AndAlso live.Count > 1
                 Dim pen = MakeCursorPen(cursor.Color, If(selected, 2.0, 1.0), cursor.Style)
 
-                Dim hit As New CursorHit With {.Cursor = cursor, .Index = index}
+                Dim hit As New CursorHit With {.Cursor = cursor, .Index = index, .X = x, .Y = readoutY}
                 ' The crossing point is clamped into the plot, so a cursor parked outside the axis
                 ' shows as a line along the edge instead of vanishing — and the lines are then inside
                 ' the plot by construction, which is why they need no clip.
@@ -2638,7 +2648,8 @@ Namespace Global.AvaloniaCharts
             Dim trace = SelectedTrace(traces)
             If trace Is Nothing Then Return
             Dim x = If(Double.IsNaN(cursor.X), common.XRange.Mid, cursor.X)
-            ' The SAME value the crossing point was drawn at, so the number and the handle always agree.
+            ' The SAME values the crossing was drawn from (see DrawCursors), so the numbers and the
+            ' handle always agree.
             Dim value = ValueAt(trace.Data, x)
 
             ' The marker on the trace itself ties the numbers to the line they came from.
@@ -2650,6 +2661,20 @@ Namespace Global.AvaloniaCharts
                 End Using
             End If
 
+            ' With TWO cursors on the chart the panel also reports the distance between them, as plain
+            ' absolute differences: |X1 - X2| and |Y1 - Y2|, from the values each cursor's own readout
+            ' line shows. Drawn in the OTHER cursor's colour, because it is the pair that it describes,
+            ' and only while both are switched on.
+            Dim delta As String = Nothing
+            Dim deltaColor = cursor.Color
+            If _cursorHits.Count >= 2 Then
+                Dim first = _cursorHits(0)
+                Dim second = _cursorHits(1)
+                delta = "ΔX " & FormatCursor(Math.Abs(first.X - second.X)) &
+                        "   ΔY " & FormatCursor(Math.Abs(first.Y - second.Y))
+                deltaColor = If(first.Index = index, second.Cursor.Color, first.Cursor.Color)
+            End If
+
             Dim parts As New List(Of String)()
             If cursor.XValues Then parts.Add("X " & FormatCursor(x))
             If cursor.YValues Then parts.Add("Y " & If(value.HasValue, FormatCursor(value.Value), "–"))
@@ -2658,8 +2683,12 @@ Namespace Global.AvaloniaCharts
 
             Dim head = MakeText(tag & "  " & name, 11, trace.LineColor)
             Dim body = If(parts.Count > 0, MakeText(String.Join("   ", parts), 11, cursor.Color), Nothing)
-            Dim width = Math.Min(Math.Max(head.Width, If(body Is Nothing, 0.0, body.Width)) + 12, Math.Max(20, plot.Width - 8))
-            Dim height = head.Height + If(body Is Nothing, 0.0, body.Height + 2) + 10
+            Dim deltaText = If(delta Is Nothing, Nothing, MakeText(delta, 11, deltaColor))
+            Dim width = Math.Min(Math.Max(Math.Max(head.Width, If(body Is Nothing, 0.0, body.Width)),
+                                          If(deltaText Is Nothing, 0.0, deltaText.Width)) + 12,
+                                 Math.Max(20, plot.Width - 8))
+            Dim height = head.Height + If(body Is Nothing, 0.0, body.Height + 2) +
+                         If(deltaText Is Nothing, 0.0, deltaText.Height + 7) + 10
 
             ' Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot
             ' and clear of the "…" file picker in the top right corner.
@@ -2680,8 +2709,17 @@ Namespace Global.AvaloniaCharts
                                   New RoundedRect(rect, New Avalonia.CornerRadius(3)))
             context.DrawText(head, New Point(rect.X + 6, rect.Y + 5))
             If body IsNot Nothing Then context.DrawText(body, New Point(rect.X + 6, rect.Y + 5 + head.Height + 2))
+            If deltaText IsNot Nothing Then
+                ' A hairline over the pair's row, so "this line is about both cursors" is visible at a
+                ' glance rather than only in its colour.
+                Dim lineY = rect.Y + 5 + head.Height + If(body Is Nothing, 0.0, body.Height + 2) + 3
+                context.DrawLine(New Pen(New SolidColorBrush(deltaColor, 0.5), 1),
+                    New Point(rect.X + 6, lineY), New Point(rect.Right - 6, lineY))
+                context.DrawText(deltaText, New Point(rect.X + 6, lineY + 3))
+            End If
 
-            _readoutText = tag & " " & name & If(parts.Count > 0, ": " & String.Join(", ", parts), String.Empty)
+            _readoutText = tag & " " & name & If(parts.Count > 0, ": " & String.Join(", ", parts), String.Empty) &
+                           If(delta Is Nothing, String.Empty, " | " & delta)
         End Sub
 
         ''' <summary>The trace's Y at x: linearly interpolated between the two samples around it (the
