@@ -2686,8 +2686,10 @@ module.exports = async (t) => {
             cursorInfo: {
                 settings: { readoutPosition: 'FollowMouse', decimals: '-1' },
                 cursors: [
-                    { src: '0', orientation: 'Vertical', style: 'Long', color: 'Teal', xValues: 'False',
-                        yValues: 'True', x: '2.5', y: '' }
+                    {
+                        src: '0', orientation: 'Vertical', style: 'Long', color: 'Teal', xValues: 'False',
+                        yValues: 'True', x: '2.5', y: ''
+                    }
                 ]
             },
             info: null

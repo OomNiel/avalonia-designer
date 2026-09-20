@@ -31,6 +31,7 @@ Imports System.Globalization
 Imports System.IO
 Imports System.IO.Compression
 Imports System.Linq
+Imports System.Threading
 Imports System.Threading.Tasks
 Imports System.Xml.Linq
 Imports Avalonia
@@ -455,7 +456,7 @@ Namespace Global.AvaloniaCharts
                                     xFromIndex As Boolean) As ChartData
             Dim data As New ChartData()
             Try
-                Using zip = ZipFile.OpenRead(path)
+                Using zip = OpenWorkbook(path)
                     ' 'shared' is a VB keyword, hence sharedStrings.
                     Dim sharedStrings = ReadSharedStrings(zip)
                     Dim sheet = FindSheet(zip)
@@ -537,9 +538,61 @@ Namespace Global.AvaloniaCharts
                     End If
                 End Using
             Catch ex As Exception
-                data.Error = "Cannot read """ & System.IO.Path.GetFileName(path) & """: " & ex.Message
+                data.Error = ReadFailure(path, ex)
             End Try
             Return data
+        End Function
+
+        ''' <summary>
+        ''' Opens a workbook so that a chart can read a sheet that is OPEN IN ANOTHER PROGRAM. On Windows
+        ''' (tested on 11) Excel holds its workbook with a share mode that refuses FileShare.Read —
+        ''' which is exactly what ZipFile.OpenRead asks for — so a chart bound to a sheet being edited
+        ''' showed "Cannot read …: the process cannot access the file" and drew nothing. Asking for
+        ''' FileShare.ReadWrite is the permission Excel's own handle needs, and allowing Delete covers
+        ''' the moment Excel saves by writing a temporary file and renaming it over the original (which
+        ''' briefly locks the path). Linux does not behave this way, so neither of those ever showed up
+        ''' in testing on that platform.
+        ''' The short retry is for that same save moment: the file is replaced within milliseconds, and a
+        ''' chart that re-reads on every save (Live Update) should not flash an error for it.
+        ''' </summary>
+        Friend Shared Function OpenWorkbook(path As String) As ZipArchive
+            Const attempts As Integer = 4
+            Dim attempt As Integer = 1
+            Do
+                Try
+                    Dim stream As New FileStream(path, FileMode.Open, FileAccess.Read,
+                                                 FileShare.ReadWrite Or FileShare.Delete)
+                    Return New ZipArchive(stream, ZipArchiveMode.Read)
+                Catch ex As IOException When attempt < attempts
+                    ' Usually "being used by another process": wait a moment and try again.
+                    Threading.Thread.Sleep(120)
+                    attempt += 1
+                End Try
+            Loop
+        End Function
+
+        ''' <summary>True when the failure means "another program has the file open", which is worth a
+        ''' different sentence from "the file is missing" or "the file is corrupt".</summary>
+        Friend Shared Function IsFileInUse(ex As Exception) As Boolean
+            If Not TypeOf ex Is IOException Then Return False
+            ' ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33). Parenthesised: Visual Basic
+            ' reads an unparenthesised "Return a = b" as an assignment and loses the rest of the
+            ' function — the whole file then fails to parse, with the errors blamed on later lines.
+            Dim code = ex.HResult And &HFFFF
+            Return (code = 32 OrElse code = 33)
+        End Function
+
+        ''' <summary>The chart's own words for a workbook it could not read.</summary>
+        Private Shared Function ReadFailure(path As String, ex As Exception) As String
+            Dim name = System.IO.Path.GetFileName(path)
+            If IsFileInUse(ex) Then
+                Return """" & name & """ is open in another program — close the workbook in Excel (or " &
+                       "save it again) and this chart reloads by itself."
+            End If
+            If TypeOf ex Is FileNotFoundException OrElse TypeOf ex Is DirectoryNotFoundException Then
+                Return """" & name & """ was not found — check the Spreadsheet path."
+            End If
+            Return "Cannot read """ & name & """: " & ex.Message
         End Function
 
         ''' <summary>The workbook's first worksheet part, or Nothing when the zip has none.</summary>

@@ -5141,7 +5141,7 @@
        one; the runtime state is deliberately not written back. */
     const MAX_CURSORS = 2;
     const CURSOR_ORIENTATIONS = [['Both', 'Both (crosshair)'], ['Vertical', 'Vertical line only'],
-        ['Horizontal', 'Horizontal line only']];
+    ['Horizontal', 'Horizontal line only']];
     const CURSOR_STYLES = ['Solid', 'Dash', 'Dot', 'Long', 'Short'];
     const READOUT_POSITIONS = [['FollowMouse', 'Follow the mouse'], ['TopRight', 'Top right corner']];
     const CURSOR_DECIMALS = [['-1', 'Automatic']].concat(

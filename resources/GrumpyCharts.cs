@@ -83,6 +83,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Avalonia;
@@ -502,7 +503,7 @@ internal static class SpreadsheetReader
         var data = new ChartData();
         try
         {
-            using var zip = ZipFile.OpenRead(path);
+            using var zip = OpenWorkbook(path);
             var shared = ReadSharedStrings(zip);
             var sheet = FindSheet(zip);
             if (sheet is null)
@@ -580,9 +581,63 @@ internal static class SpreadsheetReader
         }
         catch (Exception ex)
         {
-            data.Error = $"Cannot read \"{Path.GetFileName(path)}\": {ex.Message}";
+            data.Error = ReadFailure(path, ex);
         }
         return data;
+    }
+
+    /// <summary>
+    /// Opens a workbook so that a chart can read a sheet that is OPEN IN ANOTHER PROGRAM. On Windows
+    /// (tested on 11) Excel holds its workbook with a share mode that refuses <c>FileShare.Read</c> —
+    /// which is exactly what <c>ZipFile.OpenRead</c> asks for — so a chart bound to a sheet being
+    /// edited showed "Cannot read …: the process cannot access the file" and drew nothing. Asking for
+    /// <c>FileShare.ReadWrite</c> is the permission Excel's own handle needs, and allowing
+    /// <c>Delete</c> covers the moment Excel saves by writing a temporary file and renaming it over
+    /// the original (which briefly locks the path). Linux does not behave this way, so neither of
+    /// those ever showed up in testing on that platform.
+    /// <para>
+    /// The short retry is for that same save moment: the file is replaced within milliseconds, and a
+    /// chart that re-reads on every save (Live Update) should not flash an error for it.
+    /// </para>
+    /// </summary>
+    internal static ZipArchive OpenWorkbook(string path)
+    {
+        const int attempts = 4;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                return new ZipArchive(stream, ZipArchiveMode.Read);
+            }
+            catch (IOException) when (attempt < attempts)
+            {
+                // Usually "being used by another process": wait a moment and try again.
+                Thread.Sleep(120);
+            }
+        }
+    }
+
+    /// <summary>True when the failure means "another program has the file open", which is worth a
+    /// different sentence from "the file is missing" or "the file is corrupt".</summary>
+    internal static bool IsFileInUse(Exception ex)
+        => ex is IOException && (ex.HResult & 0xFFFF) is 32 or 33;   // ERROR_SHARING_VIOLATION / _LOCK_VIOLATION
+
+    /// <summary>The chart's own words for a workbook it could not read.</summary>
+    private static string ReadFailure(string path, Exception ex)
+    {
+        var name = Path.GetFileName(path);
+        if (IsFileInUse(ex))
+        {
+            return $"\"{name}\" is open in another program — close the workbook in Excel (or save it "
+                + "again) and this chart reloads by itself.";
+        }
+        if (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return $"\"{name}\" was not found — check the Spreadsheet path.";
+        }
+        return $"Cannot read \"{name}\": {ex.Message}";
     }
 
     /// <summary>The workbook's first worksheet part, or null when the zip has none.</summary>
