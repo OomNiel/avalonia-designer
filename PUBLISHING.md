@@ -233,8 +233,41 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.11.2` (2026-09-21) — released on GitHub (*Latest*); the file for the Marketplace upload. THIS is the
-> file to upload** (it also carries everything in `0.11.1`, whose number is spent). Four chart appearance
+> **`0.11.11` (2026-09-21) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
+> the Marketplace upload. THIS is the file to upload.** It carries everything in `0.11.3` … `0.11.10`, whose
+> numbers are spent (all were built and installed on this machine during the day and are superseded).
+>
+> **Artefact:** `avalonia-designer-0.11.11.vsix`, **1,110,164 bytes**, sha256
+> **`0025867f9a8bb9ac3d6eab8e4291de0194584c02902f8bb160f73005dd2af0d0`**, 118 files, manifest
+> `Version="0.11.11"` and **no `PreRelease` attribute** (a plain, stable upload). Commit **`142cde1`** on
+> `main`, annotated tag **`v0.11.11`**, pushed (`ccbf597..142cde1 main`). **Verified three ways:** local
+> `sha256sum`, a fresh `gh release download -R OomNiel/avalonia-designer`, and the API asset `digest` — all
+> identical. Suite **6,946 passed / 0 failed**.
+>
+> **What it adds:** the **Bar**, **Area** and **Pie** chart controls (with the pie's **Slices** editor and
+> category names read from the spreadsheet's X column), the **Data Selector** editor (source
+> `Spreadsheet`/`Data Files`, the workbook, and the **page** by the workbook's own sheet names via
+> `SourceSheet`/`SourceKind`/`DataFile`), and the fixes that came with them — axis colours now show in the
+> designer preview (`Nullable<Color>` was skipped by the host's converter), a stale bundled helper is
+> offered on **open** (`Update now`), the code check no longer calls a chart's axis **title** an invalid
+> control name, and the Data Selector's dropdown renders **Spreadsheet**/**Data Files** instead of the
+> letters "p" and "a". The `GrumpyCharts` staleness marker is now **`SourceSheet`**.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.11.11.vsix` → leave **Pre-release
+> unchecked** → then confirm with `flags: 914` that the version is `0.11.11` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it
+> is the user's.** Locally the same file is installed as `grumpy.avalonia-designer@0.11.11` — and because
+> installing over the same version REPLACES the folder, the preview host had to be rebuilt inside it
+> (`dotnet build host/PreviewerHost.csproj`, 0 warnings / 0 errors).
+>
+> **Artefact audit (run BEFORE tagging this time):** the extracted VSIX is clean of development-machine
+> references — no user name, no project folder, no `/home/<user>/…` path. The only hits are the generic
+> placeholders in comments (`/home/x/a.gguf`, `/home/me/data.xlsx`) and the CHANGELOG's deliberately kept
+> verbatim user quote. Two paths **I** had just written into the new manual/CHANGELOG text were caught and
+> neutralised (`TestExtApps/GrumpyCharts.xlsx`), which is why the shipped hash is the third build of the
+> same version — the first two were never tagged or uploaded.
+>
+> **`0.11.2` (2026-09-21) — released on GitHub (*Latest*); superseded as an upload candidate by `0.11.11`.** Four chart appearance
 > requests: the cursor readout is now **always white on black** (its border and series line still take the
 > selected series' colour), the axis editor's single colour row became **three** (line, tick labels, name —
 > either text colour empty follows the line), the chart gained a **Background Gradient** (`PlotBackBrush`:
