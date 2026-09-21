@@ -1782,6 +1782,32 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     min-width: 0;
 }
 
+/* The Data Selector stacks its rows in ONE column, with each field's label ABOVE its control.
+   Reason (measured, and reported twice from a narrow designer panel): a `.series-field` gives its
+   label a fixed 96px, so in a two-column dialog on a ~350px panel the dropdown was left about 50px
+   and showed a single letter — it looked like missing data, not missing space. Stacking gives every
+   control the full width of the dialog however narrow the panel is. */
+.data-rows {
+    display: flex;
+    flex-direction: column;
+}
+
+.data-rows h4 {
+    margin: 2px 0 6px;
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+.data-fields .series-field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+}
+
+.data-fields .series-field>span {
+    flex: 0 0 auto;
+}
+
 .grid-defs-col h4 {
     margin: 2px 0 6px;
     font-size: 12px;

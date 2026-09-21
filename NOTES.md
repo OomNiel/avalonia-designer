@@ -3537,6 +3537,67 @@ audit's `+2` never lingers, because a verified control is recorded compliant and
 `AVALONIA_COMPLIANCE_RESET=1` restores 6,308). Both twins compile 0/0 at 12.1.1 and 11.0.10, the VB one under
 `Option Strict On`, each using `Padding="10"` and `Padding="4,8,4,8"` in a real form.
 
+### §145 — three chart types, a page selector, and two bugs that only measuring could find (2026-09-21, 0.11.3–0.11.11)
+
+**Asked, in four parts:** *"When you use a file or folder picker in the chart controls, always persist
+the last used folder. The color changes for the axis items only shows at runtime, not designtime."* →
+*"Implement your suggested new chart types (1,2,3). Also add the various Editors as you did for the
+existing chart types."* → *"Add new pages to the spreadsheet for each of the 3 new graph types"* →
+*"Add a 'Data Selector' editor … select 'Spreadsheet' as the data source and then a Page selector pops
+to select the sheet page. Also add a 'DataFiles' option … For now that option does nothing."*
+
+**The chart set gained bar, area and pie types** without a line of duplicated drawing code: the base
+class grew overridable seams (`BuildPlots`, `DrawSeriesLayer`) plus the questions a chart type has to
+answer about itself — `StackSeries`, `ZeroBaseline`, `HasCartesianAxes`, `SupportsCursors`,
+`NamedXAxis`, `XPadUnits`, `ZeroToHundred` — and the helpers those answers need (`WithBaseline`,
+`PaddedX`, `StackTotals`, `StackBands`, `SeriesPoints`, `YAt`). A bar chart is then a `DrawSeriesLayer`
+override and a handful of properties; the pie is an override of `BuildPlots` too, because turning each
+WEDGE into a `Plot` is what makes the legend, its tick boxes and the colours work unchanged.
+
+**Two bugs shipped through a green build and were caught only by measuring the PNG.** Worth
+remembering, because both looked like a chart:
+- **The bar slot was measured through a zero-length mapping** (`ToPixel(1, 0, 0)`), so every bar fell
+  back to the plot's full width and the whole chart merged into one stepped block. Measure a slot
+  **through the axis** (`ToPixel(1, plot.X, plot.Width)`), never with a made-up origin.
+- **100%-stacked drew in percent space while the scale was fitted to the raw totals**, so every shape
+  was drawn hundreds of pixels above the plot and clipped away: a chart with axes, grid and legend —
+  and nothing in it. The fix is a property the scale can ask (`ZeroToHundred`) rather than a special
+  case in the drawing.
+
+**`SourceSheet` is a real page selector, and the lookup had to be the hard one.** A workbook's sheet
+parts are named `sheet1.xml`, `sheet2.xml`… in whatever order Excel feels like, and the reader was
+taking "the first worksheet part" — so a page could be chosen *visually* and still read page one. A
+named page is therefore resolved through `xl/workbook.xml` (sheets in tab order) and
+`xl/_rels/workbook.xml.rels` (each sheet's part), matched case-insensitively, with an empty name keeping
+the old first-page behaviour and a missing name reported as an error rather than quietly reading page
+one. The page-list dropdown gets its names from a new **host** command (`sheets`), so the designer reads
+the workbook the same way the chart does.
+
+**The expensive lesson of the day — read the code that FILLS a control before touching its CSS.** The
+Data Selector's *Data source* dropdown showed the letters **"p"** and **"a"**. Two builds went into a
+layout theory (a column `min-width`, then stacking the fields) before reading `labelledSelect`, which
+takes `[value, label]` **pairs**: the list had been passed as plain strings, so `pair[0]`/`pair[1]`
+indexed the *string* and each option became two characters. The user had said it in their first message
+— *"I don't see the letters 'p' and 'a' in Data source … what on earth does that mean?"* — and reading
+it as *letters missing* rather than *letters shown* cost three releases. Two habits came out of it: when
+a report mentions specific visible text, **grep the code that produces that text first**; and prove a
+UI fix by rendering the **real** helper and constants (a stand-in DOM in a test, or the real stylesheet
+in a throwaway page), never a hand-written imitation of them — the hand-built page is what let the first
+"fix" look verified while the letters stayed wrong.
+
+**Smaller, still worth the ink:** the axis `TickLabelColor`/`NameColor` were dropped by the preview's
+property converter because it compared a property's type **without unwrapping `Nullable<T>`** (the same
+class of bug as the earlier immutable-brush one — a silent `catch`); a stale bundled helper is now
+offered on **open** (*Update now*) instead of waiting for a save, and the file search looks beside the
+`.axaml` too; and the code check read a bare `Name` as a control name, so a chart's axis **title**
+(`Name="X Values"`) produced two red PROBLEMS errors on a form that compiled 0/0 — a bare `Name` names
+an object only on a Control, and that rule is now a set of model types in `codeBehindCheck.ts`.
+
+**Suite:** 6,437 → **6,946** (+509: the seven new files above plus the fixtures the panel's new shape
+forced). Both twins build 0/0, the VB one under `Option Strict On` — where `Protected` may not expose
+the `Friend`-internal `Plot` type (the seams are `Friend`) and a local may not share a property's name
+(`Dim samples = If(Values, …)`).
+
 ### §144 — the preview is a second implementation, and it had been dropping brushes for years (2026-09-21, 0.11.2)
 
 **Asked, in four parts:** the cursor readout must always render the X,Y values **white** on a **black** box

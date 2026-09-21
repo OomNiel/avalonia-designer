@@ -1,4 +1,5 @@
 import { localName } from './xamlModel';
+import { isChartTag, isCartesianChartTag } from './chartSeries';
 
 /**
  * Property descriptions for the designer's Properties panel.
@@ -59,6 +60,12 @@ const ORIENTATION = ['Vertical', 'Horizontal'];
 const CHART_LINE_STYLES = ['Solid', 'Dash', 'Dot', 'DashDot'];
 const CHART_MARKERS = ['None', 'Dot', 'Cross', 'Square', 'Diamond'];
 const CHART_TITLE_POSITIONS = ['Top', 'Bottom', 'Left', 'Right'];
+
+/** How a bar chart stands its bars in their category (the C# `BarMode`). */
+const BAR_MODES = ['Grouped', 'Stacked', 'Stacked100'];
+
+/** How an area chart fills its series (the C# `AreaMode`). */
+const AREA_MODES = ['Plain', 'Stacked', 'Stacked100'];
 const DOCK_OPTIONS = ['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom'];
 // PathPicker.PathType — which platform dialog the Browse button opens. SaveFile need not exist yet
 // (it is the “choose where to save” variant).
@@ -697,9 +704,8 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         // size because everything it draws is proportional.
         { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
         { key: 'Values', label: 'Values', kind: 'text' },
-        { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
-        // The workbook is picked from the chart's right-click menu now ("Choose spreadsheet…"), not
-        // from a button drawn on the chart, so there is nothing to switch on here any more.
+        // The workbook and its PAGE belong to the 'Data Selector' editor now (the Spreadsheet row that
+        // used to sit here moved in there, so the file and the page are chosen in one place).
         { key: 'Gradient', label: 'Background Gradient', kind: 'button' },
         // X/Y Column and the data rows below belong to the ONE implicit series this chart draws
         // when it has no explicit <charts:LineSeries> children. A line plot reads X from the sample
@@ -738,8 +744,7 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         // See GrumpyLinePlot: the same Dock row, so either chart can be pinned to a DockPanel edge.
         { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
         { key: 'Points', label: 'Points (x,y)', kind: 'text' },
-        { key: 'SourceFile', label: 'Spreadsheet', kind: 'file' },
-        // See GrumpyLinePlot: the workbook is picked from the right-click menu now.
+        // See GrumpyLinePlot: the workbook and its page live in the 'Data Selector' editor now.
         { key: 'Gradient', label: 'Background Gradient', kind: 'button' },
         { key: 'XColumn', label: 'X Column', kind: 'text' },
         { key: 'YColumn', label: 'Y Column', kind: 'text' },
@@ -766,6 +771,106 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'MaxX', label: 'X Max', kind: 'number' },
         { key: 'MinY', label: 'Y Min', kind: 'number' },
         { key: 'MaxY', label: 'Y Max', kind: 'number' }
+    ],
+    // The BAR chart. See GrumpyLinePlot for the shared rows: the same Dock row, the same column /
+    // row-number rows (X is the CATEGORY column here — its text labels the axis) and the same
+    // appearance rows. Bar Mode / Bar Width / Bar Corner Radius are this chart's own.
+    GrumpyBarPlot: [
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
+        { key: 'Values', label: 'Values', kind: 'text' },
+        { key: 'Gradient', label: 'Background Gradient', kind: 'button' },
+        { key: 'XColumn', label: 'Category Column', kind: 'text' },
+        { key: 'YColumn', label: 'Values Column', kind: 'text' },
+        { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
+        { key: 'FirstDataRow', label: 'First Data Row', kind: 'number' },
+        { key: 'LiveUpdate', label: 'Live Update', kind: 'dropdown', options: BOOL },
+        { key: 'BarMode', label: 'Bar Mode', kind: 'dropdown', options: BAR_MODES },
+        { key: 'BarWidth', label: 'Bar Width', kind: 'number' },
+        { key: 'BarCornerRadius', label: 'Bar Corner Radius', kind: 'number' },
+        { key: 'Title', label: 'Title', kind: 'text' },
+        { key: 'ShowTitle', label: 'Show Title', kind: 'dropdown', options: BOOL },
+        { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
+        { key: 'TitleColor', label: 'Title Colour', kind: 'color', options: COLORS },
+        { key: 'TitleFontSize', label: 'Title Size', kind: 'number' },
+        { key: 'PlotBackColor', label: 'Plot Backcolour', kind: 'color', options: COLORS },
+        { key: 'PlotBackOpacity', label: 'Plot Opacity', kind: 'number' },
+        { key: 'ShowBorder', label: 'Border', kind: 'dropdown', options: BOOL },
+        { key: 'BorderBrush', label: 'Border Colour', kind: 'color', options: COLORS },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'number' },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'ShowGrid', label: 'Gridlines', kind: 'dropdown', options: BOOL },
+        { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS },
+        { key: 'GridThickness', label: 'Grid Thickness', kind: 'number' },
+        { key: 'GridStyle', label: 'Grid Style', kind: 'dropdown', options: CHART_LINE_STYLES },
+        { key: 'MinX', label: 'X Min', kind: 'number' },
+        { key: 'MaxX', label: 'X Max', kind: 'number' },
+        { key: 'MinY', label: 'Y Min', kind: 'number' },
+        { key: 'MaxY', label: 'Y Max', kind: 'number' }
+    ],
+    // The AREA chart: the bar chart's rows with Area Mode / Area Opacity instead of the bar ones.
+    GrumpyAreaPlot: [
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
+        { key: 'Values', label: 'Values', kind: 'text' },
+        { key: 'Gradient', label: 'Background Gradient', kind: 'button' },
+        { key: 'XColumn', label: 'Category Column', kind: 'text' },
+        { key: 'YColumn', label: 'Values Column', kind: 'text' },
+        { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
+        { key: 'FirstDataRow', label: 'First Data Row', kind: 'number' },
+        { key: 'LiveUpdate', label: 'Live Update', kind: 'dropdown', options: BOOL },
+        { key: 'AreaMode', label: 'Area Mode', kind: 'dropdown', options: AREA_MODES },
+        { key: 'AreaOpacity', label: 'Area Opacity', kind: 'number' },
+        { key: 'Title', label: 'Title', kind: 'text' },
+        { key: 'ShowTitle', label: 'Show Title', kind: 'dropdown', options: BOOL },
+        { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
+        { key: 'TitleColor', label: 'Title Colour', kind: 'color', options: COLORS },
+        { key: 'TitleFontSize', label: 'Title Size', kind: 'number' },
+        { key: 'PlotBackColor', label: 'Plot Backcolour', kind: 'color', options: COLORS },
+        { key: 'PlotBackOpacity', label: 'Plot Opacity', kind: 'number' },
+        { key: 'ShowBorder', label: 'Border', kind: 'dropdown', options: BOOL },
+        { key: 'BorderBrush', label: 'Border Colour', kind: 'color', options: COLORS },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'number' },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'ShowGrid', label: 'Gridlines', kind: 'dropdown', options: BOOL },
+        { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS },
+        { key: 'GridThickness', label: 'Grid Thickness', kind: 'number' },
+        { key: 'GridStyle', label: 'Grid Style', kind: 'dropdown', options: CHART_LINE_STYLES },
+        { key: 'MinX', label: 'X Min', kind: 'number' },
+        { key: 'MaxX', label: 'X Max', kind: 'number' },
+        { key: 'MinY', label: 'Y Min', kind: 'number' },
+        { key: 'MaxY', label: 'Y Max', kind: 'number' }
+    ],
+    // The PIE chart: its own rows are the ring and the slice look. There are NO gridline, axis or
+    // scale rows — a pie has no cartesian frame — and the slices themselves belong to the Slices
+    // editor (they are child elements, like a line chart's series).
+    GrumpyPiePlot: [
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
+        { key: 'Labels', label: 'Slice Names', kind: 'text' },
+        { key: 'Values', label: 'Slice Values', kind: 'text' },
+        { key: 'Gradient', label: 'Background Gradient', kind: 'button' },
+        { key: 'XColumn', label: 'Names Column', kind: 'text' },
+        { key: 'YColumn', label: 'Values Column', kind: 'text' },
+        { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
+        { key: 'FirstDataRow', label: 'First Data Row', kind: 'number' },
+        { key: 'LiveUpdate', label: 'Live Update', kind: 'dropdown', options: BOOL },
+        { key: 'DoughnutPercent', label: 'Doughnut Hole', kind: 'number' },
+        { key: 'StartAngle', label: 'Start Angle', kind: 'number' },
+        { key: 'SliceGap', label: 'Slice Gap', kind: 'number' },
+        { key: 'SliceBorderColor', label: 'Slice Border Colour', kind: 'color', options: COLORS },
+        { key: 'SliceBorderThickness', label: 'Slice Border Thickness', kind: 'number' },
+        { key: 'Title', label: 'Title', kind: 'text' },
+        { key: 'ShowTitle', label: 'Show Title', kind: 'dropdown', options: BOOL },
+        { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
+        { key: 'TitleColor', label: 'Title Colour', kind: 'color', options: COLORS },
+        { key: 'TitleFontSize', label: 'Title Size', kind: 'number' },
+        { key: 'PlotBackColor', label: 'Plot Backcolour', kind: 'color', options: COLORS },
+        { key: 'PlotBackOpacity', label: 'Plot Opacity', kind: 'number' },
+        { key: 'ShowBorder', label: 'Border', kind: 'dropdown', options: BOOL },
+        { key: 'BorderBrush', label: 'Border Colour', kind: 'color', options: COLORS },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'number' },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' }
     ],
     Line: [
         { key: 'Stroke', label: 'Line Colour', kind: 'color', options: COLORS },
@@ -887,6 +992,39 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     // NumericUpDown / Polyline / Polygon / PathIcon) ---
     Points: { desc: 'The shape\'s outline: "x,y" points separated by spaces (e.g. "0,80 30,10 60,60").' },
     Data: { desc: 'The icon\'s path data, e.g. "M0,8 L8,16 L16,0".' },
+
+    // --- GrumpyCharts: the bar, area and pie rows (2026-09-20) ---
+    BarMode: {
+        desc: 'How the bars stand in their category: Grouped (side by side, one per series — the easiest '
+            + 'to compare), Stacked (each series starts where the previous ended, so a category reads as '
+            + 'its total) or Stacked100 (every category fills to 100%, turning the data into a share of '
+            + 'the whole).'
+    },
+    BarWidth: {
+        kind: 'number', unit: '× slot',
+        desc: 'How much of its slot one bar fills: 0.8 (the default) leaves a fifth of the space as gap, '
+            + '1 makes the bars touch.'
+    },
+    BarCornerRadius: { kind: 'number', unit: 'px', desc: 'Rounds the corners of every bar (0 = square).' },
+    AreaMode: {
+        desc: 'How the areas are filled: Plain (each series fills down to zero, so the last one drawn '
+            + 'covers the ones before), Stacked (each fills from the top of the previous one) or '
+            + 'Stacked100 (every category totals 100%).'
+    },
+    AreaOpacity: {
+        kind: 'number', unit: '%',
+        desc: 'How solid the fill is (default 60). The line along the top stays fully opaque, so a '
+            + 'lighter fill lets the gridlines and the series behind it show through.'
+    },
+    Labels: { desc: 'The slice names, one per value ("North,South,East,West") — used with Slice Values when the chart has no spreadsheet.' },
+    DoughnutPercent: {
+        kind: 'number', unit: '%',
+        desc: 'How thick the ring is, as a share of the radius: 0 is a solid pie (the default), 50 leaves '
+            + 'a hole half the radius.'
+    },
+    SliceGap: { kind: 'number', unit: '°', desc: 'The gap between two neighbouring slices in degrees (0 = they touch).' },
+    SliceBorderColor: { kind: 'color', options: COLORS, desc: 'The line drawn between two slices.' },
+    SliceBorderThickness: { kind: 'number', unit: 'px', desc: 'How thick that line is (0 = the colours touch).' },
     Value: { kind: 'number', desc: 'The current value (Progress bar / Slider: 0-100; Number box: a number).' },
     Minimum: { kind: 'number', desc: 'The lowest value the control allows.' },
     Maximum: { kind: 'number', desc: 'The highest value the control allows.' },
@@ -1297,6 +1435,20 @@ export const DEFAULTS: Record<string, string> = {
     MaxX: '',
     MinY: '',
     MaxY: '',
+    // --- GrumpyCharts: the category and pie charts (the bar chart's own defaults, the area fill,
+    // and the pie's ring, angle, gaps and slice outline). ---
+    BarMode: 'Grouped',
+    BarWidth: '0.8',
+    BarCornerRadius: '0',
+    AreaMode: 'Plain',
+    AreaOpacity: '60',
+    Labels: '',
+    DoughnutPercent: '0',
+    // StartAngle already has its generic default above (the Arc shape uses it too); a pie's own
+    // default is the same 0 — 12 o'clock.
+    SliceGap: '0',
+    SliceBorderColor: '#FFFFFF',
+    SliceBorderThickness: '1',
     OnContent: 'On',
     OffContent: 'Off',
     Radius: '',
@@ -1437,7 +1589,7 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
         // Everything the designer edits through a popup editor (`kind: 'button'`) — whether it is
         // pushed as a "top action" (DataGrid Rows/Columns, SplitPanel Split Layout/Splitters) or
         // lives in the control's own list (Items, Grid.Defs, MenuItems, StatusItems).
-        keys: ['Rows', 'Columns', 'Series', 'Axis', 'Legend', 'Cursors', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
+        keys: ['Rows', 'Columns', 'Series', 'Slices', 'Axis', 'Legend', 'Cursors', 'SplitLayout', 'Splitters', 'Items', 'Grid.Defs', 'MenuItems', 'StatusItems', 'TreeItems']
     },
     {
         id: 'layout', label: 'Layout & size',
@@ -1478,7 +1630,12 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'ShowMajorTicks', 'MajorTickLength', 'ShowMinorTicks', 'MinorTickLength',
             'ShowTickLabels', 'TickLabelFontSize', 'ShowAxisTitles',
             'ShowTitle', 'TitleColor', 'TitlePosition', 'TitleFontSize',
-            'ShowLegend', 'LegendFontSize'
+            'ShowLegend', 'LegendFontSize',
+            // The category and pie charts (2026-09-20): how the shapes stand in their category, how
+            // full the area fill is, and the pie's ring, its start angle, the gaps and the slice
+            // outlines.
+            'BarMode', 'BarWidth', 'BarCornerRadius', 'AreaMode', 'AreaOpacity',
+            'DoughnutPercent', 'StartAngle', 'SliceGap', 'SliceBorderColor', 'SliceBorderThickness'
         ]
     },
     {
@@ -1516,7 +1673,7 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // GrumpyCharts data: the inline array, the spreadsheet link with its columns and rows,
             // and the optional fixed axis bounds (empty = auto-fit to the data). 'Points' is listed
             // under Appearance, where the point-defined shapes already keep it.
-            'Values', 'SourceFile', 'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow',
+            'Values', 'Labels', 'SourceFile', 'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow',
             'MinX', 'MaxX', 'MinY', 'MaxY'
         ]
     },
@@ -1777,12 +1934,29 @@ export function propertyDefsFor(
             desc: 'Styles the columns and headers: the default column width, minimum/maximum column width, frozen (pinned) columns and the header height.'
         });
     }
+    // 'Data Selector' opens the data-source editor on EVERY chart: which source (Spreadsheet or Data
+    // Files), the file it reads, and — for a spreadsheet — which PAGE of it. Shown at the TOP.
+    if (isChartTag(tag)) {
+        topActions.push({
+            key: 'Data',
+            label: 'Data Selector',
+            kind: 'button',
+            value: 'Select data…',
+            desc: 'Chooses where this chart gets its data. **Spreadsheet** reads a page of an .xlsx '
+                + 'workbook: pick the file, then the page from the list of its own sheet names (leave it '
+                + 'on <first page> to keep reading the first sheet). **Data Files** is the place for data '
+                + 'files such as CSVs — the file is remembered in the form, and the charts will start '
+                + 'reading it when that reader lands.'
+        });
+    }
     // 'Series' opens the multi-series editor for either chart: one line per entry, each with its own
     // spreadsheet column(s), colour, line style and markers. A single-series chart needs no series
     // at all — the chart's own styling draws it — so opening the editor seeds one entry from those
     // values. Series can share the chart's axis (Common) or be scaled on their own (Per series).
-    // Shown at the TOP of the list.
-    if (tag === 'GrumpyLinePlot' || tag === 'GrumpyXYPlot') {
+    // Shown at the TOP of the list. The BAR and AREA charts draw their series as rectangles/fills
+    // instead of lines, but they are the same series in every other way, so they get the same four
+    // editors (their data comes from the X column's CATEGORY names).
+    if (isCartesianChartTag(tag)) {
         topActions.push({
             key: 'Series',
             label: 'Series',
@@ -1830,6 +2004,35 @@ export function propertyDefsFor(
                 + 'sample, up/down to pick the trace the readout reports, and right-click the chart '
                 + 'for the cursor menu. With two cursors switched on, the readout also reports the '
                 + 'distance between them (|ΔX| and |ΔY|).'
+        });
+    }
+    // 'Slices' opens the pie's slice editor: one row per wedge (the names it draws, with the
+    // palette colour each one would take), where a row can be re-coloured, pushed out of the pie
+    // (Explode) or switched off. A slice row is an OVERRIDE for a wedge the data supplies.
+    // The pie gets the Legend editor too (the legend lists the SLICES and its tick boxes switch
+    // one off) but no Axis and no Cursors: it has no cartesian frame.
+    if (tag === 'GrumpyPiePlot') {
+        topActions.push({
+            key: 'Slices',
+            label: 'Slices',
+            kind: 'button',
+            value: 'Edit slices…',
+            desc: 'Names the wedges that should differ from the palette: colour each one, push it out of '
+                + 'the pie (Explode, in pixels) or switch it off. The rows start from the slice names the '
+                + 'chart draws (its Labels, or the names column of its workbook), so an untouched slice '
+                + 'keeps the palette colour shown beside it and no element is written for it at all. '
+                + 'Slices are matched to the data by NAME.'
+        });
+        topActions.push({
+            key: 'Legend',
+            label: 'Legend',
+            kind: 'button',
+            value: 'Edit legend…',
+            desc: 'Sets the legend bar up: switch it on or off, choose which side it sits on (bottom, '
+                + 'top, left or right — it wraps to fit its entries either way), its font size, and a '
+                + 'frame with its own backcolour, outline and rounded corners. On a pie the entries are '
+                + 'the SLICES, in data order and in their own colours, and each one carries a tick box '
+                + 'that switches that wedge off while the app runs.'
         });
     }
     // 'Items' (batch editor) for combo/list/items controls — opens a popup where you type

@@ -17,7 +17,43 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-21, third session — 0.11.2)
+## Where the last session left off (2026-09-21, fourth session — 0.11.11)
+
+**The whole chart line is released together:** `0.11.3` … `0.11.11` were all built and installed on this
+machine during the day and go out as **one** version, because the Marketplace and the GitHub tag carry the
+same number and it only ever goes up.
+
+**What went in** (full detail in `CHANGELOG.md` `[0.11.11]` and `NOTES.md` §145):
+
+- **Three new chart types** — Bar (Grouped / Stacked / Stacked100), Area (Plain / Stacked / Stacked100)
+  and Pie (with a doughnut hole) — each with the full editor set, plus a **Slices** editor for the pie and
+  category names read from the spreadsheet's X column. Both twins, toolbox, properties, help text and the
+  designer preview.
+- **The Data Selector editor** on every chart: the **source** (Spreadsheet, or Data Files — a picker whose
+  file is remembered but not read yet), the **workbook**, and the **page**, listed from the workbook's own
+  sheet names. `SourceSheet` resolves a page through the workbook's rels, so a reorder in Excel keeps the
+  chart on the same sheet.
+- **The fixes that came with them:** axis colours now show in the preview (`Nullable<Color>` was skipped by
+  the host's converter); a stale bundled helper is offered on *open*; and the code check stopped reporting
+  a chart's axis **title** as an invalid control name.
+- **Sample data** in `TestExtApps/GrumpyCharts.xlsx`: one page per new chart type, laid out the way the
+  charts read by default.
+
+**Two things to know before continuing:**
+
+1. **The one bug that took three releases** was a webview dropdown showing the letters "p" and "a": the
+   option list was plain strings where `labelledSelect` expects `[value, label]` pairs. `NOTES.md` §145 has
+   the full post-mortem, and `tests/t2-logic/dropdownOptions.test.js` now runs the real helper in a
+   stand-in DOM so it cannot come back.
+2. **The staleness marker moved to `SourceSheet`.** An existing project's bundled `GrumpyCharts` copy is
+   refreshed when the designer opens a form and offers **Update now** — accept it before expecting the new
+   chart types or the page selector to compile.
+
+**State at hand-off:** suite **6,946 passed / 0 failed**, PROBLEMS clean, host and a generated VB project
+build 0/0, `package.json` = `0.11.11`, VSIX packaged and audited, tagged and released on GitHub, and the
+Marketplace upload prepared (`PUBLISHING.md`).
+
+## Where the third session left off (2026-09-21 — 0.11.2)
 
 **Released: `0.11.2`** — *the chart gets its own colours: a gradient background, three axis colours, a reading
 you can always read*. Four appearance requests in one breath: the cursor readout must always be **white on

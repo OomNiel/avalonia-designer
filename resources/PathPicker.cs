@@ -108,8 +108,14 @@ public class PathPicker : UserControl
     /// (Fully qualified — `Path` alone would clash with System.IO.Path.)</summary>
     private readonly Avalonia.Controls.Shapes.Path _icon = new();
 
-    /// <summary>The folder the last pick used — remembered for the process lifetime (best effort).</summary>
-    private static string? _lastFolder;
+    /// <summary>The folder the last pick used — remembered in the per-user app-data folder (see
+    /// <see cref="PickerFolderMemory"/>), so it survives a restart instead of being lost with the
+    /// process.</summary>
+    private static string? LastFolder
+    {
+        get => PickerFolderMemory.LastFolder;
+        set => PickerFolderMemory.LastFolder = value;
+    }
 
     /// <summary>Builds the row: the kind icon at the left, a fill TextBox bound to this control's
     /// properties, and the Browse button docked right.</summary>
@@ -230,7 +236,7 @@ public class PathPicker : UserControl
             var provider = TopLevel.GetTopLevel(this)?.StorageProvider;
             if (provider is null) return;
             IStorageFolder? start = null;
-            var startPath = string.IsNullOrWhiteSpace(_lastFolder) ? InitialFolder : _lastFolder;
+            var startPath = string.IsNullOrWhiteSpace(LastFolder) ? InitialFolder : LastFolder;
             if (!string.IsNullOrWhiteSpace(startPath))
             {
                 try { start = await provider.TryGetFolderFromPathAsync(new Uri(startPath!)); }
@@ -274,7 +280,7 @@ public class PathPicker : UserControl
             var path = picked.TryGetLocalPath();
             if (string.IsNullOrEmpty(path)) return;
             SelectedPath = path;
-            _lastFolder = FolderOf(path!);
+            LastFolder = FolderOf(path!);
         }
         catch
         {
@@ -340,5 +346,70 @@ public class PathPicker : UserControl
             return string.IsNullOrEmpty(dir) ? null : dir;
         }
         catch { return null; }
+    }
+}
+
+/// <summary>
+/// Remembers the folder the Browse button used last, so the next dialog opens there instead of wherever
+/// the platform happens to start. It lives in the per-user app-data folder (~/.local/share/&lt;App&gt; on
+/// Linux, %LOCALAPPDATA%\&lt;App&gt; on Windows) — the same place the generated DataSet helpers keep their
+/// data — which is what makes it survive a restart. Every step is best-effort: an unwritable location
+/// simply means the dialog starts at the platform's default again.
+/// </summary>
+internal static class PickerFolderMemory
+{
+    private static string? _folder;
+    private static bool _loaded;
+
+    private static string StorePath
+    {
+        get
+        {
+            var name = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name
+                       ?? System.Reflection.Assembly.GetExecutingAssembly().GetName().Name
+                       ?? "app";
+            var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrEmpty(root)) root = System.IO.Path.GetTempPath();
+            var dir = System.IO.Path.Combine(root, name);
+            // Fully qualified on purpose: this file deliberately does not import System.IO (the control
+            // has a property called `Path`, so a bare `Path` would be ambiguous anyway).
+            try { System.IO.Directory.CreateDirectory(dir); } catch { /* the failing write is what reports it */ }
+            return System.IO.Path.Combine(dir, "PathPicker.lastfolder");
+        }
+    }
+
+    /// <summary>The folder the last pick used (null = let the platform choose), or null once it is gone.</summary>
+    internal static string? LastFolder
+    {
+        get
+        {
+            if (!_loaded)
+            {
+                _loaded = true;
+                try { if (System.IO.File.Exists(StorePath)) _folder = System.IO.File.ReadAllText(StorePath).Trim(); }
+                catch { _folder = null; }
+            }
+            // A folder on a drive that is no longer mounted is worse than no answer: the platform would
+            // open the dialog inside a path that does not exist.
+            if (string.IsNullOrEmpty(_folder) || !System.IO.Directory.Exists(_folder)) return null;
+            return _folder;
+        }
+        set
+        {
+            _loaded = true;
+            _folder = value;
+            try
+            {
+                if (string.IsNullOrEmpty(value))
+                {
+                    if (System.IO.File.Exists(StorePath)) System.IO.File.Delete(StorePath);
+                }
+                else
+                {
+                    System.IO.File.WriteAllText(StorePath, value!);
+                }
+            }
+            catch { /* best effort */ }
+        }
     }
 }

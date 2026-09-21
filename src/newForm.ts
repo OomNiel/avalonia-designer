@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { lastPickerFolder, rememberPickerFolder } from './pickerFolders';
 import * as path from 'path';
 import * as fs from 'fs';
 import {
@@ -83,13 +84,16 @@ export async function createNewForm(_context: vscode.ExtensionContext): Promise<
     let targetDir = project ? path.dirname(project.projectUri.fsPath) : wsFolder.uri.fsPath;
 
     if (!project) {
+        const startFolder = lastPickerFolder('folder');
         const folder = await vscode.window.showOpenDialog({
             canSelectFolders: true,
             canSelectFiles: false,
+            defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined,
             openLabel: 'Select the project folder for the new form'
         });
         if (!folder || folder.length === 0) return;
         targetDir = folder[0].fsPath;
+        await rememberPickerFolder('folder', targetDir);
         project = findProject(vscode.Uri.file(path.join(targetDir, '__probe__.axaml')));
     }
 

@@ -168,113 +168,122 @@ internal static class Program
                 case "ping":
                     return Json(id, new { type = "pong" });
                 case "snippet":
-                {
-                    var tag = root.TryGetProperty("tag", out var tagEl) ? tagEl.GetString() ?? "Button" : "Button";
-                    var snip = Factory.Create(tag);
-                    return Json(id, new { type = "snippetResult", tag, name = snip.Name, xaml = snip.Xaml });
-                }
+                    {
+                        var tag = root.TryGetProperty("tag", out var tagEl) ? tagEl.GetString() ?? "Button" : "Button";
+                        var snip = Factory.Create(tag);
+                        return Json(id, new { type = "snippetResult", tag, name = snip.Name, xaml = snip.Xaml });
+                    }
                 case "render":
-                {
-                    var xaml = root.TryGetProperty("xaml", out var xel) ? xel.GetString() ?? "" : "";
-                    double w = 800, h = 450;
-                    if (root.TryGetProperty("width", out var wel) && wel.TryGetDouble(out var wv)) w = wv;
-                    if (root.TryGetProperty("height", out var hel) && hel.TryGetDouble(out var hv)) h = hv;
-                    var projectPath = root.TryGetProperty("projectPath", out var pp) ? pp.GetString() ?? "" : "";
-                    var theme = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "" : "";
-
-                    // Optional design-time data: DB rows for named DataGrids (bound DataSet tables),
-                    // so the designer canvas can show the grid's rows even though code-behind never runs.
-                    var grids = new List<XamlRenderer.GridPreviewData>();
-                    if (root.TryGetProperty("grids", out var ge) && ge.ValueKind == JsonValueKind.Array)
                     {
-                        foreach (var g in ge.EnumerateArray())
+                        var xaml = root.TryGetProperty("xaml", out var xel) ? xel.GetString() ?? "" : "";
+                        double w = 800, h = 450;
+                        if (root.TryGetProperty("width", out var wel) && wel.TryGetDouble(out var wv)) w = wv;
+                        if (root.TryGetProperty("height", out var hel) && hel.TryGetDouble(out var hv)) h = hv;
+                        var projectPath = root.TryGetProperty("projectPath", out var pp) ? pp.GetString() ?? "" : "";
+                        var theme = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "" : "";
+
+                        // Optional design-time data: DB rows for named DataGrids (bound DataSet tables),
+                        // so the designer canvas can show the grid's rows even though code-behind never runs.
+                        var grids = new List<XamlRenderer.GridPreviewData>();
+                        if (root.TryGetProperty("grids", out var ge) && ge.ValueKind == JsonValueKind.Array)
                         {
-                            var gd = new XamlRenderer.GridPreviewData();
-                            if (g.TryGetProperty("control", out var ce)) gd.Control = ce.GetString() ?? "";
-                            if (g.TryGetProperty("columns", out var cole) && cole.ValueKind == JsonValueKind.Array)
+                            foreach (var g in ge.EnumerateArray())
                             {
-                                var cols = new List<string>();
-                                foreach (var c in cole.EnumerateArray()) cols.Add(c.GetString() ?? "");
-                                gd.Columns = cols.ToArray();
-                            }
-                            if (g.TryGetProperty("rows", out var rowe) && rowe.ValueKind == JsonValueKind.Array)
-                            {
-                                var rows = new List<object?[]>();
-                                foreach (var r in rowe.EnumerateArray())
+                                var gd = new XamlRenderer.GridPreviewData();
+                                if (g.TryGetProperty("control", out var ce)) gd.Control = ce.GetString() ?? "";
+                                if (g.TryGetProperty("columns", out var cole) && cole.ValueKind == JsonValueKind.Array)
                                 {
-                                    var cells = new List<object?>();
-                                    if (r.ValueKind == JsonValueKind.Array)
-                                    {
-                                        foreach (var cell in r.EnumerateArray()) cells.Add(JsonCell(cell));
-                                    }
-                                    rows.Add(cells.ToArray());
+                                    var cols = new List<string>();
+                                    foreach (var c in cole.EnumerateArray()) cols.Add(c.GetString() ?? "");
+                                    gd.Columns = cols.ToArray();
                                 }
-                                gd.Rows = rows.ToArray();
+                                if (g.TryGetProperty("rows", out var rowe) && rowe.ValueKind == JsonValueKind.Array)
+                                {
+                                    var rows = new List<object?[]>();
+                                    foreach (var r in rowe.EnumerateArray())
+                                    {
+                                        var cells = new List<object?>();
+                                        if (r.ValueKind == JsonValueKind.Array)
+                                        {
+                                            foreach (var cell in r.EnumerateArray()) cells.Add(JsonCell(cell));
+                                        }
+                                        rows.Add(cells.ToArray());
+                                    }
+                                    gd.Rows = rows.ToArray();
+                                }
+                                grids.Add(gd);
                             }
-                            grids.Add(gd);
                         }
-                    }
 
-                    var frame = Renderer.Render(xaml, w, h,
-                        string.IsNullOrEmpty(projectPath) ? null : projectPath,
-                        string.IsNullOrEmpty(theme) ? null : theme,
-                        grids);
-                    return Json(id, new
-                    {
-                        type = "frame",
-                        png = frame.PngBase64,
-                        width = frame.Width,
-                        height = frame.Height,
-                        controls = frame.Controls,
-                        gridCells = frame.GridCells,
-                        error = frame.Error
-                    });
-                }
+                        var frame = Renderer.Render(xaml, w, h,
+                            string.IsNullOrEmpty(projectPath) ? null : projectPath,
+                            string.IsNullOrEmpty(theme) ? null : theme,
+                            grids);
+                        return Json(id, new
+                        {
+                            type = "frame",
+                            png = frame.PngBase64,
+                            width = frame.Width,
+                            height = frame.Height,
+                            controls = frame.Controls,
+                            gridCells = frame.GridCells,
+                            error = frame.Error
+                        });
+                    }
                 case "audit":
-                {
-                    var typeName = root.TryGetProperty("typeName", out var te) ? te.GetString() ?? "" : "";
-                    var keys = new List<string>();
-                    if (root.TryGetProperty("keys", out var ke) && ke.ValueKind == JsonValueKind.Array)
-                        foreach (var k in ke.EnumerateArray())
-                            if (k.GetString() is { } ks) keys.Add(ks);
-                    return Json(id, new { type = "auditResult", typeName, valid = AuditKeys(typeName, keys) });
-                }
+                    {
+                        var typeName = root.TryGetProperty("typeName", out var te) ? te.GetString() ?? "" : "";
+                        var keys = new List<string>();
+                        if (root.TryGetProperty("keys", out var ke) && ke.ValueKind == JsonValueKind.Array)
+                            foreach (var k in ke.EnumerateArray())
+                                if (k.GetString() is { } ks) keys.Add(ks);
+                        return Json(id, new { type = "auditResult", typeName, valid = AuditKeys(typeName, keys) });
+                    }
+                case "sheets":
+                    {
+                        // The PAGE names of an .xlsx workbook, in the order its tabs show, for the Data
+                        // Selector editor's page dropdown. An xlsx is a zip: xl/workbook.xml lists the
+                        // sheets in tab order. Read-only, and an unreadable file is an answer, not a throw.
+                        var file = root.TryGetProperty("file", out var fe) ? fe.GetString() ?? "" : "";
+                        var (sheetsFound, sheetsError) = WorkbookSheets(file);
+                        return Json(id, new { type = "sheetsResult", file, sheets = sheetsFound, error = sheetsError });
+                    }
                 case "fonts":
-                {
-                    // Enumerate the system font families Avalonia can actually see (same engine the
-                    // generated projects resolve fonts with) for the designer's font pickers.
-                    var names = new List<string>();
-                    try
                     {
-                        foreach (var family in FontManager.Current.SystemFonts)
-                            if (!string.IsNullOrWhiteSpace(family.Name))
-                                names.Add(family.Name);
+                        // Enumerate the system font families Avalonia can actually see (same engine the
+                        // generated projects resolve fonts with) for the designer's font pickers.
+                        var names = new List<string>();
+                        try
+                        {
+                            foreach (var family in FontManager.Current.SystemFonts)
+                                if (!string.IsNullOrWhiteSpace(family.Name))
+                                    names.Add(family.Name);
+                        }
+                        catch
+                        {
+                            // Keep whatever was collected (best effort).
+                        }
+                        var fonts = names
+                            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+                            .OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase)
+                            .ToList();
+                        return Json(id, new { type = "fontsResult", fonts });
                     }
-                    catch
-                    {
-                        // Keep whatever was collected (best effort).
-                    }
-                    var fonts = names
-                        .Distinct(StringComparer.CurrentCultureIgnoreCase)
-                        .OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase)
-                        .ToList();
-                    return Json(id, new { type = "fontsResult", fonts });
-                }
                 case "sqlite":
-                {
-                    // Design-time access to the user's SQLite database file. Read-only.
-                    //   op "tables" -> { type:"sqliteTables", tables:[{name, columns:[{name,type,notNull,isPk}]}] }
-                    //   op "query"  -> { type:"sqliteResult", columns:[..], rows:[[..]] }  (json-safe values)
-                    var file = root.TryGetProperty("file", out var fe) ? fe.GetString() ?? "" : "";
-                    var op = root.TryGetProperty("op", out var oe) ? oe.GetString() ?? "query" : "query";
-                    if (op == "tables")
-                        return Json(id, new { type = "sqliteTables", tables = SqliteTables(file) });
-                    var sql = root.TryGetProperty("sql", out var se) ? se.GetString() ?? "" : "";
-                    int limit = 200;
-                    if (root.TryGetProperty("limit", out var le) && le.TryGetInt32(out var lv)) limit = lv;
-                    var q = SqliteQuery(file, sql, limit);
-                    return Json(id, new { type = "sqliteResult", columns = q.Columns, rows = q.Rows });
-                }
+                    {
+                        // Design-time access to the user's SQLite database file. Read-only.
+                        //   op "tables" -> { type:"sqliteTables", tables:[{name, columns:[{name,type,notNull,isPk}]}] }
+                        //   op "query"  -> { type:"sqliteResult", columns:[..], rows:[[..]] }  (json-safe values)
+                        var file = root.TryGetProperty("file", out var fe) ? fe.GetString() ?? "" : "";
+                        var op = root.TryGetProperty("op", out var oe) ? oe.GetString() ?? "query" : "query";
+                        if (op == "tables")
+                            return Json(id, new { type = "sqliteTables", tables = SqliteTables(file) });
+                        var sql = root.TryGetProperty("sql", out var se) ? se.GetString() ?? "" : "";
+                        int limit = 200;
+                        if (root.TryGetProperty("limit", out var le) && le.TryGetInt32(out var lv)) limit = lv;
+                        var q = SqliteQuery(file, sql, limit);
+                        return Json(id, new { type = "sqliteResult", columns = q.Columns, rows = q.Rows });
+                    }
                 default:
                     return Json(id, new { type = "error", error = $"Unknown message type '{type}'" });
             }
@@ -336,6 +345,44 @@ internal static class Program
         foreach (var p in body.GetType().GetProperties())
             dict[p.Name] = p.GetValue(body);
         return JsonSerializer.Serialize(dict, JsonOpts);
+    }
+
+    // ---------------- workbook pages (the Data Selector's page list) ----------------
+
+    /// <summary>
+    /// The PAGE names of an .xlsx workbook, in the order its tabs show. xl/workbook.xml lists the
+    /// sheets in that order, so the names can be read without resolving the relationship ids the parts
+    /// hang off. An empty path, a missing file and an unreadable one are all ANSWERS: the designer
+    /// shows the reason under the page dropdown instead of falling over.
+    /// </summary>
+    private static (List<string> Sheets, string? Error) WorkbookSheets(string file)
+    {
+        var sheets = new List<string>();
+        if (string.IsNullOrWhiteSpace(file)) return (sheets, null);
+        if (!File.Exists(file)) return (sheets, $"\"{Path.GetFileName(file)}\" was not found.");
+        try
+        {
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read,
+                                              FileShare.ReadWrite | FileShare.Delete);
+            using var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Read);
+            var entry = zip.Entries.FirstOrDefault(e =>
+                e.FullName.Equals("xl/workbook.xml", StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return (sheets, $"\"{Path.GetFileName(file)}\" has no workbook part.");
+            using var workbook = entry.Open();
+            foreach (var element in System.Xml.Linq.XDocument.Load(workbook).Descendants()
+                         .Where(e => e.Name.LocalName == "sheet"))
+            {
+                var name = element.Attribute("name")?.Value;
+                if (!string.IsNullOrWhiteSpace(name)) sheets.Add(name!.Trim());
+            }
+            if (sheets.Count == 0) return (sheets, $"\"{Path.GetFileName(file)}\" lists no pages.");
+            return (sheets, null);
+        }
+        catch (Exception ex)
+        {
+            // e.g. a password-protected workbook, or a file that is not one at all.
+            return (sheets, $"Cannot read \"{Path.GetFileName(file)}\": {ex.Message}");
+        }
     }
 
     // ---------------- SQLite (design-time data preview / schema inspection) ----------------

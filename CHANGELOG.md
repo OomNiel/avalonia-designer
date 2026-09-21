@@ -6,11 +6,125 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.11.2` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.11.11` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.11.11] - 2026-09-21 · *the chart set grows up: three chart types, a Data Selector — and the page you actually wanted*
+
+Covers `0.11.3` … `0.11.11`, all built and installed on this machine but never published until now. Four
+requests in one day: *"When you use a file or folder picker in the chart controls, always persist the
+last used folder. The color changes for the axis items only shows at runtime, not designtime."*,
+*"Implement your suggested new chart types (1,2,3). Also add the various Editors as you did for the
+existing chart types."*, *"Add new pages to the spreadsheet for each of the 3 new graph types"* and
+*"Add a 'Data Selector' editor. In this editor the user can select 'Spreadsheet' as the data source and
+then a Page selector pops to select the sheet page. Also add a 'DataFiles' option in addition to the
+'Spreadsheet' option which contains a file selection picker. For now that option does nothing."*
+
+### Added — three new chart types, with the full editor treatment (2026-09-21)
+
+- **Bar Chart** (`charts:GrumpyBarPlot`) — one bar per category, drawn from its baseline. **Bar Mode**
+  picks **Grouped** (one bar per series per category), **Stacked** (each series starts where the previous
+  ended, so a category reads as its total) or **Stacked100** (every category fills to 100%, turning the same
+  data into a share of the total). **Bar Width** is how much of its slot one bar fills (0.8 leaves a fifth
+  as gap) and **Bar Corner Radius** rounds the tops. 0 is always on the Y scale, because a bar is read as a
+  length from its baseline.
+- **Area Chart** (`charts:GrumpyAreaPlot`) — each series is a filled shape under its line: **Plain** (every
+  series fills down to zero, so the last one drawn covers the others), **Stacked**, or **Stacked100**.
+  **Area Opacity** (60 by default) is how solid the fill is; the line along the top stays fully opaque, so a
+  lighter fill lets the gridlines and the series behind it show through.
+- **Pie Chart** (`charts:GrumpyPiePlot`) — one wedge per labelled value, with **Doughnut Hole** (`0` = a
+  solid pie), **Start Angle** (0 = 12 o'clock, slices run clockwise), **Slice Gap** and the slice outline's
+  colour and thickness. A slice takes a colour from a **10-colour palette** until the form names one.
+- **The categories come from the spreadsheet's X column**, so a bar or area chart labels its X axis with
+  the sheet's own text ("North", "Feb" …) and falls back to numbers when those cells hold numbers. The
+  line and X,Y plots are untouched: they label with numbers, so an existing form cannot change under it.
+- **All five charts now share one editor set** — Series, Axis, Legend, Cursors, Background Gradient — plus
+  a new **Slices** editor on the pie: one row per wedge (the names the chart draws, with the palette colour
+  each one would take), where a row can be re-coloured, pushed out of the pie (**Explode**) or switched
+  off. A row is an **override**: an untouched slice writes nothing to the form. The pie lists its SLICES in
+  the legend, with a tick box per slice, because `PieSlice` is a `ChartSeries` and each wedge is one plot
+  under the hood. A pie has no gridlines, no axes and no cursors, and hides the axis furniture instead of
+  the frame it draws in.
+- The chart library grew the hooks behind them in the same shape as the existing charts — `BuildPlots` and
+  `DrawSeriesLayer` are overridable, `StackBands` computes a stack's base and top per point, `ZeroBaseline`
+  keeps a bar chart's scale honest, and `NamedXAxis`/`XPadUnits`/`ZeroToHundred` cover categories, the half
+  slot at each end and the 0–100 band. Both twins (`GrumpyCharts.cs` and `.vb`) carry all of it.
+
+### Added — the **Data Selector** editor: the source, the workbook, and which PAGE of it (2026-09-21)
+
+- Every chart now has a **Data Selector** button at the top of the Properties list; the plain *Spreadsheet*
+  row moved into it, so the file and the page are chosen in one place.
+- **Source** picks **Spreadsheet** (the default) or **Data Files**. Spreadsheet opens the **Workbook** row
+  (with a `…` Browse button) and a **Page** dropdown listing the workbook's **own sheet names**, read from
+  the file when you pick it. `(first page)` means "the first worksheet" — what every form did before — and a
+  page that is not there is refused with the reason printed under the dropdown, never a silent fall-back.
+- **`SourceSheet` names the worksheet** the chart reads, and the reader resolves it the way Excel means it:
+  `xl/workbook.xml` lists the sheets in tab order, each pointing at a relationship that names the part.
+  Part file names carry no meaning (Excel may keep `sheet1.xml` for any tab), so this is the only correct
+  lookup — and it is why a named page survives a reorder in the spreadsheet. An empty name keeps reading the
+  first part, so forms written before this property existed behave exactly as they did.
+- **`SourceKind`** carries the choice and **`DataFile`** carries the data file's path — declared so a form
+  can hold the Data Selector's answer and still compile. **Nothing reads `DataFile` yet**: the Data Files
+  branch of the dialog names the file, shows what it is for and says so plainly. That is deliberate, and it
+  is the hook the CSV reader will land on.
+- The workbook's page names come from a new **host command** (`sheets`), so the designer reads the file the
+  same way the chart's own reader does — an unreadable workbook answers with its reason instead of an empty
+  list. The chart's workbook picker and the Data Selector's data-file picker each remember their own last
+  folder, like every other picker in the extension.
+
+### Added — every picker remembers where it was (2026-09-21)
+
+- The chart's own workbook picker (*Choose spreadsheet…*) and the PathPicker-based pickers (File Selector,
+  Folder Selector) remember the folder they used last, **per picker kind**, and open there next time. The
+  memory lives in the per-user app-data folder, so it survives a restart — including in a **generated app**,
+  not just in the designer. Deleting a remembered folder simply means the platform picks again.
+
+### Fixed — the axis colours only appeared in the running app (0.11.3, 2026-09-21)
+
+- **Tick label colour** and **Name colour** looked right at runtime but not in the designer's preview. The
+  preview's property converter skipped any property whose type was `Color?` (`Nullable<Color>`): it compared
+  the property's type without unwrapping the Nullable first, so the colour was quietly dropped. It now
+  unwraps and compares the underlying type, which is also the rule for any future Nullable property.
+
+### Fixed — a stale bundled chart file could not be refreshed by opening the form (0.11.4, 2026-09-21)
+
+- A project created before a bundled helper grew a member kept its old copy until the form was **saved** — so
+  opening a form that used a newer property compiled fine in the designer and failed in the build. Opening a
+  form now notices a stale `GrumpyCharts`/`PathPicker` copy and offers **Update now**; the search also looks
+  beside the `.axaml` file, not only in the project folder, so a helper in a sub-folder form is found.
+
+### Fixed — the code check reported the axis TITLES as invalid control names (0.11.6, 2026-09-21)
+
+- `<charts:Axis Name="X Values"/>` is the axis **title** — what the Axis editor's *Name* row writes — but
+  the checker read a bare `Name` exactly like `x:Name`, so a healthy form showed two red errors in PROBLEMS
+  (`"X Values" is not a valid identifier`) while `dotnet build` was 0 errors. A bare `Name` is a name-scope
+  registration only on a Control; on the chart set's plain model objects (`Axis`, `LineSeries`, `XYSeries`,
+  `PieSlice`, `ChartCursor`) it is their own property. `x:Name` is still checked everywhere, and a genuinely
+  bad control name is still reported, so the check did not get blunter — it got accurate.
+
+### Fixed — the Data Selector's dropdown showed the letters "p" and "a" (0.11.11, 2026-09-21)
+
+- The source dropdown displayed one character per option instead of **Spreadsheet** and **Data Files**. The
+  webview's option helpers take `[value, label]` **pairs** (`labelledSelect` reads `pair[0]`/`pair[1]`), and
+  this one list was passed as plain strings — so each *string* was indexed and its first two characters
+  became the value and the label. The list is pairs now, `labelledSelect` also accepts a plain string as its
+  own label so the next caller cannot repeat it, and the dialog's fields put their label **above** their
+  control so a narrow designer panel cannot squeeze a dropdown either.
+
+### Notes
+
+- **The staleness marker moved twice**, and it now watches the newest *attribute* rather than the newest
+  type: `ChartPickerMemory` → `GrumpyBarPlot` → **`SourceSheet`**. Each move is what refreshes an existing
+  project's bundled copy before a form can be written that the old copy cannot compile.
+- **Sample data**: the workbook used to exercise the chart set gained a page per new chart type ("Bar
+  Chart": 8 regions with two series, "Area Chart": 12 months, "Pie Chart": 6 shares), each laid out the way
+  the charts read by default — names in column B, values in C — so a dropped chart only needs the file and
+  the page. That workbook is test data on the development machine, not part of the extension.
+- Windows and Linux both, C# and VB both: the three new controls, the Data Selector's properties and the
+  picker memory are mirrored in `GrumpyCharts.vb` and compile with `Option Strict On`.
 
 ## [0.11.2] - 2026-09-21 · *the chart gets its own colours: a gradient background, three axis colours, a reading you can always read*
 

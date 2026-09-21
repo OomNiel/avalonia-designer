@@ -60,9 +60,15 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'Folder Selector', tag: 'PathPickerFolder', group: TOOLBOX_CATEGORY_INPUT },
     // GrumpyCharts (the bundled AvaloniaCharts set: dependency-free, self-drawing charts). The line
     // plot takes Y values in sample order (X runs 0…N-1); the X,Y plot takes (x,y) pairs and can be
-    // markers only, joined, or both. Both can read an .xlsx workbook instead of an inline array.
+    // markers only, joined, or both. The bar and area plots put one shape per point along a CATEGORY
+    // axis (the X column's names when it holds text, numbers otherwise), grouped or stacked; the pie
+    // is one wedge per labelled value, with an optional doughnut hole. All of them can read an .xlsx
+    // workbook instead of an inline array.
     { label: 'Line Plot', tag: 'GrumpyLinePlot', group: TOOLBOX_CATEGORY_CHARTS },
     { label: 'X, Y Plot', tag: 'GrumpyXYPlot', group: TOOLBOX_CATEGORY_CHARTS },
+    { label: 'Bar Chart', tag: 'GrumpyBarPlot', group: TOOLBOX_CATEGORY_CHARTS },
+    { label: 'Area Chart', tag: 'GrumpyAreaPlot', group: TOOLBOX_CATEGORY_CHARTS },
+    { label: 'Pie Chart', tag: 'GrumpyPiePlot', group: TOOLBOX_CATEGORY_CHARTS },
     { label: 'Panel', tag: 'Panel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'Grid', tag: 'Grid', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'StackPanel', tag: 'StackPanel', group: TOOLBOX_CATEGORY_LAYOUT },

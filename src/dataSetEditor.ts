@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { DOMParser } from '@xmldom/xmldom';
 import { localName } from './xamlModel';
+import { lastPickerFolder, rememberPickerFile, rememberPickerFolder, pickerStartFolder } from './pickerFolders';
 import { bindControlToDataSet, unbindControlFromDataSet, unbindImageFromGrid, hasDataSetBinding, DataSetBindingRef } from './codeBehind';
 import {
     DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, parseDataSet, parseDataSetChecked, serializeDataSet, defaultDataSetSpec,
@@ -628,13 +629,16 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                     const t = findTable(doc.spec, String(msg.table ?? ''));
                     const proj = findProject(doc.uri);
                     const projectDir = proj ? path.dirname(proj.projectUri.fsPath) : undefined;
+                    // The last folder a database dialog used wins over the project folder (pickerFolders).
+                    const startFolder = pickerStartFolder('database', projectDir);
                     const picked = await vscode.window.showOpenDialog({
                         canSelectMany: false, canSelectFolders: false, openLabel: 'Use this SQLite file',
                         filters: { 'SQLite database': ['db', 'sqlite', 'sqlite3'] },
-                        defaultUri: projectDir ? vscode.Uri.file(projectDir) : undefined,
+                        defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined,
                         title: t ? `SQLite file for ${t.name}` : 'SQLite database file'
                     });
                     if (t && picked && picked[0]) {
+                        await rememberPickerFile('database', picked[0].fsPath);
                         // Rule: an existing .db is used IN PLACE — store the full absolute path so the
                         // app opens/edits exactly that file (never a copy next to the exe).
                         const p = picked[0].fsPath;
@@ -682,13 +686,15 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                     // Reverse path: create .adset tables from an existing .db.
                     const proj = findProject(doc.uri);
                     const projectDir = proj ? path.dirname(proj.projectUri.fsPath) : undefined;
+                    const startFolder = pickerStartFolder('database', projectDir);
                     const picked = await vscode.window.showOpenDialog({
                         canSelectMany: false, canSelectFolders: false, openLabel: 'Import tables',
                         filters: { 'SQLite database': ['db', 'sqlite', 'sqlite3'] },
-                        defaultUri: projectDir ? vscode.Uri.file(projectDir) : undefined,
+                        defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined,
                         title: 'Import tables from a SQLite database'
                     });
                     if (!picked || !picked[0]) return;
+                    await rememberPickerFile('database', picked[0].fsPath);
                     try {
                         const client = await this.host.getClient();
                         const tables = await client.sqliteTables(picked[0].fsPath);
@@ -1106,8 +1112,13 @@ export async function newDataSet(context: vscode.ExtensionContext): Promise<void
     if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         folder = vscode.workspace.workspaceFolders[0].uri;
     } else {
-        const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, openLabel: 'Create DataSet here' });
+        const startFolder = lastPickerFolder('folder');
+        const picked = await vscode.window.showOpenDialog({
+            canSelectFolders: true, openLabel: 'Create DataSet here',
+            defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined
+        });
         folder = picked && picked[0];
+        if (folder) await rememberPickerFolder('folder', folder.fsPath);
     }
     if (!folder) return;
 

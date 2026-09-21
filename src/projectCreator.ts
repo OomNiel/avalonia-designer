@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { execFile } from 'child_process';
 import { TEMPLATES, FormTemplate } from './formTemplates';
+import { pickerStartFolder, rememberPickerFolder } from './pickerFolders';
 import { generateProjectScaffold } from './projectScaffold';
 
 // ---------------------------------------------------------------------------
@@ -274,14 +275,17 @@ async function resolveParentDir(): Promise<string | undefined> {
     const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (ws) return ws;
 
+    const startFolder = pickerStartFolder('folder', os_homedir());
     const chosen = await vscode.window.showOpenDialog({
         title: 'Select a folder for the new project',
         canSelectFolders: true,
         canSelectFiles: false,
         canSelectMany: false,
-        defaultUri: vscode.Uri.file(os_homedir())
+        defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined
     });
-    return chosen && chosen.length > 0 ? chosen[0].fsPath : undefined;
+    if (!chosen || chosen.length === 0) return undefined;
+    await rememberPickerFolder('folder', chosen[0].fsPath);
+    return chosen[0].fsPath;
 }
 
 function os_homedir(): string {

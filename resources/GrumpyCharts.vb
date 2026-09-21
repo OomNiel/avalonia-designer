@@ -157,6 +157,34 @@ Namespace Global.AvaloniaCharts
         TopRight
     End Enum
 
+    ''' <summary>How the bars of a GrumpyBarPlot stand in their category.</summary>
+    Public Enum BarMode
+        ''' <summary>Side by side, one bar per series per category (the default) — the easiest to compare.</summary>
+        Grouped
+        ''' <summary>Each series starts where the previous one ended, so a category reads as its total.</summary>
+        Stacked
+        ''' <summary>Stacked and filled to 100%, which turns the same data into a share-of-total chart.</summary>
+        Stacked100
+    End Enum
+
+    ''' <summary>How the series of a GrumpyAreaPlot are filled.</summary>
+    Public Enum AreaMode
+        ''' <summary>Every series is its own filled shape, drawn over the ones before it (the default).</summary>
+        Plain
+        ''' <summary>Every series is filled from the top of the previous one (a stacked area).</summary>
+        Stacked
+        ''' <summary>Stacked and filled to 100% — a share-of-total picture over the categories.</summary>
+        Stacked100
+    End Enum
+
+    ''' <summary>Where a chart's data comes from (the Data Selector editor's first choice).</summary>
+    Public Enum DataSourceKind
+        ''' <summary>A page of an .xlsx workbook (the default): see SourceFile and SourceSheet.</summary>
+        Spreadsheet
+        ''' <summary>A data file such as a CSV — named by DataFile, not read yet.</summary>
+        DataFiles
+    End Enum
+
     ''' <summary>Reads Values="4,9,6,12" from XAML into a Double array.</summary>
     Public Class DoubleArrayConverter
         Inherits TypeConverter
@@ -208,6 +236,21 @@ Namespace Global.AvaloniaCharts
                 result(i, 1) = pairs(i)(1)
             Next
             Return result
+        End Function
+    End Class
+
+    ''' <summary>Reads Labels="Jan,Feb,Mar" from XAML into a String array.</summary>
+    Public NotInheritable Class StringArrayConverter
+        Inherits TypeConverter
+
+        Public Overrides Function CanConvertFrom(context As ITypeDescriptorContext, sourceType As Type) As Boolean
+            Return sourceType Is GetType(String) OrElse MyBase.CanConvertFrom(context, sourceType)
+        End Function
+
+        Public Overrides Function ConvertFrom(context As ITypeDescriptorContext, culture As CultureInfo, value As Object) As Object
+            Dim text = TryCast(value, String)
+            If text Is Nothing Then Return MyBase.ConvertFrom(context, culture, value)
+            Return text.Split(","c).Select(Function(part) part.Trim()).ToArray()
         End Function
     End Class
 
@@ -425,6 +468,11 @@ Namespace Global.AvaloniaCharts
         ''' <summary>The Y values.</summary>
         Public Property Ys As Double() = Array.Empty(Of Double)()
 
+        ''' <summary>The NAME of each point, from the spreadsheet's X column (a bar or area chart labels
+        ''' its categories with these; a pie reads its slice names here). Empty when the X cells hold
+        ''' numbers, or when there is no workbook.</summary>
+        Public Property Labels As String() = Array.Empty(Of String)()
+
         ''' <summary>The X axis name (the spreadsheet's X-column header).</summary>
         Public Property XTitle As String = String.Empty
 
@@ -487,15 +535,17 @@ Namespace Global.AvaloniaCharts
         ''' </summary>
         Friend Shared Function Read(path As String, xColumn As String, yColumn As String,
                                     headerRow As Integer, firstDataRow As Integer,
-                                    xFromIndex As Boolean) As ChartData
+                                    xFromIndex As Boolean, Optional sheet As String = Nothing) As ChartData
             Dim data As New ChartData()
             Try
                 Using zip = OpenWorkbook(path)
                     ' 'shared' is a VB keyword, hence sharedStrings.
                     Dim sharedStrings = ReadSharedStrings(zip)
-                    Dim sheet = FindSheet(zip)
-                    If sheet Is Nothing Then
-                        data.Error = """" & System.IO.Path.GetFileName(path) & """ has no worksheet."
+                    Dim sheetPart = FindSheet(zip, sheet)
+                    If sheetPart Is Nothing Then
+                        data.Error = If(String.IsNullOrWhiteSpace(sheet),
+                                        """" & System.IO.Path.GetFileName(path) & """ has no worksheet.",
+                                        """" & System.IO.Path.GetFileName(path) & """ has no page called """ & sheet.Trim() & """.")
                         Return data
                     End If
 
@@ -503,12 +553,13 @@ Namespace Global.AvaloniaCharts
                     Dim yi = ColumnIndex(yColumn)
                     Dim xs As New List(Of Double)()
                     Dim ys As New List(Of Double)()
+                    Dim labels As New List(Of String)()
                     Dim xsFallback As New List(Of Double)()
                     Dim ysFallback As New List(Of Double)()
                     Dim xTitle = String.Empty
                     Dim yTitle = String.Empty
 
-                    Using stream = sheet.Open()
+                    Using stream = sheetPart.Open()
                         For Each row In XDocument.Load(stream).Descendants().Where(Function(e) e.Name.LocalName = "row")
                             Dim rowNumber As Integer = -1
                             Dim rawRow = row.Attribute("r")
@@ -542,9 +593,16 @@ Namespace Global.AvaloniaCharts
                             Dim hasY = TryNumber(yText, yVal)
 
                             If xFromIndex Then
+                                ' A line series only needs one column. Prefer the Y column; if the sheet
+                                ' has the values in the X column instead, take those rather than drawing
+                                ' nothing. The X cell is read either way: when it holds TEXT it is this
+                                ' point's NAME (a bar chart's category, an area chart's tick label), and
+                                ' when it holds a number the index is still the X — which is what lets a
+                                ' categorical sheet drive a bar chart.
                                 If hasY Then
                                     xs.Add(ys.Count)
                                     ys.Add(yVal)
+                                    labels.Add(If(xText, String.Empty))
                                 ElseIf hasX Then
                                     xsFallback.Add(ysFallback.Count)
                                     ysFallback.Add(xVal)
@@ -552,6 +610,7 @@ Namespace Global.AvaloniaCharts
                             ElseIf hasX AndAlso hasY Then
                                 xs.Add(xVal)
                                 ys.Add(yVal)
+                                labels.Add(If(xText, String.Empty))
                             End If
                         Next
                     End Using
@@ -563,12 +622,96 @@ Namespace Global.AvaloniaCharts
 
                     data.Xs = xs.ToArray()
                     data.Ys = ys.ToArray()
+                    data.Labels = labels.ToArray()
                     data.XTitle = xTitle
                     data.YTitle = yTitle
                     If data.Ys.Length = 0 Then
                         Dim columns = If(xFromIndex, yColumn, xColumn & "/" & yColumn)
                         data.Error = "No numbers found in column " & columns & " of """ & System.IO.Path.GetFileName(path) &
                                      """ from row " & firstDataRow.ToString(CultureInfo.InvariantCulture) & "."
+                    End If
+                End Using
+            Catch ex As Exception
+                data.Error = ReadFailure(path, ex)
+            End Try
+            Return data
+        End Function
+
+        ''' <summary>
+        ''' Reads a workbook as LABEL + VALUE pairs, which is what a pie needs: the value column must
+        ''' hold numbers, the label column may hold anything, and a row whose label cell is empty falls
+        ''' back to the cell's own address. Unlike Read this KEEPS a row whose label is text — that is
+        ''' the whole point of reading a pie's categories — and X is the row's position, not a number.
+        ''' </summary>
+        Friend Shared Function ReadLabels(path As String, labelColumn As String, valueColumn As String,
+                                          headerRow As Integer, firstDataRow As Integer,
+                                          Optional sheet As String = Nothing) As ChartData
+            Dim data As New ChartData()
+            Try
+                Using zip = OpenWorkbook(path)
+                    Dim sharedStrings = ReadSharedStrings(zip)
+                    Dim sheetPart = FindSheet(zip, sheet)
+                    If sheetPart Is Nothing Then
+                        data.Error = If(String.IsNullOrWhiteSpace(sheet),
+                                        """" & System.IO.Path.GetFileName(path) & """ has no worksheet.",
+                                        """" & System.IO.Path.GetFileName(path) & """ has no page called """ & sheet.Trim() & """.")
+                        Return data
+                    End If
+
+                    Dim li = ColumnIndex(labelColumn)
+                    Dim vi = ColumnIndex(valueColumn)
+                    Dim xs As New List(Of Double)()
+                    Dim ys As New List(Of Double)()
+                    Dim labels As New List(Of String)()
+                    Dim labelTitle = String.Empty
+                    Dim valueTitle = String.Empty
+
+                    Using stream = sheetPart.Open()
+                        For Each row In XDocument.Load(stream).Descendants().Where(Function(e) e.Name.LocalName = "row")
+                            Dim rowNumber As Integer = -1
+                            Dim rawRow = row.Attribute("r")
+                            If rawRow IsNot Nothing Then
+                                Integer.TryParse(rawRow.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, rowNumber)
+                            End If
+
+                            Dim cells As New Dictionary(Of Integer, String)()
+                            For Each cell In row.Elements().Where(Function(e) e.Name.LocalName = "c")
+                                Dim cellRef = If(cell.Attribute("r")?.Value, String.Empty)
+                                Dim index = ColumnIndex(ColumnOf(cellRef))
+                                Dim text = CellText(cell, sharedStrings)
+                                If index >= 0 AndAlso text IsNot Nothing Then cells(index) = text
+                            Next
+
+                            If rowNumber = headerRow Then
+                                Dim labelHeader As String = Nothing
+                                Dim valueHeader As String = Nothing
+                                If cells.TryGetValue(li, labelHeader) Then labelTitle = labelHeader
+                                If cells.TryGetValue(vi, valueHeader) Then valueTitle = valueHeader
+                                Continue For
+                            End If
+                            If firstDataRow > 0 AndAlso rowNumber > 0 AndAlso rowNumber < firstDataRow Then Continue For
+
+                            Dim valueText As String = Nothing
+                            Dim value As Double = 0
+                            cells.TryGetValue(vi, valueText)
+                            If Not TryNumber(valueText, value) Then Continue For   ' a slice needs a number
+                            Dim labelText As String = Nothing
+                            cells.TryGetValue(li, labelText)
+                            labels.Add(If(String.IsNullOrWhiteSpace(labelText), labelColumn & rowNumber.ToString(CultureInfo.InvariantCulture), labelText.Trim()))
+                            xs.Add(ys.Count)
+                            ys.Add(value)
+                        Next
+                    End Using
+
+                    data.Xs = xs.ToArray()
+                    data.Ys = ys.ToArray()
+                    data.Labels = labels.ToArray()
+                    data.XTitle = labelTitle
+                    data.YTitle = valueTitle
+                    If data.Ys.Length = 0 Then
+                        data.Error = "No numbers found in column " & valueColumn & " of """ &
+                                     System.IO.Path.GetFileName(path) & """ from row " &
+                                     firstDataRow.ToString(CultureInfo.InvariantCulture) & "."
                     End If
                 End Using
             Catch ex As Exception
@@ -629,13 +772,83 @@ Namespace Global.AvaloniaCharts
             Return "Cannot read """ & name & """: " & ex.Message
         End Function
 
-        ''' <summary>The workbook's first worksheet part, or Nothing when the zip has none.</summary>
-        Private Shared Function FindSheet(zip As ZipArchive) As ZipArchiveEntry
+        ''' <summary>
+        ''' The worksheet to read: 'sheet' names one (matched case-insensitively against the workbook's
+        ''' own sheet names, whatever order Excel keeps its parts in), and an empty name gives the first
+        ''' worksheet part — the behaviour every form written before SourceSheet had.
+        ''' </summary>
+        Private Shared Function FindSheet(zip As ZipArchive, Optional sheet As String = Nothing) As ZipArchiveEntry
+            If Not String.IsNullOrWhiteSpace(sheet) Then
+                Dim target = SheetTarget(zip, sheet.Trim())
+                If target IsNot Nothing Then
+                    For Each entry In zip.Entries
+                        If entry.FullName.Equals(target, StringComparison.OrdinalIgnoreCase) Then Return entry
+                    Next
+                End If
+                ' A named page that is not there is an error, not "read page one instead".
+                Return Nothing
+            End If
             Return zip.Entries _
                 .Where(Function(e) e.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) _
                                  AndAlso e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)) _
                 .OrderBy(Function(e) e.FullName, StringComparer.OrdinalIgnoreCase) _
                 .FirstOrDefault()
+        End Function
+
+        ''' <summary>
+        ''' The zip path of the worksheet called 'sheet', resolved the way Excel means it: xl/workbook.xml
+        ''' lists the sheets in the order the tabs show, each pointing at a relationship
+        ''' (xl/_rels/workbook.xml.rels) that names the part. Part NAMES carry no meaning — Excel may keep
+        ''' sheet1.xml for any tab — which is why a named page is looked up through the rels rather than
+        ''' by guessing from the file name. Nothing when there is no such sheet.
+        ''' </summary>
+        Private Shared Function SheetTarget(zip As ZipArchive, sheet As String) As String
+            Dim workbook As ZipArchiveEntry = Nothing
+            Dim rels As ZipArchiveEntry = Nothing
+            For Each entry In zip.Entries
+                If entry.FullName.Equals("xl/workbook.xml", StringComparison.OrdinalIgnoreCase) Then workbook = entry
+                If entry.FullName.Equals("xl/_rels/workbook.xml.rels", StringComparison.OrdinalIgnoreCase) Then rels = entry
+            Next
+            If workbook Is Nothing OrElse rels Is Nothing Then Return Nothing
+
+            Dim id = String.Empty
+            Using stream = workbook.Open()
+                For Each element In XDocument.Load(stream).Descendants().Where(Function(e) e.Name.LocalName = "sheet")
+                    Dim name = element.Attribute("name")
+                    If name Is Nothing OrElse Not String.Equals(name.Value.Trim(), sheet, StringComparison.OrdinalIgnoreCase) Then Continue For
+                    Dim idAttr = element.Attributes().FirstOrDefault(Function(a) a.Name.LocalName = "id")
+                    If idAttr IsNot Nothing Then id = idAttr.Value
+                    Exit For
+                Next
+            End Using
+            If id.Length = 0 Then Return Nothing
+
+            Dim relTarget As String = Nothing
+            Using stream = rels.Open()
+                For Each element In XDocument.Load(stream).Descendants().Where(Function(e) e.Name.LocalName = "Relationship")
+                    Dim idAttr = element.Attribute("Id")
+                    If idAttr Is Nothing OrElse Not String.Equals(idAttr.Value, id, StringComparison.Ordinal) Then Continue For
+                    Dim targetAttr = element.Attribute("Target")
+                    If targetAttr IsNot Nothing Then relTarget = targetAttr.Value
+                    Exit For
+                Next
+            End Using
+            If String.IsNullOrWhiteSpace(relTarget) Then Return Nothing
+
+            ' Targets are relative to xl/ ("worksheets/sheet2.xml", sometimes with a leading "/" or a
+            ' "../"): normalize both spellings into a zip path.
+            Dim target = relTarget.Replace("\"c, "/"c).Trim()
+            If target.StartsWith("/", StringComparison.Ordinal) Then
+                target = target.TrimStart("/"c)
+            Else
+                target = "xl/" & target
+            End If
+            While target.Contains("../", StringComparison.Ordinal)
+                Dim at = target.IndexOf("../", StringComparison.Ordinal)
+                Dim cut = target.LastIndexOf("/"c, Math.Max(0, at - 1))
+                target = If(cut <= 0, target.Substring(at + 3), target.Substring(0, cut + 1) & target.Substring(at + 3))
+            End While
+            Return target
         End Function
 
         ''' <summary>The workbook's shared string table (xl/sharedStrings.xml), if it has one.</summary>
@@ -824,6 +1037,25 @@ Namespace Global.AvaloniaCharts
         ' ---- data source ----------------------------------------------------------------------
         Public Shared ReadOnly SourceFileProperty As StyledProperty(Of String) =
             AvaloniaProperty.Register(Of ChartBase, String)(NameOf(SourceFile), String.Empty)
+
+        ''' <summary>Where the data comes from: Spreadsheet (the default, the workbook in SourceFile)
+        ''' or DataFiles — a data file such as a CSV, which the Data Selector editor can already name in
+        ''' DataFile and which the charts will read when that reader lands. Choosing DataFiles today
+        ''' simply means the chart keeps drawing whatever SourceFile gives it.</summary>
+        Public Shared ReadOnly SourceKindProperty As StyledProperty(Of DataSourceKind) =
+            AvaloniaProperty.Register(Of ChartBase, DataSourceKind)(NameOf(SourceKind), DataSourceKind.Spreadsheet)
+
+        ''' <summary>Which PAGE of the workbook to read, by its sheet name ("Bar Chart"). Empty — the
+        ''' default — reads the first worksheet, which is what every form written before this property
+        ''' existed does.</summary>
+        Public Shared ReadOnly SourceSheetProperty As StyledProperty(Of String) =
+            AvaloniaProperty.Register(Of ChartBase, String)(NameOf(SourceSheet), String.Empty)
+
+        ''' <summary>The data FILE for the DataFiles source (a CSV today, other formats as they are
+        ''' added). Declared so a form can carry the Data Selector's choice and still compile; nothing
+        ''' reads it yet.</summary>
+        Public Shared ReadOnly DataFileProperty As StyledProperty(Of String) =
+            AvaloniaProperty.Register(Of ChartBase, String)(NameOf(DataFile), String.Empty)
 
         Public Shared ReadOnly LiveUpdateProperty As StyledProperty(Of Boolean) =
             AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(LiveUpdate), True)
@@ -1067,7 +1299,8 @@ Namespace Global.AvaloniaCharts
                 ShowTickLabelsProperty, TickLabelFontSizeProperty,
                 ShowAxisTitlesProperty, XAxisTitleProperty, YAxisTitleProperty,
                 ShowTitleProperty, TitleProperty, TitleColorProperty, TitlePositionProperty, TitleFontSizeProperty,
-                SourceFileProperty, XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
+                SourceFileProperty, SourceKindProperty, SourceSheetProperty, DataFileProperty,
+                XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
                 ShowLegendProperty, LegendFontSizeProperty,
                 LegendPositionProperty, LegendBackColorProperty, LegendShowFrameProperty,
                 LegendBorderBrushProperty, LegendBorderThicknessProperty, LegendCornerRadiusProperty,
@@ -1352,6 +1585,36 @@ Namespace Global.AvaloniaCharts
             End Get
             Set(value As String)
                 SetValue(SourceFileProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Where the data comes from (see DataSourceKind).</summary>
+        Public Property SourceKind As DataSourceKind
+            Get
+                Return GetValue(SourceKindProperty)
+            End Get
+            Set(value As DataSourceKind)
+                SetValue(SourceKindProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Which PAGE of the workbook to read, by sheet name (empty = the first worksheet).</summary>
+        Public Property SourceSheet As String
+            Get
+                Return GetValue(SourceSheetProperty)
+            End Get
+            Set(value As String)
+                SetValue(SourceSheetProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The data file for the DataFiles source — carried in the form, not read yet.</summary>
+        Public Property DataFile As String
+            Get
+                Return GetValue(DataFileProperty)
+            End Get
+            Set(value As String)
+                SetValue(DataFileProperty, value)
             End Set
         End Property
 
@@ -1644,8 +1907,7 @@ Namespace Global.AvaloniaCharts
         ''' <summary>The common Y axis to draw: the Axis object when the XAML has one, else one built
         ''' from the chart-level (legacy) axis properties.</summary>
         Private Function CommonYAxis() As Axis
-            If YAxis IsNot Nothing Then Return YAxis
-            Return New Axis With {
+            Dim axis = If(YAxis, New Axis With {
                 .Position = AxisPosition.Left,
                 .ShowAxis = ShowAxes,
                 .AxisColor = AxisColor,
@@ -1657,13 +1919,27 @@ Namespace Global.AvaloniaCharts
                 .TickLabelFontSize = TickLabelFontSize,
                 .ShowAxisName = ShowAxisTitles,
                 .Name = YAxisTitle
-            }
+            })
+            If Not HasCartesianAxes Then Hide(axis)
+            Return axis
         End Function
+
+        ''' <summary>
+        ''' A chart with no cartesian frame (the pie) wants the axis furniture out of the way but still
+        ''' wants the room its OWN axis objects would take — the pie gives its drawing a centred square
+        ''' of the frame, and an explicit &lt;charts:Axis&gt; in the form must not shrink it either.
+        ''' </summary>
+        Private Shared Sub Hide(axis As Axis)
+            axis.ShowAxis = False
+            axis.ShowMajorTicks = False
+            axis.ShowMinorTicks = False
+            axis.ShowTickLabels = False
+            axis.ShowAxisName = False
+        End Sub
 
         ''' <summary>The common X axis to draw: see CommonYAxis.</summary>
         Private Function CommonXAxis() As Axis
-            If XAxis IsNot Nothing Then Return XAxis
-            Return New Axis With {
+            Dim axis = If(XAxis, New Axis With {
                 .Position = AxisPosition.Bottom,
                 .ShowAxis = ShowAxes,
                 .AxisColor = AxisColor,
@@ -1675,19 +1951,26 @@ Namespace Global.AvaloniaCharts
                 .TickLabelFontSize = TickLabelFontSize,
                 .ShowAxisName = ShowAxisTitles,
                 .Name = XAxisTitle
-            }
+            })
+            If Not HasCartesianAxes Then Hide(axis)
+            Return axis
         End Function
 
         Private ReadOnly _cache As New Dictionary(Of String, ChartData)()
         Private _cacheFile As String = Nothing
         Private _lastPlotCount As Integer = 0
 
-        ''' <summary>The data for one series (cached per column pair and workbook).</summary>
-        Private Function DataFor(xColumn As String, yColumn As String, xFromIndex As Boolean) As ChartData
+        ''' <summary>
+        ''' The data for one series (cached per column pair and workbook). labelPairs reads label + value
+        ''' pairs instead of two numeric columns, which is what a pie's slices are — and it is only that
+        ''' chart that asks for it.
+        ''' </summary>
+        Private Protected Function DataFor(xColumn As String, yColumn As String, xFromIndex As Boolean,
+                                          Optional labelPairs As Boolean = False) As ChartData
             Dim file = SourceFile
             If String.IsNullOrWhiteSpace(file) Then Return InlineData()
 
-            Dim key = xColumn & "|" & yColumn & "|" & xFromIndex.ToString()
+            Dim key = xColumn & "|" & yColumn & "|" & xFromIndex.ToString() & "|" & labelPairs.ToString() & "|" & SourceSheet
             If _cacheFile <> file Then
                 _cache.Clear()
                 _cacheFile = file
@@ -1695,13 +1978,22 @@ Namespace Global.AvaloniaCharts
             Dim cached As ChartData = Nothing
             If _cache.TryGetValue(key, cached) Then Return cached
 
-            Dim loaded = SpreadsheetReader.Read(file, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex)
+            ' The PAGE the form asks for, by name; empty means the workbook's first worksheet.
+            Dim page = SourceSheet
+            Dim loaded = If(labelPairs,
+                            SpreadsheetReader.ReadLabels(file, xColumn, yColumn, HeaderRow, FirstDataRow, page),
+                            SpreadsheetReader.Read(file, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex, page))
             _cache(key) = loaded
             Return loaded
         End Function
 
-        ''' <summary>Every series to draw, with its data, styling, scale and axes resolved.</summary>
-        Private Function BuildPlots() As List(Of Plot)
+        ''' <summary>Every series to draw, with its data, styling, scale and axes resolved. A chart type
+        ''' with a different notion of "series" — the pie, whose slices each become one plot so the
+        ''' legend, its tick boxes and the colours work unchanged — overrides this. Friend (not Protected)
+        ''' because Plot is Friend: VB will not let a Protected member expose an assembly-internal type,
+        ''' which is exactly what the C# twin's private protected avoids.
+        ''' </summary>
+        Friend Overridable Function BuildPlots() As List(Of Plot)
             Dim plots As New List(Of Plot)()
             If Series.Count = 0 Then
                 ' The implicit single series: chart-level columns and (legacy) chart-level styling.
@@ -1717,7 +2009,7 @@ Namespace Global.AvaloniaCharts
                     .Connected = Connected
                 }
                 onePlot.XRange = AxisRange.Over(only.Xs, MinX, MaxX, 6, 1)
-                onePlot.YRange = AxisRange.Over(only.Ys, MinY, MaxY, 5, 5)
+                onePlot.YRange = WithBaseline(only.Ys, MinY, MaxY)
                 plots.Add(onePlot)
                 Return plots
             End If
@@ -1755,15 +2047,174 @@ Namespace Global.AvaloniaCharts
             Dim commonPlots = plots.Where(Function(p) Not p.PerSeries).ToList()
             If commonPlots.Count = 0 Then commonPlots = plots
             Dim allXs = commonPlots.SelectMany(Function(p) p.Data.Xs).ToArray()
-            Dim allYs = commonPlots.SelectMany(Function(p) p.Data.Ys).ToArray()
+            Dim allYs = commonPlots.SelectMany(Function(p) p.Data.Ys).ToList()
+            ' A stacked chart's scale has to fit the TOTALS (the tallest bar is the sum of its category's
+            ' segments); fitting each series on its own would push the stack out of the plot.
+            If StackSeries Then allYs.AddRange(StackTotals(commonPlots))
             Dim subdivisions = If(Series.Any(Function(s) s.XFromIndex), 1, 5)
-            Dim sharedX = AxisRange.Over(allXs, MinX, MaxX, 6, subdivisions)
-            Dim sharedY = AxisRange.Over(allYs, MinY, MaxY, 5, 5)
+            Dim sharedX = AxisRange.Over(PaddedX(allXs), MinX, MaxX, 6, subdivisions)
+            Dim sharedY = WithBaseline(allYs, MinY, MaxY)
             For Each one In commonPlots
                 one.XRange = sharedX
                 one.YRange = sharedY
             Next
             Return plots
+        End Function
+
+        ''' <summary>The Y scale for a set of values, with 0 included when this chart type needs a
+        ''' baseline (see ZeroBaseline). Forced limits still win: a hand-set MinY/MaxY is drawn as
+        ''' asked.</summary>
+        Private Function WithBaseline(values As IEnumerable(Of Double), forcedMin As Double, forcedMax As Double) As AxisRange
+            ' A share-of-whole chart always spans the whole 0-100 band: the drawing turns the values into
+            ' percentages, so fitting the raw totals would push every shape out of the plot.
+            If ZeroToHundred Then Return AxisRange.Over(New Double() {0.0R, 100.0R}, forcedMin, forcedMax, 5, 5)
+            Dim list = values.ToList()
+            If ZeroBaseline Then list.Add(0)
+            Return AxisRange.Over(list, forcedMin, forcedMax, 5, 5)
+        End Function
+
+        ''' <summary>The X values with this chart type's end margin added (see XPadUnits): the scale then
+        ''' reaches past the outer bars, so they are drawn whole.</summary>
+        Private Function PaddedX(xs As Double()) As Double()
+            If XPadUnits <= 0 OrElse xs.Length = 0 Then Return xs
+            Return New Double() {xs.Min() - XPadUnits, xs.Max() + XPadUnits}
+        End Function
+
+        ''' <summary>The per-point TOTALS of a stack, used to fit a stacked chart's scale.</summary>
+        Private Shared Function StackTotals(plots As List(Of Plot)) As IEnumerable(Of Double)
+            Dim length = If(plots.Count = 0, 0, plots.Max(Function(p) p.Data.Ys.Length))
+            Dim totals As New List(Of Double)()
+            For i = 0 To length - 1
+                Dim sum As Double = 0
+                For Each one In plots
+                    If i < one.Data.Ys.Length Then sum += one.Data.Ys(i)
+                Next
+                totals.Add(sum)
+            Next
+            Return totals
+        End Function
+
+        ''' <summary>
+        ''' True when this chart type STACKS its series: each one starts where the previous ended, so the
+        ''' scale has to fit the totals rather than the individual series (the bar and area charts).
+        ''' </summary>
+        Protected Overridable ReadOnly Property StackSeries As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' True when 0 has to be on the Y scale whether the data asks for it or not. A bar is read as a
+        ''' length from its baseline and an area as a filled space above it, so a chart whose values all
+        ''' sit far from zero (say 40…50) would otherwise draw meaningless shapes and a misleading
+        ''' picture.
+        ''' </summary>
+        Protected Overridable ReadOnly Property ZeroBaseline As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' True for a chart without a cartesian frame (the pie): there is no grid to draw and the axis
+        ''' furniture is hidden, so the drawing gets the whole frame instead of a plottable rectangle.
+        ''' </summary>
+        Protected Overridable ReadOnly Property HasCartesianAxes As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        ''' <summary>False when a draggable crosshair makes no sense on this chart type (the pie).</summary>
+        Protected Overridable ReadOnly Property SupportsCursors As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' True when the X axis is a list of CATEGORIES and should be labelled with each point's own
+        ''' name (the bar and area charts). Every other chart type keeps its numbers, so an existing
+        ''' form's axis cannot change under it just because its X column happens to hold text.
+        ''' </summary>
+        Protected Overridable ReadOnly Property NamedXAxis As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        ''' <summary>The names to label the X axis with, or Nothing when this chart type labels numbers.</summary>
+        Private Function XNames(data As ChartData) As String()
+            Return If(NamedXAxis, data.Labels, Nothing)
+        End Function
+
+        ''' <summary>
+        ''' How much empty room the X scale keeps at each end, in X units. A bar chart asks for HALF A
+        ''' SLOT, so the first and last bar stand clear of the plot's edge instead of being cut in half
+        ''' by it.
+        ''' </summary>
+        Protected Overridable ReadOnly Property XPadUnits As Double
+            Get
+                Return 0.0R
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' True when the series are SHARES OF A WHOLE (a 100% stacked bar or area), so the Y scale is
+        ''' fixed at 0 to 100 and the drawing works in percentages rather than the workbook's raw
+        ''' numbers.
+        ''' </summary>
+        Protected Overridable ReadOnly Property ZeroToHundred As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' Where each series sits when they are stacked: the level every shape of that series starts at
+        ''' and the level it reaches, per point. hundred first scales each category to 100, so the same
+        ''' data turns into a share-of-total chart. Without stacking the base is 0 and the top is the
+        ''' value, which is why the bar and area drawing can use one code path for both.
+        ''' </summary>
+        Friend Shared Function StackBands(plots As List(Of Plot), hundred As Boolean) As (Base As Double(), Top As Double())()
+            Dim bands(plots.Count - 1) As (Base As Double(), Top As Double())
+            Dim length = If(plots.Count = 0, 0, plots.Max(Function(p) p.Data.Ys.Length))
+            Dim running(length - 1) As Double
+            For s = 0 To plots.Count - 1
+                Dim ys = plots(s).Data.Ys
+                Dim bases(ys.Length - 1) As Double
+                Dim tops(ys.Length - 1) As Double
+                For i = 0 To ys.Length - 1
+                    Dim value = ys(i)
+                    If hundred Then
+                        Dim total As Double = 0
+                        For Each one In plots
+                            If i < one.Data.Ys.Length Then total += one.Data.Ys(i)
+                        Next
+                        value = If(total > 0, ys(i) / total * 100.0R, 0.0R)
+                    End If
+                    bases(i) = running(i)
+                    tops(i) = running(i) + value
+                    running(i) = tops(i)
+                Next
+                bands(s) = (bases, tops)
+            Next
+            Return bands
+        End Function
+
+        ''' <summary>A series' points in control coordinates.</summary>
+        Friend Shared Function SeriesPoints(one As Plot, area As Rect) As Point()
+            Return one.Data.Xs.Select(
+                Function(v, i)
+                    Return New Point(one.XRange.ToPixel(one.Data.Xs(i), area.X, area.Width),
+                                     one.YRange.ToPixel(one.Data.Ys(i), area.Bottom, -area.Height))
+                End Function).ToArray()
+        End Function
+
+        ''' <summary>Where a data value sits vertically in the plot (bars, areas and their baselines).</summary>
+        Friend Shared Function YAt(one As Plot, area As Rect, value As Double) As Double
+            Return one.YRange.ToPixel(value, area.Bottom, -area.Height)
         End Function
 
         ''' <summary>Drop the cached data so the next redraw re-reads the workbook.</summary>
@@ -1799,6 +2250,8 @@ Namespace Global.AvaloniaCharts
             MyBase.OnPropertyChanged(change)
             If change.Property Is SourceFileProperty Then
                 InvalidateCache()
+            ElseIf change.Property Is SourceSheetProperty Then
+                InvalidateCache()
             ElseIf change.Property Is LiveUpdateProperty Then
                 RestartWatcher()
             End If
@@ -1826,12 +2279,26 @@ Namespace Global.AvaloniaCharts
                     .AllowMultiple = False,
                     .FileTypeFilter = filters
                 }
+                ' Open where the last pick left off — see ChartPickerMemory — when there is somewhere to open.
+                Dim last = ChartPickerMemory.LastFolder
+                If last IsNot Nothing Then
+                    Try
+                        options.SuggestedStartLocation = Await storage.TryGetFolderFromPathAsync(New Uri(last))
+                    Catch
+                        ' The remembered folder is gone — let the platform choose.
+                    End Try
+                End If
                 Dim files = Await storage.OpenFilePickerAsync(options)
                 Dim picked As String = Nothing
                 If files IsNot Nothing AndAlso files.Count > 0 Then picked = files(0).TryGetLocalPath()
                 If Not String.IsNullOrWhiteSpace(picked) Then
                     SourceFile = picked
                     InvalidateCache()
+                    Try
+                        ChartPickerMemory.LastFolder = System.IO.Path.GetDirectoryName(picked)
+                    Catch
+                        ' Best effort.
+                    End Try
                 End If
             Catch
                 ' No picker available (headless preview, no portal, …): leave the path untouched.
@@ -2085,7 +2552,9 @@ Namespace Global.AvaloniaCharts
         ''' </summary>
         Private Function MeasureLegend(frameSize As Size, plots As List(Of Plot)) As Size
             _legend.Clear()
-            If Not ShowLegend OrElse _series.Count = 0 Then Return New Size(0, 0)
+            ' The plots are what the legend lists, not the form's series elements: a pie has no series
+            ' but its slices still need a legend.
+            If Not ShowLegend OrElse plots.Count = 0 Then Return New Size(0, 0)
 
             Const boxSize As Double = 13, boxGap As Double = 6, itemGap As Double = 16, lineGap As Double = 4
             ' The bar's own padding, plus whatever the user asked for: LegendMargin is the space between
@@ -2337,7 +2806,7 @@ Namespace Global.AvaloniaCharts
             End If
 
             ' Gridlines, then the common axis with its ticks and labels.
-            If ShowGrid Then
+            If ShowGrid AndAlso HasCartesianAxes Then
                 Dim gridPen = MakePen(GridColor, GridThickness, GridStyle)
                 For Each tick In commonPlot.XRange.Ticks()
                     Dim x = commonPlot.XRange.ToPixel(tick, plotRect.X, plotRect.Width)
@@ -2354,7 +2823,7 @@ Namespace Global.AvaloniaCharts
             DrawYAxis(context, plotRect, commonPlot.YRange, commonY, yOnRight, 0,
                       TickLabels(commonY, commonPlot.YRange), AxisName(commonY, YAxisTitle, commonPlot.Data.YTitle))
             DrawXAxis(context, plotRect, commonPlot.XRange, commonX, xOnTop, 0,
-                      TickLabels(commonX, commonPlot.XRange), AxisName(commonX, XAxisTitle, commonPlot.Data.XTitle))
+                      TickLabels(commonX, commonPlot.XRange, XNames(commonPlot.Data)), AxisName(commonX, XAxisTitle, commonPlot.Data.XTitle))
 
             Dim leftUsed As Double = If(yOnRight, 0, commonYWidth)
             Dim rightUsed As Double = If(yOnRight, commonYWidth, 0)
@@ -2373,38 +2842,25 @@ Namespace Global.AvaloniaCharts
             Next
             For Each one In topBlocks
                 DrawXAxis(context, plotRect, one.XRange, one.XAxis, True, topUsed,
-                          TickLabels(one.XAxis, one.XRange), AxisName(one.XAxis, Nothing, one.Data.XTitle))
+                          TickLabels(one.XAxis, one.XRange, XNames(one.Data)), AxisName(one.XAxis, Nothing, one.Data.XTitle))
                 topUsed += XBlockHeight(one.XAxis, one.XRange, Nothing, one.Data.XTitle)
             Next
             For Each one In bottomBlocks
                 DrawXAxis(context, plotRect, one.XRange, one.XAxis, False, bottomUsed,
-                          TickLabels(one.XAxis, one.XRange), AxisName(one.XAxis, Nothing, one.Data.XTitle))
+                          TickLabels(one.XAxis, one.XRange, XNames(one.Data)), AxisName(one.XAxis, Nothing, one.Data.XTitle))
                 bottomUsed += XBlockHeight(one.XAxis, one.XRange, Nothing, one.Data.XTitle)
             Next
 
-            ' The data itself, in order, clipped to the plot area.
+            ' The data itself, in order, clipped to the plot area. HOW it is drawn is the chart type's
+            ' business: a line joins its points, a bar stands a rectangle at each one, an area fills the
+            ' space under the line and a pie cuts a wedge for each value.
             Using context.PushClip(plotRect)
-                For Each one In plots
-                    If Not one.Data.HasData OrElse Not one.Visible Then Continue For
-                    Dim dataPoints = one.Data.Xs.Select(
-                        Function(v, i)
-                            Return New Point(one.XRange.ToPixel(v, plotRect.X, plotRect.Width),
-                                             one.YRange.ToPixel(one.Data.Ys(i), plotRect.Bottom, -plotRect.Height))
-                        End Function).ToArray()
-
-                    If one.Connected AndAlso dataPoints.Length > 1 Then
-                        Dim pen = MakePen(one.LineColor, one.LineThickness, one.LineStyle)
-                        For i = 1 To dataPoints.Length - 1
-                            context.DrawLine(pen, dataPoints(i - 1), dataPoints(i))
-                        Next
-                    End If
-                    DrawMarkers(context, dataPoints, one)
-                Next
+                DrawSeriesLayer(context, plots, plotRect)
             End Using
 
             ' The cursors sit on top of the data, and their readout on top of that, so a cursor is never
             ' buried by a line that happens to cross it.
-            DrawCursors(context, plotRect, plots)
+            If SupportsCursors Then DrawCursors(context, plotRect, plots)
 
             ' Frame + title last, so nothing can overdraw them.
             DrawFrame(context, frame, radius, frameWidth)
@@ -2412,14 +2868,43 @@ Namespace Global.AvaloniaCharts
             DrawLegend(context)
         End Sub
 
-        ''' <summary>The tick label texts of an axis (empty when it draws no labels).</summary>
-        Private Shared Function TickLabels(axis As Axis, range As AxisRange) As List(Of String)
-            Dim labels As New List(Of String)()
-            If Not axis.ShowTickLabels Then Return labels
-            For Each tick In range.Ticks()
-                labels.Add(FormatNumber(tick, range.TickStep))
+        ''' <summary>
+        ''' Draws the data itself: the LINE chart's series, one after another. A chart type with another
+        ''' shape overrides this (a bar stands rectangles, an area fills under the line, a pie cuts
+        ''' wedges) while everything around it — the plate, the frame, the grid, the axes, the legend, the
+        ''' title and the cursors — stays the same.
+        ''' </summary>
+        Friend Overridable Sub DrawSeriesLayer(context As DrawingContext, plots As List(Of Plot), plot As Rect)
+            For Each one In plots
+                If Not one.Data.HasData OrElse Not one.Visible Then Continue For
+                Dim dataPoints = SeriesPoints(one, plot)
+
+                If one.Connected AndAlso dataPoints.Length > 1 Then
+                    Dim pen = MakePen(one.LineColor, one.LineThickness, one.LineStyle)
+                    For i = 1 To dataPoints.Length - 1
+                        context.DrawLine(pen, dataPoints(i - 1), dataPoints(i))
+                    Next
+                End If
+                DrawMarkers(context, dataPoints, one)
             Next
-            Return labels
+        End Sub
+
+        ''' <summary>The tick label texts of an axis (empty when it draws no labels). When NAMES are given
+        ''' the axis is a list of CATEGORIES, so each tick is labelled with the name of the point it
+        ''' sits on instead of the number.</summary>
+        Private Shared Function TickLabels(axis As Axis, range As AxisRange, Optional names As String() = Nothing) As List(Of String)
+            If Not axis.ShowTickLabels Then Return New List(Of String)()
+            If names Is Nothing OrElse names.Length = 0 Then
+                Return range.Ticks().Select(Function(v) FormatNumber(v, range.TickStep)).ToList()
+            End If
+            Return range.Ticks().Select(
+                Function(v)
+                    ' A named axis keeps its number when the name is missing, so a partially labelled
+                    ' sheet still reads.
+                    Dim index = CInt(Math.Round(v))
+                    Return If(index >= 0 AndAlso index < names.Length AndAlso Not String.IsNullOrWhiteSpace(names(index)),
+                              names(index), FormatNumber(v, range.TickStep))
+                End Function).ToList()
         End Function
 
         ''' <summary>An axis' name text: its own Name, else the chart-level title, else the spreadsheet's
@@ -2550,7 +3035,7 @@ Namespace Global.AvaloniaCharts
             End If
         End Sub
 
-        Private Sub DrawMarkers(context As DrawingContext, dataPoints As Point(), one As Plot)
+        Private Protected Sub DrawMarkers(context As DrawingContext, dataPoints As Point(), one As Plot)
             If one.MarkerStyle = ChartMarkerStyle.None Then Return
             Dim size = Math.Max(2, one.MarkerSize)
             Dim brush As New SolidColorBrush(one.LineColor)
@@ -2988,7 +3473,7 @@ Namespace Global.AvaloniaCharts
                             Math.Max(0, rect.Width - left - right), Math.Max(0, rect.Height - top - bottom))
         End Function
 
-        Private Shared Function MakePen(color As Color, thickness As Double, style As ChartLineStyle) As IPen
+        Private Protected Shared Function MakePen(color As Color, thickness As Double, style As ChartLineStyle) As IPen
             Dim pen As New Pen(New SolidColorBrush(color), Math.Max(0.5, thickness), DashFor(style))
             ' Round caps make the Dot style read as dots rather than as nothing at all.
             pen.LineCap = If(style = ChartLineStyle.Dot, PenLineCap.Round, PenLineCap.Flat)
@@ -3201,6 +3686,734 @@ Namespace Global.AvaloniaCharts
             MyBase.OnPropertyChanged(change)
             If change.Property Is PointsProperty Then Reload()
         End Sub
+    End Class
+
+    ''' <summary>
+    ''' One slice of a GrumpyPiePlot: its NAME (ChartSeries.Title, which is what the legend shows), its
+    ''' COLOUR (ChartSeries.LineColor — the same property a series uses, so the Slices editor's rows mean
+    ''' what the Series editor's rows mean), how far it is pushed out of the pie, and whether it is drawn
+    ''' at all.
+    ''' <para>
+    ''' A slice listed here is an OVERRIDE: the pie's slices come from the data, and this names the ones
+    ''' that should look different. A slice the form does not mention gets a colour from the chart's
+    ''' palette. Slices are matched to the data by their name.
+    ''' </para>
+    ''' </summary>
+    Public Class PieSlice
+        Inherits ChartSeries
+
+        ''' <summary>How far this slice is pushed out of the pie, in pixels (0 = in place).</summary>
+        Public Property Explode As Double = 0
+
+        ''' <summary>A slice's position is its row, so it is never read from a workbook column.</summary>
+        Friend Overrides ReadOnly Property XFromIndex As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+    End Class
+
+    ''' <summary>
+    ''' A BAR / COLUMN chart: one bar per category, drawn from its baseline — side by side, stacked, or
+    ''' stacked and filled to 100% (see BarMode). A point's NAME comes from the spreadsheet's X column (a
+    ''' label column of text, dates or numbers), and when it has none the axis falls back to numbers. 0 is
+    ''' always on the Y scale, because a bar is read as a length from its baseline.
+    ''' <para>
+    ''' Everything shared with the other charts works exactly as it does on a line chart: series (one bar
+    ''' colour each, from the Series editor), the common and per-series axes, the legend, the two cursors,
+    ''' the background gradient, the border and the padding.
+    ''' </para>
+    ''' </summary>
+    Public Class GrumpyBarPlot
+        Inherits ChartBase
+
+        ''' <summary>The implicit series' values, used only when the chart has no series elements. One bar
+        ''' per value; the category names still come from the spreadsheet's X column.</summary>
+        Public Shared ReadOnly ValuesProperty As StyledProperty(Of Double()) =
+            AvaloniaProperty.Register(Of GrumpyBarPlot, Double())(NameOf(Values))
+
+        ''' <summary>Grouped, Stacked or Stacked100.</summary>
+        Public Shared ReadOnly BarModeProperty As StyledProperty(Of BarMode) =
+            AvaloniaProperty.Register(Of GrumpyBarPlot, BarMode)(NameOf(BarMode))
+
+        ''' <summary>How much of its slot one bar fills: 0.1 … 1 (default 0.8, the rest is the gap).</summary>
+        Public Shared ReadOnly BarWidthProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyBarPlot, Double)(NameOf(BarWidth), 0.8R)
+
+        ''' <summary>How round a bar's corners are, in pixels (0 = square corners, the default).</summary>
+        Public Shared ReadOnly BarCornerRadiusProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyBarPlot, Double)(NameOf(BarCornerRadius))
+
+        ''' <summary>The values of the implicit series (used only when the chart has no series elements).</summary>
+        <TypeConverter(GetType(DoubleArrayConverter))>
+        Public Property Values As Double()
+            Get
+                Return GetValue(ValuesProperty)
+            End Get
+            Set(value As Double())
+                SetValue(ValuesProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How the bars stand in their category (see BarMode).</summary>
+        Public Property BarMode As BarMode
+            Get
+                Return GetValue(BarModeProperty)
+            End Get
+            Set(value As BarMode)
+                SetValue(BarModeProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How much of its slot one bar fills.</summary>
+        Public Property BarWidth As Double
+            Get
+                Return GetValue(BarWidthProperty)
+            End Get
+            Set(value As Double)
+                SetValue(BarWidthProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How round a bar's corners are, in pixels.</summary>
+        Public Property BarCornerRadius As Double
+            Get
+                Return GetValue(BarCornerRadiusProperty)
+            End Get
+            Set(value As Double)
+                SetValue(BarCornerRadiusProperty, value)
+            End Set
+        End Property
+
+        Protected Overrides ReadOnly Property ImplicitXFromIndex As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property ZeroBaseline As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property StackSeries As Boolean
+            Get
+                Return BarMode <> BarMode.Grouped
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property NamedXAxis As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        ''' <summary>Half a slot of room at each end, so the first and last bar are drawn whole.</summary>
+        Protected Overrides ReadOnly Property XPadUnits As Double
+            Get
+                Return 0.5R
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property ZeroToHundred As Boolean
+            Get
+                Return BarMode = BarMode.Stacked100
+            End Get
+        End Property
+
+        Protected Overrides Function InlineData() As ChartData
+            ' Not named 'values': VB is case-insensitive and would match the property above.
+            Dim samples = If(Values, Array.Empty(Of Double)())
+            Return New ChartData With {
+                .Xs = Enumerable.Range(0, samples.Length).Select(Function(i) CDbl(i)).ToArray(),
+                .Ys = samples
+            }
+        End Function
+
+        Protected Overrides Sub SetInlineData(xs As Double(), ys As Double())
+            Values = ys
+        End Sub
+
+        Protected Overrides Sub OnPropertyChanged(change As AvaloniaPropertyChangedEventArgs)
+            MyBase.OnPropertyChanged(change)
+            If change.Property Is ValuesProperty OrElse change.Property Is BarModeProperty OrElse
+               change.Property Is BarWidthProperty OrElse change.Property Is BarCornerRadiusProperty Then
+                Reload()
+            End If
+        End Sub
+
+        ''' <summary>
+        ''' Draws one bar per point, per series. Grouped bars split the category's slot between the series
+        ''' (a switched-off series keeps its place, so the others do not jump sideways when it is toggled);
+        ''' stacked bars share the whole slot and start where the previous series ended, which is why the
+        ''' scale is fitted to the stack's totals (see ChartBase.StackSeries).
+        ''' </summary>
+        Friend Overrides Sub DrawSeriesLayer(context As DrawingContext, plots As List(Of Plot), plot As Rect)
+            If plots.Count = 0 Then Return
+            Dim stacked = BarMode <> BarMode.Grouped
+            Dim bands = If(stacked, StackBands(plots, BarMode = BarMode.Stacked100), Nothing)
+            Dim radius = Math.Max(0, BarCornerRadius)
+
+            For s = 0 To plots.Count - 1
+                Dim p = plots(s)
+                Dim count = p.Data.Ys.Length
+                If count = 0 OrElse Not p.Visible Then Continue For
+
+                ' The slot a category owns is one X unit, measured THROUGH the axis' own mapping (its
+                ' origin and its length), so the bars keep their width whatever the scale is.
+                Dim slot = Math.Abs(p.XRange.ToPixel(1, plot.X, plot.Width) - p.XRange.ToPixel(0, plot.X, plot.Width))
+                If Not (slot > 0) Then slot = plot.Width / Math.Max(1, p.Data.Xs.Length)
+                Dim group = Math.Clamp(BarWidth, 0.05, 1) * slot
+                Dim width = If(stacked, group, group / Math.Max(1, plots.Count))
+                Dim offset = If(stacked, 0.0, (s - (plots.Count - 1) / 2.0) * width)
+
+                Dim bases As Double()
+                Dim tops As Double()
+                If bands IsNot Nothing Then
+                    bases = bands(s).Base
+                    tops = bands(s).Top
+                Else
+                    bases = New Double(count - 1) {}
+                    tops = p.Data.Ys
+                End If
+
+                Dim fill As New SolidColorBrush(p.LineColor)
+                For i = 0 To count - 1
+                    Dim x = p.XRange.ToPixel(p.Data.Xs(i), plot.X, plot.Width) + offset
+                    Dim top = YAt(p, plot, tops(i))
+                    Dim bottom = YAt(p, plot, bases(i))
+                    Dim bar As New Rect(x - width / 2, Math.Min(top, bottom), width, Math.Abs(bottom - top))
+                    context.DrawRectangle(fill, Nothing, New RoundedRect(bar, radius))
+                Next
+            Next
+        End Sub
+    End Class
+
+    ''' <summary>
+    ''' An AREA chart: each series is a filled shape under its line. A plain area chart fills every series
+    ''' down to zero (so the series drawn last covers the ones before it — that is what a plain area chart
+    ''' does), while AreaMode.Stacked fills each series from the top of the previous one, which is the shape
+    ''' monitoring dashboards use, and AreaMode.Stacked100 makes every category total 100%.
+    ''' <para>
+    ''' The data, the series, the axes (with the points' names along the bottom), the legend, the cursors,
+    ''' the background gradient, the border and the padding all work as they do on the line chart.
+    ''' </para>
+    ''' </summary>
+    Public Class GrumpyAreaPlot
+        Inherits ChartBase
+
+        ''' <summary>The implicit series' values, used only when the chart has no series elements.</summary>
+        Public Shared ReadOnly ValuesProperty As StyledProperty(Of Double()) =
+            AvaloniaProperty.Register(Of GrumpyAreaPlot, Double())(NameOf(Values))
+
+        ''' <summary>Plain, Stacked or Stacked100.</summary>
+        Public Shared ReadOnly AreaModeProperty As StyledProperty(Of AreaMode) =
+            AvaloniaProperty.Register(Of GrumpyAreaPlot, AreaMode)(NameOf(AreaMode))
+
+        ''' <summary>How solid the fill is, 0 … 100 (default 60): the line on top stays fully opaque, so a
+        ''' lighter fill lets the gridlines and the series behind it show through.</summary>
+        Public Shared ReadOnly AreaOpacityProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyAreaPlot, Double)(NameOf(AreaOpacity), 60.0R)
+
+        ''' <summary>The values of the implicit series (used only when the chart has no series elements).</summary>
+        <TypeConverter(GetType(DoubleArrayConverter))>
+        Public Property Values As Double()
+            Get
+                Return GetValue(ValuesProperty)
+            End Get
+            Set(value As Double())
+                SetValue(ValuesProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How the series are filled (see AreaMode).</summary>
+        Public Property AreaMode As AreaMode
+            Get
+                Return GetValue(AreaModeProperty)
+            End Get
+            Set(value As AreaMode)
+                SetValue(AreaModeProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How solid the fill is, as a percentage.</summary>
+        Public Property AreaOpacity As Double
+            Get
+                Return GetValue(AreaOpacityProperty)
+            End Get
+            Set(value As Double)
+                SetValue(AreaOpacityProperty, value)
+            End Set
+        End Property
+
+        Protected Overrides ReadOnly Property ImplicitXFromIndex As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property ZeroBaseline As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property StackSeries As Boolean
+            Get
+                Return AreaMode <> AreaMode.Plain
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property NamedXAxis As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property ZeroToHundred As Boolean
+            Get
+                Return AreaMode = AreaMode.Stacked100
+            End Get
+        End Property
+
+        Protected Overrides Function InlineData() As ChartData
+            ' Not named 'values': VB is case-insensitive and would match the property above.
+            Dim samples = If(Values, Array.Empty(Of Double)())
+            Return New ChartData With {
+                .Xs = Enumerable.Range(0, samples.Length).Select(Function(i) CDbl(i)).ToArray(),
+                .Ys = samples
+            }
+        End Function
+
+        Protected Overrides Sub SetInlineData(xs As Double(), ys As Double())
+            Values = ys
+        End Sub
+
+        Protected Overrides Sub OnPropertyChanged(change As AvaloniaPropertyChangedEventArgs)
+            MyBase.OnPropertyChanged(change)
+            If change.Property Is ValuesProperty OrElse change.Property Is AreaModeProperty OrElse
+               change.Property Is AreaOpacityProperty Then
+                Reload()
+            End If
+        End Sub
+
+        ''' <summary>
+        ''' Fills each series down to its baseline and then strokes the line along its top, so the shape has
+        ''' a crisp edge and the same colour as its fill. Stacked modes fill from the previous series' top;
+        ''' the plain mode fills to zero, which is the classic overlap (and why the series order matters).
+        ''' </summary>
+        Friend Overrides Sub DrawSeriesLayer(context As DrawingContext, plots As List(Of Plot), plot As Rect)
+            If plots.Count = 0 Then Return
+            Dim stacked = AreaMode <> AreaMode.Plain
+            Dim bands = If(stacked, StackBands(plots, AreaMode = AreaMode.Stacked100), Nothing)
+            Dim fillOpacity = Math.Clamp(AreaOpacity, 0, 100) / 100.0
+
+            For s = 0 To plots.Count - 1
+                Dim p = plots(s)
+                Dim count = p.Data.Ys.Length
+                If count = 0 OrElse Not p.Visible Then Continue For
+
+                Dim bases As Double()
+                Dim tops As Double()
+                If bands IsNot Nothing Then
+                    bases = bands(s).Base
+                    tops = bands(s).Top
+                Else
+                    bases = New Double(count - 1) {}
+                    tops = p.Data.Ys
+                End If
+
+                Dim xs = p.Data.Xs
+                Dim geometry As New StreamGeometry()
+                Using g = geometry.Open()
+                    g.BeginFigure(New Point(p.XRange.ToPixel(xs(0), plot.X, plot.Width), YAt(p, plot, tops(0))), True)
+                    For i = 1 To count - 1
+                        g.LineTo(New Point(p.XRange.ToPixel(xs(i), plot.X, plot.Width), YAt(p, plot, tops(i))))
+                    Next
+                    ' Back along the baseline, right to left, so the shape is closed.
+                    For i = count - 1 To 0 Step -1
+                        g.LineTo(New Point(p.XRange.ToPixel(xs(i), plot.X, plot.Width), YAt(p, plot, bases(i))))
+                    Next
+                    g.EndFigure(True)
+                End Using
+                context.DrawGeometry(New SolidColorBrush(p.LineColor, fillOpacity), Nothing, geometry)
+
+                If p.Connected AndAlso count > 1 Then
+                    Dim pen = MakePen(p.LineColor, p.LineThickness, p.LineStyle)
+                    For i = 1 To count - 1
+                        context.DrawLine(pen,
+                            New Point(p.XRange.ToPixel(xs(i - 1), plot.X, plot.Width), YAt(p, plot, tops(i - 1))),
+                            New Point(p.XRange.ToPixel(xs(i), plot.X, plot.Width), YAt(p, plot, tops(i))))
+                    Next
+                End If
+                If p.MarkerStyle <> ChartMarkerStyle.None Then
+                    DrawMarkers(context, tops.Select(
+                        Function(t, i)
+                            Return New Point(p.XRange.ToPixel(xs(i), plot.X, plot.Width), YAt(p, plot, t))
+                        End Function).ToArray(), p)
+                End If
+            Next
+        End Sub
+    End Class
+
+    ''' <summary>
+    ''' A PIE / DOUGHNUT chart: one wedge per labelled value. The slices come from the workbook's label and
+    ''' value columns (the label column may hold text, dates or numbers — a pie is the one chart whose
+    ''' categories are almost always words), or from the typed Labels and Values. A doughnut is the same
+    ''' chart with DoughnutPercent above zero.
+    ''' <para>
+    ''' There is no cartesian frame here — no gridlines, no axes and no cursors — and the legend lists the
+    ''' SLICES, so clicking an entry switches that slice off exactly as it switches a trace off on the other
+    ''' charts. The colour of a slice is its own; the ones the form does not mention take a colour from the
+    ''' chart's palette, and the Slices editor writes the overrides.
+    ''' </para>
+    ''' </summary>
+    Public Class GrumpyPiePlot
+        Inherits ChartBase
+
+        ''' <summary>The wedge values (used when the chart has no workbook).</summary>
+        Public Shared ReadOnly ValuesProperty As StyledProperty(Of Double()) =
+            AvaloniaProperty.Register(Of GrumpyPiePlot, Double())(NameOf(Values))
+
+        ''' <summary>The wedge names, one per value ("Jan,Feb,Mar"), used with Values.</summary>
+        Public Shared ReadOnly LabelsProperty As StyledProperty(Of String()) =
+            AvaloniaProperty.Register(Of GrumpyPiePlot, String())(NameOf(Labels))
+
+        ''' <summary>How thick the ring is, as a percentage of the radius: 0 is a solid pie (the default),
+        ''' 50 makes a doughnut whose hole is half the pie.</summary>
+        Public Shared ReadOnly DoughnutPercentProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyPiePlot, Double)(NameOf(DoughnutPercent))
+
+        ''' <summary>Where the first slice starts: 0 is 12 o'clock, and the slices run clockwise from there.</summary>
+        Public Shared ReadOnly StartAngleProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyPiePlot, Double)(NameOf(StartAngle))
+
+        ''' <summary>The gap between two neighbouring slices, in degrees (0 = they touch).</summary>
+        Public Shared ReadOnly SliceGapProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyPiePlot, Double)(NameOf(SliceGap))
+
+        ''' <summary>The line drawn between two slices.</summary>
+        Public Shared ReadOnly SliceBorderColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpyPiePlot, Color)(NameOf(SliceBorderColor), Colors.White)
+
+        ''' <summary>How thick that line is (0 = no line, so the colours touch).</summary>
+        Public Shared ReadOnly SliceBorderThicknessProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyPiePlot, Double)(NameOf(SliceBorderThickness), 1.0R)
+
+        ''' <summary>The wedge values (used when the chart has no workbook).</summary>
+        <TypeConverter(GetType(DoubleArrayConverter))>
+        Public Property Values As Double()
+            Get
+                Return GetValue(ValuesProperty)
+            End Get
+            Set(value As Double())
+                SetValue(ValuesProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The wedge names, one per value (used with Values).</summary>
+        <TypeConverter(GetType(StringArrayConverter))>
+        Public Property Labels As String()
+            Get
+                Return GetValue(LabelsProperty)
+            End Get
+            Set(value As String())
+                SetValue(LabelsProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How thick the ring is, as a percentage of the radius (0 = a solid pie).</summary>
+        Public Property DoughnutPercent As Double
+            Get
+                Return GetValue(DoughnutPercentProperty)
+            End Get
+            Set(value As Double)
+                SetValue(DoughnutPercentProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Where the first slice starts, in degrees clockwise from 12 o'clock.</summary>
+        Public Property StartAngle As Double
+            Get
+                Return GetValue(StartAngleProperty)
+            End Get
+            Set(value As Double)
+                SetValue(StartAngleProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The gap between two neighbouring slices, in degrees.</summary>
+        Public Property SliceGap As Double
+            Get
+                Return GetValue(SliceGapProperty)
+            End Get
+            Set(value As Double)
+                SetValue(SliceGapProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Colour of the line between two slices.</summary>
+        Public Property SliceBorderColor As Color
+            Get
+                Return GetValue(SliceBorderColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(SliceBorderColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Thickness of that line.</summary>
+        Public Property SliceBorderThickness As Double
+            Get
+                Return GetValue(SliceBorderThicknessProperty)
+            End Get
+            Set(value As Double)
+                SetValue(SliceBorderThicknessProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>
+        ''' The slices the form names: one element per slice that should differ from the palette —
+        ''' &lt;charts:PieSlice Title="North" LineColor="#E4572E" Explode="8"/&gt;. A slice the form does not
+        ''' mention is drawn from the palette, and switching one off in the legend switches it off for the
+        ''' session (which slices are switched on is runtime state, as it is for a series).
+        ''' </summary>
+        Public ReadOnly Property Slices As New AvaloniaList(Of PieSlice)()
+
+        Protected Overrides ReadOnly Property ImplicitXFromIndex As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property HasCartesianAxes As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property SupportsCursors As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        Protected Overrides Function InlineData() As ChartData
+            ' Not named 'values': VB is case-insensitive and would match the property above.
+            Dim samples = If(Values, Array.Empty(Of Double)())
+            Dim names = If(Labels, Array.Empty(Of String)())
+            Return New ChartData With {
+                .Xs = Enumerable.Range(0, samples.Length).Select(Function(i) CDbl(i)).ToArray(),
+                .Ys = samples,
+                .Labels = Enumerable.Range(0, samples.Length).Select(
+                    Function(i)
+                        If i < names.Length AndAlso Not String.IsNullOrWhiteSpace(names(i)) Then
+                            Return names(i)
+                        End If
+                        Return "Slice " & (i + 1).ToString(CultureInfo.InvariantCulture)
+                    End Function).ToArray()
+            }
+        End Function
+
+        Protected Overrides Sub SetInlineData(xs As Double(), ys As Double())
+            Values = ys
+        End Sub
+
+        Protected Overrides Sub OnPropertyChanged(change As AvaloniaPropertyChangedEventArgs)
+            MyBase.OnPropertyChanged(change)
+            If change.Property Is ValuesProperty OrElse change.Property Is LabelsProperty OrElse
+               change.Property Is DoughnutPercentProperty OrElse change.Property Is StartAngleProperty OrElse
+               change.Property Is SliceGapProperty OrElse change.Property Is SliceBorderColorProperty OrElse
+               change.Property Is SliceBorderThicknessProperty Then
+                Reload()
+            End If
+        End Sub
+
+        ''' <summary>The colours a slice takes when the form does not name one.</summary>
+        Private Shared ReadOnly SlicePalette As Color() = {
+            Color.Parse("#2D7DD2"), Color.Parse("#E4572E"), Color.Parse("#3FA34D"), Color.Parse("#F2A541"),
+            Color.Parse("#8367C7"), Color.Parse("#00A6A6"), Color.Parse("#C05780"), Color.Parse("#6B7A8F"),
+            Color.Parse("#8CB369"), Color.Parse("#B5651D")
+        }
+
+        ''' <summary>Stand-ins for the slices the form does not name, kept so the legend's tick boxes stick.</summary>
+        Private ReadOnly _sliceStubs As New Dictionary(Of String, PieSlice)()
+
+        ''' <summary>
+        ''' One plot per SLICE, which is what makes the shared machinery work: the legend lists the slices
+        ''' with their colours, clicking an entry switches that wedge off, and the drawing below reads the
+        ''' same list back. PieSlice is a ChartSeries, so a slice and a series are described by the same
+        ''' properties.
+        ''' </summary>
+        Friend Overrides Function BuildPlots() As List(Of Plot)
+            Dim data = DataFor(If(XColumn, "B"), If(YColumn, "C"), True, labelPairs:=True)
+            Dim plots As New List(Of Plot)()
+            For i = 0 To data.Ys.Length - 1
+                Dim name = If(i < data.Labels.Length AndAlso Not String.IsNullOrWhiteSpace(data.Labels(i)),
+                              data.Labels(i), "Slice " & (i + 1).ToString(CultureInfo.InvariantCulture))
+                Dim slice = SliceFor(name, i)
+                plots.Add(New Plot With {
+                    .Data = New ChartData With {
+                        .Xs = New Double() {0.0R},
+                        .Ys = New Double() {data.Ys(i)},
+                        .Labels = New String() {name},
+                        .XTitle = data.XTitle,
+                        .YTitle = name
+                    },
+                    .Definition = slice,
+                    .LineColor = slice.LineColor,
+                    .Visible = slice.Visible
+                })
+            Next
+            ' A workbook that could not be read has nothing to draw, and its message has to survive: the
+            ' empty plot carries it into the chart's "no data" line.
+            If plots.Count = 0 AndAlso data.Error IsNot Nothing Then
+                plots.Add(New Plot With {.Data = New ChartData With {.Error = data.Error}})
+            End If
+            Return plots
+        End Function
+
+        ''' <summary>The named slice for this wedge, or a remembered stand-in with its palette colour.</summary>
+        Private Function SliceFor(name As String, index As Integer) As PieSlice
+            For Each slice In Slices
+                If String.Equals(slice.Title, name, StringComparison.OrdinalIgnoreCase) Then Return slice
+            Next
+            Dim stub As PieSlice = Nothing
+            If _sliceStubs.TryGetValue(name, stub) Then Return stub
+            Dim made As New PieSlice With {.Title = name, .LineColor = SlicePalette(index Mod SlicePalette.Length)}
+            _sliceStubs(name) = made
+            Return made
+        End Function
+
+        ''' <summary>
+        ''' Draws the wedges. Each one is an arc out at the radius and back in at the ring's inner radius
+        ''' (or back to the centre for a solid pie), which is one closed path either way — so a doughnut is
+        ''' the same drawing with a hole in it. A slice may explode outwards along its own middle, and the
+        ''' gap is taken off both of its edges so the gaps stay even.
+        ''' </summary>
+        Friend Overrides Sub DrawSeriesLayer(context As DrawingContext, plots As List(Of Plot), plot As Rect)
+            Dim total As Double = 0
+            For Each p In plots
+                If p.Visible AndAlso p.Data.HasData Then total += Math.Max(0, p.Data.Ys(0))
+            Next
+            If total <= 0 Then Return
+
+            Dim side = Math.Min(plot.Width, plot.Height)
+            If side <= 4 Then Return
+            Dim centre As New Point(plot.X + plot.Width / 2, plot.Y + plot.Height / 2)
+            Dim radius = side / 2
+            Dim inner = radius * Math.Clamp(DoughnutPercent, 0, 95) / 100.0
+            Dim gap = Math.Max(0, SliceGap)
+            Dim border As IPen = Nothing
+            If SliceBorderThickness > 0 Then border = MakePen(SliceBorderColor, SliceBorderThickness, ChartLineStyle.Solid)
+            Dim angle = StartAngle - 90.0    ' 0° is 12 o'clock; -90° is where a circle's 0 radian sits
+
+            For Each p In plots
+                If Not p.Visible OrElse Not p.Data.HasData Then Continue For
+                Dim value = Math.Max(0, p.Data.Ys(0))
+                If value <= 0 Then Continue For
+
+                Dim sweep = value / total * 360.0
+                Dim from = angle + gap / 2
+                Dim [to] = angle + sweep - gap / 2
+                angle += sweep
+                If [to] - from <= 0.01 Then Continue For
+
+                Dim origin = centre
+                Dim exploded = TryCast(p.Definition, PieSlice)
+                If exploded IsNot Nothing AndAlso exploded.Explode > 0 Then
+                    Dim middle = (from + [to]) / 2 * Math.PI / 180.0
+                    origin = New Point(centre.X + Math.Cos(middle) * exploded.Explode,
+                                       centre.Y + Math.Sin(middle) * exploded.Explode)
+                End If
+
+                Dim large = [to] - from > 180.0
+                Dim geometry As New StreamGeometry()
+                Using g = geometry.Open()
+                    g.BeginFigure(OnCircle(origin, radius, from), True)
+                    g.ArcTo(OnCircle(origin, radius, [to]), New Size(radius, radius), 0, large, SweepDirection.Clockwise)
+                    If inner > 0 Then
+                        g.LineTo(OnCircle(origin, inner, [to]))
+                        g.ArcTo(OnCircle(origin, inner, from), New Size(inner, inner), 0, large, SweepDirection.CounterClockwise)
+                    Else
+                        g.LineTo(origin)
+                    End If
+                    g.EndFigure(True)
+                End Using
+                context.DrawGeometry(New SolidColorBrush(p.LineColor), border, geometry)
+            Next
+        End Sub
+
+        ''' <summary>The point DEGREES around a circle (0° = 12 o'clock, clockwise).</summary>
+        Private Shared Function OnCircle(centre As Point, radius As Double, degrees As Double) As Point
+            Dim radians = degrees * Math.PI / 180.0
+            Return New Point(centre.X + Math.Cos(radians) * radius, centre.Y + Math.Sin(radians) * radius)
+        End Function
+    End Class
+
+    ''' <summary>
+    ''' Remembers the folder the chart's own file picker used last, so the next one opens there instead of
+    ''' wherever the platform happens to start. It lives in the per-user app-data folder
+    ''' (~/.local/share/&lt;App&gt; on Linux, %LOCALAPPDATA%\&lt;App&gt; on Windows) — the same place the
+    ''' generated DataSet helpers keep their data — which is what makes it survive a restart. Every step is
+    ''' best-effort: an unwritable location simply means the dialog starts at the platform's default again.
+    ''' </summary>
+    Friend NotInheritable Class ChartPickerMemory
+        Private Shared _folder As String = Nothing
+        Private Shared _loaded As Boolean = False
+
+        Private Sub New()
+        End Sub
+
+        Private Shared ReadOnly Property StorePath As String
+            Get
+                Dim entry = System.Reflection.Assembly.GetEntryAssembly()
+                Dim name As String = If(entry Is Nothing, Nothing, entry.GetName().Name)
+                If String.IsNullOrEmpty(name) Then name = System.Reflection.Assembly.GetExecutingAssembly().GetName().Name
+                If String.IsNullOrEmpty(name) Then name = "app"
+                Dim root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+                If String.IsNullOrEmpty(root) Then root = System.IO.Path.GetTempPath()
+                Dim dir = System.IO.Path.Combine(root, name)
+                Try
+                    System.IO.Directory.CreateDirectory(dir)
+                Catch
+                    ' The failing write is what reports it.
+                End Try
+                Return System.IO.Path.Combine(dir, "GrumpyCharts.lastfolder")
+            End Get
+        End Property
+
+        ''' <summary>The folder the last pick used (Nothing = let the platform choose), or Nothing once it is gone.</summary>
+        Friend Shared Property LastFolder As String
+            Get
+                If Not _loaded Then
+                    _loaded = True
+                    Try
+                        If System.IO.File.Exists(StorePath) Then _folder = System.IO.File.ReadAllText(StorePath).Trim()
+                    Catch
+                        _folder = Nothing
+                    End Try
+                End If
+                ' A folder on a drive that is no longer mounted is worse than no answer: the platform would
+                ' open the dialog inside a path that does not exist.
+                If String.IsNullOrEmpty(_folder) OrElse Not System.IO.Directory.Exists(_folder) Then Return Nothing
+                Return _folder
+            End Get
+            Set(value As String)
+                _loaded = True
+                _folder = value
+                Try
+                    If String.IsNullOrEmpty(value) Then
+                        If System.IO.File.Exists(StorePath) Then System.IO.File.Delete(StorePath)
+                    Else
+                        System.IO.File.WriteAllText(StorePath, value)
+                    End If
+                Catch
+                    ' Best effort.
+                End Try
+            End Set
+        End Property
     End Class
 
 End Namespace

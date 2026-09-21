@@ -214,6 +214,37 @@ public enum CursorReadout
     TopRight
 }
 
+/// <summary>How the bars of a <see cref="GrumpyBarPlot"/> stand in their category.</summary>
+public enum BarMode
+{
+    /// <summary>Side by side, one bar per series per category (the default) — the easiest to compare.</summary>
+    Grouped,
+    /// <summary>Each series starts where the previous one ended, so a category reads as its total.</summary>
+    Stacked,
+    /// <summary>Stacked and filled to 100%, which turns the same data into a share-of-total chart.</summary>
+    Stacked100
+}
+
+/// <summary>How the series of a <see cref="GrumpyAreaPlot"/> are filled.</summary>
+public enum AreaMode
+{
+    /// <summary>Every series is its own filled shape, drawn over the ones before it (the default).</summary>
+    Plain,
+    /// <summary>Every series is filled from the top of the previous one (a stacked area).</summary>
+    Stacked,
+    /// <summary>Stacked and filled to 100% — a share-of-total picture over the categories.</summary>
+    Stacked100
+}
+
+/// <summary>Where a chart's data comes from (the Data Selector editor's first choice).</summary>
+public enum DataSourceKind
+{
+    /// <summary>A page of an .xlsx workbook (the default): see SourceFile and SourceSheet.</summary>
+    Spreadsheet,
+    /// <summary>A data file such as a CSV — named by DataFile, not read yet.</summary>
+    DataFiles
+}
+
 /// <summary>Reads <c>Values="4,9,6,12"</c> from XAML into a <see cref="double"/> array.</summary>
 public sealed class DoubleArrayConverter : TypeConverter
 {
@@ -468,6 +499,13 @@ public sealed class ChartData
     /// <summary>The Y values.</summary>
     public double[] Ys { get; set; } = Array.Empty<double>();
 
+    /// <summary>
+    /// A NAME for each point, when the point has one: the category text of a bar or area chart (the
+    /// label column of the workbook) or the slice name of a pie. Empty, or shorter than the values,
+    /// when the data has no names — every reader of it falls back to the number or to the index.
+    /// </summary>
+    public string[] Labels { get; set; } = Array.Empty<string>();
+
     /// <summary>The X axis name (the spreadsheet's X-column header).</summary>
     public string XTitle { get; set; } = string.Empty;
 
@@ -524,17 +562,19 @@ internal static class SpreadsheetReader
     /// turns out to be empty, so a one-column sheet still draws).
     /// </summary>
     internal static ChartData Read(string path, string xColumn, string yColumn,
-                                   int headerRow, int firstDataRow, bool xFromIndex)
+                                   int headerRow, int firstDataRow, bool xFromIndex, string? sheet = null)
     {
         var data = new ChartData();
         try
         {
             using var zip = OpenWorkbook(path);
             var shared = ReadSharedStrings(zip);
-            var sheet = FindSheet(zip);
-            if (sheet is null)
+            var sheetPart = FindSheet(zip, sheet);
+            if (sheetPart is null)
             {
-                data.Error = $"\"{Path.GetFileName(path)}\" has no worksheet.";
+                data.Error = string.IsNullOrWhiteSpace(sheet)
+                    ? $"\"{Path.GetFileName(path)}\" has no worksheet."
+                    : $"\"{Path.GetFileName(path)}\" has no page called \"{sheet!.Trim()}\".";
                 return data;
             }
 
@@ -542,12 +582,13 @@ internal static class SpreadsheetReader
             var yi = ColumnIndex(yColumn);
             var xs = new List<double>();
             var ys = new List<double>();
+            var labels = new List<string>();
             var xsFallback = new List<double>();
             var ysFallback = new List<double>();
             var xTitle = string.Empty;
             var yTitle = string.Empty;
 
-            using var stream = sheet.Open();
+            using var stream = sheetPart.Open();
             foreach (var row in XDocument.Load(stream).Descendants()
                          .Where(e => e.Name.LocalName == "row"))
             {
@@ -579,13 +620,17 @@ internal static class SpreadsheetReader
                 {
                     // A line series only needs one column. Prefer the Y column; if the sheet has the
                     // values in the X column instead, take those rather than drawing nothing.
-                    if (hasY) { xs.Add(ys.Count); ys.Add(yVal); }
+                    // The X cell is read either way: when it holds TEXT it is this point's NAME (a bar
+                    // chart's category, an area chart's tick label), and when it holds a number the
+                    // index is still the X — which is what lets a categorical sheet drive a bar chart.
+                    if (hasY) { xs.Add(ys.Count); ys.Add(yVal); labels.Add(xText ?? string.Empty); }
                     else if (hasX) { xsFallback.Add(ysFallback.Count); ysFallback.Add(xVal); }
                 }
                 else if (hasX && hasY)
                 {
                     xs.Add(xVal);
                     ys.Add(yVal);
+                    labels.Add(xText ?? string.Empty);
                 }
             }
 
@@ -597,11 +642,91 @@ internal static class SpreadsheetReader
 
             data.Xs = xs.ToArray();
             data.Ys = ys.ToArray();
+            data.Labels = labels.ToArray();
             data.XTitle = xTitle;
             data.YTitle = yTitle;
             if (data.Ys.Length == 0)
             {
                 data.Error = $"No numbers found in column {(xFromIndex ? yColumn : $"{xColumn}/{yColumn}")} " +
+                             $"of \"{Path.GetFileName(path)}\" from row {firstDataRow}.";
+            }
+        }
+        catch (Exception ex)
+        {
+            data.Error = ReadFailure(path, ex);
+        }
+        return data;
+    }
+
+    /// <summary>
+    /// Reads a workbook as LABEL + VALUE pairs, which is what a pie needs: the value column must hold
+    /// numbers, the label column may hold anything, and a row whose label cell is empty falls back to
+    /// the cell's own address. Unlike <see cref="Read"/> this KEEPS a row whose label is text — that is
+    /// the whole point of reading a pie's categories — and X is the row's position, not a number.
+    /// </summary>
+    internal static ChartData ReadLabels(string path, string labelColumn, string valueColumn,
+                                        int headerRow, int firstDataRow, string? sheet = null)
+    {
+        var data = new ChartData();
+        try
+        {
+            using var zip = OpenWorkbook(path);
+            var shared = ReadSharedStrings(zip);
+            var sheetPart = FindSheet(zip, sheet);
+            if (sheetPart is null)
+            {
+                data.Error = string.IsNullOrWhiteSpace(sheet)
+                    ? $"\"{Path.GetFileName(path)}\" has no worksheet."
+                    : $"\"{Path.GetFileName(path)}\" has no page called \"{sheet!.Trim()}\".";
+                return data;
+            }
+
+            var li = ColumnIndex(labelColumn);
+            var vi = ColumnIndex(valueColumn);
+            var xs = new List<double>();
+            var ys = new List<double>();
+            var labels = new List<string>();
+            var labelTitle = string.Empty;
+            var valueTitle = string.Empty;
+
+            using var stream = sheetPart.Open();
+            foreach (var row in XDocument.Load(stream).Descendants()
+                         .Where(e => e.Name.LocalName == "row"))
+            {
+                var rowNumber = int.TryParse(row.Attribute("r")?.Value, NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out var rn) ? rn : -1;
+                var cells = new Dictionary<int, string>();
+                foreach (var cell in row.Elements().Where(e => e.Name.LocalName == "c"))
+                {
+                    var index = ColumnIndex(ColumnOf(cell.Attribute("r")?.Value ?? string.Empty));
+                    var text = CellText(cell, shared);
+                    if (index >= 0 && text is not null) cells[index] = text;
+                }
+
+                if (rowNumber == headerRow)
+                {
+                    if (cells.TryGetValue(li, out var lh)) labelTitle = lh;
+                    if (cells.TryGetValue(vi, out var vh)) valueTitle = vh;
+                    continue;
+                }
+                if (firstDataRow > 0 && rowNumber > 0 && rowNumber < firstDataRow) continue;
+
+                cells.TryGetValue(vi, out var valueText);
+                if (!TryNumber(valueText, out var value)) continue;   // a slice needs a number
+                cells.TryGetValue(li, out var labelText);
+                labels.Add(string.IsNullOrWhiteSpace(labelText) ? $"{labelColumn}{rowNumber}" : labelText!.Trim());
+                xs.Add(ys.Count);
+                ys.Add(value);
+            }
+
+            data.Xs = xs.ToArray();
+            data.Ys = ys.ToArray();
+            data.Labels = labels.ToArray();
+            data.XTitle = labelTitle;
+            data.YTitle = valueTitle;
+            if (data.Ys.Length == 0)
+            {
+                data.Error = $"No numbers found in column {valueColumn} " +
                              $"of \"{Path.GetFileName(path)}\" from row {firstDataRow}.";
             }
         }
@@ -666,13 +791,85 @@ internal static class SpreadsheetReader
         return $"Cannot read \"{name}\": {ex.Message}";
     }
 
-    /// <summary>The workbook's first worksheet part, or null when the zip has none.</summary>
-    private static ZipArchiveEntry? FindSheet(ZipArchive zip)
-        => zip.Entries
+    /// <summary>
+    /// The worksheet to read: <paramref name="sheet"/> names one (matched case-insensitively against
+    /// the workbook's own sheet names, whatever order Excel keeps its parts in), and an empty name
+    /// gives the first worksheet part — the behaviour every form written before SourceSheet had.
+    /// </summary>
+    private static ZipArchiveEntry? FindSheet(ZipArchive zip, string? sheet = null)
+    {
+        if (!string.IsNullOrWhiteSpace(sheet))
+        {
+            var wanted = sheet!.Trim();
+            var target = SheetTarget(zip, wanted);
+            if (target is not null)
+            {
+                var entry = zip.Entries.FirstOrDefault(e =>
+                    e.FullName.Equals(target, StringComparison.OrdinalIgnoreCase));
+                if (entry is not null) return entry;
+            }
+            return null;   // a named page that is not there is an error, not "read page one instead"
+        }
+        return zip.Entries
             .Where(e => e.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase)
                         && e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
             .OrderBy(e => e.FullName, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// The zip path of the worksheet called <paramref name="sheet"/>, resolved the way Excel means it:
+    /// xl/workbook.xml lists the sheets in the order the tabs show, each pointing at a relationship
+    /// (xl/_rels/workbook.xml.rels) that names the part. Part NAMES carry no meaning — Excel may keep
+    /// sheet1.xml for any tab — which is why a named page is looked up through the rels rather than by
+    /// guessing from the file name. Returns null when there is no such sheet.
+    /// </summary>
+    private static string? SheetTarget(ZipArchive zip, string sheet)
+    {
+        var workbook = zip.Entries.FirstOrDefault(e =>
+            e.FullName.Equals("xl/workbook.xml", StringComparison.OrdinalIgnoreCase));
+        var rels = zip.Entries.FirstOrDefault(e =>
+            e.FullName.Equals("xl/_rels/workbook.xml.rels", StringComparison.OrdinalIgnoreCase));
+        if (workbook is null || rels is null) return null;
+        var id = string.Empty;
+        using (var stream = workbook.Open())
+        {
+            foreach (var element in XDocument.Load(stream).Descendants()
+                         .Where(e => e.Name.LocalName == "sheet"))
+            {
+                var name = element.Attribute("name")?.Value;
+                if (!string.Equals(name?.Trim(), sheet, StringComparison.OrdinalIgnoreCase)) continue;
+                id = element.Attributes()
+                    .FirstOrDefault(a => a.Name.LocalName == "id")?.Value ?? string.Empty;
+                break;
+            }
+        }
+        if (id.Length == 0) return null;
+        string? relTarget = null;
+        using (var stream = rels.Open())
+        {
+            foreach (var element in XDocument.Load(stream).Descendants()
+                         .Where(e => e.Name.LocalName == "Relationship"))
+            {
+                if (!string.Equals(element.Attribute("Id")?.Value, id, StringComparison.Ordinal)) continue;
+                relTarget = element.Attribute("Target")?.Value;
+                break;
+            }
+        }
+        if (string.IsNullOrWhiteSpace(relTarget)) return null;
+        // Targets are relative to xl/ ("worksheets/sheet2.xml", sometimes with a leading "/" or a
+        // "../"): normalize both spellings into a zip path.
+        var target = relTarget!.Replace('\\', '/').Trim();
+        if (target.StartsWith("/", StringComparison.Ordinal)) target = target.TrimStart('/');
+        else target = "xl/" + target;
+        while (target.Contains("../", StringComparison.Ordinal))
+        {
+            var at = target.IndexOf("../", StringComparison.Ordinal);
+            var cut = target.LastIndexOf('/', Math.Max(0, at - 1));
+            target = cut <= 0 ? target[(at + 3)..] : target[..(cut + 1)] + target[(at + 3)..];
+        }
+        return target;
+    }
 
     /// <summary>The workbook's shared string table (xl/sharedStrings.xml), if it has one.</summary>
     private static List<string> ReadSharedStrings(ZipArchive zip)
@@ -867,6 +1064,26 @@ public abstract class ChartBase : Control
     /// <summary>The .xlsx workbook every series reads from. Empty = the inline Values/Points.</summary>
     public static readonly StyledProperty<string?> SourceFileProperty =
         AvaloniaProperty.Register<ChartBase, string?>(nameof(SourceFile), string.Empty);
+
+    /// <summary>Where the data comes from: <see cref="DataSourceKind.Spreadsheet"/> (the default, the
+    /// workbook in <see cref="SourceFile"/>) or <see cref="DataSourceKind.DataFiles"/> — a data file
+    /// such as a CSV, which the Data Selector editor can already name in <see cref="DataFile"/> and
+    /// which the charts will start reading when that reader lands. Choosing DataFiles today simply
+    /// means the chart keeps drawing whatever SourceFile gives it.</summary>
+    public static readonly StyledProperty<DataSourceKind> SourceKindProperty =
+        AvaloniaProperty.Register<ChartBase, DataSourceKind>(nameof(SourceKind), DataSourceKind.Spreadsheet);
+
+    /// <summary>Which PAGE of the workbook to read, by its sheet name (e.g. "Bar Chart"). Empty —
+    /// the default — reads the first worksheet, which is what every form written before this
+    /// property existed does.</summary>
+    public static readonly StyledProperty<string?> SourceSheetProperty =
+        AvaloniaProperty.Register<ChartBase, string?>(nameof(SourceSheet), string.Empty);
+
+    /// <summary>The data FILE for <see cref="DataSourceKind.DataFiles"/> (a CSV today, other formats
+    /// as they are added). Declared so a form can carry the Data Selector's choice and still compile;
+    /// nothing reads it yet.</summary>
+    public static readonly StyledProperty<string?> DataFileProperty =
+        AvaloniaProperty.Register<ChartBase, string?>(nameof(DataFile), string.Empty);
 
     /// <summary>Re-read the workbook whenever it changes on disk.</summary>
     public static readonly StyledProperty<bool> LiveUpdateProperty =
@@ -1229,6 +1446,15 @@ public abstract class ChartBase : Control
     /// <summary>The .xlsx workbook every series reads from (empty = the inline Values/Points).</summary>
     public string? SourceFile { get => GetValue(SourceFileProperty); set => SetValue(SourceFileProperty, value); }
 
+    /// <summary>Where the data comes from (see <see cref="DataSourceKind"/>).</summary>
+    public DataSourceKind SourceKind { get => GetValue(SourceKindProperty); set => SetValue(SourceKindProperty, value); }
+
+    /// <summary>Which PAGE of the workbook to read, by sheet name (empty = the first worksheet).</summary>
+    public string? SourceSheet { get => GetValue(SourceSheetProperty); set => SetValue(SourceSheetProperty, value); }
+
+    /// <summary>The data file for the DataFiles source — carried in the form, not read yet.</summary>
+    public string? DataFile { get => GetValue(DataFileProperty); set => SetValue(DataFileProperty, value); }
+
     /// <summary>Re-read the workbook when it changes on disk.</summary>
     public bool LiveUpdate { get => GetValue(LiveUpdateProperty); set => SetValue(LiveUpdateProperty, value); }
 
@@ -1337,36 +1563,60 @@ public abstract class ChartBase : Control
 
     /// <summary>The common Y axis to draw: the Axis object when the XAML has one, else one built from
     /// the chart-level (legacy) axis properties.</summary>
-    private Axis CommonYAxis() => YAxis ?? new Axis
+    private Axis CommonYAxis()
     {
-        Position = AxisPosition.Left,
-        ShowAxis = ShowAxes,
-        AxisColor = AxisColor,
-        ShowMajorTicks = ShowMajorTicks,
-        MajorTickLength = MajorTickLength,
-        ShowMinorTicks = ShowMinorTicks,
-        MinorTickLength = MinorTickLength,
-        ShowTickLabels = ShowTickLabels,
-        TickLabelFontSize = TickLabelFontSize,
-        ShowAxisName = ShowAxisTitles,
-        Name = YAxisTitle
-    };
+        var axis = YAxis ?? new Axis
+        {
+            Position = AxisPosition.Left,
+            ShowAxis = ShowAxes,
+            AxisColor = AxisColor,
+            ShowMajorTicks = ShowMajorTicks,
+            MajorTickLength = MajorTickLength,
+            ShowMinorTicks = ShowMinorTicks,
+            MinorTickLength = MinorTickLength,
+            ShowTickLabels = ShowTickLabels,
+            TickLabelFontSize = TickLabelFontSize,
+            ShowAxisName = ShowAxisTitles,
+            Name = YAxisTitle
+        };
+        if (!HasCartesianAxes) Hide(axis);
+        return axis;
+    }
+
+    /// <summary>
+    /// A chart with no cartesian frame (the pie) wants the axis furniture out of the way but still wants
+    /// the room its OWN axis objects would take — the pie gives its drawing a centred square of the
+    /// frame, and an explicit <c>&lt;charts:Axis&gt;</c> in the form must not shrink it either.
+    /// </summary>
+    private static void Hide(Axis axis)
+    {
+        axis.ShowAxis = false;
+        axis.ShowMajorTicks = false;
+        axis.ShowMinorTicks = false;
+        axis.ShowTickLabels = false;
+        axis.ShowAxisName = false;
+    }
 
     /// <summary>The common X axis to draw: see <see cref="CommonYAxis"/>.</summary>
-    private Axis CommonXAxis() => XAxis ?? new Axis
+    private Axis CommonXAxis()
     {
-        Position = AxisPosition.Bottom,
-        ShowAxis = ShowAxes,
-        AxisColor = AxisColor,
-        ShowMajorTicks = ShowMajorTicks,
-        MajorTickLength = MajorTickLength,
-        ShowMinorTicks = ShowMinorTicks,
-        MinorTickLength = MinorTickLength,
-        ShowTickLabels = ShowTickLabels,
-        TickLabelFontSize = TickLabelFontSize,
-        ShowAxisName = ShowAxisTitles,
-        Name = XAxisTitle
-    };
+        var axis = XAxis ?? new Axis
+        {
+            Position = AxisPosition.Bottom,
+            ShowAxis = ShowAxes,
+            AxisColor = AxisColor,
+            ShowMajorTicks = ShowMajorTicks,
+            MajorTickLength = MajorTickLength,
+            ShowMinorTicks = ShowMinorTicks,
+            MinorTickLength = MinorTickLength,
+            ShowTickLabels = ShowTickLabels,
+            TickLabelFontSize = TickLabelFontSize,
+            ShowAxisName = ShowAxisTitles,
+            Name = XAxisTitle
+        };
+        if (!HasCartesianAxes) Hide(axis);
+        return axis;
+    }
 
     /// <summary>The X column of the nth series in the editor's default pairing (B, D, F, …).</summary>
     internal static string DefaultXColumn(int index) => SpreadsheetReader.ColumnAfter("B", index * 2);
@@ -1377,23 +1627,34 @@ public abstract class ChartBase : Control
     private readonly Dictionary<string, ChartData> _cache = new();
     private string? _cacheFile;
 
-    /// <summary>The data for one series (cached per column pair and workbook).</summary>
-    private ChartData DataFor(ChartSeries? series, string xColumn, string yColumn, bool xFromIndex)
+    /// <summary>
+    /// The data for one series (cached per column pair and workbook). <paramref name="labelPairs"/> reads
+    /// label + value pairs instead of two numeric columns, which is what a pie's slices are — and it is
+    /// only that chart that asks for it.
+    /// </summary>
+    private protected ChartData DataFor(ChartSeries? series, string xColumn, string yColumn, bool xFromIndex,
+                                        bool labelPairs = false)
     {
         var file = SourceFile;
         if (string.IsNullOrWhiteSpace(file)) return InlineData();
 
-        var key = $"{xColumn}|{yColumn}|{xFromIndex}";
+        var key = $"{xColumn}|{yColumn}|{xFromIndex}|{labelPairs}|{SourceSheet}";
         if (_cacheFile != file) { _cache.Clear(); _cacheFile = file; }
         if (_cache.TryGetValue(key, out var cached)) return cached;
 
-        var data = SpreadsheetReader.Read(file!, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex);
+        // The PAGE the form asks for, by name; empty means the workbook's first worksheet.
+        var page = SourceSheet;
+        var data = labelPairs
+            ? SpreadsheetReader.ReadLabels(file!, xColumn, yColumn, HeaderRow, FirstDataRow, page)
+            : SpreadsheetReader.Read(file!, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex, page);
         _cache[key] = data;
         return data;
     }
 
-    /// <summary>Every series to draw, with its data, styling, scale and axes resolved.</summary>
-    private List<Plot> BuildPlots()
+    /// <summary>Every series to draw, with its data, styling, scale and axes resolved. A chart type with a
+    /// different notion of "series" — the pie, whose slices each become one plot so the legend, its tick
+    /// boxes and the colours work unchanged — overrides this.</summary>
+    private protected virtual List<Plot> BuildPlots()
     {
         var plots = new List<Plot>();
         if (Series.Count == 0)
@@ -1411,7 +1672,7 @@ public abstract class ChartBase : Control
                 Connected = Connected
             };
             plot.XRange = AxisRange.Over(data.Xs, MinX, MaxX, 6, 1);
-            plot.YRange = AxisRange.Over(data.Ys, MinY, MaxY, 5, 5);
+            plot.YRange = WithBaseline(data.Ys, MinY, MaxY);
             plots.Add(plot);
             return plots;
         }
@@ -1451,10 +1712,13 @@ public abstract class ChartBase : Control
         var commonPlots = plots.Where(p => !p.PerSeries).ToList();
         if (commonPlots.Count == 0) commonPlots = plots;
         var xs = commonPlots.SelectMany(p => p.Data.Xs).ToArray();
-        var ys = commonPlots.SelectMany(p => p.Data.Ys).ToArray();
+        var ys = commonPlots.SelectMany(p => p.Data.Ys).ToList();
+        // A stacked chart's scale has to fit the TOTALS (the tallest bar is the sum of its category's
+        // segments); fitting each series on its own would push the stack out of the plot.
+        if (StackSeries) ys.AddRange(StackTotals(commonPlots));
         var subdivisions = Series.Any(s => s.XFromIndex) ? 1 : 5;
-        var xr = AxisRange.Over(xs, MinX, MaxX, 6, subdivisions);
-        var yr = AxisRange.Over(ys, MinY, MaxY, 5, 5);
+        var xr = AxisRange.Over(PaddedX(xs), MinX, MaxX, 6, subdivisions);
+        var yr = WithBaseline(ys, MinY, MaxY);
         foreach (var plot in commonPlots)
         {
             plot.XRange = xr;
@@ -1465,8 +1729,129 @@ public abstract class ChartBase : Control
 
     private bool XFromIndex => Series.Count > 0 ? Series[0].XFromIndex : ImplicitXFromIndex;
 
+    /// <summary>
+    /// The Y scale for a set of values, with 0 included when this chart type needs a baseline (see
+    /// <see cref="ZeroBaseline"/>). Forced limits still win: a hand-set MinY/MaxY is drawn as asked.
+    /// </summary>
+    private AxisRange WithBaseline(IEnumerable<double> values, double forcedMin, double forcedMax)
+    {
+        // A share-of-whole chart always spans the whole 0-100 band: the drawing turns the values into
+        // percentages, so fitting the raw totals would push every shape out of the plot.
+        if (ZeroToHundred) return AxisRange.Over(new double[] { 0d, 100d }, forcedMin, forcedMax, 5, 5);
+        var list = values.ToList();
+        if (ZeroBaseline) list.Add(0);
+        return AxisRange.Over(list, forcedMin, forcedMax, 5, 5);
+    }
+
+    /// <summary>The X values with this chart type's end margin added (see <see cref="XPadUnits"/>): the
+    /// scale then reaches past the outer bars, so they are drawn whole.</summary>
+    private double[] PaddedX(double[] xs)
+    {
+        if (XPadUnits <= 0 || xs.Length == 0) return xs;
+        return new[] { xs.Min() - XPadUnits, xs.Max() + XPadUnits };
+    }
+
+    /// <summary>The per-point TOTALS of a stack, used to fit a stacked chart's scale.</summary>
+    private static IEnumerable<double> StackTotals(List<Plot> plots)
+    {
+        var length = plots.Count == 0 ? 0 : plots.Max(p => p.Data.Ys.Length);
+        for (var i = 0; i < length; i++)
+        {
+            var sum = 0d;
+            foreach (var p in plots) if (i < p.Data.Ys.Length) sum += p.Data.Ys[i];
+            yield return sum;
+        }
+    }
+
     /// <summary>True when the implicit (no-series) chart plots Y against the sample index.</summary>
     protected abstract bool ImplicitXFromIndex { get; }
+
+    /// <summary>
+    /// True when this chart type STACKS its series: each one starts where the previous ended, so the
+    /// scale has to fit the totals rather than the individual series (the bar and area charts).
+    /// </summary>
+    protected virtual bool StackSeries => false;
+
+    /// <summary>
+    /// True when 0 has to be on the Y scale whether the data asks for it or not. A bar is read as a
+    /// length from its baseline and an area as a filled space above it, so a chart whose values all sit
+    /// far from zero (say 40…50) would otherwise draw meaningless shapes and a misleading picture.
+    /// </summary>
+    protected virtual bool ZeroBaseline => false;
+
+    /// <summary>
+    /// True for a chart without a cartesian frame (the pie): there is no grid to draw and the axis
+    /// furniture is hidden, so the drawing gets the whole frame instead of a plottable rectangle.
+    /// </summary>
+    protected virtual bool HasCartesianAxes => true;
+
+    /// <summary>False when a draggable crosshair makes no sense on this chart type (the pie).</summary>
+    protected virtual bool SupportsCursors => true;
+
+    /// <summary>
+    /// True when the X axis is a list of CATEGORIES and should be labelled with each point's own name
+    /// (the bar and area charts). Every other chart type keeps its numbers, so an existing form's axis
+    /// cannot change under it just because its X column happens to hold text.
+    /// </summary>
+    protected virtual bool NamedXAxis => false;
+
+    /// <summary>The names to label the X axis with, or null when this chart type labels numbers.</summary>
+    private string[]? XNames(ChartData data) => NamedXAxis ? data.Labels : null;
+
+    /// <summary>
+    /// How much empty room the X scale keeps at each end, in X units. A bar chart asks for HALF A SLOT,
+    /// so the first and last bar stand clear of the plot's edge instead of being cut in half by it.
+    /// </summary>
+    protected virtual double XPadUnits => 0d;
+
+    /// <summary>
+    /// True when the series are SHARES OF A WHOLE (a 100% stacked bar or area), so the Y scale is fixed
+    /// at 0 to 100 and the drawing works in percentages rather than the workbook's raw numbers.
+    /// </summary>
+    protected virtual bool ZeroToHundred => false;
+
+    /// <summary>
+    /// Where each series sits when they are stacked: the level every shape of that series starts at and
+    /// the level it reaches, per point. <paramref name="hundred"/> first scales each category to 100, so
+    /// the same data turns into a share-of-total chart. Without stacking the base is 0 and the top is
+    /// the value, which is why the bar and area drawing can use one code path for both.
+    /// </summary>
+    private protected static (double[] Base, double[] Top)[] StackBands(List<Plot> plots, bool hundred)
+    {
+        var bands = new (double[] Base, double[] Top)[plots.Count];
+        var running = new double[plots.Count == 0 ? 0 : plots.Max(p => p.Data.Ys.Length)];
+        for (var s = 0; s < plots.Count; s++)
+        {
+            var ys = plots[s].Data.Ys;
+            var bases = new double[ys.Length];
+            var tops = new double[ys.Length];
+            for (var i = 0; i < ys.Length; i++)
+            {
+                var value = ys[i];
+                if (hundred)
+                {
+                    var total = 0d;
+                    foreach (var p in plots) if (i < p.Data.Ys.Length) total += p.Data.Ys[i];
+                    value = total > 0 ? ys[i] / total * 100d : 0d;
+                }
+                bases[i] = running[i];
+                tops[i] = running[i] + value;
+                running[i] = tops[i];
+            }
+            bands[s] = (bases, tops);
+        }
+        return bands;
+    }
+
+    /// <summary>A series' points in control coordinates.</summary>
+    private protected static Point[] SeriesPoints(Plot plot, Rect area)
+        => plot.Data.Xs.Select((_, i) => new Point(
+            plot.XRange.ToPixel(plot.Data.Xs[i], area.X, area.Width),
+            plot.YRange.ToPixel(plot.Data.Ys[i], area.Bottom, -area.Height))).ToArray();
+
+    /// <summary>Where a data value sits vertically in the plot (bars, areas and their baselines).</summary>
+    private protected static double YAt(Plot plot, Rect area, double value)
+        => plot.YRange.ToPixel(value, area.Bottom, -area.Height);
 
     /// <summary>Drop the cached data so the next redraw re-reads the workbook.</summary>
     public void Reload()
@@ -1506,6 +1891,7 @@ public abstract class ChartBase : Control
     {
         base.OnPropertyChanged(change);
         if (change.Property == SourceFileProperty) InvalidateCache();
+        else if (change.Property == SourceSheetProperty) InvalidateCache();
         else if (change.Property == LiveUpdateProperty) RestartWatcher();
     }
 
@@ -1521,7 +1907,7 @@ public abstract class ChartBase : Control
         {
             var top = TopLevel.GetTopLevel(this);
             if (top?.StorageProvider is not { } storage) return;
-            var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+            var options = new FilePickerOpenOptions
             {
                 Title = "Select a spreadsheet",
                 AllowMultiple = false,
@@ -1530,12 +1916,22 @@ public abstract class ChartBase : Control
                     new FilePickerFileType("Excel workbook") { Patterns = new[] { "*.xlsx" } },
                     new FilePickerFileType("All files") { Patterns = new[] { "*" } }
                 }
-            });
+            };
+            // Open where the last pick left off — see ChartPickerMemory — when there is somewhere to open.
+            var last = ChartPickerMemory.LastFolder;
+            if (last is not null)
+            {
+                try { options.SuggestedStartLocation = await storage.TryGetFolderFromPathAsync(new Uri(last)); }
+                catch { /* the remembered folder is gone — let the platform choose */ }
+            }
+            var files = await storage.OpenFilePickerAsync(options);
             var picked = files?.Count > 0 ? files[0].TryGetLocalPath() : null;
             if (!string.IsNullOrWhiteSpace(picked))
             {
                 SourceFile = picked;
                 InvalidateCache();
+                try { ChartPickerMemory.LastFolder = Path.GetDirectoryName(picked); }
+                catch { /* best effort */ }
             }
         }
         catch
@@ -1881,7 +2277,7 @@ public abstract class ChartBase : Control
         }
 
         // Gridlines, then the common axis with its ticks and labels.
-        if (ShowGrid)
+        if (ShowGrid && HasCartesianAxes)
         {
             var gridPen = MakePen(GridColor, GridThickness, GridStyle);
             foreach (var tick in common.XRange.Ticks())
@@ -1901,7 +2297,7 @@ public abstract class ChartBase : Control
         DrawYAxis(context, plot, common.YRange, commonY, yOnRight, 0,
             TickLabels(commonY, common.YRange), AxisName(commonY, YAxisTitle, common.Data.YTitle));
         DrawXAxis(context, plot, common.XRange, commonX, xOnTop, 0,
-            TickLabels(commonX, common.XRange), AxisName(commonX, XAxisTitle, common.Data.XTitle));
+            TickLabels(commonX, common.XRange, XNames(common.Data)), AxisName(commonX, XAxisTitle, common.Data.XTitle));
 
         var leftUsed = yOnRight ? 0 : commonYWidth;
         var rightUsed = yOnRight ? commonYWidth : 0;
@@ -1923,7 +2319,7 @@ public abstract class ChartBase : Control
         foreach (var p in topBlocks)
         {
             DrawXAxis(context, plot, p.XRange, p.XAxis!, true, topUsed,
-                TickLabels(p.XAxis!, p.XRange), AxisName(p.XAxis!, null, p.Data.XTitle));
+                TickLabels(p.XAxis!, p.XRange, XNames(p.Data)), AxisName(p.XAxis!, null, p.Data.XTitle));
             topUsed += XBlockHeight(p.XAxis!, p.XRange, null, p.Data.XTitle);
         }
         foreach (var p in bottomBlocks)
@@ -1933,29 +2329,13 @@ public abstract class ChartBase : Control
             bottomUsed += XBlockHeight(p.XAxis!, p.XRange, null, p.Data.XTitle);
         }
 
-        // The data itself, in order, clipped to the plot area. A series whose trace is switched off
-        // keeps its place in the scale but is not drawn.
-        using (context.PushClip(plot))
-        {
-            foreach (var p in plots)
-            {
-                if (!p.Data.HasData || !p.Visible) continue;
-                var points = p.Data.Xs.Select((_, i) => new Point(
-                    p.XRange.ToPixel(p.Data.Xs[i], plot.X, plot.Width),
-                    p.YRange.ToPixel(p.Data.Ys[i], plot.Bottom, -plot.Height))).ToArray();
-
-                if (p.Connected && points.Length > 1)
-                {
-                    var pen = MakePen(p.LineColor, p.LineThickness, p.LineStyle);
-                    for (var i = 1; i < points.Length; i++) context.DrawLine(pen, points[i - 1], points[i]);
-                }
-                DrawMarkers(context, points, p);
-            }
-        }
+        // The data itself is the chart type's own business (lines and markers, bars, filled areas, pie
+        // wedges) — see DrawSeriesLayer — but it is always clipped to the plot area.
+        using (context.PushClip(plot)) DrawSeriesLayer(context, plots, plot);
 
         // The cursors sit on top of the data, and their readout on top of that, so a cursor is never
         // buried by a line that happens to cross it.
-        DrawCursors(context, plot, plots);
+        if (SupportsCursors) DrawCursors(context, plot, plots);
 
         // Frame + title last, so nothing can overdraw them.
         DrawFrame(context, frame, radius, frameWidth);
@@ -1963,11 +2343,48 @@ public abstract class ChartBase : Control
         DrawLegend(context);
     }
 
-    /// <summary>The tick label texts of an axis (empty when it draws no labels).</summary>
-    private static List<string> TickLabels(Axis axis, AxisRange range)
-        => axis.ShowTickLabels
-            ? range.Ticks().Select(v => FormatNumber(v, range.TickStep)).ToList()
-            : new List<string>();
+    /// <summary>
+    /// Draws the data itself: one line per series with a marker at each point. The chart types that draw
+    /// something else override this — bars <see cref="GrumpyBarPlot"/>, filled areas
+    /// <see cref="GrumpyAreaPlot"/>, wedges <see cref="GrumpyPiePlot"/> — while everything around it
+    /// (the plate, the frame, the gridlines, the axes, the title, the legend and the cursors) is shared.
+    /// A series whose trace is switched off keeps its place in the scale but is not drawn.
+    /// </summary>
+    private protected virtual void DrawSeriesLayer(DrawingContext context, List<Plot> plots, Rect plot)
+    {
+        foreach (var p in plots)
+        {
+            if (!p.Data.HasData || !p.Visible) continue;
+            var points = SeriesPoints(p, plot);
+            if (p.Connected && points.Length > 1)
+            {
+                var pen = MakePen(p.LineColor, p.LineThickness, p.LineStyle);
+                for (var i = 1; i < points.Length; i++) context.DrawLine(pen, points[i - 1], points[i]);
+            }
+            DrawMarkers(context, points, p);
+        }
+    }
+
+    /// <summary>
+    /// The tick label texts of an axis (empty when it draws no labels). When <paramref name="names"/> is
+    /// given — a bar or area chart passes its points' own names — a tick that lands on a named point
+    /// shows that name instead of its number, which is how a categorical axis is labelled: the ticks
+    /// themselves still come from the range, so a long category list is thinned out automatically instead
+    /// of overprinting itself.
+    /// </summary>
+    private static List<string> TickLabels(Axis axis, AxisRange range, string[]? names = null)
+    {
+        if (!axis.ShowTickLabels) return new List<string>();
+        if (names is null || names.Length == 0)
+            return range.Ticks().Select(v => FormatNumber(v, range.TickStep)).ToList();
+        return range.Ticks().Select(v =>
+        {
+            var index = (int)Math.Round(v);
+            return index >= 0 && index < names.Length && !string.IsNullOrWhiteSpace(names[index])
+                ? names[index]
+                : FormatNumber(v, range.TickStep);
+        }).ToList();
+    }
 
     /// <summary>An axis' name text: its own <see cref="Axis.Name"/>, else the chart-level title, else
     /// the spreadsheet's column header. Null when this axis draws no name.</summary>
@@ -2040,7 +2457,7 @@ public abstract class ChartBase : Control
     private Size MeasureLegend(Size frameSize, List<Plot> plots)
     {
         _legend.Clear();
-        if (!ShowLegend || Series.Count == 0) return default;
+        if (!ShowLegend || plots.Count == 0) return default;
 
         const double boxSize = 13, boxGap = 6, itemGap = 16, lineGap = 4;
         // The bar's own padding, plus whatever the user asked for: LegendMargin is the space between
@@ -2269,7 +2686,7 @@ public abstract class ChartBase : Control
         }
     }
 
-    private void DrawMarkers(DrawingContext context, Point[] points, Plot plot)
+    private protected void DrawMarkers(DrawingContext context, Point[] points, Plot plot)
     {
         if (plot.MarkerStyle == ChartMarkerStyle.None) return;
         var size = Math.Max(2, plot.MarkerSize);
@@ -2750,7 +3167,7 @@ public abstract class ChartBase : Control
         => new(rect.X + left, rect.Y + top,
                Math.Max(0, rect.Width - left - right), Math.Max(0, rect.Height - top - bottom));
 
-    private static IPen MakePen(Color color, double thickness, ChartLineStyle style)
+    private protected static IPen MakePen(Color color, double thickness, ChartLineStyle style)
         => new Pen(new SolidColorBrush(color), Math.Max(0.5, thickness), DashFor(style))
         {
             // Round caps make the Dot style read as dots rather than as nothing at all.
@@ -2941,5 +3358,596 @@ public class GrumpyXYPlot : ChartBase
             points[i, 1] = ys[i];
         }
         Points = points;
+    }
+}
+
+/// <summary>Reads <c>Labels="Jan,Feb,Mar"</c> from XAML into a <see cref="string"/> array.</summary>
+public sealed class StringArrayConverter : TypeConverter
+{
+    /// <inheritdoc/>
+    public override bool CanConvertFrom(ITypeDescriptorContext? context, Type sourceType)
+        => sourceType == typeof(string) || base.CanConvertFrom(context, sourceType);
+
+    /// <inheritdoc/>
+    public override object? ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value)
+        => value is string text
+            ? text.Split(',').Select(part => part.Trim()).ToArray()
+            : base.ConvertFrom(context, culture, value);
+}
+
+/// <summary>
+/// One slice of a <see cref="GrumpyPiePlot"/>: its NAME (<see cref="ChartSeries.Title"/>, which is what
+/// the legend shows), its COLOUR (<see cref="ChartSeries.LineColor"/> — the same property a series uses,
+/// so the Slices editor's rows mean what the Series editor's rows mean), how far it is pushed out of the
+/// pie, and whether it is drawn at all.
+/// <para>
+/// A slice listed here is an OVERRIDE: the pie's slices come from the data, and this names the ones that
+/// should look different. A slice the form does not mention gets a colour from the chart's palette.
+/// Slices are matched to the data by their name.
+/// </para>
+/// </summary>
+public class PieSlice : ChartSeries
+{
+    /// <summary>How far this slice is pushed out of the pie, in pixels (0 = in place).</summary>
+    public double Explode { get; set; }
+
+    /// <summary>A slice's position is its row, so it is never read from a workbook column.</summary>
+    internal override bool XFromIndex => true;
+}
+
+/// <summary>
+/// A BAR / COLUMN chart: one bar per category, drawn from its baseline — side by side, stacked, or
+/// stacked and filled to 100% (see <see cref="BarMode"/>). A point's NAME comes from the spreadsheet's X
+/// column (a label column of text, dates or numbers), and when it has none the axis falls back to
+/// numbers. 0 is always on the Y scale, because a bar is read as a length from its baseline.
+/// <para>
+/// Everything shared with the other charts works exactly as it does on a line chart: series (one bar
+/// colour each, from the Series editor), the common and per-series axes, the legend, the two cursors, the
+/// background gradient, the border and the padding.
+/// </para>
+/// </summary>
+public class GrumpyBarPlot : ChartBase
+{
+    /// <summary>The implicit series' values, used only when the chart has no series elements. One bar
+    /// per value; the category names still come from the spreadsheet's X column.</summary>
+    public static readonly StyledProperty<double[]?> ValuesProperty =
+        AvaloniaProperty.Register<GrumpyBarPlot, double[]?>(nameof(Values));
+
+    /// <summary>Grouped, Stacked or Stacked100.</summary>
+    public static readonly StyledProperty<BarMode> BarModeProperty =
+        AvaloniaProperty.Register<GrumpyBarPlot, BarMode>(nameof(BarMode));
+
+    /// <summary>How much of its slot one bar fills: 0.1 … 1 (default 0.8, the rest is the gap).</summary>
+    public static readonly StyledProperty<double> BarWidthProperty =
+        AvaloniaProperty.Register<GrumpyBarPlot, double>(nameof(BarWidth), 0.8d);
+
+    /// <summary>How round a bar's corners are, in pixels (0 = square corners, the default).</summary>
+    public static readonly StyledProperty<double> BarCornerRadiusProperty =
+        AvaloniaProperty.Register<GrumpyBarPlot, double>(nameof(BarCornerRadius));
+
+    static GrumpyBarPlot()
+    {
+        AffectsRender<GrumpyBarPlot>(ValuesProperty, BarModeProperty, BarWidthProperty, BarCornerRadiusProperty);
+        ValuesProperty.Changed.AddClassHandler<GrumpyBarPlot>((plot, _) => plot.Reload());
+    }
+
+    /// <summary>The values of the implicit series (used only when the chart has no series elements).</summary>
+    [TypeConverter(typeof(DoubleArrayConverter))]
+    public double[]? Values { get => GetValue(ValuesProperty); set => SetValue(ValuesProperty, value); }
+
+    /// <summary>How the bars stand in their category (see <see cref="BarMode"/>).</summary>
+    public BarMode BarMode { get => GetValue(BarModeProperty); set => SetValue(BarModeProperty, value); }
+
+    /// <summary>How much of its slot one bar fills.</summary>
+    public double BarWidth { get => GetValue(BarWidthProperty); set => SetValue(BarWidthProperty, value); }
+
+    /// <summary>How round a bar's corners are, in pixels.</summary>
+    public double BarCornerRadius { get => GetValue(BarCornerRadiusProperty); set => SetValue(BarCornerRadiusProperty, value); }
+
+    /// <inheritdoc/>
+    protected override bool ImplicitXFromIndex => true;
+
+    /// <inheritdoc/>
+    protected override bool ZeroBaseline => true;
+
+    /// <inheritdoc/>
+    protected override bool StackSeries => BarMode is not BarMode.Grouped;
+
+    /// <inheritdoc/>
+    protected override bool NamedXAxis => true;
+
+    /// <summary>Half a slot of room at each end, so the first and last bar are drawn whole.</summary>
+    protected override double XPadUnits => 0.5d;
+
+    /// <inheritdoc/>
+    protected override bool ZeroToHundred => BarMode is BarMode.Stacked100;
+
+    /// <inheritdoc/>
+    protected override ChartData InlineData()
+    {
+        var values = Values ?? Array.Empty<double>();
+        return new ChartData
+        {
+            Xs = Enumerable.Range(0, values.Length).Select(i => (double)i).ToArray(),
+            Ys = values
+        };
+    }
+
+    /// <inheritdoc/>
+    protected override void SetInlineData(double[] xs, double[] ys) => Values = ys;
+
+    /// <summary>
+    /// Draws one bar per point, per series. Grouped bars split the category's slot between the series
+    /// (a switched-off series keeps its place, so the others do not jump sideways when it is toggled);
+    /// stacked bars share the whole slot and start where the previous series ended, which is why the
+    /// scale is fitted to the stack's totals (see <see cref="ChartBase.StackSeries"/>).
+    /// </summary>
+    private protected override void DrawSeriesLayer(DrawingContext context, List<Plot> plots, Rect plot)
+    {
+        if (plots.Count == 0) return;
+        var stacked = BarMode is not BarMode.Grouped;
+        var bands = stacked ? StackBands(plots, BarMode is BarMode.Stacked100) : null;
+        var radius = Math.Max(0, BarCornerRadius);
+
+        for (var s = 0; s < plots.Count; s++)
+        {
+            var p = plots[s];
+            var count = p.Data.Ys.Length;
+            if (count == 0 || !p.Visible) continue;
+
+            // The slot a category owns is one X unit, measured THROUGH the axis' own mapping (its origin
+            // and its length), so the bars keep their width whatever the scale is.
+            var slot = Math.Abs(p.XRange.ToPixel(1, plot.X, plot.Width) - p.XRange.ToPixel(0, plot.X, plot.Width));
+            if (!(slot > 0)) slot = plot.Width / Math.Max(1, p.Data.Xs.Length);
+            var group = Math.Clamp(BarWidth, 0.05, 1) * slot;
+            var width = stacked ? group : group / Math.Max(1, plots.Count);
+            var offset = stacked ? 0 : (s - (plots.Count - 1) / 2d) * width;
+
+            double[] bases;
+            double[] tops;
+            if (bands is not null) { bases = bands[s].Base; tops = bands[s].Top; }
+            else { bases = new double[count]; tops = p.Data.Ys; }
+
+            var fill = new SolidColorBrush(p.LineColor);
+            for (var i = 0; i < count; i++)
+            {
+                var x = p.XRange.ToPixel(p.Data.Xs[i], plot.X, plot.Width) + offset;
+                var top = YAt(p, plot, tops[i]);
+                var bottom = YAt(p, plot, bases[i]);
+                var rect = new Rect(x - width / 2, Math.Min(top, bottom), width, Math.Abs(bottom - top));
+                context.DrawRectangle(fill, null, new RoundedRect(rect, radius));
+            }
+        }
+    }
+}
+
+/// <summary>
+/// An AREA chart: each series is a filled shape under its line. A plain area chart fills every series
+/// down to zero (so the series drawn last covers the ones before it — that is what a plain area chart
+/// does), while <see cref="AreaMode.Stacked"/> fills each series from the top of the previous one, which
+/// is the shape monitoring dashboards use, and <see cref="AreaMode.Stacked100"/> makes every category
+/// total 100%.
+/// <para>
+/// The data, the series, the axes (with the points' names along the bottom), the legend, the cursors,
+/// the background gradient, the border and the padding all work as they do on the line chart.
+/// </para>
+/// </summary>
+public class GrumpyAreaPlot : ChartBase
+{
+    /// <summary>The implicit series' values, used only when the chart has no series elements.</summary>
+    public static readonly StyledProperty<double[]?> ValuesProperty =
+        AvaloniaProperty.Register<GrumpyAreaPlot, double[]?>(nameof(Values));
+
+    /// <summary>Plain, Stacked or Stacked100.</summary>
+    public static readonly StyledProperty<AreaMode> AreaModeProperty =
+        AvaloniaProperty.Register<GrumpyAreaPlot, AreaMode>(nameof(AreaMode));
+
+    /// <summary>How solid the fill is, 0 … 100 (default 60): the line on top stays fully opaque, so a
+    /// lighter fill lets the gridlines and the series behind it show through.</summary>
+    public static readonly StyledProperty<double> AreaOpacityProperty =
+        AvaloniaProperty.Register<GrumpyAreaPlot, double>(nameof(AreaOpacity), 60d);
+
+    static GrumpyAreaPlot()
+    {
+        AffectsRender<GrumpyAreaPlot>(ValuesProperty, AreaModeProperty, AreaOpacityProperty);
+        ValuesProperty.Changed.AddClassHandler<GrumpyAreaPlot>((plot, _) => plot.Reload());
+    }
+
+    /// <summary>The values of the implicit series (used only when the chart has no series elements).</summary>
+    [TypeConverter(typeof(DoubleArrayConverter))]
+    public double[]? Values { get => GetValue(ValuesProperty); set => SetValue(ValuesProperty, value); }
+
+    /// <summary>How the series are filled (see <see cref="AreaMode"/>).</summary>
+    public AreaMode AreaMode { get => GetValue(AreaModeProperty); set => SetValue(AreaModeProperty, value); }
+
+    /// <summary>How solid the fill is, as a percentage.</summary>
+    public double AreaOpacity { get => GetValue(AreaOpacityProperty); set => SetValue(AreaOpacityProperty, value); }
+
+    /// <inheritdoc/>
+    protected override bool ImplicitXFromIndex => true;
+
+    /// <inheritdoc/>
+    protected override bool ZeroBaseline => true;
+
+    /// <inheritdoc/>
+    protected override bool StackSeries => AreaMode is not AreaMode.Plain;
+
+    /// <inheritdoc/>
+    protected override bool NamedXAxis => true;
+
+    /// <inheritdoc/>
+    protected override bool ZeroToHundred => AreaMode is AreaMode.Stacked100;
+
+    /// <inheritdoc/>
+    protected override ChartData InlineData()
+    {
+        var values = Values ?? Array.Empty<double>();
+        return new ChartData
+        {
+            Xs = Enumerable.Range(0, values.Length).Select(i => (double)i).ToArray(),
+            Ys = values
+        };
+    }
+
+    /// <inheritdoc/>
+    protected override void SetInlineData(double[] xs, double[] ys) => Values = ys;
+
+    /// <summary>
+    /// Fills each series down to its baseline and then strokes the line along its top, so the shape has a
+    /// crisp edge and the same colour as its fill. Stacked modes fill from the previous series' top; the
+    /// plain mode fills to zero, which is the classic overlap (and why the series order matters).
+    /// </summary>
+    private protected override void DrawSeriesLayer(DrawingContext context, List<Plot> plots, Rect plot)
+    {
+        if (plots.Count == 0) return;
+        var stacked = AreaMode is not AreaMode.Plain;
+        var bands = stacked ? StackBands(plots, AreaMode is AreaMode.Stacked100) : null;
+        var fillOpacity = Math.Clamp(AreaOpacity, 0, 100) / 100d;
+
+        for (var s = 0; s < plots.Count; s++)
+        {
+            var p = plots[s];
+            var count = p.Data.Ys.Length;
+            if (count == 0 || !p.Visible) continue;
+
+            double[] bases;
+            double[] tops;
+            if (bands is not null) { bases = bands[s].Base; tops = bands[s].Top; }
+            else { bases = new double[count]; tops = p.Data.Ys; }
+
+            var xs = p.Data.Xs;
+            var geometry = new StreamGeometry();
+            using (var g = geometry.Open())
+            {
+                g.BeginFigure(new Point(p.XRange.ToPixel(xs[0], plot.X, plot.Width), YAt(p, plot, tops[0])), true);
+                for (var i = 1; i < count; i++)
+                    g.LineTo(new Point(p.XRange.ToPixel(xs[i], plot.X, plot.Width), YAt(p, plot, tops[i])));
+                // back along the baseline, right to left, so the shape is closed
+                for (var i = count - 1; i >= 0; i--)
+                    g.LineTo(new Point(p.XRange.ToPixel(xs[i], plot.X, plot.Width), YAt(p, plot, bases[i])));
+                g.EndFigure(true);
+            }
+            context.DrawGeometry(new SolidColorBrush(p.LineColor, fillOpacity), null, geometry);
+
+            if (p.Connected && count > 1)
+            {
+                var pen = MakePen(p.LineColor, p.LineThickness, p.LineStyle);
+                for (var i = 1; i < count; i++)
+                {
+                    context.DrawLine(pen,
+                        new Point(p.XRange.ToPixel(xs[i - 1], plot.X, plot.Width), YAt(p, plot, tops[i - 1])),
+                        new Point(p.XRange.ToPixel(xs[i], plot.X, plot.Width), YAt(p, plot, tops[i])));
+                }
+            }
+            if (p.MarkerStyle is not ChartMarkerStyle.None)
+            {
+                DrawMarkers(context, xs.Select((x, i) =>
+                    new Point(p.XRange.ToPixel(x, plot.X, plot.Width), YAt(p, plot, tops[i]))).ToArray(), p);
+            }
+        }
+    }
+}
+
+/// <summary>
+/// A PIE / DOUGHNUT chart: one wedge per labelled value. The slices come from the workbook's label and
+/// value columns (the label column may hold text, dates or numbers — a pie is the one chart whose
+/// categories are almost always words), or from the typed <see cref="Labels"/> and <see cref="Values"/>.
+/// A doughnut is the same chart with <see cref="DoughnutPercent"/> above zero.
+/// <para>
+/// There is no cartesian frame here — no gridlines, no axes and no cursors — and the legend lists the
+/// SLICES, so clicking an entry switches that slice off exactly as it switches a trace off on the other
+/// charts. The colour of a slice is its own; the ones the form does not mention take a colour from the
+/// chart's palette, and the Slices editor writes the overrides.
+/// </para>
+/// </summary>
+public class GrumpyPiePlot : ChartBase
+{
+    /// <summary>The implicit series' values (one wedge each), used when the chart has no workbook.</summary>
+    public static readonly StyledProperty<double[]?> ValuesProperty =
+        AvaloniaProperty.Register<GrumpyPiePlot, double[]?>(nameof(Values));
+
+    /// <summary>The wedge names, one per value ("Jan,Feb,Mar"), used with <see cref="Values"/>.</summary>
+    public static readonly StyledProperty<string[]?> LabelsProperty =
+        AvaloniaProperty.Register<GrumpyPiePlot, string[]?>(nameof(Labels));
+
+    /// <summary>How thick the ring is, as a percentage of the radius: 0 is a solid pie (the default),
+    /// 50 makes a doughnut whose hole is half the pie.</summary>
+    public static readonly StyledProperty<double> DoughnutPercentProperty =
+        AvaloniaProperty.Register<GrumpyPiePlot, double>(nameof(DoughnutPercent));
+
+    /// <summary>Where the first slice starts: 0 is 12 o'clock, and the slices run clockwise from there.</summary>
+    public static readonly StyledProperty<double> StartAngleProperty =
+        AvaloniaProperty.Register<GrumpyPiePlot, double>(nameof(StartAngle));
+
+    /// <summary>The gap between two neighbouring slices, in degrees (0 = they touch).</summary>
+    public static readonly StyledProperty<double> SliceGapProperty =
+        AvaloniaProperty.Register<GrumpyPiePlot, double>(nameof(SliceGap));
+
+    /// <summary>The line drawn between two slices.</summary>
+    public static readonly StyledProperty<Color> SliceBorderColorProperty =
+        AvaloniaProperty.Register<GrumpyPiePlot, Color>(nameof(SliceBorderColor), Colors.White);
+
+    /// <summary>How thick that line is (0 = no line, so the colours touch).</summary>
+    public static readonly StyledProperty<double> SliceBorderThicknessProperty =
+        AvaloniaProperty.Register<GrumpyPiePlot, double>(nameof(SliceBorderThickness), 1d);
+
+    static GrumpyPiePlot()
+    {
+        AffectsRender<GrumpyPiePlot>(ValuesProperty, LabelsProperty, DoughnutPercentProperty, StartAngleProperty,
+            SliceGapProperty, SliceBorderColorProperty, SliceBorderThicknessProperty);
+        ValuesProperty.Changed.AddClassHandler<GrumpyPiePlot>((plot, _) => plot.Reload());
+        LabelsProperty.Changed.AddClassHandler<GrumpyPiePlot>((plot, _) => plot.Reload());
+    }
+
+    /// <summary>The wedge values (used when the chart has no workbook).</summary>
+    [TypeConverter(typeof(DoubleArrayConverter))]
+    public double[]? Values { get => GetValue(ValuesProperty); set => SetValue(ValuesProperty, value); }
+
+    /// <summary>The wedge names, one per value (used with <see cref="Values"/>).</summary>
+    [TypeConverter(typeof(StringArrayConverter))]
+    public string[]? Labels { get => GetValue(LabelsProperty); set => SetValue(LabelsProperty, value); }
+
+    /// <summary>How thick the ring is, as a percentage of the radius (0 = a solid pie).</summary>
+    public double DoughnutPercent { get => GetValue(DoughnutPercentProperty); set => SetValue(DoughnutPercentProperty, value); }
+
+    /// <summary>Where the first slice starts, in degrees clockwise from 12 o'clock.</summary>
+    public double StartAngle { get => GetValue(StartAngleProperty); set => SetValue(StartAngleProperty, value); }
+
+    /// <summary>The gap between two neighbouring slices, in degrees.</summary>
+    public double SliceGap { get => GetValue(SliceGapProperty); set => SetValue(SliceGapProperty, value); }
+
+    /// <summary>Colour of the line between two slices.</summary>
+    public Color SliceBorderColor { get => GetValue(SliceBorderColorProperty); set => SetValue(SliceBorderColorProperty, value); }
+
+    /// <summary>Thickness of that line.</summary>
+    public double SliceBorderThickness { get => GetValue(SliceBorderThicknessProperty); set => SetValue(SliceBorderThicknessProperty, value); }
+
+    /// <summary>
+    /// The slices the form names: one element per slice that should differ from the palette —
+    /// <c>&lt;charts:PieSlice Title="North" LineColor="#E4572E" Explode="8"/&gt;</c>. A slice the form
+    /// does not mention is drawn from the palette, and switching one off in the legend switches it off
+    /// for the session (which slices are switched on is runtime state, as it is for a series).
+    /// </summary>
+    public AvaloniaList<PieSlice> Slices { get; } = new();
+
+    /// <inheritdoc/>
+    protected override bool ImplicitXFromIndex => true;
+
+    /// <inheritdoc/>
+    protected override bool HasCartesianAxes => false;
+
+    /// <inheritdoc/>
+    protected override bool SupportsCursors => false;
+
+    /// <inheritdoc/>
+    protected override ChartData InlineData()
+    {
+        var values = Values ?? Array.Empty<double>();
+        var names = Labels ?? Array.Empty<string>();
+        return new ChartData
+        {
+            Xs = Enumerable.Range(0, values.Length).Select(i => (double)i).ToArray(),
+            Ys = values,
+            Labels = Enumerable.Range(0, values.Length)
+                .Select(i => i < names.Length && !string.IsNullOrWhiteSpace(names[i]) ? names[i]! : $"Slice {i + 1}")
+                .ToArray()
+        };
+    }
+
+    /// <inheritdoc/>
+    protected override void SetInlineData(double[] xs, double[] ys) => Values = ys;
+
+    /// <summary>The colours a slice takes when the form does not name one.</summary>
+    private static readonly Color[] SlicePalette =
+    {
+        Color.Parse("#2D7DD2"), Color.Parse("#E4572E"), Color.Parse("#3FA34D"), Color.Parse("#F2A541"),
+        Color.Parse("#8367C7"), Color.Parse("#00A6A6"), Color.Parse("#C05780"), Color.Parse("#6B7A8F"),
+        Color.Parse("#8CB369"), Color.Parse("#B5651D")
+    };
+
+    /// <summary>Stand-ins for the slices the form does not name, kept so the legend's tick boxes stick.</summary>
+    private readonly Dictionary<string, PieSlice> _sliceStubs = new();
+
+    /// <summary>
+    /// One plot per SLICE, which is what makes the shared machinery work: the legend lists the slices
+    /// with their colours, clicking an entry switches that wedge off, and the drawing below reads the
+    /// same list back. <see cref="PieSlice"/> is a <see cref="ChartSeries"/>, so a slice and a series
+    /// are described by the same properties.
+    /// </summary>
+    private protected override List<Plot> BuildPlots()
+    {
+        var data = DataFor(null, XColumn ?? "B", YColumn ?? "C", true, labelPairs: true);
+        var plots = new List<Plot>();
+        for (var i = 0; i < data.Ys.Length; i++)
+        {
+            var name = i < data.Labels.Length && !string.IsNullOrWhiteSpace(data.Labels[i])
+                ? data.Labels[i]
+                : $"Slice {i + 1}";
+            var slice = SliceFor(name, i);
+            plots.Add(new Plot
+            {
+                Data = new ChartData
+                {
+                    Xs = new[] { 0d },
+                    Ys = new[] { data.Ys[i] },
+                    Labels = new[] { name },
+                    XTitle = data.XTitle,
+                    YTitle = name
+                },
+                Definition = slice,
+                LineColor = slice.LineColor,
+                Visible = slice.Visible
+            });
+        }
+        // A workbook that could not be read has nothing to draw, and its message has to survive: the
+        // empty plot carries it into the chart's "no data" line.
+        if (plots.Count == 0 && data.Error is not null)
+            plots.Add(new Plot { Data = new ChartData { Error = data.Error } });
+        return plots;
+    }
+
+    /// <summary>The named slice for this wedge, or a remembered stand-in with its palette colour.</summary>
+    private PieSlice SliceFor(string name, int index)
+    {
+        foreach (var slice in Slices)
+            if (string.Equals(slice.Title, name, StringComparison.OrdinalIgnoreCase)) return slice;
+        if (_sliceStubs.TryGetValue(name, out var stub)) return stub;
+        var made = new PieSlice { Title = name, LineColor = SlicePalette[index % SlicePalette.Length] };
+        _sliceStubs[name] = made;
+        return made;
+    }
+
+    /// <summary>
+    /// Draws the wedges. Each one is an arc out at the radius and back in at the ring's inner radius (or
+    /// back to the centre for a solid pie), which is one closed path either way — so a doughnut is the
+    /// same drawing with a hole in it. A slice may explode outwards along its own middle, and the gap is
+    /// taken off both of its edges so the gaps stay even.
+    /// </summary>
+    private protected override void DrawSeriesLayer(DrawingContext context, List<Plot> plots, Rect plot)
+    {
+        var total = 0d;
+        foreach (var p in plots) if (p.Visible && p.Data.HasData) total += Math.Max(0, p.Data.Ys[0]);
+        if (total <= 0) return;
+
+        var side = Math.Min(plot.Width, plot.Height);
+        if (side <= 4) return;
+        var centre = new Point(plot.X + plot.Width / 2, plot.Y + plot.Height / 2);
+        var radius = side / 2;
+        var inner = radius * Math.Clamp(DoughnutPercent, 0, 95) / 100d;
+        var gap = Math.Max(0, SliceGap);
+        var border = SliceBorderThickness > 0
+            ? MakePen(SliceBorderColor, SliceBorderThickness, ChartLineStyle.Solid)
+            : null;
+        var angle = StartAngle - 90d;   // 0° is 12 o'clock; -90° is where a circle's 0 radian sits
+
+        foreach (var p in plots)
+        {
+            if (!p.Visible || !p.Data.HasData) continue;
+            var value = Math.Max(0, p.Data.Ys[0]);
+            if (value <= 0) continue;
+
+            var sweep = value / total * 360d;
+            var from = angle + gap / 2;
+            var to = angle + sweep - gap / 2;
+            angle += sweep;
+            if (to - from <= 0.01) continue;
+
+            var origin = centre;
+            var explode = (p.Definition as PieSlice)?.Explode ?? 0d;
+            if (explode > 0)
+            {
+                var middle = (from + to) / 2 * Math.PI / 180d;
+                origin = new Point(centre.X + Math.Cos(middle) * explode, centre.Y + Math.Sin(middle) * explode);
+            }
+
+            var large = to - from > 180d;
+            var geometry = new StreamGeometry();
+            using (var g = geometry.Open())
+            {
+                g.BeginFigure(OnCircle(origin, radius, from), true);
+                g.ArcTo(OnCircle(origin, radius, to), new Size(radius, radius), 0, large, SweepDirection.Clockwise);
+                if (inner > 0)
+                {
+                    g.LineTo(OnCircle(origin, inner, to));
+                    g.ArcTo(OnCircle(origin, inner, from), new Size(inner, inner), 0, large, SweepDirection.CounterClockwise);
+                }
+                else
+                {
+                    g.LineTo(origin);
+                }
+                g.EndFigure(true);
+            }
+            context.DrawGeometry(new SolidColorBrush(p.LineColor), border, geometry);
+        }
+    }
+
+    /// <summary>The point <paramref name="degrees"/> around a circle (0° = 12 o'clock, clockwise).</summary>
+    private static Point OnCircle(Point centre, double radius, double degrees)
+    {
+        var radians = degrees * Math.PI / 180d;
+        return new Point(centre.X + Math.Cos(radians) * radius, centre.Y + Math.Sin(radians) * radius);
+    }
+}
+
+/// <summary>
+/// Remembers the folder the chart's own file picker used last, so the next one opens there instead of
+/// wherever the platform happens to start. It lives in the per-user app-data folder
+/// (~/.local/share/&lt;App&gt; on Linux, %LOCALAPPDATA%\&lt;App&gt; on Windows) — the same place the
+/// generated DataSet helpers keep their data — which is what makes it survive a restart. Every step is
+/// best-effort: an unwritable location simply means the dialog starts at the platform's default again.
+/// </summary>
+internal static class ChartPickerMemory
+{
+    private static string? _folder;
+    private static bool _loaded;
+
+    private static string StorePath
+    {
+        get
+        {
+            var name = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name
+                       ?? System.Reflection.Assembly.GetExecutingAssembly().GetName().Name
+                       ?? "app";
+            var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrEmpty(root)) root = Path.GetTempPath();
+            var dir = Path.Combine(root, name);
+            try { Directory.CreateDirectory(dir); } catch { /* the failing write is what reports it */ }
+            return Path.Combine(dir, "GrumpyCharts.lastfolder");
+        }
+    }
+
+    /// <summary>The folder the last pick used (null = let the platform choose), or null once it is gone.</summary>
+    internal static string? LastFolder
+    {
+        get
+        {
+            if (!_loaded)
+            {
+                _loaded = true;
+                try { if (File.Exists(StorePath)) _folder = File.ReadAllText(StorePath).Trim(); }
+                catch { _folder = null; }
+            }
+            // A folder on a drive that is no longer mounted is worse than no answer: the platform would
+            // open the dialog inside a path that does not exist.
+            if (string.IsNullOrEmpty(_folder) || !Directory.Exists(_folder)) return null;
+            return _folder;
+        }
+        set
+        {
+            _loaded = true;
+            _folder = value;
+            try
+            {
+                if (string.IsNullOrEmpty(value))
+                {
+                    if (File.Exists(StorePath)) File.Delete(StorePath);
+                }
+                else
+                {
+                    File.WriteAllText(StorePath, value!);
+                }
+            }
+            catch { /* best effort */ }
+        }
     }
 }

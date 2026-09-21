@@ -49,18 +49,20 @@ module.exports = async (t) => {
     t.ok(block.length > 0, 'fileRows', 'the browseFile case exists in designerPanel.ts');
 
     const keys = fileKindKeys();
-    t.ok(keys.length >= 4, 'fileRows', `catalog has file-kind rows (${keys.join(', ')})`);
+    // Icon / Source / TitleBarIcon. The charts' workbook used to be a file-kind row too; it is picked
+    // inside the 'Data Selector' editor now (2026-09-21), which is why this list is one shorter.
+    t.ok(keys.length >= 3, 'fileRows', `catalog has file-kind rows (${keys.join(', ')})`);
 
     const missing = keys.filter((k) => !block.includes(`'${k}'`));
     t.equal(missing, [], 'fileRows',
         'every file-kind catalog key is accepted by the browseFile handler (or its Browse button does nothing)');
 
-    // Self-test: prove the check CAN fail, so a green run means something. This is the old handler
-    // (before the charts' SourceFile was added) and it must be reported as missing that key.
-    const oldHandler = "case 'browseFile': { if (key !== 'Source' && key !== 'Icon' && key !== 'TitleBarIcon') return; }";
+    // Self-test: prove the check CAN fail, so a green run means something. This is an old handler that
+    // accepted only the Image's Source, so it must be reported as missing the other keys.
+    const oldHandler = "case 'browseFile': { if (key !== 'Source') return; }";
     const syntheticMissing = keys.filter((k) => !oldHandler.includes(`'${k}'`));
-    t.ok(syntheticMissing.includes('SourceFile'), 'fileRows',
-        'the check reports an unhandled key (self-test against the pre-fix handler)');
+    t.ok(syntheticMissing.length > 0, 'fileRows',
+        'the check reports an unhandled key (self-test against an older handler)');
 
     // The charts' spreadsheet is a PATH, not a bundled asset: the chart reads it with ZipFile.OpenRead
     // and Live Update re-reads it on save, so bundling a copy into Assets would break it outright.

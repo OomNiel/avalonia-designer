@@ -26,6 +26,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { assessHardware, readHardwareFacts, type AssistantConfig } from './assistant';
+import { lastPickerFolder, rememberPickerFile } from './pickerFolders';
 import { freePort, isMissingExecutable, runCmd } from './hostClient';
 import { log, logError } from './logger';
 import {
@@ -783,10 +784,12 @@ export async function setupBundledModel(context: vscode.ExtensionContext): Promi
     if (!pick) return;
 
     if (pick.action === 'file') {
+        const startFolder = lastPickerFolder('model');
         const chosen = await vscode.window.showOpenDialog({
             title: 'Pick a .gguf model file',
             canSelectMany: false,
             openLabel: 'Use this model',
+            defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined,
             filters: { 'GGUF model': ['gguf'] }
         });
         const file = chosen?.[0]?.fsPath;
@@ -795,6 +798,7 @@ export async function setupBundledModel(context: vscode.ExtensionContext): Promi
             void vscode.window.showWarningMessage('That is not a .gguf file.');
             return;
         }
+        await rememberPickerFile('model', file);
         await activateWith(context, file);
         return;
     }

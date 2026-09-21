@@ -69,6 +69,8 @@ private static Dock AnchorDockEdge(string anchor) { return Dock.Left; }`;
     // --- PathPicker.vb / .cs (the file/folder selector) ---
     // beta.6 added the left-edge file/folder icon (+ the ShowIcon switch). Older copies are a bare
     // path row, so a File Selector and a Folder Selector look identical on the form.
+    // 2026-09-21 moved the marker to `PickerFolderMemory`: the Browse button now remembers the folder it
+    // used last in the per-user app-data folder, instead of forgetting it at the next restart.
     const oldVbPicker = `' PathPicker.vb — BUNDLED RESOURCE (the C# twin is resources/PathPicker.cs). Copied into every
 ' generated project, next to GrumpyPanel.vb / ExifImageLoader.vb.
 Namespace Global.AvaloniaChrome
@@ -85,13 +87,20 @@ Namespace Global.AvaloniaChrome
         Public Shared ReadOnly ShowIconProperty As StyledProperty(Of Boolean) = Nothing
         Private ReadOnly _icon As New Avalonia.Controls.Shapes.Path()
     End Class
+    Friend NotInheritable Class PickerFolderMemory
+    End Class
 End Namespace`;
     t.equal(isStaleBundledCopy(oldVbPicker, true, 'PathPicker'), true, 'detect', 'old bundled PathPicker.vb is stale (no icon)');
     t.equal(isStaleBundledCopy(curVbPicker, true, 'PathPicker'), false, 'detect', 'current PathPicker.vb is current');
     const oldCsPicker = `// PathPicker.cs — BUNDLED RESOURCE (the VB twin is resources/PathPicker.vb).
 public class PathPicker : UserControl { public string? SelectedPath { get; set; } }`;
-    const curCsPicker = `// PathPicker.cs — BUNDLED RESOURCE (the VB twin is resources/PathPicker.vb).
+    // The icon era: it has ShowIcon, but no folder memory — which is what the marker watches now.
+    const iconEraCsPicker = `// PathPicker.cs — BUNDLED RESOURCE (the VB twin is resources/PathPicker.vb).
 public class PathPicker : UserControl { public bool ShowIcon { get; set; } }`;
+    t.equal(isStaleBundledCopy(iconEraCsPicker, false, 'PathPicker'), true, 'detect',
+        'a picker with the icon but no folder memory is stale (it forgets the folder at every restart)');
+    const curCsPicker = `${iconEraCsPicker}
+internal static class PickerFolderMemory { internal static string? LastFolder { get; set; } }`;
     t.equal(isStaleBundledCopy(oldCsPicker, false, 'PathPicker'), true, 'detect', 'old bundled PathPicker.cs is stale (no ShowIcon)');
     t.equal(isStaleBundledCopy(curCsPicker, false, 'PathPicker'), false, 'detect', 'current PathPicker.cs is current');
     t.equal(isStaleBundledCopy(`${oldVbPicker}\n' customised by hand — do not touch`, true, 'PathPicker'), true,
@@ -113,7 +122,7 @@ public class PathPicker : UserControl { public bool ShowIcon { get; set; } }`;
     // shipped has it, so it detected nothing), not `XYSeries` (the multi-series copies have it), and no
     // longer `ChartCursor`, `DrawnColor`, `LegendMargin` or `Padding` either.
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'PlotBackBrush', 'spec',
+    t.equal(chartSpec.marker, 'SourceSheet', 'spec',
         'the GrumpyCharts marker is the newest token in the current bundled file');
     const oldCsCharts = `// GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb).
 public sealed class ChartSeries { public double[] Xs = Array.Empty<double>(); }
@@ -130,7 +139,16 @@ public sealed class ChartCursor { public CursorOrientation Orientation { get; se
 public sealed class CursorHit { internal Color DrawnColor = Colors.Transparent; }
 public sealed class ChartBase { public static readonly StyledProperty<double> LegendMarginProperty = null!; }
 public sealed class ChartShell { public static readonly StyledProperty<Thickness> PaddingProperty = null!; }
-public sealed class BrushHost { public static readonly StyledProperty<Brush?> PlotBackBrushProperty = null!; }`;
+public sealed class BrushHost { public static readonly StyledProperty<Brush?> PlotBackBrushProperty = null!; }
+internal static class ChartPickerMemory { internal static string? LastFolder { get; set; } }
+public class GrumpyBarPlot : ChartBase { }
+public class GrumpyAreaPlot : ChartBase { }
+public class GrumpyPiePlot : ChartBase { }
+public class PieSlice : ChartSeries { }
+public sealed class ChartData
+{
+    public static readonly StyledProperty<string?> SourceSheetProperty = null!;
+}`;
     t.equal(isStaleBundledCopy(oldCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'a chart file from before the series classes is stale (this broke ChartTestCS)');
     t.equal(isStaleBundledCopy(seriesEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
@@ -154,7 +172,15 @@ public sealed class ChartBase { public static readonly StyledProperty<double> Le
     const paddingEraCsCharts = `${marginEraCsCharts}
 public sealed class ChartShell { public static readonly StyledProperty<Thickness> PaddingProperty = null!; }`;
     t.equal(isStaleBundledCopy(paddingEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
-        'and one with the padding but no gradient brush (the newest thing the Properties panel writes)');
+        'and one with the padding but no gradient brush');
+    // The copy that is current in every earlier respect but has no BAR/AREA/PIE types: the toolbox now
+    // writes <charts:GrumpyBarPlot BarMode="Stacked">, which such a copy cannot resolve at all — this
+    // is the newest gap, so it is what the marker watches.
+    const brushEraCsCharts = `${paddingEraCsCharts}
+public sealed class BrushHost { public static readonly StyledProperty<Brush?> PlotBackBrushProperty = null!; }
+internal static class ChartPickerMemory { internal static string? LastFolder { get; set; } }`;
+    t.equal(isStaleBundledCopy(brushEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with the gradient and the picker memory but neither the bar, area nor pie types');
     t.equal(isStaleBundledCopy(curCsCharts, false, 'GrumpyCharts'), false, 'detect',
         'the current chart file is current');
     t.equal(isStaleBundledCopy(`${oldCsCharts}\n// hand-tweaked below`, false, 'GrumpyCharts'), true, 'detect',
@@ -171,7 +197,18 @@ End Class
 Friend DrawnColor As Color = Colors.Transparent
 Friend LegendMargin As Double
 Friend Padding As Thickness
-Friend PlotBackBrush As Brush`;
+Friend PlotBackBrush As Brush
+Friend NotInheritable Class ChartPickerMemory
+End Class
+Public Class GrumpyBarPlot
+End Class
+Public Class GrumpyAreaPlot
+End Class
+Public Class GrumpyPiePlot
+End Class
+Public Class PieSlice
+End Class
+Public Shared ReadOnly SourceSheetProperty As StyledProperty(Of String) = Nothing`;
     t.equal(isStaleBundledCopy(oldVbCharts, true, 'GrumpyCharts'), true, 'detect',
         'a VB chart file from before the series classes is stale');
     t.equal(isStaleBundledCopy(curVbCharts, true, 'GrumpyCharts'), false, 'detect',
@@ -217,6 +254,35 @@ Friend PlotBackBrush As Brush`;
     t.ok(saveDoc.includes("text.includes('charts:Grumpy')")
         && saveDoc.includes('ensureGrumpyChartsHelper(document)'), 'trigger',
         'saving a form that uses a chart refreshes the project chart file');
+
+    // …and OPENING one OFFERS it, which is the gap that made a new bundled feature look broken: a form
+    // that is only opened (and an app built from it) keeps the project's older control, because saving
+    // is the trigger — and there is nothing to save. Reported 2026-09-21 after the chart's picker
+    // learned to remember its folder: it worked in the designer and not in the app, because the app
+    // compiles the PROJECT's copy.
+    const openDoc = methodBlock('async openCustomDocument(');
+    t.ok(openDoc.includes('noticeStaleBundledHelpers(doc)'), 'open-notice',
+        'opening a form checks this project\'s bundled files');
+    const notice = methodBlock('private noticeStaleBundledHelpers(');
+    t.ok(notice.includes('this.staleHelperOffered.has(key)') && notice.includes('this.staleHelperOffered.add(key)'),
+        'open-notice', 'the notice is shown once per form, not on every open');
+    t.ok(notice.includes('staleBundledFiles(doc)'), 'open-notice',
+        'it asks which files are actually stale');
+    t.ok(notice.includes("'Update now'") && notice.includes('ensureBundledComponentsCurrent(doc)'),
+        'open-notice', 'and updates them only when the user asks');
+    const scan = methodBlock('private staleBundledFiles(');
+    t.ok(scan.includes('isStaleBundledCopy('), 'open-notice',
+        'only provable bundled boilerplate is ever reported (a customised copy is not)');
+    const candidates = methodBlock('private bundledFileCandidates(');
+    t.ok(candidates.includes('projectUri.fsPath') && candidates.includes('doc.uri.fsPath'), 'open-notice',
+        'both places a helper can live are searched (project folder, and next to the .axaml)');
+    // The refresh shares that search — it used to `break` on a missing file, so a form in a sub-folder
+    // (helper next to the .axaml) was never refreshed at all.
+    const ensure = methodBlock('private ensureBundledComponentsCurrent(');
+    t.ok(ensure.includes('bundledFileCandidates(doc, proj, spec.file)'), 'open-notice',
+        'and the refresh uses the same two-place search');
+    t.ok(!/\n\s*const dirs = \[path\.dirname\(proj\.projectUri/.test(ensure), 'open-notice',
+        'the old one-place search is gone');
 
     // --- A customised copy (bundled header removed) is NEVER touched ---
     t.equal(isStaleBundledCopy('public class ChromeWindow : Window { }  // heavily customised, no header', false, 'ChromeWindow'), false,

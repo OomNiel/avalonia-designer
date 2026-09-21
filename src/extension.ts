@@ -12,7 +12,7 @@ import { hostGate } from './hostCheck';
 import { AssistantCodeActionProvider, PROPOSAL_SCHEME, addHubModel, applyProposal, cancelAiPrompt, chooseBundledBackend, closeStaleProposalTabs, discardProposal, fixFindingWithAI, implementInFunction, proposalContent, proposalLenses, refreshPanels, removeHubModel, sendAiPrompt, showStatus } from './assistantUi';
 import { initModelRuntime, stopModelServer } from './modelRuntime';
 import { initLlamaServer, startMyLlamaServerFlow, stopOwnLlamaServer } from './llamaServer';
-import { startLlamaServerByChoice, startTarget, stopLlamaServerConfirmed } from './llamaService';
+import { initPickerFolders } from './pickerFolders'; import { startLlamaServerByChoice, startTarget, stopLlamaServerConfirmed } from './llamaService';
 import { learnConventions } from './conventionsUi';
 import { unloadOnExit } from './localModelCore';
 import { chooseLocalModel, unloadLoadedModel } from './localModelSetup';
@@ -152,6 +152,9 @@ export function activate(context: vscode.ExtensionContext): void {
         // same treatment for the same reason — one child per window, whichever engine is in use.
         initModelRuntime(context);
         initLlamaServer(context);
+        // Every file/folder picker in the extension remembers the folder it used last (per kind, in
+        // global state) so the next one opens where the user left off — see src/pickerFolders.ts.
+        initPickerFolders(context.globalState);
 
         // A proposal only lives in memory, so a proposal tab restored from a previous window is a dead
         // pane with no buttons (reported twice, 2026-09-14). Close whatever the last session left behind.

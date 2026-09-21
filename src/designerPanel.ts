@@ -4,7 +4,8 @@ import * as fs from 'fs';
 import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './xamlModel';
 import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
-    chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush
+    chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush, chartSlicesOf, writeChartSlices,
+    chartDataSourceOf, writeChartDataSource
 } from './chartSeries';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
@@ -20,6 +21,7 @@ import { repairUntilClean, RepairReport } from './repairLoop';
 import { bigModelOffer, escalateToBigModel, llamaUnitText, type EscalationResult } from './bigModel';
 import { markCodeEdited, codeEditedSinceBuild, codeEditedReason, clearCodeEdited } from './writeStamp';
 import { withDesignerHeader } from './xamlHeader';
+import { lastPickerFolder, rememberPickerFile, type PickerKind } from './pickerFolders';
 import { controlInfoFor } from './controlInfo';
 import { asksForEventOnPlace, eventsFor, eventArgsFor, isKnownEvent } from './controlEvents';
 import { findProject, ProjectInfo } from './projectParser';
@@ -1594,6 +1596,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      */
     private autoSizeOff = new Set<string>();
     private autoSizeOffLoaded = false;
+    /**
+     * Forms (by URI) this session has already offered the bundled-helper update for — the notice is
+     * shown once per form, so opening the same designer repeatedly does not nag.
+     */
+    private staleHelperOffered = new Set<string>();
     /** Pending debounce timers for the automatic code-behind re-check, keyed by .axaml URI. */
     private codeCheckTimers = new Map<string, NodeJS.Timeout>();
     /**
@@ -1795,6 +1802,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     async openCustomDocument(uri: vscode.Uri): Promise<DesignerDocument> {
         const doc = await DesignerDocument.create(uri);
         this.docs.set(uri.toString(), doc);
+        // A project's own copy of a bundled control is what the RUNNING APP compiles — the designer
+        // renders from the extension. So a new feature can look broken in the app while the designer
+        // shows it perfectly, which is exactly what happens after an extension update until something
+        // in that project is saved. Offer the update the moment the form is opened.
+        this.noticeStaleBundledHelpers(doc);
         return doc;
     }
 
@@ -2711,7 +2723,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     }
                     // Charts: same story — a project created before GrumpyCharts existed needs
                     // GrumpyCharts.cs/.vb next to ChromeWindow, or the saved <charts:…> won't compile.
-                    if (msg.tag === 'GrumpyLinePlot' || msg.tag === 'GrumpyXYPlot') {
+                    if (isChartTag(msg.tag)) {
                         this.ensureGrumpyChartsHelper(doc);
                     }
                     if (msg.tag === 'GrumpyStatus' && name) {
@@ -3321,6 +3333,82 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.applyDataGridCols(doc, panel, el, msg.values);
                     return;
                 }
+                case 'saveChartSlices': {
+                    // 'Slices' editor on a pie: the chart's own .Slices property element holding one
+                    // <charts:PieSlice> per wedge the form overrides (colour, Explode, Visible).
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || localName(el.tagName) !== 'GrumpyPiePlot') return;
+                    const before = doc.model.serialize(true);
+                    writeChartSlices(doc.model, el, Array.isArray(msg.slices) ? msg.slices : []);
+                    // The slice elements need the project's bundled chart file to be current.
+                    this.ensureGrumpyChartsHelper(doc);
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
+                    return;
+                }
+                case 'saveChartDataSource': {
+                    // 'Data Selector' on any chart: the source kind, the workbook, the PAGE of it to
+                    // read and the (not read yet) data file. Every one is a plain chart attribute, so
+                    // writing a value equal to the renderer's default removes it again.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || !isChartTag(localName(el.tagName))) return;
+                    const before = doc.model.serialize(true);
+                    writeChartDataSource(doc.model, el, (msg.values ?? {}) as Record<string, unknown>);
+                    // SourceSheet/SourceKind/DataFile need the project's bundled chart file to be current
+                    // (an older copy has no such properties, so the form would not compile).
+                    this.ensureGrumpyChartsHelper(doc);
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
+                    return;
+                }
+                case 'requestSheets': {
+                    // The Data Selector's page dropdown asks for the workbook's own sheet names. The
+                    // HOST reads them (it has the file system and the zip reader); a file that cannot
+                    // be read comes back as an error, which the editor shows under the dropdown.
+                    const wanted = String(msg.file ?? '');
+                    if (!wanted) {
+                        void panel.webview.postMessage({ type: 'sheetsResult', file: '', sheets: [], error: null });
+                        return;
+                    }
+                    try {
+                        const host = await this.host.getClient();
+                        const answer = await host.sheets(wanted);
+                        void panel.webview.postMessage({
+                            type: 'sheetsResult', file: wanted, sheets: answer.sheets, error: answer.error
+                        });
+                    } catch (e) {
+                        void panel.webview.postMessage({
+                            type: 'sheetsResult', file: wanted, sheets: [],
+                            error: `Could not read the workbook: ${String((e as Error).message ?? e)}`
+                        });
+                    }
+                    return;
+                }
+                case 'pickChartSource': {
+                    // The Data Selector's two Browse buttons. A workbook picker and a data-file picker
+                    // each keep their own last folder (src/pickerFolders.ts), like every other picker in
+                    // the extension. `which` says which row asked.
+                    const which = String(msg.which ?? 'workbook');
+                    const kind: PickerKind = which === 'data' ? 'data' : 'workbook';
+                    const filters: { [name: string]: string[] } = which === 'data'
+                        ? { 'Data files': ['csv', 'tsv', 'txt', 'json', 'xlsx'], 'All files': ['*'] }
+                        : { 'Excel workbooks': ['xlsx'], 'All files': ['*'] };
+                    const startFolder = lastPickerFolder(kind);
+                    const picked = await vscode.window.showOpenDialog({
+                        canSelectMany: false,
+                        filters,
+                        defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined,
+                        title: which === 'data' ? 'Select a data file' : 'Select a spreadsheet'
+                    });
+                    if (!picked || picked.length === 0) return;
+                    await rememberPickerFile(kind, picked[0].fsPath);
+                    void panel.webview.postMessage({
+                        type: 'chartSourcePicked', which, path: picked[0].fsPath
+                    });
+                    return;
+                }
                 case 'saveChartSeries': {
                     // 'Series' editor on either chart: write the list as <charts:LineSeries> /
                     // <charts:XYSeries> children, so the chart draws one line per series.
@@ -3619,11 +3707,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         : isWorkbook
                             ? { 'Excel workbooks': ['xlsx'], 'All files': ['*'] }
                             : { Icons: ['ico', 'png'] };
+                    // Which memory this picker uses — a workbook, a picture and an icon each keep
+                    // their own last folder (src/pickerFolders.ts).
+                    const kind: PickerKind = isWorkbook ? 'workbook' : key === 'Source' ? 'image' : 'icon';
+                    const startFolder = lastPickerFolder(kind);
                     const picked = await vscode.window.showOpenDialog({
                         canSelectMany: false, filters,
+                        defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined,
                         title: isWorkbook ? 'Select a spreadsheet' : 'Select a file'
                     });
                     if (!picked || picked.length === 0) return;
+                    await rememberPickerFile(kind, picked[0].fsPath);
                     // Named differently from the bundling path's `before` below: both live in this
                     // one case block, so a second `const before` would not compile.
                     const beforeWorkbook = doc.model.serialize(true);
@@ -4591,6 +4685,66 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         } catch { return false; }
     }
 
+    /**
+     * The bundled files this project has, and which of them are OLDER than the extension's copy.
+     * Only provable bundled boilerplate counts (`isStaleBundledCopy`: the bundled header is there and
+     * the newest marker is not), so a file the user has customised is never listed.
+     */
+    private staleBundledFiles(doc: DesignerDocument): string[] {
+        const proj = findProject(doc.uri);
+        if (!proj) return [];
+        const vb = proj.language === 'vb';
+        const stale: string[] = [];
+        for (const spec of bundledComponentSpecs(vb)) {
+            for (const p of this.bundledFileCandidates(doc, proj, spec.file)) {
+                if (!fs.existsSync(p)) continue;
+                try {
+                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, spec.kind)) stale.push(spec.file);
+                } catch { /* unreadable — say nothing about it */ }
+                break; // only the first place that has the file
+            }
+        }
+        return stale;
+    }
+
+    /**
+     * Where a bundled component may live: next to the project file (where New Project writes it), and
+     * next to the .axaml (an older layout, and the only place for a form in a sub-folder).
+     */
+    private bundledFileCandidates(doc: DesignerDocument, proj: ProjectInfo, file: string): string[] {
+        const dirs = [path.dirname(proj.projectUri.fsPath), path.dirname(doc.uri.fsPath)];
+        return [...new Set(dirs)].map((dir) => path.join(dir, file));
+    }
+
+    /**
+     * Tells the user, once per form, that this project's bundled helpers are older than the
+     * extension's and offers to bring them up to date there and then.
+     *
+     * Why it exists: `saveCustomDocument` already refreshes them silently — but a form that is only
+     * OPENED keeps the old files, and the running app compiles THOSE. A feature added to a bundled
+     * control (the chart picker remembering its folder, a readout colour, a chart property) is then
+     * invisible in the app until some unrelated edit happens to be saved, which reads as "the feature
+     * does not work". Nothing is written without being asked: the refresh is one click away, and the
+     * same provable-boilerplate rule decides what may be touched.
+     */
+    private noticeStaleBundledHelpers(doc: DesignerDocument): void {
+        const key = doc.uri.toString();
+        if (this.staleHelperOffered.has(key)) return;
+        this.staleHelperOffered.add(key);
+        const stale = this.staleBundledFiles(doc);
+        if (stale.length === 0) return;
+        const what = stale.join(' + ');
+        void vscode.window.showInformationMessage(
+            `This project's ${what} ${stale.length === 1 ? 'is' : 'are'} older than the extension's copy. `
+            + 'The running app compiles that file, so it can behave differently from the designer until it is updated.',
+            'Update now'
+        ).then((pick) => {
+            if (pick !== 'Update now') return;
+            // Refreshes every stale bundled file at once (and says what it touched).
+            this.ensureBundledComponentsCurrent(doc);
+        });
+    }
+
     /** GrumpyCharts (the bundled AvaloniaCharts chart control set behind the Charts tools) ships
      *  with every NEW project, like GrumpyPanel. A project created before it existed needs the file
      *  next to ChromeWindow — otherwise the saved <charts:GrumpyLinePlot> won't compile. */
@@ -4741,19 +4895,19 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         const updated: string[] = [];
         for (const spec of bundledComponentSpecs(vb)) {
             // The component lives next to the project file (where New Project writes it); older
-            // layouts sometimes put it next to the .axaml — check both.
-            const dirs = [path.dirname(proj.projectUri.fsPath), path.dirname(doc.uri.fsPath)];
-            for (const dir of dirs) {
-                const p = path.join(dir, spec.file);
+            // layouts sometimes put it next to the .axaml — check both. A form in a sub-folder only
+            // has it in the second place, so a missing file must not stop the search.
+            const candidates = this.bundledFileCandidates(doc, proj, spec.file);
+            for (const [index, p] of candidates.entries()) {
                 if (!fs.existsSync(p)) {
                     // A ChromeWindow-rooted form can't compile without its ChromeWindow component.
-                    if (spec.kind === 'ChromeWindow') {
+                    if (spec.kind === 'ChromeWindow' && index === 0) {
                         try {
                             fs.copyFileSync(path.join(resourceRoot, spec.file), p);
                             updated.push(spec.file);
                         } catch { /* leave it; the code-behind change is best-effort too */ }
                     }
-                    break;
+                    continue;
                 }
                 try {
                     const text = fs.readFileSync(p, 'utf8');
@@ -4762,14 +4916,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         updated.push(spec.file);
                     }
                 } catch { /* never fail an edit over a stale helper */ }
-                break; // only the first directory that contains the file
+                break; // only the first place that has the file
             }
         }
         if (updated.length > 0) {
             void vscode.window.showInformationMessage(
-                `Updated ${updated.join(' + ')} to the current bundled version ` +
-                `(this project was created before that component gained the settable Title Bar Height / ` +
-                `Canvas-only anchoring).`
+                `Updated ${updated.join(' + ')} to the current bundled version. This project's copy `
+                + 'predated the newest features, and the running app compiles THIS file — so it now '
+                + 'matches what the designer shows.'
             );
         }
         return updated;
@@ -4985,13 +5139,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             msg.dgCols = dgColsOf(el);
         }
         // The same for a chart's series, axes, legend and cursors (the 'Series'/'Axis'/'Legend'/
-        // 'Cursors' editors pre-fill from these).
+        // 'Cursors' editors pre-fill from these) and for a pie's slices (the 'Slices' editor).
         if (isChartTag(localName(el.tagName))) {
             msg.chartSeries = chartSeriesOf(el);
             msg.chartAxes = chartAxesOf(el);
             msg.legendInfo = chartLegendOf(el);
             msg.cursorInfo = chartCursorsOf(el);
             msg.brushInfo = chartBrushOf(el);
+            msg.sliceInfo = chartSlicesOf(el);
+            // The Data Selector editor's working copy (source kind, file, page, data file). The page
+            // LIST is not here: it comes from the workbook via the host, when the editor asks for it.
+            msg.dataSource = chartDataSourceOf(el);
         }
         await panel.webview.postMessage(msg);
     }
@@ -7507,6 +7665,58 @@ ${publishButtons}      <span class="sep"></span>
         <div class="modal-buttons">
           <button id="seriesCancel" type="button" class="modal-btn">Cancel</button>
           <button id="seriesSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="dataModal" class="modal" hidden>
+      <div class="modal-box modal-wide">
+        <h3 id="dataTitle">Data Selector</h3>
+        <p class="modal-hint">Where this chart gets its data. <b>Spreadsheet</b> reads a page of an
+          .xlsx workbook: pick the file, then the page from the workbook's own sheet names — leave the
+          page on <b>(first page)</b> to keep reading the first sheet, which is what every form did
+          before this editor existed. <b>Data Files</b> is the place for data files such as CSVs: the
+          file you pick is remembered in the form, and the charts will start reading it when that
+          reader lands (until then the chart keeps drawing whatever the spreadsheet gives it).</p>
+        <div class="data-rows">
+          <h4>Source</h4>
+          <div id="dataKind" class="series-fields data-fields"></div>
+          <h4 id="dataHead">Details</h4>
+          <div id="dataFields" class="series-fields data-fields"></div>
+        </div>
+        <div class="modal-buttons">
+          <button id="dataCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="dataSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="sliceModal" class="modal" hidden>
+      <div class="modal-box modal-wide">
+        <h3 id="sliceTitle">Slices</h3>
+        <p class="modal-hint">A pie draws <b>one wedge per value</b>; this editor names the wedges that
+          should look different. The rows list the slices the chart draws — from its <b>Slice Names</b>
+          when they are in the XAML, or, for a spreadsheet pie, the names it already overrides (add the
+          rest by name; the workbook supplies them at run time). An untouched slice keeps the
+          <b>palette colour</b> shown beside it and writes nothing to the form, so the XAML stays short.
+          <b>Explode</b> pushes a wedge out of the pie (in pixels) and <b>Visible</b> off hides it —
+          which is what the legend's tick box does at run time. Slices are matched to the data by
+          <b>name</b>, so renaming a slice here makes it a different slice to the chart.</p>
+        <div class="grid-defs">
+          <div class="grid-defs-col">
+            <h4>Slices</h4>
+            <div id="sliceList" class="grid-def-list"></div>
+            <div class="series-buttons">
+              <button id="sliceAdd" type="button" class="modal-btn">+ Add slice</button>
+              <button id="sliceDel" type="button" class="modal-btn warning">Delete</button>
+            </div>
+          </div>
+          <div class="grid-defs-col">
+            <h4 id="sliceHead">Details</h4>
+            <div id="sliceFields" class="series-fields"></div>
+          </div>
+        </div>
+        <div class="modal-buttons">
+          <button id="sliceCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="sliceSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

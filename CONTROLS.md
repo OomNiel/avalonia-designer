@@ -154,16 +154,21 @@ internal/template parts have no published summary and are described by role inst
 |---------|----------|--------------|----------|
 | Line Plot | `charts:GrumpyLinePlot` | A self-drawing line chart: Y values in sample order (X = the sample number 0, 1, 2 …) with axes, gridlines, a title and a legend. Data from a typed list or an `.xlsx` workbook. | ✅ Toolbox *(Charts)* |
 | X, Y Plot | `charts:GrumpyXYPlot` | A self-drawing X,Y chart: `(x, y)` pairs as a joined line, as markers, or both — same axes, gridlines, title and legend as the line plot. | ✅ Toolbox *(Charts)* |
+| Bar Chart | `charts:GrumpyBarPlot` | One bar per category, from a baseline that is always on the scale: **Grouped**, **Stacked** or **Stacked100** (share of the whole). The categories are the sheet's X-column **names**. Bar Width and Bar Corner Radius shape the bars. Minimum 0 included; legend, cursors, axes and the gradient all work as on the line plot. | ✅ Toolbox *(Charts)* |
+| Area Chart | `charts:GrumpyAreaPlot` | Each series as a filled shape under its line: **Plain**, **Stacked** or **Stacked100**, with Area Opacity for the fill (the line on top stays opaque). Categories come from the X column's names, as on the bar chart. | ✅ Toolbox *(Charts)* |
+| Pie Chart | `charts:GrumpyPiePlot` | One wedge per labelled value from the workbook's **label + value** columns (or typed `Labels`/`Values`), coloured from a 10-colour palette. **Doughnut Hole**, **Start Angle**, **Slice Gap** and the slice outline are properties; the **Slices** editor names the wedges that should differ (colour, Explode, off). The legend lists the slices with a tick box each; there are no gridlines, axes or cursors. | ✅ Toolbox *(Charts)* |
 
 Both come from the bundled **`GrumpyCharts.cs` / `.vb`** file (namespace `using:AvaloniaCharts`), copied
 into every new project next to the other helpers — no package, no image file, nothing to install. See
 **USER_MANUAL §19, "The charting tools"** for the full walkthrough.
 
-- **Data**: `Values` (line plot) or `Points` (X,Y plot) for typed-in data, or `SourceFile` → an `.xlsx`
-  workbook (row 1 names the columns, data from row 2; columns `B/C`, `D/E`, `F/G` … per series).
-  `LiveUpdate` re-reads the file on save. The workbook is picked from the chart's **right-click menu**
-  (*Choose spreadsheet…*) — `ShowBrowse` and its surface button were retired in 0.11.2 and the property is
-  now a no-op kept only so older forms still compile.
+- **Data**: `Values` (line plot / bar / area / pie) or `Points` (X,Y plot) for typed-in data, or `SourceFile`
+  → an `.xlsx` workbook (row 1 names the columns, data from row 2; columns `B/C`, `D/E`, `F/G` … per series).
+  `LiveUpdate` re-reads the file on save. The **Data Selector** button (`Data — Select data…`) picks the
+  **source** (`Spreadsheet` or, not read yet, `Data Files`), the **workbook** and — new in 0.11.7 — **which
+  PAGE** of it to read, by the workbook's own sheet names (`SourceKind`, `SourceFile`, `SourceSheet`,
+  `DataFile`). `ShowBrowse` and its surface button were retired in 0.11.2 and the property is now a no-op
+  kept only so older forms still compile.
 - **Series** (`Series — Edit series…`): one line per series, each with its own columns, colour, thickness,
   line style, markers, `AxisMode` (Common / Per series) and `Visible` switch. Order in the list = draw
   order.
@@ -172,6 +177,7 @@ into every new project next to the other helpers — no package, no image file, 
   their font size, the axis name, and **three independent colours**: `AxisColor` (the line and its ticks),
   `TickLabelColor` (the numbers) and `NameColor` (the name). Either of the last two left empty follows the
   line colour, which is how every axis behaved before 0.11.2.
+- **Slices** (`Slices — Edit slices…`), pie only: one row per wedge (the names the chart draws, each with the palette colour it would take anyway). A row is an override — colour, **Explode**, on/off — and an untouched row writes **no** `<charts:PieSlice>` element at all.
 - **Legend** (`Legend — Edit legend…`): on/off, side (Bottom/Top/Left/Right — it wraps to fit), name font
   size, and a frame with its own backcolour, outline and rounded corners. Clicking an entry switches that
   trace on and off at runtime; the trace keeps its place on the axis.

@@ -165,6 +165,61 @@ module.exports = async (t) => {
         t.ok(ink(noData.img, MESSAGE_GREY, CENTRE) > 40, 'browse',
             'while the "no data" advice is still drawn in the middle of the plot',
             `grey=${ink(noData.img, MESSAGE_GREY, CENTRE)}`);
+
+        // --- the axis has THREE colours and all three reach the picture -------------------------
+        // Only the line used to: `AxisColor` is a plain `Color` while `TickLabelColor`/`NameColor` are
+        // `Color?`, and a nullable value type reports `Nullable<Color>` at runtime — so the host's
+        // converter skipped its colour branch and both properties kept their defaults, in the preview
+        // only (the running app uses Avalonia's own XAML loader, which has no such problem).
+        //
+        // Measuring it needs care. Skia renders text with SUBPIXEL antialiasing, so a black glyph has
+        // coloured fringes: in this very render the most "red" pixel of a fully black axis is
+        // r-g = 111 and the most "green" is g-r = 112. Counting "reddish" pixels therefore proves
+        // nothing, and requiring pure (255,0,0) cores is far too strict — antialiased text has almost
+        // none. So the labels and the name are proved by how STRONG the strongest signal gets (a real
+        // colour reaches 216/255 against those 111/112 fringes), and the line — long and axis-aligned,
+        // so it keeps pure pixels — by counting them.
+        const axisForm = (attrs) => `<Window ${NS} Title="axis" Width="${W}" Height="${H}">
+  <Canvas Name="Holder" Width="${W}" Height="${H}">
+    <charts:GrumpyXYPlot x:Name="Chart1" Width="${W}" Height="${H}" SourceFile="${FIXTURE}"
+      ShowTitle="False" ShowLegend="False" GridStyle="Dot">
+      <charts:GrumpyXYPlot.YAxis><charts:Axis ${attrs}/></charts:GrumpyXYPlot.YAxis>
+      <charts:GrumpyXYPlot.XAxis><charts:Axis ${attrs}/></charts:GrumpyXYPlot.XAxis>
+      <charts:XYSeries Title="Inside" XColumn="B" YColumn="C" LineColor="#2D7DD2" MarkerStyle="None"/>
+    </charts:GrumpyXYPlot>
+  </Canvas>
+</Window>`;
+        /** The strongest colour signal anywhere in the image — `f(r,g,b)` returning a difference. */
+        const strongest = (img, f) => {
+            let best = -999;
+            for (let i = 0; i < img.data.length; i += 4) {
+                const v = f(img.data[i], img.data[i + 1], img.data[i + 2]);
+                if (v > best) best = v;
+            }
+            return best;
+        };
+        const pureBlue = (img) => ink(img, (r, g, b) => b > 230 && r < 60 && g < 60, { x0: 0, x1: img.width, y0: 0, y1: img.height });
+
+        const plainAxis = await renderPng(host, axisForm('AxisColor="#000000"'), W, H);
+        const plainRed = strongest(plainAxis.img, (r, g) => r - g);
+        const plainGreen = strongest(plainAxis.img, (r, g) => g - r);
+        t.ok(plainRed < 150, 'axis-colour',
+            'the control case: a black axis has no red in it (its antialiasing fringes reach 111)', `max r-g=${plainRed}`);
+        t.ok(plainGreen < 150, 'axis-colour',
+            'and none green either (fringes reach 112)', `max g-r=${plainGreen}`);
+        t.equal(pureBlue(plainAxis.img), 0, 'axis-colour',
+            'and no pure blue pixels at all');
+
+        const colouredAxis = await renderPng(host,
+            axisForm('AxisColor="#0000FF" TickLabelColor="#FF0000" NameColor="#00FF00" '
+                + 'ShowName="True" AxisName="Volts"'), W, H);
+        const reds = strongest(colouredAxis.img, (r, g) => r - g);
+        const greens = strongest(colouredAxis.img, (r, g) => g - r);
+        const blues = pureBlue(colouredAxis.img);
+        t.ok(reds > 150, 'axis-colour', 'the tick labels really are drawn in the LABEL colour', `max r-g=${reds}`);
+        t.ok(greens > 150, 'axis-colour', 'the axis NAME in its own colour', `max g-r=${greens}`);
+        t.ok(blues > 100, 'axis-colour',
+            'and the line and its ticks keep the LINE colour', `pure blue=${blues}`);
     } finally {
         host.close();
     }

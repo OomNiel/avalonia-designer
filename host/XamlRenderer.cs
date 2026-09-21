@@ -791,6 +791,24 @@ public class XamlRenderer
                 }
                 continue;
             }
+            // …and a pie's slices: <charts:GrumpyPiePlot.Slices><charts:PieSlice Title="North" …/>…
+            // A slice is an override of one wedge (its name, colour, explode and visibility), matched to
+            // the data by name — so the preview shows the same colours the running app does.
+            if (child.Name.LocalName.EndsWith(".Slices", StringComparison.Ordinal)
+                && chart is AvaloniaCharts.GrumpyPiePlot pie)
+            {
+                foreach (var sliceElem in child.Elements())
+                {
+                    var slice = new AvaloniaCharts.PieSlice();
+                    foreach (var attr in sliceElem.Attributes())
+                    {
+                        if (attr.Name.LocalName.StartsWith("xmlns")) continue;
+                        ApplyProperty(slice, attr.Name.LocalName, attr.Value);
+                    }
+                    pie.Slices.Add(slice);
+                }
+                continue;
+            }
             // …and its background brush: <charts:GrumpyXYPlot.PlotBackBrush><LinearGradientBrush>…
             // Property elements never reach ApplyProperty (the type map is attribute-driven), so
             // without this the gradient exists in the running app but not in the designer preview.
@@ -882,34 +900,34 @@ public class XamlRenderer
         switch (el.Name.LocalName)
         {
             case "SolidColorBrush":
-            {
-                var text = Attr(el, "Color") ?? "#000000";
-                try { return new SolidColorBrush(Color.Parse(text), 1); }
-                catch { return new SolidColorBrush(Color.Parse("#" + text), 1); }
-            }
+                {
+                    var text = Attr(el, "Color") ?? "#000000";
+                    try { return new SolidColorBrush(Color.Parse(text), 1); }
+                    catch { return new SolidColorBrush(Color.Parse("#" + text), 1); }
+                }
             case "LinearGradientBrush":
-            {
-                var brush = new LinearGradientBrush { GradientStops = Stops() };
-                brush.StartPoint = Point(el, "StartPoint", brush.StartPoint);
-                brush.EndPoint = Point(el, "EndPoint", brush.EndPoint);
-                return brush;
-            }
+                {
+                    var brush = new LinearGradientBrush { GradientStops = Stops() };
+                    brush.StartPoint = Point(el, "StartPoint", brush.StartPoint);
+                    brush.EndPoint = Point(el, "EndPoint", brush.EndPoint);
+                    return brush;
+                }
             case "RadialGradientBrush":
-            {
-                var brush = new RadialGradientBrush { GradientStops = Stops() };
-                brush.Center = Point(el, "Center", brush.Center);
-                brush.GradientOrigin = Point(el, "GradientOrigin", brush.GradientOrigin);
-                return brush;
-            }
+                {
+                    var brush = new RadialGradientBrush { GradientStops = Stops() };
+                    brush.Center = Point(el, "Center", brush.Center);
+                    brush.GradientOrigin = Point(el, "GradientOrigin", brush.GradientOrigin);
+                    return brush;
+                }
             case "ConicGradientBrush":
-            {
-                var brush = new ConicGradientBrush { GradientStops = Stops() };
-                brush.Center = Point(el, "Center", brush.Center);
-                var angle = Attr(el, "Angle");
-                if (angle is not null && double.TryParse(angle, NumberStyles.Float, CultureInfo.InvariantCulture, out var a))
-                    brush.Angle = a;
-                return brush;
-            }
+                {
+                    var brush = new ConicGradientBrush { GradientStops = Stops() };
+                    brush.Center = Point(el, "Center", brush.Center);
+                    var angle = Attr(el, "Angle");
+                    if (angle is not null && double.TryParse(angle, NumberStyles.Float, CultureInfo.InvariantCulture, out var a))
+                        brush.Angle = a;
+                    return brush;
+                }
             default:
                 return null;
         }
@@ -973,20 +991,30 @@ public class XamlRenderer
 
     private static object? ConvertValue(string value, Type targetType, System.Reflection.PropertyInfo? info = null)
     {
-        if (targetType == typeof(string)) return value;
-        if (targetType == typeof(double) || targetType == typeof(double?))
+        // A nullable VALUE type is its own type at runtime — a `Color?` property reports
+        // `System.Nullable<Avalonia.Media.Color>`, not `Avalonia.Media.Color` — so every
+        // `tn == "Avalonia.Media.Color"` style test below missed it, fell through to the generic type
+        // converter (which has nothing for it) and left the property at its default. The running app
+        // uses the real XAML loader and showed the colour; the preview did not. The chart's two axis
+        // colours are exactly this shape: with `TickLabelColor`/`NameColor` set (both `Color?`) the
+        // axis LINE recoloured and the labels and name kept the line's colour instead. Unwrap first, and
+        // compare the underlying type everywhere below. (`Brush?` needs no unwrapping — a reference
+        // type's nullable annotation is erased at runtime.)
+        var target = Nullable.GetUnderlyingType(targetType) ?? targetType;
+        if (target == typeof(string)) return value;
+        if (target == typeof(double))
             return double.TryParse(value, out var d) ? d : 0.0;
-        if (targetType == typeof(int) || targetType == typeof(int?))
+        if (target == typeof(int))
             return int.TryParse(value, out var i) ? i : 0;
-        if (targetType == typeof(bool) || targetType == typeof(bool?))
+        if (target == typeof(bool))
             return bool.TryParse(value, out var b) && b;
-        if (targetType.IsEnum)
+        if (target.IsEnum)
         {
-            try { return Enum.Parse(targetType, value, true); }
-            catch { return Enum.ToObject(targetType, 0); }
+            try { return Enum.Parse(target, value, true); }
+            catch { return Enum.ToObject(target, 0); }
         }
 
-        var tn = targetType.FullName;
+        var tn = target.FullName;
         if (tn == "Avalonia.GridLength")
         {
             return ParseGridLength(value);

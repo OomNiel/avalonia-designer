@@ -78,7 +78,9 @@ module.exports = async (t) => {
         t.equal(keyOf(props, 'ShowBrowse'), undefined, 'browse',
             `${tag} no longer lists a Browse Button row`);
         t.ok(!!keyOf(props, 'Gradient'), 'browse', `${tag} lists the Background Gradient row instead`);
-        t.ok(!!keyOf(props, 'SourceFile'), 'browse', `${tag} still lists the Spreadsheet row`);
+        // The Spreadsheet row moved into the 'Data Selector' editor (2026-09-21), which owns the
+        // workbook AND which page of it to read, so the file is still editable — one click away.
+        t.ok(!!keyOf(props, 'Data'), 'browse', `${tag} offers the Data Selector editor instead`);
     }
     t.equal(Object.prototype.hasOwnProperty.call(DEFAULTS, 'ShowBrowse'), false, 'browse',
         'the panel carries no default for it any more');

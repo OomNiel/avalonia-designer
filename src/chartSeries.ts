@@ -69,14 +69,27 @@ export const CHART_AXIS_LEGACY_ATTRS = [
     'ShowTickLabels', 'TickLabelFontSize', 'ShowAxisTitles', 'XAxisTitle', 'YAxisTitle'
 ];
 
-/** The two bundled chart tags. */
+/** The bundled chart tags: the two LINE charts, the two CATEGORY charts (bar and area) and the pie. */
 export function isChartTag(tag: string): boolean {
-    return tag === 'GrumpyLinePlot' || tag === 'GrumpyXYPlot';
+    return tag === 'GrumpyLinePlot' || tag === 'GrumpyXYPlot' || tag === 'GrumpyBarPlot'
+        || tag === 'GrumpyAreaPlot' || tag === 'GrumpyPiePlot';
 }
 
-/** The series element tag a chart holds — the chart tag decides the series type. */
+/** True for the charts whose data is drawn as cartesian series (a line, a bar or a filled area).
+ *  The pie is the exception: it has no frame, no axes and no cursors. */
+export function isCartesianChartTag(tag: string): boolean {
+    return isChartTag(tag) && tag !== 'GrumpyPiePlot';
+}
+
+/** The series element tag a chart holds — the chart tag decides the series type. A bar or an area
+ *  chart reads its categories from the X column and draws one shape per point, so its series are
+ *  plain LineSeries: the SHAPE is the chart's business, not the series'. A pie holds PieSlice
+ *  elements instead, and they live in the chart's `.Slices` property element. */
 export function seriesTagFor(chartTag: string): string {
-    return chartTag === 'GrumpyLinePlot' ? 'LineSeries' : 'XYSeries';
+    if (chartTag === 'GrumpyPiePlot') return 'PieSlice';
+    return chartTag === 'GrumpyLinePlot' || chartTag === 'GrumpyBarPlot' || chartTag === 'GrumpyAreaPlot'
+        ? 'LineSeries'
+        : 'XYSeries';
 }
 
 /** 'y' for a Y axis, 'x' for an X axis. */
@@ -287,6 +300,121 @@ export function writeChartCursors(
     if (created) el.appendChild(host);
 }
 
+/** The colours a slice takes when the form does not name one — the palette the renderer uses, in the
+ *  same order, so the Slices editor can show what an un-named slice will actually look like. */
+export const CHART_SLICE_PALETTE = [
+    '#2D7DD2', '#E4572E', '#3FA34D', '#F2A541', '#8367C7',
+    '#00A6A6', '#C05780', '#6B7A8F', '#8CB369', '#B5651D'
+];
+
+/** Slice fields (key = message/UI name, attr = XAML attribute, def = the renderer's default). A slice
+ *  element is an OVERRIDE for one wedge: Title is how it is matched to the data, LineColor is the wedge
+ *  colour, Explode pushes it out of the pie and Visible switches it off. */
+export const CHART_SLICE_FIELDS: { key: string; attr: string; def: string }[] = [
+    { key: 'title', attr: 'Title', def: '' },
+    { key: 'lineColor', attr: 'LineColor', def: '' },
+    { key: 'explode', attr: 'Explode', def: '0' },
+    { key: 'visible', attr: 'Visible', def: 'True' }
+];
+
+/** The `<charts:GrumpyPiePlot.Slices>` property element of a pie, if it has one. NOT the content
+ *  property: a chart's children are its series, so slices live in their own property element. */
+function sliceProperty(el: Element): Element | undefined {
+    for (let i = 0; i < el.childNodes.length; i++) {
+        const kid = el.childNodes[i] as Element;
+        if (kid.nodeType !== 1) continue;
+        if (kid.tagName.endsWith('.Slices')) return kid;
+    }
+    return undefined;
+}
+
+/** The pie's `<charts:PieSlice …/>` elements, in document order. */
+export function chartSliceChildren(el: Element): Element[] {
+    const prop = sliceProperty(el);
+    const out: Element[] = [];
+    if (!prop) return out;
+    for (let i = 0; i < prop.childNodes.length; i++) {
+        const kid = prop.childNodes[i] as Element;
+        if (kid.nodeType === 1 && localName(kid.tagName) === 'PieSlice') out.push(kid);
+    }
+    return out;
+}
+
+/** What the Slices editor needs. `slices` is always ONE ROW PER SLICE THE CHART DRAWS: a pie whose
+ *  Labels are in the XAML lists them all (with the palette colour each one would take), and a
+ *  workbook-bound pie lists the slices the form already names — the rest are named in the workbook,
+ *  which the designer cannot read, so the editor lets the user add them by name. */
+export interface ChartSlicesInfo {
+    slices: Record<string, string>[];
+    fromWorkbook: boolean;
+}
+
+export function chartSlicesOf(el: Element): ChartSlicesInfo {
+    const kids = chartSliceChildren(el);
+    const labels = readAttr(el, 'Labels', '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    const byName = new Map<string, Element>();
+    for (const kid of kids) {
+        const title = readAttr(kid, 'Title', '').trim();
+        if (title) byName.set(title.toLowerCase(), kid);
+    }
+    const rows: Record<string, string>[] = [];
+    const add = (title: string, element: Element | undefined, index: number) => {
+        rows.push({
+            // The element index the row came from (-1 = the form does not name this slice yet), so
+            // editing a slice in place never loses anything this editor does not know about.
+            src: element ? String(kids.indexOf(element)) : '-1',
+            title,
+            lineColor: element ? readAttr(element, 'LineColor', '') : '',
+            explode: element ? readAttr(element, 'Explode', '0') : '0',
+            visible: element ? readAttr(element, 'Visible', 'True') : 'True',
+            // What this wedge looks like when the form does not colour it: the renderer's palette.
+            palette: element ? '' : CHART_SLICE_PALETTE[index % CHART_SLICE_PALETTE.length]
+        });
+    };
+    labels.forEach((title, i) => add(title, byName.get(title.toLowerCase()), i));
+    for (const kid of kids) {
+        const title = readAttr(kid, 'Title', '').trim();
+        if (title && !labels.some((l) => l.toLowerCase() === title.toLowerCase())) add(title, kid, rows.length);
+    }
+    return { slices: rows, fromWorkbook: labels.length === 0 && !!readAttr(el, 'SourceFile', '') };
+}
+
+/** Rewrites a pie's slices: the `<charts:PieSlice>` list inside the chart's `.Slices` property element.
+ *  An entry keeps its element (matched by `src`), so a slice that is edited in place never loses
+ *  anything this editor does not know about. An empty list removes the property element entirely —
+ *  a pie with no overrides has every slice coloured from the palette. */
+export function writeChartSlices(model: XamlModel, el: Element, slices: unknown[]): void {
+    const before = chartSliceChildren(el);
+    const existing = sliceProperty(el);
+    const created = slices.length > 0 && !existing;
+    const host = slices.length > 0
+        ? existing ?? model.createElement(`<${el.tagName}.Slices/>`)
+        : existing;
+    if (!host) return;
+
+    const keep: Element[] = [];
+    for (const raw of slices) {
+        const it = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+        const src = parseInt(String(it.src ?? '-1'), 10);
+        const node = Number.isInteger(src) && src >= 0 && src < before.length && before[src]
+            ? before[src]
+            : model.createElement('<charts:PieSlice/>');
+        for (const f of CHART_SLICE_FIELDS) writeAttr(model, node, f.attr, String(it[f.key] ?? f.def), f.def);
+        keep.push(node);
+    }
+
+    if (keep.length === 0) {
+        el.removeChild(host);
+        return;
+    }
+    for (const node of keep) host.appendChild(node);   // appendChild MOVES, so this reorders them
+    for (const node of before) if (!keep.includes(node)) host.removeChild(node);
+    if (created) el.appendChild(host);
+}
+
 /** The `<charts:….PlotBackBrush>` property element of a chart, if it has one. NOT the content property:
  *  a chart's children are its series, so the background brush lives in its own property element. */
 function brushProperty(el: Element): Element | undefined {
@@ -411,6 +539,36 @@ export function writeChartBrush(model: XamlModel, el: Element, info: Record<stri
  *  a legend the user never restyled keeps a short, readable XAML element. */
 export function writeChartLegend(model: XamlModel, el: Element, values: Record<string, unknown>): void {
     for (const f of CHART_LEGEND_FIELDS) {
+        writeAttr(model, el, f.attr, String(values[f.key] ?? f.def), f.def);
+    }
+}
+
+// ---------------------------------------------------------------- the data source
+/** The data sources the Data Selector offers, in the order the editor shows them. `Spreadsheet` is
+ *  the renderer's default; `DataFiles` is declared so a form can carry the choice and still compile,
+ *  but nothing reads the file it names yet. */
+export const DATA_SOURCE_KINDS = ['Spreadsheet', 'DataFiles'];
+
+/** The data-source fields (key = message/UI name, attr = XAML attribute, def = the renderer's default
+ *  or '' for "not set"). Writing a value equal to the default REMOVES the attribute, so a chart that
+ *  was never touched keeps its short element. */
+export const CHART_DATA_SOURCE_FIELDS: { key: string; attr: string; def: string }[] = [
+    { key: 'kind', attr: 'SourceKind', def: 'Spreadsheet' },
+    { key: 'file', attr: 'SourceFile', def: '' },
+    { key: 'sheet', attr: 'SourceSheet', def: '' },
+    { key: 'dataFile', attr: 'DataFile', def: '' }
+];
+
+/** A chart's current data source (attribute, else the renderer's default). */
+export function chartDataSourceOf(el: Element): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const f of CHART_DATA_SOURCE_FIELDS) out[f.key] = readAttr(el, f.attr, f.def);
+    return out;
+}
+
+/** Writes the data source onto the chart element, dropping any value equal to the default. */
+export function writeChartDataSource(model: XamlModel, el: Element, values: Record<string, unknown>): void {
+    for (const f of CHART_DATA_SOURCE_FIELDS) {
         writeAttr(model, el, f.attr, String(values[f.key] ?? f.def), f.def);
     }
 }

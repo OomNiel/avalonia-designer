@@ -22,6 +22,8 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'menuDummies',
     'contextMenu', 'ctxDelete', 'ctxCut', 'ctxCopy', 'ctxPaste', 'ctxMoveToContainer', 'ctxAddEvent',
     'eventModal', 'eventTitle', 'eventHint', 'eventList', 'eventRemember', 'eventRememberWrap', 'eventSkip', 'eventWire',
+    'sliceModal', 'sliceTitle', 'sliceList', 'sliceFields', 'sliceHead', 'sliceAdd', 'sliceDel', 'sliceSave', 'sliceCancel',
+    'dataModal', 'dataTitle', 'dataKind', 'dataFields', 'dataHead', 'dataSave', 'dataCancel',
     'handlerModal', 'handlerTitle', 'handlerHint', 'handlerList', 'handlerAdd', 'handlerClose',
     'btnCodeSettings', 'settingsModal', 'settingsHint', 'settingsModes', 'settingsBadges', 'settingsSave', 'settingsCancel',
     // the dialog's own "still arriving" marker (2026-09-17), left of Cancel/Save

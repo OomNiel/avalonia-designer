@@ -404,6 +404,17 @@ function childSpan(text: string, openIndex: number): { count: number; start: num
     return { count, start: tagEnd + 1, end: text.length };
 }
 
+/**
+ * Types whose bare `Name` attribute is THEIR OWN property, not a name-scope registration: the chart
+ * set's objects (an `Axis`'s Name is the axis TITLE, a `PieSlice`/series carries a Title) are plain
+ * classes, not Controls, so `Name` is just data. Treated as a control name, the Axis editor's axis
+ * titles produced two false ERRORS in the Problems pane on a form that compiled cleanly:
+ * `"X Values" is not a valid identifier` and `"Y-Values" is not a valid identifier`
+ * (seen 2026-09-21 on ChartTestCS). `x:Name` is unaffected — that directive really does name an
+ * object, and XAML itself refuses it on a type that cannot hold a name.
+ */
+const NAME_IS_A_PROPERTY = new Set(['Axis', 'LineSeries', 'XYSeries', 'PieSlice', 'ChartCursor', 'GradientStop']);
+
 /** Reads the form's XAML (from the designer's in-memory copy when given) and extracts the facts the
  *  checks need: named controls, event wiring, the class/root type and the root namespace. */
 export function axamlFacts(axamlUri: vscode.Uri, axamlText?: string): AxamlFacts {
@@ -437,15 +448,28 @@ export function axamlFacts(axamlUri: vscode.Uri, axamlText?: string): AxamlFacts
         const tagName = tag[1];
         const type = tagName.split(':').pop() ?? tagName;
         const attrs = tag[2] ?? '';
+        // A bare `Name` is only a NAME-SCOPE registration on a Control (StyledElement). On the chart
+        // set's model objects it is their own data property: an <charts:Axis Name="X Values"/> names
+        // the AXIS (the text drawn beside it), so reading it as a control name reported
+        // `"X Values" is not a valid identifier` on a perfectly good form — a false ERROR in the
+        // Problems pane (seen 2026-09-21 on ChartTestCS, where the Axis editor had set both axis
+        // titles). `x:Name` is still read everywhere: that directive IS a name even on a plain class
+        // (and XAML rejects it there, which the compiler reports itself).
+        const nameIsProperty = NAME_IS_A_PROPERTY.has(type);
         const attrRe = /([A-Za-z_][\w.:-]*)\s*=\s*"([^"]*)"/g;
         let attr: RegExpExecArray | null;
         let name = '';
+        let explicitName = '';
         const localEvents: { event: string; handler: string }[] = [];
         while ((attr = attrRe.exec(attrs))) {
             const key = attr[1];
             const value = attr[2];
-            if (key === 'x:Name' || key === 'Name') {
-                if (!name) name = value;
+            if (key === 'x:Name') {
+                if (!explicitName) explicitName = value;
+                continue;
+            }
+            if (key === 'Name') {
+                if (!nameIsProperty && !name) name = value;
                 continue;
             }
             // `DragDrop.DragOver="…"` qualifies the event; a bare name must be a known event.
@@ -455,10 +479,16 @@ export function axamlFacts(axamlUri: vscode.Uri, axamlText?: string): AxamlFacts
             }
         }
         // x:Name wins; `Name=` is the Avalonia synonym and registers in the name scope too.
-        if (!name) {
-            const nameM = /(?:x:Name|(?<![:\w])Name)\s*=\s*"([^"]+)"/.exec(attrs);
+        // (The fallback exists for attribute values single-quoted, which the loop above skips.)
+        if (!explicitName) {
+            const xM = /x:Name\s*=\s*["']([^"']+)["']/.exec(attrs);
+            if (xM) explicitName = xM[1];
+        }
+        if (!name && !nameIsProperty && !explicitName) {
+            const nameM = /(?<![:\w])Name\s*=\s*["']([^"']+)["']/.exec(attrs);
             if (nameM) name = nameM[1];
         }
+        if (explicitName) name = explicitName;
         if (name) {
             if (!/^[A-Za-z_]\w*$/.test(name)) facts.invalidNames.push(name);
             else if (seen.has(name)) facts.duplicateNames.push(name);

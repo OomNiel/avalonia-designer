@@ -31,6 +31,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { normalizeAssistantConfig, probeServer } from './assistant';
+import { lastPickerFolder, rememberPickerFile } from './pickerFolders';
 import { freePort, isMissingExecutable } from './hostClient';
 import { log, logError } from './logger';
 import {
@@ -712,14 +713,17 @@ export async function startMyLlamaServerFlow(context: vscode.ExtensionContext): 
     if (!lookup.path) {
         const pick = await vscode.window.showWarningMessage(llamaServerMissingMessage(lookup), 'Set the path…', 'Cancel');
         if (pick !== 'Set the path…') return false;
+        const startFolder = lastPickerFolder('binary');
         const chosen = await vscode.window.showOpenDialog({
             title: 'Where is llama-server?',
             canSelectMany: false,
             openLabel: 'Use this binary',
+            defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined,
             filters: process.platform === 'win32' ? { Program: ['exe'] } : {}
         });
         const file = chosen?.[0]?.fsPath;
         if (!file) return false;
+        await rememberPickerFile('binary', file);
         await cfg.update('llamaServerPath', file);
         return startMyLlamaServerFlow(context);
     }
@@ -861,13 +865,17 @@ async function chooseLlamaServerModel(
     if (!pick) return undefined;
     if (!pick.browse) return pick.file;
 
+    const startFolder = lastPickerFolder('model');
     const chosen = await vscode.window.showOpenDialog({
         title: 'Pick a .gguf model file',
         canSelectMany: false,
         openLabel: 'Use this model',
+        defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined,
         filters: { 'GGUF model': ['gguf'] }
     });
-    return chosen?.[0]?.fsPath;
+    const pickedModel = chosen?.[0]?.fsPath;
+    if (pickedModel) await rememberPickerFile('model', pickedModel);
+    return pickedModel;
 }
 
 function shortFolder(file: string): string {

@@ -392,7 +392,8 @@ const VB_CHROME_NS_TYPES = new Set(['GrumpyPanel', 'ChromeWindow', 'PathPicker']
 
 /** GrumpyCharts types (the bundled AvaloniaCharts control set) that likewise need
  *  `Imports AvaloniaCharts` before a VB accessor like `… As GrumpyLinePlot` compiles. */
-const VB_CHARTS_NS_TYPES = new Set(['GrumpyLinePlot', 'GrumpyXYPlot']);
+const VB_CHARTS_NS_TYPES = new Set(['GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAreaPlot',
+    'GrumpyPiePlot', 'PieSlice']);
 
 /** Rebuilds the accessor block: strips old accessors, adds one per named control before `End Class`. */
 export function applyAccessors(text: string, controls: { name: string; type: string }[]): string {

@@ -107,7 +107,16 @@ Namespace Global.AvaloniaChrome
         Private ReadOnly _icon As New Avalonia.Controls.Shapes.Path()
 
         ''' <summary>The folder the last pick used — remembered for the process lifetime (best effort).</summary>
-        Private Shared _lastFolder As String
+        ''' <summary>The folder the last pick used — remembered in the per-user app-data folder (see
+        ''' PickerFolderMemory), so it survives a restart instead of being lost with the process.</summary>
+        Private Shared Property LastFolder As String
+            Get
+                Return PickerFolderMemory.LastFolder
+            End Get
+            Set(value As String)
+                PickerFolderMemory.LastFolder = value
+            End Set
+        End Property
 
         ''' <summary>Builds the row: the kind icon at the left, a fill TextBox bound to this control's
         ''' properties, and the Browse button docked right.</summary>
@@ -249,7 +258,7 @@ Namespace Global.AvaloniaChrome
                 Dim provider = TopLevel.GetTopLevel(Me)?.StorageProvider
                 If provider Is Nothing Then Return
                 Dim start As IStorageFolder = Nothing
-                Dim startPath As String = If(String.IsNullOrWhiteSpace(_lastFolder), InitialFolder, _lastFolder)
+                Dim startPath As String = If(String.IsNullOrWhiteSpace(LastFolder), InitialFolder, LastFolder)
                 If Not String.IsNullOrWhiteSpace(startPath) Then
                     Try
                         start = Await provider.TryGetFolderFromPathAsync(New Uri(startPath))
@@ -288,7 +297,7 @@ Namespace Global.AvaloniaChrome
                 Dim path2 As String = picked.TryGetLocalPath()
                 If String.IsNullOrEmpty(path2) Then Return
                 SelectedPath = path2
-                _lastFolder = FolderOf(path2)
+                LastFolder = FolderOf(path2)
             Catch
                 ' The picker must never take the app down: an unusable StorageProvider (or a dialog
                 ' the user cancelled in an odd way) simply leaves SelectedPath alone.
@@ -350,6 +359,68 @@ Namespace Global.AvaloniaChrome
                 Return Nothing
             End Try
         End Function
+    End Class
+
+    ''' <summary>
+    ''' Remembers the folder the Browse button used last, so the next dialog opens there instead of
+    ''' wherever the platform happens to start. It lives in the per-user app-data folder
+    ''' (~/.local/share/&lt;App&gt; on Linux, %LOCALAPPDATA%\&lt;App&gt; on Windows) — the same place the
+    ''' generated DataSet helpers keep their data — which is what makes it survive a restart. Every step is
+    ''' best-effort: an unwritable location simply means the dialog starts at the platform's default again.
+    ''' </summary>
+    Friend NotInheritable Class PickerFolderMemory
+        Private Shared _folder As String = Nothing
+        Private Shared _loaded As Boolean = False
+
+        Private Sub New()
+        End Sub
+
+        Private Shared ReadOnly Property StorePath As String
+            Get
+                Dim entry = System.Reflection.Assembly.GetEntryAssembly()
+                Dim name As String = If(entry Is Nothing, Nothing, entry.GetName().Name)
+                If String.IsNullOrEmpty(name) Then name = System.Reflection.Assembly.GetExecutingAssembly().GetName().Name
+                If String.IsNullOrEmpty(name) Then name = "app"
+                Dim root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+                If String.IsNullOrEmpty(root) Then root = System.IO.Path.GetTempPath()
+                Dim dir = System.IO.Path.Combine(root, name)
+                Try
+                    System.IO.Directory.CreateDirectory(dir)
+                Catch
+                    ' The failing write is what reports it.
+                End Try
+                Return System.IO.Path.Combine(dir, "PathPicker.lastfolder")
+            End Get
+        End Property
+
+        ''' <summary>The folder the last pick used (Nothing = let the platform choose), or Nothing once it is gone.</summary>
+        Friend Shared Property LastFolder As String
+            Get
+                If Not _loaded Then
+                    _loaded = True
+                    Try
+                        If System.IO.File.Exists(StorePath) Then _folder = System.IO.File.ReadAllText(StorePath).Trim()
+                    Catch
+                        _folder = Nothing
+                    End Try
+                End If
+                If String.IsNullOrEmpty(_folder) OrElse Not System.IO.Directory.Exists(_folder) Then Return Nothing
+                Return _folder
+            End Get
+            Set(value As String)
+                _loaded = True
+                _folder = value
+                Try
+                    If String.IsNullOrEmpty(value) Then
+                        If System.IO.File.Exists(StorePath) Then System.IO.File.Delete(StorePath)
+                    Else
+                        System.IO.File.WriteAllText(StorePath, value)
+                    End If
+                Catch
+                    ' Best effort.
+                End Try
+            End Set
+        End Property
     End Class
 
 End Namespace

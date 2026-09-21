@@ -12,7 +12,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-20)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-21)
 
 ---
 
@@ -1950,7 +1950,7 @@ Legend / Cursors — Edit …** rows at the top of the list.
 |---|---|
 | **Dock** | Pins the chart to a DockPanel edge (wraps it in a DockPanel if it isn't in one). |
 | **Values** / **Points (x,y)** | Inline data, as described in 19.2 A. |
-| **Spreadsheet / X Column / Y Column / Names Row / First Data Row / Live Update** | The workbook and how it is read (19.2 B). The workbook itself is picked from the chart's **right-click menu** (*Choose spreadsheet…*) — there is no Browse Button row since 0.11.2. |
+| **Spreadsheet / X Column / Y Column / Names Row / First Data Row / Live Update** | The workbook and how it is read (19.2 B). Since 0.11.7 the workbook **and which page of it** to read are chosen in the **Data Selector** editor (19.11) — the row moved in there, so the file is edited in one place. |
 | **Title, Show Title, Title Position, Title Colour, Title Size** | The chart title and where it sits (Top, Bottom, Left, Right). |
 | **Plot Backcolour, Plot Opacity** | The chart's own background — it fills the whole control, so the title and axis labels do not depend on the form behind it. |
 | **Background Gradient** | A **brush** for that background, taking the backcolour's place when one is set: **Type** is **None** (the default — the backcolour shows), **Linear**, **Radial** or **Conic**, with **three colour stops** (start, middle, end; the middle one is optional) and an **Angle** for the linear kind. Avalonia's own `LinearGradientBrush` / `RadialGradientBrush` / `ConicGradientBrush` are written into the form, so the same picture appears in the running app. **None** removes the brush and gives you the backcolour back. |
@@ -2052,6 +2052,71 @@ cursor's colour under a hairline. That is the "how wide is this peak" arithmetic
 > **Switching every trace off leaves the axes and the legend on screen** — by design. The scale also
 > stays put while you switch traces, so the other lines do not jump around (the same behaviour as a
 > spreadsheet chart).
+
+### 19.10 Bar, Area and Pie charts (since 0.11.11)
+
+The chart set gained three more controls, all in the **Charts** toolbox group, and all reading the same
+workbooks as the line and X,Y plots. Everything you learned above still applies to them: the **Series**,
+**Axis**, **Legend**, **Cursors** and **Background Gradient** editors, the title, border, padding and scale
+rows, and the `.xlsx` reader with its `LiveUpdate` reload.
+
+| Control | What it draws | Its own properties |
+|---------|---------------|-------------------|
+| **Bar Chart** (`charts:GrumpyBarPlot`) | One bar per category, standing on a baseline that is always on the scale | **Bar Mode** (`Grouped` / `Stacked` / `Stacked100`), **Bar Width** (0.8 leaves a fifth as gap), **Bar Corner Radius** |
+| **Area Chart** (`charts:GrumpyAreaPlot`) | Each series as a filled shape under its line | **Area Mode** (`Plain` / `Stacked` / `Stacked100`), **Area Opacity** (60 = a see-through fill, the top line stays solid) |
+| **Pie Chart** (`charts:GrumpyPiePlot`) | One wedge per labelled value, or a doughnut | **Slice Names**, **Slice Values**, **Doughnut Hole** (0 = solid pie, 45 = a hole a bit under half the radius), **Start Angle** (0 = 12 o'clock, clockwise), **Slice Gap**, **Slice Border Colour / Thickness** |
+
+**Categories come from the X column's text.** A bar or area chart labels its X axis with the sheet's own
+names — "North", "Feb" — which is why the default columns are **B for the names** and **C for the values**.
+When those cells hold numbers the axis falls back to numbers, so a sheet written for a line chart still
+draws. A second series reads column **E** (the `B/C`, `D/E` pairing), exactly as the line plot does.
+
+**Stacked** means each series starts where the previous one ended, so a category reads as its total.
+**Stacked100** makes every category fill to 100%, which turns the same numbers into a share of the whole —
+and both modes make the chart fit its scale to the stack's totals rather than to the tallest single series.
+A **Plain** area chart fills every series down to zero, so the last one drawn covers the ones before it;
+that is what a plain area chart does, and it is why the order of the series matters.
+
+**The pie is the odd one out, deliberately.** It reads **label + value pairs** instead of two numeric
+columns, so its names may be text, dates or anything else — a pie's categories are almost always words. Each
+wedge takes a colour from a **10-colour palette** until the form names one, and switching a wedge off in the
+legend (or in the **Slices** editor) hides it without disturbing the others. There are no gridlines, no axes
+and no cursors, because there is no cartesian frame to put them on.
+
+#### The Slices editor
+
+The pie's **Slices** button opens one row per wedge — the names the chart draws, each with a colour swatch
+showing **the palette colour that slice would take anyway**. A row is an **override**: change a colour, add
+an **Explode** distance (how far the wedge is pushed out of the pie, in pixels) or switch a slice off, and
+only then is a `<charts:PieSlice>` element written into the form. Leave a row alone and it writes nothing,
+so the XAML stays as short as the picture it describes. Slices are matched to the data **by name**, so
+renaming a slice here points the override at nothing — the chart then draws that wedge from the palette
+again rather than complaining.
+
+### 19.11 The Data Selector editor — which file, and which page (since 0.11.7)
+
+Every chart (the line and X,Y plots included) has a **Data Selector** button at the top of its Properties
+list. It is the one place where a chart's data source is chosen:
+
+- **Data source = Spreadsheet** (the default). The **Workbook** row takes the `.xlsx` file — type it, or use
+  the `…` button, which opens the platform's picker where the last workbook pick left off. Under it, the
+  **Page** dropdown lists that workbook's **own sheet names**, read from the file as soon as you choose one:
+  *Bar Chart*, *Area Chart*, *Pie Chart* …
+- **`(first page)`** is the default and means "the first worksheet" — exactly what every chart did before
+  this editor existed, so old forms behave as they always did.
+- A page that is not in the workbook is **refused with the reason printed under the dropdown**
+  (`"Book.xlsx" has no page called "Nope".`) rather than quietly reading the first sheet instead.
+- **Data source = Data Files** is the place for **data files such as CSVs**. The file you pick is stored on
+  the chart (`DataFile`) and shown in the editor, with a line saying it is not read yet — the charts keep
+  drawing whatever the spreadsheet gives them until that reader lands. Nothing is lost by trying it: the
+  choice is remembered in the form.
+
+**What it writes:** `SourceKind="DataFiles"`, `SourceFile="/…/Book.xlsx"`, `SourceSheet="Bar Chart"` and
+`DataFile="/…/data.csv"` — and only the ones that differ from the defaults, so a chart you never touched
+keeps its short element. The page is matched by NAME rather than by position, so reordering the tabs in
+your spreadsheet after choosing a page keeps the chart on the same sheet.
+
+**Sample data.** A workbook is enough to try each chart type: give it a page per chart, with the names it\nshould draw in column **B** and the values in column **C** (a second series in column **E**) — one page of\ncategories and values for a bar or area chart, one page of slice names and shares for a pie. Row 1 holds the\nnames of the columns and the data starts on row 2, which is what the defaults expect. Point a chart at the\nfile, pick the page in the Data Selector, and it draws — with the names, the series colours and the\ncategories the page itself defines.
 
 > **Charts need no packages or data files of their own.** The chart control is bundled into your project
 > like the other helpers; nothing is added to the `.csproj` beyond what the project already had.

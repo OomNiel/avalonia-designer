@@ -1,6 +1,22 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-21 · Status: **full suite green on this machine — 6,437 passed / 0 failed / 0 skipped (48 s)**
+Date: 2026-09-21 · Status: **full suite green on this machine — 6,946 passed / 0 failed / 0 skipped (49 s)**
+
+> 2026-09-21: **`0.11.11`** (the line `0.11.3`…`0.11.11`) added 509 assertions across the chart work: the
+> three new chart types and their editors, the Data Selector, the picker memories and the two false reports
+> the fixes chased away. New files: `t2-logic/newCharts` (130), `t1-preview/newChartsRender` (15),
+> `t2-logic/dataSelector` (73), `t2-logic/dropdownOptions` (16), `t2-logic/chartAxisNames` (14),
+> `t2-logic/pickerFolders` (20) and `t2-logic/pickerMemory` (52). The rest are stale fixtures reworked as
+> the panel changed shape (the chart's *Spreadsheet* row moved into the editor, the placeable-control count
+> went 47 → 50, and the `GrumpyCharts` staleness marker moved twice: `ChartPickerMemory` → `GrumpyBarPlot` →
+> `SourceSheet`). **6,437 → 6,946**, or higher with `AVALONIA_COMPLIANCE_RESET=1` (the T5 audit re-checks
+> every control whose property list changed; cache: the gitignored `tests/compliance.json`).
+>
+> Two of those files exist because of bugs that shipped and were caught by measuring rather than looking:
+> `t1-preview/newChartsRender` pins the bar geometry (bars separate and proportional, a 100% stack filling
+> its slot, a doughnut's hole) after a zero-length slot measurement merged every bar into one shape, and
+> `t2-logic/dropdownOptions` runs the webview's real `labelledSelect` in a stand-in DOM after the Data
+> Selector's dropdown showed the letters "p" and "a" instead of its two options.
 
 > 2026-09-21: **`0.11.2`** added 113 assertions for four chart appearance changes — a gradient background
 > brush, three axis colours, a white-on-black cursor readout and the workbook picker moving into the
@@ -437,6 +453,23 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.11.11 (2026-09-21) — bar / area / pie charts, the Data Selector, and the pages a chart can read
+
+| File | New | What it pins |
+|---|---|---|
+| `t2-logic/newCharts.test.js` | 130 | The three new types end to end at the model level: the tag sets (`isChartTag`, `isCartesianChartTag`, `seriesTagFor` — a bar/area chart holds plain `LineSeries`), the slice palette **matching the C# one colour for colour**, the Slices round-trip (a palette-only row writes nothing, an override writes colour/Explode/Visible, an empty list removes the property element), the property rows and their editor buttons per tag (no Axis/Cursors on a pie), the defaults, the toolbox entries, the help text, the marker, and that **both twins** ship every type, `ReadLabels`, `StackBands`, `NamedXAxis`, `ZeroToHundred` and the three `DrawSeriesLayer` overrides. |
+| `t1-preview/newChartsRender.test.js` | 15 | Pixels through the real host, for the drawing itself: five bars that are **separate** (gaps measured) and as tall as their values; grouped bars never sharing a column while stacked ones do; a 100% stack whose bars are all the same height (the zero-length-slot bug merged every bar, and the wrong scale drew an empty picture — both were caught here, not by eye); the area fill; a pie's wedges; a doughnut's white centre; and a slice drawn in the colour the form named. |
+| `t2-logic/dataSelector.test.js` | 73 | The editor's seams: the four attributes written by `writeChartDataSource` against the property names in **both** twins, default-omission, the `Data` button on all five charts and the **removal** of the old Spreadsheet row, the host's `sheets` command and its client, the panel's `saveChartDataSource`/`requestSheets`/`pickChartSource` handling, the two separate picker memories, the webview's element ids and replies, the marker, and the stacked layout that keeps a narrow panel from crushing the dialog. |
+| `t2-logic/dropdownOptions.test.js` | 16 | The webview's own dropdown helper, run for real: the **real** `labelledSelect` and the **real** option constants are lifted out of `media/designer.js` and executed against a stand-in DOM, so the Data source list must render `Spreadsheet`/`Data Files` (not the letters "p" and "a"), a plain string list must still render whole words, an unknown value must fall back to the first option, and the sibling lists must stay `[value, label]` pairs. |
+| `t2-logic/chartAxisNames.test.js` | 14 | `<charts:Axis Name="X Values"/>` is a TITLE: the code check must not report it as an invalid control name (it did, as two red errors on a form that compiled 0/0), while a genuinely bad control name and a bad `x:Name` still are — plus every chart model class, both quoting styles and duplicate detection. |
+| `t2-logic/pickerFolders.test.js` | 20 | Every `showOpenDialog` in `src/` has a remembered start folder and a `rememberPicker…` write — the scan that fails the build when a new picker forgets, which is how the Data Selector's two pickers ended up compliant. |
+| `t2-logic/pickerMemory.test.js` | 52 | The two runtime memories (`GrumpyCharts`' workbook picker and `PathPicker`'s folder picker), in both twins, in both languages: the app-data path, read-before-dialog and write-after-pick ordering, and the staleness markers. |
+
+Reworked rather than added (the panel changed shape, so the fixtures had to follow): `bundledComponents` +
+`pickerMemory` (the marker moved twice — `ChartPickerMemory` → `GrumpyBarPlot` → `SourceSheet`), the chart
+files that had listed a *Spreadsheet* row (it moved into the Data Selector), `fileRows` (three file-kind
+rows now, not four) and `vb-all-controls` (47 → **50** placeable controls).
 
 ### 0.11.2 (2026-09-21) — chart appearance: gradient background, three axis colours, white-on-black readout, no browse button
 

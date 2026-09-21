@@ -176,7 +176,13 @@ public class ControlFactory
             // The `charts:` prefix (xmlns:charts="using:AvaloniaCharts") is declared by the extension
             // when placing it (GrumpyCharts.cs/.vb are bundled into every generated project).
             ["GrumpyLinePlot"] = n => $"<charts:GrumpyLinePlot x:Name=\"{n}\" Width=\"300\" Height=\"180\" Values=\"4,9,6,12,8,15,11,16\" Title=\"Line plot\" ShowTitle=\"True\"/>",
-            ["GrumpyXYPlot"] = n => $"<charts:GrumpyXYPlot x:Name=\"{n}\" Width=\"300\" Height=\"180\" Points=\"0,2 1,5 2,3 3,8 4,6 5,11\" Title=\"X,Y plot\" ShowTitle=\"True\" MarkerStyle=\"Cross\"/>"
+            ["GrumpyXYPlot"] = n => $"<charts:GrumpyXYPlot x:Name=\"{n}\" Width=\"300\" Height=\"180\" Points=\"0,2 1,5 2,3 3,8 4,6 5,11\" Title=\"X,Y plot\" ShowTitle=\"True\" MarkerStyle=\"Cross\"/>",
+            // The three charts added 2026-09-21 all ship sample data too: a bar chart with a couple of
+            // series (so Grouped/Stacked mean something), an area chart reading the same kind of values,
+            // and a pie whose slices come from typed Labels + Values (no workbook needed to look right).
+            ["GrumpyBarPlot"] = n => $"<charts:GrumpyBarPlot x:Name=\"{n}\" Width=\"320\" Height=\"200\" Values=\"8,14,10,16,12\" Title=\"Bar chart\" ShowTitle=\"True\"/>",
+            ["GrumpyAreaPlot"] = n => $"<charts:GrumpyAreaPlot x:Name=\"{n}\" Width=\"320\" Height=\"200\" Values=\"6,11,8,14,9,15\" Title=\"Area chart\" ShowTitle=\"True\"/>",
+            ["GrumpyPiePlot"] = n => $"<charts:GrumpyPiePlot x:Name=\"{n}\" Width=\"240\" Height=\"240\" Labels=\"North,South,East,West\" Values=\"32,24,18,26\" Title=\"Pie chart\" ShowTitle=\"True\" ShowLegend=\"False\"/>"
         };
     }
 
@@ -257,7 +263,10 @@ public class ControlFactory
         // The bundled GrumpyCharts controls (AvaloniaCharts.GrumpyLinePlot / .GrumpyXYPlot) — linked
         // into the host from resources/GrumpyCharts.cs so the builder draws the real chart.
         ["GrumpyLinePlot"] = typeof(AvaloniaCharts.GrumpyLinePlot),
-        ["GrumpyXYPlot"] = typeof(AvaloniaCharts.GrumpyXYPlot)
+        ["GrumpyXYPlot"] = typeof(AvaloniaCharts.GrumpyXYPlot),
+        ["GrumpyBarPlot"] = typeof(AvaloniaCharts.GrumpyBarPlot),
+        ["GrumpyAreaPlot"] = typeof(AvaloniaCharts.GrumpyAreaPlot),
+        ["GrumpyPiePlot"] = typeof(AvaloniaCharts.GrumpyPiePlot)
     };
 
     public static Type? GetTypeForName(string name)

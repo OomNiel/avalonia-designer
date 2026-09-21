@@ -91,9 +91,10 @@ module.exports = async (t) => {
             row ? row.value : 'row missing');
         const leftovers = LEGACY_ROWS.filter((k) => keyOf(props, k));
         t.equal(leftovers.join(','), '', 'catalog', `${tag} no longer lists the chart-level series styling rows`);
-        // The data rows the editor still needs must stay: X/Y Column + the spreadsheet fields.
-        t.ok(keyOf(props, 'SourceFile') && keyOf(props, 'YColumn'), 'catalog',
-            `${tag} still lists the spreadsheet + Y Column rows`);
+        // The data rows the editor still needs must stay: X/Y Column. The workbook and its PAGE are
+        // chosen in the 'Data Selector' editor now (2026-09-21), which the chart offers as a button.
+        t.ok(keyOf(props, 'YColumn') && keyOf(props, 'Data'), 'catalog',
+            `${tag} still lists the Y Column row and the Data Selector editor`);
         // The legend's own settings (on/off, side, font, frame) live in the 'Legend' editor — see
         // chartLegend.test.js; the chart merely offers its button.
         const legendRow = keyOf(props, 'Legend');

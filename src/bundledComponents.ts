@@ -59,7 +59,10 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // The current picker draws a FILE / FOLDER icon at its left edge (and grew the
             // ShowIcon switch); older copies are a bare path row, so a File Selector and a Folder
             // Selector look identical on the form.
-            marker: 'ShowIcon'
+            // 2026-09-21 moved the marker to `PickerFolderMemory`: Browse now remembers the folder it
+            // used last in the per-user app-data folder instead of forgetting it at every restart, and
+            // an old copy has no such class — which is how an existing project receives that.
+            marker: 'PickerFolderMemory'
         },
         {
             kind: 'GrumpyCharts',
@@ -80,10 +83,21 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // with either. History: `PlotBackOpacityProperty` (the first release, detected nothing),
             // `XYSeries` (multi-series), `ChartCursor` (cursors), `DrawnColor` (a following cursor takes
             // the followed series' colour, 2026-09-20), `LegendMargin` (the legend's inner margin),
-            // `Padding` (the room between the chart's border and its frame, 2026-09-20) and now
+            // `Padding` (the room between the chart's border and its frame, 2026-09-20) and
             // `PlotBackBrush` (the background gradient, 2026-09-21) — the newest thing the Properties
             // panel writes, as a property element and as a terse `PlotBackBrush="#RRGGBB"`.
-            marker: 'PlotBackBrush'
+            // 2026-09-21, later: the chart's own picker remembers the folder it used last
+            // (`ChartPickerMemory`), which an existing project only gets if its bundled copy is
+            // refreshed — so the marker moved to that class name.
+            // 2026-09-21, later still: the BAR, AREA and PIE chart types arrived (`GrumpyBarPlot`,
+            // `GrumpyAreaPlot`, `GrumpyPiePlot`, `PieSlice`, `BarMode`, `AreaMode`), so the toolbox can
+            // now write `<charts:GrumpyBarPlot BarMode="Stacked">` — XAML a copy that predates those
+            // types cannot compile ("Unable to resolve type GrumpyBarPlot from namespace
+            // using:AvaloniaCharts"). The marker is the newest TYPE the designer can write.
+            // 2026-09-21, the Data Selector editor: the panel now also writes SourceKind, SourceSheet
+            // and DataFile — three properties an older copy does not have, so a form saved with a page
+            // choice would not compile against it. The marker moved to the newest ATTRIBUTE.
+            marker: 'SourceSheet'
         }
     ];
 }

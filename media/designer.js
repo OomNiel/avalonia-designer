@@ -210,6 +210,22 @@
         seriesSave: $('seriesSave'),
         seriesCancel: $('seriesCancel'),
         cursorModal: $('cursorModal'),
+        dataModal: $('dataModal'),
+        dataTitle: $('dataTitle'),
+        dataKind: $('dataKind'),
+        dataFields: $('dataFields'),
+        dataHead: $('dataHead'),
+        dataSave: $('dataSave'),
+        dataCancel: $('dataCancel'),
+        sliceModal: $('sliceModal'),
+        sliceTitle: $('sliceTitle'),
+        sliceList: $('sliceList'),
+        sliceFields: $('sliceFields'),
+        sliceHead: $('sliceHead'),
+        sliceAdd: $('sliceAdd'),
+        sliceDel: $('sliceDel'),
+        sliceSave: $('sliceSave'),
+        sliceCancel: $('sliceCancel'),
         cursorTitle: $('cursorTitle'),
         cursorList: $('cursorList'),
         cursorFields: $('cursorFields'),
@@ -2844,6 +2860,10 @@
                     if (p.key === 'Gradient') openGradientEditor(msg.name, msg.brushInfo || {});
                     // 'Cursors' opens the cursor editor (up to two draggable crosshairs).
                     if (p.key === 'Cursors') openCursorEditor(msg.name, msg.cursorInfo || {});
+                    // 'Slices' opens the pie's slice editor (one row per wedge, colour + Explode).
+                    if (p.key === 'Slices') openSliceEditor(msg.name, msg.sliceInfo || {});
+                    // 'Data Selector' opens the data-source editor (source, workbook, page, data file).
+                    if (p.key === 'Data') openDataEditor(msg.name, msg.dataSource || {});
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -3103,6 +3123,26 @@
     window.addEventListener('message', (e) => {
         const msg = e.data;
         switch (msg.type) {
+            case 'sheetsResult': {
+                // The extension's answer to the Data Selector's page-list request. A late answer for a
+                // file the user has already changed away from is ignored (the editor is a live dialog).
+                if (dataEdit && dataEdit.file === msg.file) {
+                    dataEdit.sheets = Array.isArray(msg.sheets) ? msg.sheets.map(String) : [];
+                    dataEdit.error = msg.error ? String(msg.error) : null;
+                    dataEdit.loading = false;
+                    renderDataEditor();
+                }
+                break;
+            }
+            case 'chartSourcePicked': {
+                // A file the extension's picker returned for the Data Selector's '…' button.
+                if (dataEdit) {
+                    if (msg.which === 'data') dataEdit.dataFile = String(msg.path || '');
+                    else { dataEdit.file = String(msg.path || ''); refreshSheets(); return; }
+                    renderDataEditor();
+                }
+                break;
+            }
             case 'frame':
                 applyFrame(msg);
                 break;
@@ -3757,6 +3797,8 @@
             if (!els.legendModal.hidden) closeLegendEditor();
             if (!els.gradientModal.hidden) closeGradientEditor();
             if (!els.cursorModal.hidden) closeCursorEditor();
+            if (!els.sliceModal.hidden) closeSliceEditor();
+            if (!els.dataModal.hidden) closeDataEditor();
             if (!els.codeModal.hidden) closeCodeFixes();
         }
     });
@@ -5241,13 +5283,19 @@
     /** A select whose option VALUES are XAML words but whose labels read like English. */
     function labelledSelect(pairs, value, onChange) {
         const sel = document.createElement('select');
-        for (const pair of pairs) {
+        for (const raw of pairs) {
+            // [value, label] pairs; a plain string is accepted as "its own label" so a caller that
+            // passes ['Spreadsheet', 'DataFiles'] still gets the whole word. It used to read pair[0]/
+            // pair[1] off ANY array, so plain strings rendered as their first two CHARACTERS: the
+            // Data Selector's dropdown showed "p" and "a" (2026-09-21).
+            const pair = typeof raw === 'string' ? [raw, raw] : raw;
             const o = document.createElement('option');
             o.value = pair[0];
             o.textContent = pair[1];
             sel.appendChild(o);
         }
-        sel.value = pairs.some((pair) => pair[0] === value) ? value : pairs[0][0];
+        const first = typeof pairs[0] === 'string' ? pairs[0] : pairs[0][0];
+        sel.value = pairs.some((raw) => (typeof raw === 'string' ? raw : raw[0]) === value) ? value : first;
         sel.addEventListener('change', () => onChange(sel.value));
         return sel;
     }
@@ -5403,6 +5451,284 @@
     els.cursorCancel.addEventListener('click', closeCursorEditor);
     els.cursorModal.addEventListener('click', (e) => {
         if (e.target === els.cursorModal) closeCursorEditor(); // click outside the box
+    });
+
+    /* Slice editor (GrumpyPiePlot) — the pie's wedges, named one row each. A row is an OVERRIDE for a
+       wedge the data supplies: the chart draws one wedge per LABEL/VALUE pair (from the XAML or from a
+       spreadsheet), and a slice the form names here gets its own colour, its Explode distance and its
+       Visible switch. A slice the form does not name is coloured from the chart's palette, which is why
+       an untouched row shows the palette colour and writes nothing. Adding a row names a slice the
+       editor could not see (a workbook pie), and the name is how it is matched to the data. */
+    const SLICE_PALETTE = [
+        '#2D7DD2', '#E4572E', '#3FA34D', '#F2A541', '#8367C7',
+        '#00A6A6', '#C05780', '#6B7A8F', '#8CB369', '#B5651D'
+    ];
+    let sliceEdit = null; // { name, rows: [...], sel } while the modal is open
+
+    /** The one-line summary shown for a slice in the list. */
+    function sliceItemText(row, i) {
+        const parts = ['Slice ' + (i + 1) + '  \u00b7  ' + (row.title || 'unnamed')];
+        if (row.explode && row.explode !== '0' && row.explode !== '') parts.push('exploded ' + row.explode + 'px');
+        if (row.visible === 'False') parts.push('hidden');
+        return parts.join('  \u00b7  ');
+    }
+    /** A brand-new slice row: unnamed, in the palette colour of its place in the list. */
+    function sliceSeedRow(index) {
+        return {
+            src: '-1', title: '', lineColor: '', explode: '0', visible: 'True',
+            palette: SLICE_PALETTE[index % SLICE_PALETTE.length], added: '1'
+        };
+    }
+    /** The colour a row draws with: its own when it has one, else the palette colour it was seeded
+     *  with, else the next palette colour. */
+    function sliceColorOf(row, i) {
+        return row.lineColor || row.palette || SLICE_PALETTE[i % SLICE_PALETTE.length];
+    }
+    function renderSliceEditor() {
+        if (!sliceEdit) return;
+        const rows = sliceEdit.rows;
+        if (sliceEdit.sel > rows.length - 1) sliceEdit.sel = Math.max(0, rows.length - 1);
+        if (sliceEdit.sel < 0) sliceEdit.sel = 0;
+        els.sliceList.innerHTML = '';
+        els.sliceFields.innerHTML = '';
+        rows.forEach((row, i) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'series-item' + (i === sliceEdit.sel ? ' active' : '');
+            const swatch = document.createElement('span');
+            swatch.className = 'series-swatch';
+            swatch.style.background = normalizeHex(sliceColorOf(row, i)) || SLICE_PALETTE[0];
+            item.appendChild(swatch);
+            const label = document.createElement('span');
+            label.className = 'series-item-label';
+            label.textContent = sliceItemText(row, i);
+            item.appendChild(label);
+            item.addEventListener('click', () => { sliceEdit.sel = i; renderSliceEditor(); });
+            els.sliceList.appendChild(item);
+        });
+        els.sliceDel.disabled = rows.length === 0;
+        els.sliceHead.textContent = rows.length
+            ? 'Slice ' + (sliceEdit.sel + 1) + ' of ' + rows.length
+            : 'Details';
+        const row = rows[sliceEdit.sel];
+        if (!row) {
+            const empty = document.createElement('p');
+            empty.className = 'modal-hint';
+            empty.textContent = 'This pie has no slices to show. Type the wedge names into Slice Names '
+                + '(or point the chart at a spreadsheet) and they appear here, or \u201cAdd slice\u201d '
+                + 'names one by hand.';
+            els.sliceFields.appendChild(empty);
+        } else {
+            const repaint = () => {
+                const item = els.sliceList.children[sliceEdit.sel];
+                if (item) item.querySelector('.series-item-label').textContent = sliceItemText(row, sliceEdit.sel);
+            };
+            const recolour = (v) => {
+                const item = els.sliceList.children[sliceEdit.sel];
+                if (item) item.querySelector('.series-swatch').style.background = normalizeHex(v) || SLICE_PALETTE[0];
+            };
+            els.sliceFields.appendChild(seriesField('Name',
+                seriesText(row.title, (v) => { row.title = v; repaint(); }),
+                'The slice\u2019s name \u2014 how this row is matched to the data. It must match the label the chart reads (the Slice Names entry, or the spreadsheet\u2019s names column) or the chart draws it from the palette instead.'));
+            els.sliceFields.appendChild(seriesField('Colour',
+                seriesColor(row.lineColor || sliceColorOf(row, sliceEdit.sel), (v) => {
+                    row.lineColor = v;
+                    // Touching the swatch turns a palette colour into an override, which is what makes
+                    // the editor write a <charts:PieSlice> element for this wedge.
+                    row.palette = '';
+                    recolour(v);
+                    repaint();
+                }),
+                'This wedge\u2019s colour. Left alone it takes the palette colour shown here, and no element is written for the slice at all.'));
+            els.sliceFields.appendChild(seriesField('Explode',
+                seriesText(row.explode, (v) => { row.explode = v; repaint(); }),
+                'How far this wedge is pushed out of the pie, in pixels (0 = in place).'));
+            els.sliceFields.appendChild(seriesField('Visible',
+                axisPairs([['True', 'On'], ['False', 'Off']], row.visible === 'False' ? 'False' : 'True',
+                    (v) => { row.visible = v; repaint(); }),
+                'Off hides this wedge \u2014 what the legend\u2019s tick box does at run time (that state is not saved, so a fresh start shows every slice).'));
+        }
+    }
+    function openSliceEditor(name, info) {
+        const rows = ((info && info.slices) || []).map((s, i) => ({
+            src: String(s.src == null ? '-1' : s.src),
+            title: String(s.title || ''),
+            lineColor: String(s.lineColor || ''),
+            explode: String(s.explode == null ? '0' : s.explode),
+            visible: s.visible === 'False' ? 'False' : 'True',
+            palette: String(s.palette || SLICE_PALETTE[i % SLICE_PALETTE.length])
+        }));
+        sliceEdit = { name: name || null, rows: rows, sel: 0 };
+        els.sliceTitle.textContent = 'Slices' + (sliceEdit.name ? ' \u2014 ' + sliceEdit.name : '');
+        renderSliceEditor();
+        els.sliceModal.hidden = false;
+    }
+    function closeSliceEditor() { els.sliceModal.hidden = true; sliceEdit = null; }
+    els.sliceAdd.addEventListener('click', () => {
+        if (!sliceEdit) return;
+        sliceEdit.rows.push(sliceSeedRow(sliceEdit.rows.length));
+        sliceEdit.sel = sliceEdit.rows.length - 1;
+        renderSliceEditor();
+    });
+    els.sliceDel.addEventListener('click', () => {
+        if (!sliceEdit || sliceEdit.rows.length === 0) return;
+        sliceEdit.rows.splice(sliceEdit.sel, 1);
+        sliceEdit.sel = Math.max(0, sliceEdit.sel - 1);
+        renderSliceEditor();
+    });
+    els.sliceSave.addEventListener('click', () => {
+        if (sliceEdit) {
+            // A row that only ever kept its palette colour writes nothing: sending it would pin the
+            // current palette colour into the form, which is exactly what the palette is there to
+            // avoid. An empty name cannot be matched to a wedge either, so it is dropped too.
+            const rows = sliceEdit.rows.filter((r) => {
+                if (!String(r.title || '').trim()) return false;
+                return !!r.lineColor || (r.explode !== '0' && r.explode !== '') || r.visible === 'False';
+            });
+            post({ type: 'saveChartSlices', name: sliceEdit.name, slices: rows });
+        }
+        closeSliceEditor();
+    });
+    els.sliceCancel.addEventListener('click', closeSliceEditor);
+    els.sliceModal.addEventListener('click', (e) => {
+        if (e.target === els.sliceModal) closeSliceEditor(); // click outside the box
+    });
+
+    /* Data Selector (every chart) — where the data comes from. Two sources: a PAGE of an .xlsx
+       workbook (source kind Spreadsheet, the default) or a data file such as a CSV (DataFiles — the
+       file is carried in the form but nothing reads it yet). The page list is the workbook's OWN sheet
+       names, asked for through the extension (which reads them in the host, where the zip reader
+       lives) each time the file changes, so a typo cannot pick a page that is not there. */
+    /* The dropdown's [value, label] pairs — the shape `labelledSelect` expects (the other option
+       constants in this file are pairs too). The labels are the words the user reads, so they spell
+       out 'Data Files' even though the stored value has no space. */
+    const DATA_SOURCE_OPTIONS = [['Spreadsheet', 'Spreadsheet'], ['DataFiles', 'Data Files']];
+    let dataEdit = null; // { name, kind, file, sheet, dataFile, sheets, error, loading } while open
+
+    /** A path row: the text box plus the '…' Browse button (the same pair the panel uses). */
+    function dataPathRow(value, which, onSet) {
+        const wrap = document.createElement('div');
+        wrap.className = 'prop-input-group';
+        const txt = document.createElement('input');
+        txt.type = 'text';
+        txt.value = value || '';
+        txt.placeholder = which === 'data' ? 'no data file chosen' : 'no workbook chosen';
+        txt.addEventListener('input', () => onSet(txt.value));
+        txt.addEventListener('change', () => { onSet(txt.value); refreshSheets(); });
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'prop-browse';
+        btn.textContent = '\u2026';
+        btn.title = which === 'data' ? 'Browse for a data file\u2026' : 'Browse for a spreadsheet\u2026';
+        btn.addEventListener('click', () => post({ type: 'pickChartSource', which }));
+        wrap.appendChild(txt);
+        wrap.appendChild(btn);
+        return wrap;
+    }
+
+    /** Asks the extension for the workbook's page names (empty file = just clears the list). */
+    function refreshSheets() {
+        if (!dataEdit) return;
+        dataEdit.sheets = [];
+        dataEdit.error = null;
+        if (!dataEdit.file) { renderDataEditor(); return; }
+        dataEdit.loading = true;
+        renderDataEditor();
+        post({ type: 'requestSheets', file: dataEdit.file });
+    }
+
+    function renderDataEditor() {
+        if (!dataEdit) return;
+        els.dataKind.innerHTML = '';
+        els.dataFields.innerHTML = '';
+        els.dataKind.appendChild(seriesField('Data source',
+            labelledSelect(DATA_SOURCE_OPTIONS, dataEdit.kind, (v) => { dataEdit.kind = v; renderDataEditor(); }),
+            'Spreadsheet reads a page of an .xlsx workbook. Data Files is for data files such as CSVs — '
+            + 'remembered in the form, not read yet.'));
+
+        if (dataEdit.kind === 'DataFiles') {
+            els.dataHead.textContent = 'Data file';
+            els.dataFields.appendChild(seriesField('File',
+                dataPathRow(dataEdit.dataFile, 'data', (v) => { dataEdit.dataFile = v; }),
+                'The data file this chart should read (a CSV today; other formats as they are added). '
+                + 'Stored on the chart as DataFile — the charts ignore it for now.'));
+            const note = document.createElement('p');
+            note.className = 'modal-hint';
+            note.textContent = 'Reading a data file is not implemented yet: the chart keeps drawing '
+                + 'whatever its spreadsheet gives it.';
+            els.dataFields.appendChild(note);
+            return;
+        }
+
+        // ---- Spreadsheet: the workbook, then which of its pages to read ----
+        els.dataHead.textContent = 'Spreadsheet';
+        els.dataFields.appendChild(seriesField('Workbook',
+            dataPathRow(dataEdit.file, 'workbook', (v) => { dataEdit.file = v; }),
+            'The .xlsx workbook this chart reads. The absolute path is stored as SourceFile; the chart '
+            + 're-reads it on every save while Live Update is on.'));
+
+        const options = ['', ...(dataEdit.sheets || [])];
+        const labels = ['(first page)', ...(dataEdit.sheets || [])];
+        const select = document.createElement('select');
+        select.className = 'series-select';
+        options.forEach((value, i) => {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.textContent = labels[i];
+            if (value === (dataEdit.sheet || '')) opt.selected = true;
+            select.appendChild(opt);
+        });
+        select.disabled = (dataEdit.sheets || []).length === 0;
+        select.addEventListener('change', () => { dataEdit.sheet = select.value; });
+        els.dataFields.appendChild(seriesField('Page', select,
+            'Which page of the workbook to read, by its sheet name. (first page) reads the first '
+            + 'worksheet, which is what a form that names no page has always done.'));
+
+        const hint = document.createElement('p');
+        hint.className = 'modal-hint';
+        if (!dataEdit.file) hint.textContent = 'Pick a workbook and its pages appear here.';
+        else if (dataEdit.loading) hint.textContent = 'Reading the workbook\u2026';
+        else if (dataEdit.error) hint.textContent = dataEdit.error;
+        else if ((dataEdit.sheets || []).length === 0) hint.textContent = 'That workbook lists no pages.';
+        else hint.textContent = `${dataEdit.sheets.length} page(s): ${dataEdit.sheets.join(', ')}`;
+        els.dataFields.appendChild(hint);
+    }
+
+    function openDataEditor(name, info) {
+        dataEdit = {
+            name: name || null,
+            kind: DATA_SOURCE_OPTIONS.some((pair) => pair[0] === info.kind) ? info.kind : 'Spreadsheet',
+            file: String(info.file || ''),
+            sheet: String(info.sheet || ''),
+            dataFile: String(info.dataFile || ''),
+            sheets: [],
+            error: null,
+            loading: false
+        };
+        els.dataTitle.textContent = 'Data Selector' + (dataEdit.name ? ' \u2014 ' + dataEdit.name : '');
+        renderDataEditor();
+        els.dataModal.hidden = false;
+        refreshSheets();
+    }
+    function closeDataEditor() { els.dataModal.hidden = true; dataEdit = null; }
+    els.dataSave.addEventListener('click', () => {
+        if (dataEdit) {
+            post({
+                type: 'saveChartDataSource',
+                name: dataEdit.name,
+                values: {
+                    kind: dataEdit.kind,
+                    file: dataEdit.file,
+                    sheet: dataEdit.sheet,
+                    dataFile: dataEdit.dataFile
+                }
+            });
+        }
+        closeDataEditor();
+    });
+    els.dataCancel.addEventListener('click', closeDataEditor);
+    els.dataModal.addEventListener('click', (e) => {
+        if (e.target === els.dataModal) closeDataEditor(); // click outside the box
     });
 
     /* Draw the placeholder labels over every (empty) Menu bar. The dummies are plain HTML overlay

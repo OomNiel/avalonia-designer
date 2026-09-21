@@ -212,6 +212,18 @@ export class HostClient {
         return Array.isArray(r.tables) ? (r.tables as unknown as SqliteTableInfo[]) : [];
     }
 
+    /**
+     * The PAGE names of an .xlsx workbook, for the Data Selector's page dropdown. `error` is set when
+     * the file could not be read, so the editor can say why instead of offering an empty list.
+     */
+    async sheets(file: string): Promise<{ sheets: string[]; error: string | null }> {
+        const r = await this.request('sheets', { file });
+        return {
+            sheets: Array.isArray(r.sheets) ? r.sheets.map(String) : [],
+            error: r.error ? String(r.error) : null
+        };
+    }
+
     /** Runs a read-only SELECT against the user's SQLite file for the design-time data preview. */
     async sqliteQuery(file: string, sql: string, limit = 200): Promise<SqliteResult> {
         const r = await this.request('sqlite', { file, op: 'query', sql, limit });

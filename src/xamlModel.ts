@@ -65,6 +65,13 @@ export function isEventAttribute(name: string): boolean {
     return EVENT_ATTRS.has(name);
 }
 
+/** The bundled GrumpyCharts tags (the AvaloniaCharts control set). Listed here — not imported from
+ *  chartSeries.ts, which imports THIS module — so the xmlns:charts declaration can be ensured without
+ *  a circular import. */
+export const CHARTS_TAGS = [
+    'GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAreaPlot', 'GrumpyPiePlot'
+];
+
 /**
  * Tags that are single-content containers (ContentControl / HeaderedContentControl
  * subclasses). In XAML they accept at most ONE child element (their Content). When the
@@ -355,7 +362,9 @@ export class XamlModel {
         }
         // GrumpyCharts is a second bundled control set (AvaloniaCharts) — its snippets use the
         // `charts` prefix, so the root must declare xmlns:charts for the XAML to compile.
-        if (localName(el.tagName) === 'GrumpyLinePlot' || localName(el.tagName) === 'GrumpyXYPlot') {
+        // The tags are listed inline (not `isChartTag` from chartSeries.ts) because that module
+        // imports THIS one, so importing it back would make a cycle.
+        if (CHARTS_TAGS.includes(localName(el.tagName))) {
             this.ensureXmlns('charts', 'using:AvaloniaCharts');
         }
 
