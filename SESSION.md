@@ -17,7 +17,54 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-20, second session — 0.11.1)
+## Where the last session left off (2026-09-21, third session — 0.11.2)
+
+**Released: `0.11.2`** — *the chart gets its own colours: a gradient background, three axis colours, a reading
+you can always read*. Four appearance requests in one breath: the cursor readout must always be **white on
+black** (with the border and the series line still taking the selected series' colour), the axis pickers must
+split into **three independent colours** (line, tick labels, name), the chart must take a **gradient background
+brush** built from Avalonia's `LinearGradientBrush` / `RadialGradientBrush` / `ConicGradientBrush`, and the
+spreadsheet **file picker must move into the chart's right-click menu** with its **Browse Button row removed**
+from the Properties list.
+
+- **The gradient is real brush XAML**: `PlotBackBrush` (a `Brush` on `ChartBase`, in both twins) written as a
+  property element with three stops (start, middle, end; the middle is optional), an angle for the linear kind,
+  corner-to-corner diagonals or a compass direction at 0°/90°/180°/270°. With a brush set the plot area is not
+  re-filled — that would map a second, compressed copy of the gradient onto it. **None** removes the element
+  and gives the backcolour back; the editor reads a hand-written brush back too.
+- **`ShowBrowse` survives as a no-op.** The **"…"** button is gone from the surface *and* from the running app
+  (the right-click menu carries *Choose spreadsheet…* in both), but the row is kept in the two twins so a form
+  saved by an earlier version still compiles — removing the property would have broken every one of them.
+- **The discovery of the session, and it was a real bug:** the preview renders through the host's
+  **programmatic builder** — not through the runtime XAML loaders — and that builder had never read a *property
+  element* other than the ones it was taught (`.Cursors`, `.XAxis`, `.YAxis`), so the gradient was invisible in
+  the designer while the built app showed it perfectly. Chasing it turned up an older one underneath:
+  `Brush.Parse` returns an **immutable** brush, a property typed `Brush` (**not** `IBrush`) refuses it, and the
+  builder's per-property `catch` swallowed the exception — so **any** `Brush`-typed attribute
+  (`PlotBackBrush="#FF0000"` among them) had silently kept its default in the preview, for as long as Brush
+  attributes have existed there. Both fixed in `host/XamlRenderer.cs` (`ReadBrush` + a mutable-brush
+  conversion).
+- **`GrumpyCharts` staleness marker → `PlotBackBrush`.** A gradient is the first such thing the editor writes
+  as a *property element*, which no older copy of the bundled file can resolve at all.
+- **Tests 6,437 / 0** (+131 from 6,306; **6,484** with a forced full control re-audit):
+  `t2-logic/chartAppearance` 100 with both twins, the editor seams and real write/read/clear round-trips,
+  `t1-preview/chartAppearance` 13 measured in pixels, `bundledComponents` +2 for the moved marker, and the
+  rest from **stale** assertions these four changes invalidated in the existing chart files.
+  The pixel file is the one that earned its keep: it proves what one sample never can (two plate points
+  **differ** under a gradient where a plain colour makes them **identical**) and it is what exposed the host
+  bug. Lessons recorded there: a radial brush gives its four corners the same colour by construction, and the
+  plate margin *above* the plot (y=4) is where a colour can be sampled without catching a gridline — a strip
+  8 px lower reported 29 shades for a single flat colour.
+- **Docs updated** (rule 7b was lifted for this request): `CHANGELOG` `[0.11.2]` (+ the 0.11.1 entry's
+  "…"-button sentence annotated as since-moved), `README` (version refs + the §7 chart paragraph),
+  `USER_MANUAL` §19.2/19.4/19.7/19.8, `CONTROLS`, `TEST_PLAN` (+ its 0.11.2 subsection), `tests/README`,
+  `NOTES` §144, `SESSION`, `PUBLISHING`. The `GrumpyCharts.cs` header comment that still promised a "…" button
+  was corrected in the same pass.
+- **Open for the next session:** the Marketplace carries **`0.11.0`**; `0.11.1` and `0.11.2` are both
+  un-uploaded, and **`0.11.2` is the file to upload** (portal *Update*, *Pre-release* unchecked, confirm with
+  `flags: 914`) — 0.11.1's number is spent, so uploading 0.11.2 covers everything in both.
+
+## Where the second session left off (2026-09-20, 0.11.1)
 
 **Released: `0.11.1`** — *the chart frame gets its own room, and the spinner boxes line up*. Two small requests
 closed the day out. **`Padding`** is a new chart property (`Thickness`): the space between the chart's border
@@ -46,7 +93,7 @@ included — beat the 64 px flex basis; they now share the text/select rule and 
   (`3d913e3d…`) exist only on GitHub/the gallery. The Series-editor layout harness lives at
   `tests/out/field-harness.html` (gitignored) if a future field needs the same check.
 
-## Where the session before left off (2026-09-20, first session — 0.11.0)
+## Where the first session left off (2026-09-20, 0.11.0)
 
 **Packed for publication and installed: `0.11.0`** — *the cursors belong to their series, and the charting tool
 is written down*. The code change is one sentence from the user: *"the cursors must inherrit the color of the

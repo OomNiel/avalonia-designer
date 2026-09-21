@@ -73,9 +73,9 @@
 //   * Ranges auto-fit and then SNAP outward to "nice" tick values (1/2/5 x 10^n), which is what makes
 //     the labels read as 0, 5, 10, 15 rather than 0.37, 3.7, 7.03.
 //   * A missing or unreadable file draws a short explanation inside the plot area instead of throwing.
-//   * LiveUpdate = True re-reads the workbook when it changes on disk. ShowBrowse draws a "…" button
-//     (also shown automatically while the chart has no data) and BrowseForFile() does the same from
-//     your own button; both are no-ops without a TopLevel, so the control is safe to place in a preview.
+//   * LiveUpdate = True re-reads the workbook when it changes on disk, and the chart's right-click menu
+//     carries "Choose spreadsheet…" (BrowseForFile()). It needs a TopLevel, so it is a no-op in the
+//     preview and safe to leave in place.
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -346,8 +346,22 @@ public sealed class Axis
     /// <summary>Draw this axis at all.</summary>
     public bool ShowAxis { get; set; } = true;
 
-    /// <summary>Colour of the axis line, its ticks, its labels and its name.</summary>
+    /// <summary>Colour of the axis line and its ticks. The tick labels and the name follow it unless
+    /// their own colours are set.</summary>
     public Color AxisColor { get; set; } = Color.Parse("#666666");
+
+    /// <summary>Colour of this axis' tick labels. Null = follow <see cref="AxisColor"/>, which is what
+    /// every form written before this existed means.</summary>
+    public Color? TickLabelColor { get; set; }
+
+    /// <summary>Colour of this axis' name. Null = follow <see cref="AxisColor"/>.</summary>
+    public Color? NameColor { get; set; }
+
+    /// <summary>The colour the tick labels are drawn in: their own, else the axis colour.</summary>
+    public Color LabelColor => TickLabelColor ?? AxisColor;
+
+    /// <summary>The colour the axis name is drawn in: its own, else the axis colour.</summary>
+    public Color AxisNameColor => NameColor ?? AxisColor;
 
     /// <summary>Draw the ticks at the labelled values.</summary>
     public bool ShowMajorTicks { get; set; } = true;
@@ -379,6 +393,8 @@ public sealed class Axis
         Position = Position,
         ShowAxis = ShowAxis,
         AxisColor = AxisColor,
+        TickLabelColor = TickLabelColor,
+        NameColor = NameColor,
         ShowMajorTicks = ShowMajorTicks,
         MajorTickLength = MajorTickLength,
         ShowMinorTicks = ShowMinorTicks,
@@ -776,6 +792,14 @@ public abstract class ChartBase : Control
     public static readonly StyledProperty<double> PlotBackOpacityProperty =
         AvaloniaProperty.Register<ChartBase, double>(nameof(PlotBackOpacity), 100d);
 
+    /// <summary>An optional background BRUSH for the whole chart — a real Avalonia gradient
+    /// (<c>LinearGradientBrush</c>, <c>RadialGradientBrush</c> or <c>ConicGradientBrush</c>), written in
+    /// XAML as a property element: <c>&lt;charts:GrumpyXYPlot.PlotBackBrush&gt;…</c>. When it is set it is
+    /// painted over the same area (the whole control) and REPLACES <see cref="PlotBackColor"/> and its
+    /// opacity, which stay the fallback for a chart without a brush.</summary>
+    public static readonly StyledProperty<Brush?> PlotBackBrushProperty =
+        AvaloniaProperty.Register<ChartBase, Brush?>(nameof(PlotBackBrush));
+
     // ---- gridlines --------------------------------------------------------------------------
     public static readonly StyledProperty<bool> ShowGridProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowGrid), true);
@@ -864,7 +888,9 @@ public abstract class ChartBase : Control
     public static readonly StyledProperty<int> FirstDataRowProperty =
         AvaloniaProperty.Register<ChartBase, int>(nameof(FirstDataRow), 2);
 
-    /// <summary>Draw the "…" file picker (also drawn automatically while the chart has no data).</summary>
+    /// <summary>Kept so forms written when the chart drew its own "…" button still compile — the button
+    /// is gone (it sits in the right-click menu now: "Choose spreadsheet…"), so this value changes
+    /// nothing at all.</summary>
     public static readonly StyledProperty<bool> ShowBrowseProperty =
         AvaloniaProperty.Register<ChartBase, bool>(nameof(ShowBrowse), false);
 
@@ -1081,7 +1107,7 @@ public abstract class ChartBase : Control
         AffectsRender<ChartBase>(
             ShowBorderProperty, BorderBrushProperty, BorderThicknessProperty,
             PaddingProperty, CornerRadiusProperty,
-            PlotBackColorProperty, PlotBackOpacityProperty,
+            PlotBackColorProperty, PlotBackOpacityProperty, PlotBackBrushProperty,
             ShowGridProperty, GridColorProperty, GridThicknessProperty, GridStyleProperty,
             ShowAxesProperty, AxisColorProperty,
             ShowMajorTicksProperty, MajorTickLengthProperty,
@@ -1090,7 +1116,7 @@ public abstract class ChartBase : Control
             ShowAxisTitlesProperty, XAxisTitleProperty, YAxisTitleProperty,
             ShowTitleProperty, TitleProperty, TitleColorProperty, TitlePositionProperty, TitleFontSizeProperty,
             SourceFileProperty, XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
-            ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
+            ShowLegendProperty, LegendFontSizeProperty,
             LegendPositionProperty, LegendBackColorProperty, LegendShowFrameProperty,
             LegendBorderBrushProperty, LegendBorderThicknessProperty, LegendCornerRadiusProperty,
             LegendMarginProperty,
@@ -1123,6 +1149,10 @@ public abstract class ChartBase : Control
 
     /// <summary>How solid the chart's backcolour is, in percent (0-100).</summary>
     public double PlotBackOpacity { get => GetValue(PlotBackOpacityProperty); set => SetValue(PlotBackOpacityProperty, value); }
+
+    /// <summary>An optional background brush (e.g. a gradient) for the whole chart; wins over
+    /// <see cref="PlotBackColor"/> when set.</summary>
+    public Brush? PlotBackBrush { get => GetValue(PlotBackBrushProperty); set => SetValue(PlotBackBrushProperty, value); }
 
     /// <summary>Draw gridlines at the common axis' major ticks.</summary>
     public bool ShowGrid { get => GetValue(ShowGridProperty); set => SetValue(ShowGridProperty, value); }
@@ -1514,19 +1544,13 @@ public abstract class ChartBase : Control
         }
     }
 
-    /// <summary>
-    /// True when the "…" file picker should be drawn: when <see cref="ShowBrowse"/> asks for it, or
-    /// when the chart has no data — an empty chart is exactly where you want to pick the workbook.
-    /// </summary>
-    private bool BrowseVisible => ShowBrowse || !HasAnyData();
-
     /// <summary>True when at least one series has points to draw.</summary>
     private bool HasAnyData() => _lastPlotCount > 0;
 
     private int _lastPlotCount;
 
-    /// <summary>Clicking the drawn "…" button loads a file; a cursor line is grabbed and dragged; a
-    /// click on the legend switches a trace; a right-click opens the cursor menu.</summary>
+    /// <summary>Clicking a cursor line grabs and drags it; a click on the legend switches a trace; a
+    /// right-click opens the chart menu (the spreadsheet picker, and the cursors).</summary>
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
@@ -1534,7 +1558,7 @@ public abstract class ChartBase : Control
 
         if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed)
         {
-            ShowCursorMenu();
+            ShowChartMenu();
             e.Handled = true;
             return;
         }
@@ -1569,11 +1593,6 @@ public abstract class ChartBase : Control
             InvalidateVisual();
             e.Handled = true;
             return;
-        }
-        if (BrowseVisible && _browseRect.Contains(position))
-        {
-            _ = BrowseForFile();
-            e.Handled = true;
         }
     }
 
@@ -1730,7 +1749,6 @@ public abstract class ChartBase : Control
 
     // ---- drawing ----------------------------------------------------------------------------
 
-    private Rect _browseRect;
     /// <summary>The plot rectangle of the last render, so a dragged cursor can be converted back
     /// into data units with the same mapping the renderer used.</summary>
     private Rect _plotRect;
@@ -1759,9 +1777,10 @@ public abstract class ChartBase : Control
 
         // The chart's OWN plate comes first, filling the whole interior - not just the plot area.
         // Everything drawn outside the plot (the title, the axis labels, the ticks) then sits on the
-        // chart's colour instead of on whatever is behind the control.
+        // chart's colour instead of on whatever is behind the control. A gradient brush, when one is
+        // set, takes the plate's place and covers exactly the same area.
         var opacity = Math.Clamp(PlotBackOpacity, 0, 100) / 100d;
-        var plate = new SolidColorBrush(PlotBackColor, opacity);
+        var plate = PlotBackBrush ?? new SolidColorBrush(PlotBackColor, opacity);
         context.DrawRectangle(plate, null, new RoundedRect(frame, radius));
 
         var plots = BuildPlots();
@@ -1817,7 +1836,6 @@ public abstract class ChartBase : Control
             DrawTitle(context, titleText, plot, content);
             DrawLegend(context);
             DrawMessage(context, plot, null);
-            DrawBrowseButton(context, frame);
             return;
         }
 
@@ -1849,8 +1867,9 @@ public abstract class ChartBase : Control
         _plotRect = plot;
 
         // Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry its
-        // own tint without touching the rest of the chart).
-        context.DrawRectangle(plate, null, plot);
+        // own tint without touching the rest of the chart). With a brush the plate has already painted
+        // this area: re-painting the smaller rect would re-map a gradient onto it.
+        if (PlotBackBrush is null) context.DrawRectangle(plate, null, plot);
 
         if (_lastPlotCount == 0)
         {
@@ -1858,7 +1877,6 @@ public abstract class ChartBase : Control
             DrawTitle(context, titleText, plot, content);
             DrawLegend(context);
             DrawMessage(context, plot, seriesError);
-            DrawBrowseButton(context, frame);
             return;
         }
 
@@ -1943,7 +1961,6 @@ public abstract class ChartBase : Control
         DrawFrame(context, frame, radius, frameWidth);
         DrawTitle(context, titleText, plot, content);
         DrawLegend(context);
-        DrawBrowseButton(context, frame);
     }
 
     /// <summary>The tick label texts of an axis (empty when it draws no labels).</summary>
@@ -1961,7 +1978,7 @@ public abstract class ChartBase : Control
             : !string.IsNullOrWhiteSpace(chartTitle) ? chartTitle : fromSheet;
         return string.IsNullOrWhiteSpace(text)
             ? null
-            : MakeText(text!, axis.TickLabelFontSize, axis.AxisColor);
+            : MakeText(text!, axis.TickLabelFontSize, axis.AxisNameColor);
     }
 
     /// <summary>The gutter width one Y axis occupies: its tick overhang, its labels and its name.</summary>
@@ -1970,7 +1987,7 @@ public abstract class ChartBase : Control
         var tickOut = axis.ShowAxis && axis.ShowMajorTicks ? Math.Max(0, axis.MajorTickLength) : 0;
         var labels = TickLabels(axis, range);
         var widest = labels.Count > 0
-            ? labels.Max(t => MakeText(t, axis.TickLabelFontSize, axis.AxisColor).Width)
+            ? labels.Max(t => MakeText(t, axis.TickLabelFontSize, axis.LabelColor).Width)
             : 0;
         var name = AxisName(axis, chartTitle, fromSheet);
         return 4 + tickOut + widest + (name is null ? 0 : name.Height + 6);
@@ -1981,7 +1998,7 @@ public abstract class ChartBase : Control
     {
         var tickOut = axis.ShowAxis && axis.ShowMajorTicks ? Math.Max(0, axis.MajorTickLength) : 0;
         var labels = TickLabels(axis, range);
-        var labelHeight = labels.Count > 0 ? MakeText("0", axis.TickLabelFontSize, axis.AxisColor).Height : 0;
+        var labelHeight = labels.Count > 0 ? MakeText("0", axis.TickLabelFontSize, axis.LabelColor).Height : 0;
         var name = AxisName(axis, chartTitle, fromSheet);
         return 4 + tickOut + labelHeight + (name is null ? 0 : name.Height + 6);
     }
@@ -2183,7 +2200,7 @@ public abstract class ChartBase : Control
         {
             var text = drawn < labels.Count ? labels[drawn] : FormatNumber(tick, range.TickStep);
             drawn++;
-            var t = MakeText(text, axis.TickLabelFontSize, axis.AxisColor);
+            var t = MakeText(text, axis.TickLabelFontSize, axis.LabelColor);
             var y = range.ToPixel(tick, plot.Bottom, -plot.Height) - t.Height / 2;
             var tx = right ? x + tickOut + 2 : x - tickOut - 2 - t.Width;
             if (axis.ShowTickLabels) context.DrawText(t, new Point(tx, y));
@@ -2237,7 +2254,7 @@ public abstract class ChartBase : Control
         {
             var text = drawn < labels.Count ? labels[drawn] : FormatNumber(tick, range.TickStep);
             drawn++;
-            var t = MakeText(text, axis.TickLabelFontSize, axis.AxisColor);
+            var t = MakeText(text, axis.TickLabelFontSize, axis.LabelColor);
             var x = range.ToPixel(tick, plot.X, plot.Width) - t.Width / 2;
             var ty = top ? y - tickOut - 2 - t.Height : y + tickOut + 2;
             if (axis.ShowTickLabels) context.DrawText(t, new Point(x, ty));
@@ -2334,7 +2351,7 @@ public abstract class ChartBase : Control
     private void DrawMessage(DrawingContext context, Rect plot, string? message)
     {
         var text = string.IsNullOrWhiteSpace(message)
-            ? "No data — set SourceFile, or add a series"
+            ? "No data — right-click to choose a spreadsheet, or add a series"
             : message!;
         var brush = Color.Parse("#909090");
         var formatted = MakeText(text, 12, brush);
@@ -2357,19 +2374,6 @@ public abstract class ChartBase : Control
         context.DrawText(formatted, new Point(
             plot.X + (plot.Width - formatted.Width) / 2,
             plot.Y + (plot.Height - formatted.Height) / 2));
-    }
-
-    private void DrawBrowseButton(DrawingContext context, Rect frame)
-    {
-        _browseRect = default;
-        if (!BrowseVisible) return;
-        const double boxSize = 18d;
-        var rect = new Rect(frame.Right - boxSize - 4, frame.Y + 4, boxSize, boxSize);
-        _browseRect = rect;
-        context.DrawRectangle(new SolidColorBrush(Color.Parse("#F0F0F0")),
-            new Pen(new SolidColorBrush(Color.Parse("#C0C0C0")), 1), new RoundedRect(rect, new CornerRadius(3)));
-        var dots = MakeText("…", 12, Color.Parse("#505050"));
-        context.DrawText(dots, new Point(rect.X + (boxSize - dots.Width) / 2, rect.Y + (boxSize - dots.Height) / 2));
     }
 
     // ---- cursors ---------------------------------------------------------------------------
@@ -2529,30 +2533,27 @@ public abstract class ChartBase : Control
             deltaColor = (first.Index == index ? second : first).DrawnColor;
         }
 
+        // The panel's TEXT is a fixed palette now: the series line keeps that trace's colour, and the
+        // numbers are always white on the always-black panel below. A reading therefore looks the same
+        // on every chart, whatever the series colour or the chart's own background is.
         var head = MakeText(tag + "  " + name, 11, trace.LineColor);
-        var body = parts.Count > 0 ? MakeText(string.Join("   ", parts), 11, color) : null;
-        var deltaText = delta is null ? null : MakeText(delta, 11, deltaColor);
+        var body = parts.Count > 0 ? MakeText(string.Join("   ", parts), 11, Colors.White) : null;
+        var deltaText = delta is null ? null : MakeText(delta, 11, Colors.White);
         var width = Math.Min(Math.Max(Math.Max(head.Width, body?.Width ?? 0), deltaText?.Width ?? 0) + 12,
                              Math.Max(20, plot.Width - 8));
         var height = head.Height + (body is null ? 0 : body.Height + 2)
                    + (deltaText is null ? 0 : deltaText.Height + 7) + 10;
 
-        // Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot
-        // and clear of the "…" file picker in the top right corner.
+        // Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot.
         var follow = ReadoutPosition is CursorReadout.FollowMouse && _hasPointer;
         var rx = follow ? _pointer.X + 14 : plot.Right - 6 - width;
         var ry = follow ? _pointer.Y + 14 : plot.Y + 6;
         rx = Math.Clamp(rx, plot.X + 4, Math.Max(plot.X + 4, plot.Right - 4 - width));
         ry = Math.Clamp(ry, plot.Y + 4, Math.Max(plot.Y + 4, plot.Bottom - 4 - height));
         var rect = new Rect(rx, ry, width, height);
-        if (_browseRect.Width > 0 && rect.Intersects(_browseRect))
-        {
-            rect = new Rect(rect.X, Math.Min(_browseRect.Bottom + 6, Math.Max(plot.Y + 4, plot.Bottom - 4 - height)),
-                            rect.Width, rect.Height);
-        }
         _readoutRect = rect;
 
-        context.DrawRectangle(new SolidColorBrush(PlotBackColor, 0.92),
+        context.DrawRectangle(new SolidColorBrush(Colors.Black),
             new Pen(new SolidColorBrush(color), 1), new RoundedRect(rect, new CornerRadius(3)));
         context.DrawText(head, new Point(rect.X + 6, rect.Y + 5));
         if (body is not null) context.DrawText(body, new Point(rect.X + 6, rect.Y + 5 + head.Height + 2));
@@ -2664,16 +2665,25 @@ public abstract class ChartBase : Control
         _ = clipboard.SetTextAsync(_readoutText);
     }
 
-    /// <summary>The chart's right-click menu: which cursors are switched on, where the readout sits,
-    /// and add / remove / reset / copy. Nothing here is written back to the form — the saved defaults
-    /// are the ones the Cursor Editor sets, and a restart starts from those again.
+    /// <summary>The chart's right-click menu: choosing the spreadsheet, which cursors are switched on,
+    /// where the readout sits, and add / remove / reset / copy. Nothing here is written back to the
+    /// form — the saved defaults are the ones the Cursor Editor sets, and a restart starts from those
+    /// again.
     /// <para>
     /// The state is carried in the item's TEXT (a leading tick) rather than in a check box: menu item
     /// ticks arrived in Avalonia 11.1, and the bundled control still has to build on 11.0.
     /// </para></summary>
-    private void ShowCursorMenu()
+    private void ShowChartMenu()
     {
         var items = new List<object>();
+
+        // The spreadsheet picker lives here now, at the top: it is the one action on the chart that is
+        // not about cursors. (It used to be a "…" button drawn on the chart's surface.)
+        var browseItem = new MenuItem { Header = "Choose spreadsheet…" };
+        browseItem.Click += (_, _) => _ = BrowseForFile();
+        items.Add(browseItem);
+        items.Add(new Separator());
+
         for (var i = 0; i < Math.Min(Cursors.Count, MaxCursors); i++)
         {
             var index = i;

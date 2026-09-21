@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './xamlModel';
 import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
-    chartCursorsOf, writeChartCursors
+    chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush
 } from './chartSeries';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
@@ -3335,6 +3335,19 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'saveChartGradient': {
+                    // 'Background Gradient' editor on either chart: Avalonia has no brush literal, so
+                    // the gradient is written as the chart's own .PlotBackBrush property element (and
+                    // removed again when the type is None).
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || !isChartTag(localName(el.tagName))) return;
+                    const before = doc.model.serialize(true);
+                    writeChartBrush(doc.model, el, (msg.values ?? {}) as Record<string, unknown>);
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
+                    return;
+                }
                 case 'saveChartLegend': {
                     // 'Legend' editor on either chart: the legend is a flat set of chart attributes
                     // (where it sits, its font size and its frame), so this is a plain property write.
@@ -4978,6 +4991,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             msg.chartAxes = chartAxesOf(el);
             msg.legendInfo = chartLegendOf(el);
             msg.cursorInfo = chartCursorsOf(el);
+            msg.brushInfo = chartBrushOf(el);
         }
         await panel.webview.postMessage(msg);
     }
@@ -7465,8 +7479,9 @@ ${publishButtons}      <span class="sep"></span>
         <p class="modal-hint">Each series is one line on the chart. <b>Common</b> shares the chart's
           X/Y columns and its scale; <b>Per series</b> uses this series' own columns and its own
           axis. A line plot reads X from the sample number (0, 1, 2…), so only its Y column is used.
-          The column letters are the columns of an <b>.xlsx</b> spreadsheet file — choose it with the
-          <b>Spreadsheet</b> row in the Properties panel (Browse…). A spreadsheet is currently the
+          The column letters are the columns of an <b>.xlsx</b> spreadsheet file — choose it from the
+          chart's own right-click menu (<b>Choose spreadsheet…</b>), or with the
+          <b>Spreadsheet</b> row in the Properties panel. A spreadsheet is currently the
           only way to <b>bind</b> data to a chart, so the columns only mean something once a workbook
           is picked. (The <b>Values</b> / <b>Points</b> rows hold numbers typed into the panel, which
           are fixed, not a binding.) An empty column box means “use the default”: the X/Y pairs run
@@ -7549,6 +7564,21 @@ ${publishButtons}      <span class="sep"></span>
         <div class="modal-buttons">
           <button id="legendCancel" type="button" class="modal-btn">Cancel</button>
           <button id="legendSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="gradientModal" class="modal" hidden>
+      <div class="modal-box modal-narrow">
+        <h3 id="gradientTitle">Background Gradient</h3>
+        <p class="modal-hint">A gradient behind the whole chart — the title, the legend bar and the plot
+          area all sit on it. It is written as a real Avalonia brush
+          (<b>LinearGradientBrush</b>, <b>RadialGradientBrush</b> or <b>ConicGradientBrush</b>), so it
+          scales to any window size. <b>Type</b> None removes it again and the chart keeps its
+          <b>Plot Backcolour</b>; <b>Middle colour</b> is optional, for a three-colour blend.</p>
+        <div id="gradientBody" class="series-fields"></div>
+        <div class="modal-buttons">
+          <button id="gradientCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="gradientSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

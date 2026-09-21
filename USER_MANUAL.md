@@ -1815,16 +1815,23 @@ to read values off the plot (19.8).
 
 **B. A spreadsheet (`.xlsx`)** — how real charts are fed
 
-1. **Spreadsheet → Browse…** and pick the workbook. The path is stored **absolute** and the file is
+1. **Spreadsheet → Browse…** (or **right-click the chart → Choose spreadsheet…**, which does the same thing
+   from the chart itself) and pick the workbook. The path is stored **absolute** and the file is
    **not** copied into your project, so the running app reads it where it lives.
 2. Set **X Column** / **Y Column** (defaults **B** / **C**), **Names Row** (default **1** — the row
    holding the axis names) and **First Data Row** (default **2** — the first row of numbers).
 3. **Live Update** (on by default) re-reads the workbook when it changes on disk: with the app running,
    edit and save the sheet and the chart redraws a moment later. (Editors that save by writing a temp
    file and renaming it over the original — Excel, LibreOffice, VS Code — are handled.)
-4. **Browse Button** draws a small **"…"** button in the chart's top-right corner so your users can
-   pick another workbook at runtime. It is also drawn automatically while the chart has **no data at
-   all**, since that is exactly when you want it.
+4. **Browse Button** used to draw a small **"…"** button in the chart's top-right corner. Since 0.11.2 it
+   draws nothing: the workbook is chosen from the chart's own menu, so a chart surface stays free of
+   chrome. A form saved earlier that still says `ShowBrowse="True"` keeps compiling and simply shows no
+   button.
+
+> **Where the workbook is chosen.** There is no **"…"** button on the chart, in the designer or in the
+> running app. **Right-click the chart** and pick **Choose spreadsheet…** — the first item in that menu —
+> in both places, so a chart that ships to your users carries no extra chrome. An empty chart also says so
+> itself: *"No data — right-click to choose a spreadsheet, or add a series"*.
 
 If the workbook cannot be read, the chart says so in the middle (naming the file and the column) instead
 of sitting blank.
@@ -1872,7 +1879,9 @@ Click **Axis — Edit axes…** on a selected chart. Every axis in this editor c
 |---|---|
 | **Position** | **Left** or **Right** for a Y axis, **Top** or **Bottom** for an X axis. |
 | **Visible** | Off hides that axis' line and its ticks (the labels and the name have their own switches). |
-| **Colour** | The axis line, its ticks, its tick labels and its name. A colour name (`White`, `Teal`) or `#RRGGBB`. |
+| **Line colour** | The axis **line** and its ticks. A colour name (`White`, `Teal`) or `#RRGGBB`. |
+| **Label colour** | The **tick labels** only — leave it empty and they follow the line colour. Since 0.11.2 the ticks, the labels and the name can each be a different colour. |
+| **Name colour** | The **axis name** only — empty follows the line colour. |
 | **Major ticks / size**, **Minor ticks / size** | The ticks at the labelled values and the short ones between them, and how long they are. |
 | **Tick labels / size** | The numbers along the axis and their font size. |
 | **Axis name / Name** | Whether the axis shows a name, and the text — empty means the spreadsheet's column header is used. |
@@ -1941,9 +1950,10 @@ Legend / Cursors — Edit …** rows at the top of the list.
 |---|---|
 | **Dock** | Pins the chart to a DockPanel edge (wraps it in a DockPanel if it isn't in one). |
 | **Values** / **Points (x,y)** | Inline data, as described in 19.2 A. |
-| **Spreadsheet / Browse Button / X Column / Y Column / Names Row / First Data Row / Live Update** | The workbook and how it is read (19.2 B). |
+| **Spreadsheet / X Column / Y Column / Names Row / First Data Row / Live Update** | The workbook and how it is read (19.2 B). The workbook itself is picked from the chart's **right-click menu** (*Choose spreadsheet…*) — there is no Browse Button row since 0.11.2. |
 | **Title, Show Title, Title Position, Title Colour, Title Size** | The chart title and where it sits (Top, Bottom, Left, Right). |
 | **Plot Backcolour, Plot Opacity** | The chart's own background — it fills the whole control, so the title and axis labels do not depend on the form behind it. |
+| **Background Gradient** | A **brush** for that background, taking the backcolour's place when one is set: **Type** is **None** (the default — the backcolour shows), **Linear**, **Radial** or **Conic**, with **three colour stops** (start, middle, end; the middle one is optional) and an **Angle** for the linear kind. Avalonia's own `LinearGradientBrush` / `RadialGradientBrush` / `ConicGradientBrush` are written into the form, so the same picture appears in the running app. **None** removes the brush and gives you the backcolour back. |
 | **Border, Border Colour, Border Thickness, Corner Radius** | The frame around the chart. |
 | **Padding** | The room between that border and the chart frame, on all four sides: it pushes the title, the legend bar and the plot area (with its axis labels) inward by that much. One value (`10`) or four (`4,8,4,8`). Empty keeps the chart's own small gap — and 0 is the same picture, so nothing you drew earlier moves. |
 | **Gridlines, Grid Colour, Grid Thickness, Grid Style** | Gridlines at the common axis' main ticks. |
@@ -1994,10 +2004,14 @@ difference between the two cursors, measured between the values their rows show,
 cursor's colour under a hairline. That is the "how wide is this peak" arithmetic, done for you.
 
 > **A cursor that follows a trace is drawn in that trace's colour.** Its lines, the handle at the crossing
-> and the readout panel all take the series' own colour, so a reading is tied to the line it belongs to
-> without reading the name — and the **Colour** row in the editor is then the colour of a cursor that does
-> *not* follow (a threshold line). Two cursors following the same series are both that colour; their dash
-> styles are what tells those two apart.
+> and the **readout's border and tag line** all take the series' own colour, so a reading is tied to the
+> line it belongs to without reading the name — and the **Colour** row in the editor is then the colour of
+> a cursor that does *not* follow (a threshold line). Two cursors following the same series are both that
+> colour; their dash styles are what tells those two apart.
+>
+> **The readout's numbers are always white on black** (since 0.11.2). The panel's own backcolour no longer
+> follows the plot, so a light chart can never make the values hard to read; only the border and the tag
+> line carry the series' colour.
 
 > **Cursors are drawn over the plot and change no data.** They are saved in the form as the chart's
 > `<chart>.Cursors` children, so they survive a resize, a re-bind or a re-read of the workbook. Which

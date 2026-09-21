@@ -6,11 +6,90 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.11.1` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.11.2` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.11.2] - 2026-09-21 · *the chart gets its own colours: a gradient background, three axis colours, a reading you can always read*
+
+Four appearance requests at the end of the `0.11.1` session: *"The cursor value readout display must always
+render the X,Y values in White and the readout 'box' backcolor must always be Black. The Border and Series
+info adopt the current selected series color (like it is currently)."*, *"Add a color picker to be able to
+select the color of the Axis tick labels and axis names as well as the axis lines."*, *"Add a Gradient
+background brush setting to the chart controls. Use the Avalonia gradients system with these brush options:
+LinearGradientBrush, RadialGradientBrush, ConicGradientBrush."* and *"Place the spreadsheet file browse
+option in the right-click menu, not a button on the chart surface. Then remove the Browse Button row from
+the Properties list."*
+
+### Added — a **Background Gradient** for a chart, in all three Avalonia gradient kinds (2026-09-21)
+
+- The new **Gradient** row in the chart's *Appearance* group opens a small editor for a **background brush**:
+  a **Type** of **None / Linear / Radial / Conic**, **three colour stops** (start, middle, end — the middle
+  one optional), and an **angle** for the linear kind. **None** removes the brush, so the chart goes back to
+  its plain **Back colour** / **Back opacity**.
+- The value is a real Avalonia brush on `PlotBackBrush`, written as a property element:
+  `<charts:GrumpyXYPlot.PlotBackBrush><LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">` with a
+  `GradientStop` per colour. A linear brush turns its corner-to-corner diagonal (or its compass direction at
+  0°, 90°, 180°, 270°) into **StartPoint/EndPoint**; radial and conic brushes carry the stops only —
+  Avalonia's own defaults place them. Re-opening the editor reads the brush back out of the XAML, so a form
+  written by hand or by a previous session reopens with the right colours.
+- With a brush set, the **plot area is not re-filled**: the brush is already painted across the whole plate,
+  and re-filling the smaller plot rect would map a second, compressed copy of the gradient onto it.
+
+### Added — three independent axis colours, so ticks, names and lines can differ (2026-09-21)
+
+- The Axis editor's single **Colour** picker became **Line colour** plus **Label colour** and **Name colour**
+  — the tick labels and the axis name each get their own, and leaving either **empty** means "follow the line
+  colour", which is exactly how every form behaved before.
+- On the `Axis` object this is `TickLabelColor` and `NameColor` (both nullable) falling back to `AxisColor`;
+  the ticks and the name are drawn with the fallback applied, while the axis line, its ticks and the
+  `AxisColor` pen are untouched.
+
+### Changed — the cursor readout is legible whatever colour the series is (2026-09-21)
+
+- The readout box is now **always black with white values**, instead of being tinted with the plot's back
+  colour at 92% opacity — a light chart could leave the numbers hard to read. The **border** and the **tag
+  line** (the series name and its value) stay in the **selected series' colour**, so the readout still says
+  which line it belongs to.
+
+### Changed — the workbook is chosen from the chart's right-click menu (2026-09-21)
+
+- The little **"…"** button that sat in the chart's top-right corner is **gone from the surface**, and so is
+  its **Browse Button** row in the Properties list. **Right-clicking the chart** now offers
+  **"Choose spreadsheet…"** as the first menu item, next to the series and appearance items it already had,
+  so every one-off action lives in one place. An empty chart's hint says so:
+  *"No data — right-click to choose a spreadsheet, or add a series"*.
+- `ShowBrowse` is still accepted (it is simply ignored, and documented as such) so a form saved by an earlier
+  version keeps compiling and rendering.
+
+### Fixed — the preview never showed a brush, and had never shown a `Brush`-typed attribute at all (2026-09-21)
+
+- The gradient looked perfect in the generated app but **did not appear in the designer preview**: the host
+  renders through its **programmatic builder** (the reflective and temp-file XAML loaders are both
+  unavailable here), and a property element — `<charts:GrumpyXYPlot.PlotBackBrush>` — never reaches the
+  attribute-driven property applier, so the brush was simply dropped. The builder now reads the element and
+  builds the brush (solid, linear, radial or conic) with its stops.
+- Chasing that turned up a **second, older** bug: `Brush.Parse` returns an **immutable** brush, and a
+  property typed `Brush` (**not** `IBrush`) refuses it — `SetValue` threw, and the preview's per-property
+  `catch` swallowed it, so **any** `Brush`-typed attribute (`PlotBackBrush="#FF0000"` among them) had
+  silently kept its default in the preview while the running app honoured it. The converter now returns a
+  mutable brush when the parsed one does not fit the property.
+
+### Notes
+
+- Suite **6,437 passed / 0 failed / 0 skipped** (from 6,306; **6,484** with `AVALONIA_COMPLIANCE_RESET=1`, a
+  full control re-audit): +100 in the new `tests/t2-logic/chartAppearance.test.js` (both twins, the editor
+  seams, and write/read/clear round-trips through the real writers) and +13 in
+  `tests/t1-preview/chartAppearance.test.js`, plus assertions added and reworked in existing files —
+  `bundledComponents` (+2, the staleness marker moved to `PlotBackBrush`) and the seven that the changes made
+  **stale**, such as the browse button that is no longer drawn or offered. The pixel file proves the two claims
+  that no single pixel can: a gradient makes two plate points **differ** where the plain colour makes them
+  **identical**, and the corner the button used to occupy is empty for both an empty chart and one that still
+  says `ShowBrowse="True"`. Pixel measurements on gradients need geometry: a radial brush gives its four
+  corners the same colour by construction, and the plate margin above the plot is where a colour can be sampled
+  without catching a gridline.
 
 ## [0.11.1] - 2026-09-20 · *the chart frame gets its own room, and the spinner boxes line up*
 
@@ -30,7 +109,8 @@ spinner controls."*
 - **The border does not move.** The padding is taken out of the inside, never added around the outside, and
   the chart's own backcolour still reaches the border — so the band it opens up is chart, not form. Negative
   values are clamped to 0, so content can never be pushed over its border; the little **"…"** open-workbook
-  button stays in the chart's corner, because it is chrome rather than chart content.
+  button stayed in the chart's corner, because it was chrome rather than chart content (0.11.2 later moved it
+  into the right-click menu).
 - **`LegendMargin` (0.11.0) is its sibling one level in:** `Padding` sits outside the legend frame,
   `LegendMargin` inside it. A chart can have both.
 - **The bundled-file staleness marker moved to `Padding`.** A new *attribute* is as invisible to an old copy of

@@ -3537,3 +3537,68 @@ audit's `+2` never lingers, because a verified control is recorded compliant and
 `AVALONIA_COMPLIANCE_RESET=1` restores 6,308). Both twins compile 0/0 at 12.1.1 and 11.0.10, the VB one under
 `Option Strict On`, each using `Padding="10"` and `Padding="4,8,4,8"` in a real form.
 
+### §144 — the preview is a second implementation, and it had been dropping brushes for years (2026-09-21, 0.11.2)
+
+**Asked, in four parts:** the cursor readout must always render the X,Y values **white** on a **black** box
+(border and series line still in the selected series' colour); the axis must get **pickers** for tick labels and
+names as well as lines; the chart must take a **gradient background brush** using Avalonia's
+`LinearGradientBrush` / `RadialGradientBrush` / `ConicGradientBrush`; and the spreadsheet **file browse must
+move into the right-click menu** with the **Browse Button row removed** from the Properties list.
+
+**Everything compiled. Nothing appeared in the designer.** The XAML was right, the host was rebuilt from the
+same source, `strings -el` even showed the new menu item — and the plate stayed plain. The reason is worth
+writing down once, properly:
+
+- **The preview does not use Avalonia's XAML loaders.** `XamlRenderer.LoadWindow` tries the reflective
+  `IRuntimeXamlLoader`, then a temp file + `AvaloniaXamlLoader.Load`, then falls back to
+  `BuildWindowFromXaml` — and for these forms the first two both fail, so **the programmatic builder is the
+  renderer**. Proof anyone can reproduce in a minute: put a
+  `<Style Selector="charts|GrumpyXYPlot"><Setter Property="PlotBackColor" …/></Style>` in the form and the
+  preview ignores it (the running app honours it).
+- **Property elements never reach `ApplyProperty`.** That builder is *attribute*-driven, so every property
+  element the extension writes has to be taught to it by hand — `.XAxis`, `.YAxis`, `.Cursors` were already
+  there, `.PlotBackBrush` was not. A gradient is the first feature the editor writes *only* as a property
+  element, which is exactly why nothing showed.
+- **And underneath it, an older bug:** `Brush.Parse` returns an **immutable** brush
+  (`ImmutableSolidColorBrush`). A property typed `IBrush` accepts that; one typed **`Brush`** does not, so
+  `SetValue` threw *"Object of type 'Avalonia.Media.Immutable.ImmutableSolidColorBrush' cannot be converted to
+  type 'Avalonia.Media.Brush'"* — and `ApplyProperty` ends in `catch { /* ignore individual property
+  failures */ }`, so **every `Brush`-typed attribute had silently kept its default in the preview** for as long
+  as Brush attributes have existed there. Not a 0.11.2 bug; found *by* 0.11.2.
+
+**How it was found, since the symptom is a silent no-op:** temporary instrumentation. `ApplyProperty` appended
+the property name, `prop.PropertyType.FullName`, the converted value and any exception to `/tmp/brushlog.txt`;
+one `dotnet build`, one probe, `cat` — the `FAIL PlotBackBrush: ArgumentException …` line was the whole answer
+in one run. Reading the value back was *not* an option: `ControlInfo.Values` (the dictionary behind the
+Properties panel) does not carry the chart's brush properties, so the panel cannot be used as an oracle here.
+
+**The pixel test is what proved it, and it had to be built like a measurement.** A single sampled pixel cannot
+tell a gradient from a flat colour: the assertion has to be **relational** — two plate points that match under
+a plain backcolour must **differ** under a gradient, and removing the brush must restore the match. Two more
+traps, both found by failing:
+- **A radial brush paints its four corners the same colour** (they are equidistant from the centre), so the
+  corner comparison that works for a linear brush proves nothing for it; the honest test counts the distinct
+  colours along a strip.
+- **The strip has to be free of chart furniture.** The plate's first 8 px are plate-only (`plot =
+  content.Deflate(8)`), so sample at **y=4**: the first attempt used y=8, which is the plot's top row, and the
+  "flat colour" control reported **29 shades** from gridlines and the series line.
+
+**Two small design decisions worth keeping:** `ShowBrowse` stays in both twins as a documented **no-op** rather
+than being deleted (deleting it would break every form ever saved with it, and the button is gone from the
+running app too — *Choose spreadsheet…* in the chart's own menu is the only route now); and with a brush set
+the plot area is **not** re-filled, because re-filling the smaller plot rect maps a second, compressed copy of
+the gradient onto it.
+
+**The marker moved a fourth time, and for a new reason:** `PlotBackBrush`, because a gradient is written as a
+*property element* — the first time the marker has been protecting against a project copy that cannot even
+*resolve* the XAML, rather than one that resolves it and draws the old picture.
+
+**Suite:** 6,306 → **6,437** (+131: +100 in `t2-logic/chartAppearance` — both twins, the editor seams, and
+`writeChartAxes`/`chartAxesOf` plus `writeChartBrush`/`chartBrushOf` round-trips — +13 in
+`t1-preview/chartAppearance`, +2 in `bundledComponents`, and the rest from the seven **stale** assertions the
+four changes invalidated in existing files: the browse button that is no longer drawn or offered, the readout
+panel whose colour rule changed, and the axis colour row that became three. A forced re-audit
+(`AVALONIA_COMPLIANCE_RESET=1`) reads **6,484** — the T5 audit verifies both charts' whole property list
+again, and far more controls are cached now than the ±2 of earlier releases). Host, C# probe and VB probe are
+all 0 warnings / 0 errors.
+

@@ -161,13 +161,17 @@ into every new project next to the other helpers — no package, no image file, 
 
 - **Data**: `Values` (line plot) or `Points` (X,Y plot) for typed-in data, or `SourceFile` → an `.xlsx`
   workbook (row 1 names the columns, data from row 2; columns `B/C`, `D/E`, `F/G` … per series).
-  `LiveUpdate` re-reads the file on save, and the chart draws its own **"…"** picker when it has no data.
+  `LiveUpdate` re-reads the file on save. The workbook is picked from the chart's **right-click menu**
+  (*Choose spreadsheet…*) — `ShowBrowse` and its surface button were retired in 0.11.2 and the property is
+  now a no-op kept only so older forms still compile.
 - **Series** (`Series — Edit series…`): one line per series, each with its own columns, colour, thickness,
   line style, markers, `AxisMode` (Common / Per series) and `Visible` switch. Order in the list = draw
   order.
 - **Axis** (`Axis — Edit axes…`): the chart's two **common** axes plus an optional X and/or Y axis per
-  *Per series* series — side (Left/Right, Top/Bottom), colour, major/minor ticks and their sizes, tick
-  labels and their font size, and the axis name.
+  *Per series* series — side (Left/Right, Top/Bottom), major/minor ticks and their sizes, tick labels and
+  their font size, the axis name, and **three independent colours**: `AxisColor` (the line and its ticks),
+  `TickLabelColor` (the numbers) and `NameColor` (the name). Either of the last two left empty follows the
+  line colour, which is how every axis behaved before 0.11.2.
 - **Legend** (`Legend — Edit legend…`): on/off, side (Bottom/Top/Left/Right — it wraps to fit), name font
   size, and a frame with its own backcolour, outline and rounded corners. Clicking an entry switches that
   trace on and off at runtime; the trace keeps its place on the axis.
@@ -183,18 +187,22 @@ into every new project next to the other helpers — no package, no image file, 
   cursors and copies the readout as text. With **two** cursors on, the readout gains a `ΔX`/`ΔY` row — the
   absolute difference between them. **A cursor that follows a trace is drawn in that traced series' own
   colour** (its `Colour` then applies to a cursor that does not follow — a threshold line), so its line,
-  its crossing and its readout panel all belong visibly to the trace they read. Which cursors are *enabled*
-  is runtime state and is not saved.
-- **Styling in Properties**: plot backcolour + opacity, border (colour/thickness/corner radius) and
-  `Padding` — the room between that border and the chart frame, which pushes the title, the legend bar and
-  the plot area (with its axis furniture) inward; one value or four (`4,8,4,8`), and leaving it empty keeps
-  the chart's own small gap. Then gridlines (colour/thickness/style), the title (text/show/position/colour/
-  size), the fixed scale overrides (`MinX`/`MaxX`/`MinY`/`MaxY`) and `DockPanel.Dock`.
+  its crossing, the readout's **border and tag line** all belong visibly to the trace they read. The
+  readout's **values are always white on black** (since 0.11.2), so a pale chart cannot make them
+  unreadable. Which cursors are *enabled* is runtime state and is not saved.
+- **Styling in Properties**: plot backcolour + opacity, a **`PlotBackBrush`** gradient (a **Background
+  Gradient** row: type None/Linear/Radial/Conic, three colour stops, an angle for linear — written as real
+  `LinearGradientBrush`/`RadialGradientBrush`/`ConicGradientBrush` XAML, taking the backcolour's place while
+  it is set), border (colour/thickness/corner radius) and `Padding` — the room between that border and the
+  chart frame, which pushes the title, the legend bar and the plot area (with its axis furniture) inward;
+  one value or four (`4,8,4,8`), and leaving it empty keeps the chart's own small gap. Then gridlines
+  (colour/thickness/style), the title (text/show/position/colour/size), the fixed scale overrides
+  (`MinX`/`MaxX`/`MinY`/`MaxY`) and `DockPanel.Dock`.
 
-> **An old copy of the bundled chart file cannot compile the newer series/axis/legend/cursor XAML**
-> (`AVLN2000: Unable to resolve type XYSeries…`, or `… type ChartCursor …`). The designer refreshes it for
-> you: save the form once after using a chart editor, and the project's `GrumpyCharts.cs`/`.vb` is
-> updated — it tells you when.
+> **An old copy of the bundled chart file cannot compile the newer series/axis/legend/cursor/brush XAML**
+> (`AVLN2000: Unable to resolve type XYSeries…`, `… type ChartCursor …`, or a `PlotBackBrush` property). The
+> designer refreshes it for you: save the form once after using a chart editor, and the project's
+> `GrumpyCharts.cs`/`.vb` is updated — it tells you when.
 
 ---
 

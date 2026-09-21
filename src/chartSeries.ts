@@ -47,6 +47,10 @@ export const CHART_AXIS_FIELDS: { key: string; attr: string; def: string }[] = [
     { key: 'position', attr: 'Position', def: '' },
     { key: 'showAxis', attr: 'ShowAxis', def: 'True' },
     { key: 'axisColor', attr: 'AxisColor', def: '#666666' },
+    // The text colours: empty means "follow the axis colour", which is what every form written
+    // before these existed means — so leaving them alone is not the same as picking grey.
+    { key: 'tickLabelColor', attr: 'TickLabelColor', def: '' },
+    { key: 'nameColor', attr: 'NameColor', def: '' },
     { key: 'showMajorTicks', attr: 'ShowMajorTicks', def: 'True' },
     { key: 'majorTickLength', attr: 'MajorTickLength', def: '6' },
     { key: 'showMinorTicks', attr: 'ShowMinorTicks', def: 'True' },
@@ -148,6 +152,32 @@ export const CURSOR_STYLES = ['Solid', 'Dash', 'Dot', 'Long', 'Short'];
 
 /** Where the cursor readout is drawn. */
 export const READOUT_POSITIONS = ['FollowMouse', 'TopRight'];
+
+/** The gradient kinds the Background Gradient editor offers. `None` removes the brush entirely, so the
+ *  chart falls back to its plain PlotBackColor. */
+export const CHART_BRUSH_TYPES = ['None', 'Linear', 'Radial', 'Conic'];
+
+/** The brush element name each type writes. Avalonia has no brush LITERAL — a gradient cannot be an
+ *  attribute — so the editor writes a property element, exactly like the cursors. */
+const BRUSH_ELEMENTS: Record<string, string> = {
+    Linear: 'LinearGradientBrush',
+    Radial: 'RadialGradientBrush',
+    Conic: 'ConicGradientBrush'
+};
+
+/** The default colours a fresh gradient starts from: the chart's own white plate towards a soft blue,
+ *  so a new gradient is visible at once without being shouty. */
+export const DEFAULT_BRUSH_COLORS = ['#FFFFFF', '#DCEBFF', '#C6DBF5'];
+
+/** What the Background Gradient editor reads and writes. An empty `middle` leaves the brush with two
+ *  stops; `angle` only means something for a Linear brush. */
+export interface ChartBrushInfo {
+    type: string;
+    start: string;
+    middle: string;
+    end: string;
+    angle: string;
+}
 
 /** Cursor fields (key = message/UI name, attr = XAML attribute, def = the renderer's default when the
  *  attribute is absent). `x`/`y` are DATA positions: empty means "not placed yet", which the renderer
@@ -257,8 +287,121 @@ export function writeChartCursors(
     if (created) el.appendChild(host);
 }
 
-/** A chart's current legend settings (attribute, else the renderer's default). */
-export function chartLegendOf(el: Element): Record<string, string> {
+/** The `<charts:….PlotBackBrush>` property element of a chart, if it has one. NOT the content property:
+ *  a chart's children are its series, so the background brush lives in its own property element. */
+function brushProperty(el: Element): Element | undefined {
+    for (let i = 0; i < el.childNodes.length; i++) {
+        const kid = el.childNodes[i] as Element;
+        if (kid.nodeType !== 1) continue;
+        if (kid.tagName.endsWith('.PlotBackBrush')) return kid;
+    }
+    return undefined;
+}
+
+/** The single brush inside the property element (a Linear-, Radial- or ConicGradientBrush). */
+function brushElement(el: Element): Element | undefined {
+    const prop = brushProperty(el);
+    if (!prop) return undefined;
+    for (let i = 0; i < prop.childNodes.length; i++) {
+        const kid = prop.childNodes[i] as Element;
+        if (kid.nodeType === 1) return kid;
+    }
+    return undefined;
+}
+
+/** A brush's `GradientStop` children, sorted by offset (so start/end do not depend on the order they
+ *  were written in). */
+function brushStops(brush: Element): { color: string; offset: number }[] {
+    const out: { color: string; offset: number }[] = [];
+    for (let i = 0; i < brush.childNodes.length; i++) {
+        const kid = brush.childNodes[i] as Element;
+        if (kid.nodeType !== 1 || localName(kid.tagName) !== 'GradientStop') continue;
+        out.push({
+            color: kid.getAttribute('Color') || '',
+            offset: parseFloat(kid.getAttribute('Offset') || '0') || 0
+        });
+    }
+    return out.sort((a, b) => a.offset - b.offset);
+}
+
+/** The two relative points a Linear brush needs for an angle in degrees (0 = left to right, 90 = top
+ *  to bottom). Dividing by the larger component is what makes 45° span the box corner to corner. */
+function brushPoints(angle: number): { start: string; end: string } {
+    const rad = (angle * Math.PI) / 180;
+    const cx = Math.cos(rad);
+    const cy = Math.sin(rad);
+    const k = 0.5 / Math.max(Math.abs(cx), Math.abs(cy), 1e-6);
+    const pct = (v: number) => `${Math.round(Math.min(1, Math.max(0, v)) * 100)}%`;
+    return {
+        start: `${pct(0.5 - cx * k)},${pct(0.5 - cy * k)}`,
+        end: `${pct(0.5 + cx * k)},${pct(0.5 + cy * k)}`
+    };
+}
+
+/** The angle a Linear brush already has, read back from its two points ('' when they are missing). */
+function brushAngle(brush: Element): string {
+    const point = (text: string | null): { x: number; y: number } | null => {
+        const m = /^(-?[\d.]+)(%?)\s*,\s*(-?[\d.]+)(%?)$/.exec((text || '').trim());
+        if (!m) return null;
+        const scale = (pct: string) => (pct === '%' ? 0.01 : 1);
+        return { x: parseFloat(m[1]) * scale(m[2]), y: parseFloat(m[3]) * scale(m[4]) };
+    };
+    const a = point(brush.getAttribute('StartPoint'));
+    const b = point(brush.getAttribute('EndPoint'));
+    if (!a || !b) return '';
+    const deg = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+    return String(Math.round((deg + 360) % 360));
+}
+
+/** Reads a chart's background gradient. A brush this editor did not write (hand-made, or a shape it
+ *  does not offer) comes back as `None`, so the editor never claims to understand it. */
+export function chartBrushOf(el: Element): ChartBrushInfo {
+    const none: ChartBrushInfo = { type: 'None', start: '', middle: '', end: '', angle: '' };
+    const brush = brushElement(el);
+    if (!brush) return none;
+    const name = localName(brush.tagName);
+    const type = Object.keys(BRUSH_ELEMENTS).find((k) => BRUSH_ELEMENTS[k] === name);
+    if (!type) return none;
+    const stops = brushStops(brush);
+    return {
+        type,
+        start: stops.length > 0 ? stops[0].color : '',
+        middle: stops.length > 2 ? stops[1].color : '',
+        end: stops.length > 1 ? stops[stops.length - 1].color : '',
+        angle: type === 'Linear' ? brushAngle(brush) : ''
+    };
+}
+
+/** Writes (or removes) a chart's background gradient: `<charts:TAG.PlotBackBrush>` holding one real
+ *  Avalonia gradient brush. `None` — or a brush without both end colours — removes the property
+ *  element entirely, so the chart falls back to its PlotBackColor. A brush is a single value, so an
+ *  existing one is replaced rather than merged. */
+export function writeChartBrush(model: XamlModel, el: Element, info: Record<string, unknown>): void {
+    const type = String(info.type ?? 'None');
+    const existing = brushProperty(el);
+    const start = String(info.start ?? '').trim();
+    const middle = String(info.middle ?? '').trim();
+    const end = String(info.end ?? '').trim();
+    if (type === 'None' || !BRUSH_ELEMENTS[type] || !start || !end) {
+        if (existing) el.removeChild(existing);
+        return;
+    }
+    const angle = parseFloat(String(info.angle ?? '45'));
+    const points = type === 'Linear' ? brushPoints(Number.isFinite(angle) ? angle : 45) : null;
+    const stops = [
+        `<GradientStop Color="${start}" Offset="0"/>`,
+        ...(middle ? [`<GradientStop Color="${middle}" Offset="0.5"/>`] : []),
+        `<GradientStop Color="${end}" Offset="1"/>`
+    ].join('');
+    const element = BRUSH_ELEMENTS[type];
+    const attrs = points ? ` StartPoint="${points.start}" EndPoint="${points.end}"` : '';
+    const replacement = model.createElement(
+        `<${el.tagName}.PlotBackBrush><${element}${attrs}>${stops}</${element}></${el.tagName}.PlotBackBrush>`);
+    if (existing) el.replaceChild(replacement, existing);
+    else el.appendChild(replacement);
+}
+
+/** A chart's current legend settings (attribute, else the renderer's default). */export function chartLegendOf(el: Element): Record<string, string> {
     const out: Record<string, string> = {};
     for (const f of CHART_LEGEND_FIELDS) out[f.key] = readAttr(el, f.attr, f.def);
     return out;

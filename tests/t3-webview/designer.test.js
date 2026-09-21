@@ -49,6 +49,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'seriesAdd', 'seriesDel', 'seriesUp', 'seriesDown', 'seriesSave', 'seriesCancel',
     'axisModal', 'axisTitle', 'axisList', 'axisFields', 'axisHead', 'axisAdd', 'axisDel', 'axisSave', 'axisCancel',
     'legendModal', 'legendTitle', 'legendBody', 'legendSave', 'legendCancel',
+    'gradientModal', 'gradientTitle', 'gradientBody', 'gradientSave', 'gradientCancel',
     'cursorModal', 'cursorTitle', 'cursorList', 'cursorFields', 'cursorSettings', 'cursorHead',
     'cursorAdd', 'cursorDel', 'cursorSave', 'cursorCancel',
     'codeModal', 'codeHint', 'codeBody', 'codeRecheck', 'codeFixAll', 'codeClose',
@@ -112,6 +113,7 @@ function setup(omit = []) {
             || id === 'splitSave' || id === 'splitCancel'
             || id === 'splitterSave' || id === 'splitterCancel'
             || id === 'dgSave' || id === 'dgCancel'
+            || id === 'gradientSave' || id === 'gradientCancel'
             || id === 'codeRecheck' || id === 'codeFixAll' || id === 'codeClose') return 'button';
         if (id === 'splitCount') return 'input';
         if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
@@ -2544,9 +2546,17 @@ module.exports = async (t) => {
         t.equal($('axisModal').hidden, false, 'axes', 'Axis opens the editor');
         const aItems = () => $('axisList').querySelectorAll('.series-item');
         const aFields = () => [...$('axisFields').querySelectorAll('.series-field')];
+        // The caption is matched EXACTLY: 'Name' must not find the 'Name colour' row that sits above it
+        // (the row's own caption is the span, the editors follow it).
         const aField = (caption) => {
-            const row = aFields().find((f) => f.textContent.trim().startsWith(caption));
+            const row = aFields().find((f) => f.querySelector('span') && f.querySelector('span').textContent === caption);
             return row ? row.querySelector('input, select') : null;
+        };
+        // A colour row holds TWO inputs: the swatch, then the authoritative text field (so a colour
+        // NAME like "White" survives). The text field is the one the editor reads and writes.
+        const aColour = (caption) => {
+            const row = aFields().find((f) => f.querySelector('span') && f.querySelector('span').textContent === caption);
+            return row ? row.querySelectorAll('input')[1] : null;
         };
         // common Y, common X, series 1 X, series 1 Y, and an information row for series 2
         t.equal(aItems().length, 5, 'axes', 'both common axes and the per-series axes are listed');
@@ -2554,8 +2564,12 @@ module.exports = async (t) => {
             'a series on the common axes is listed as information');
         t.equal(aItems()[4].disabled, true, 'axes', 'and that row cannot be selected');
         // The first slot (the common Y axis) is pre-filled from the chart-level scalars.
-        t.equal(aField('Colour').value.toLowerCase(), '#123456', 'axes',
+        t.equal(aColour('Line colour').value.toLowerCase(), '#123456', 'axes',
             'the common axis is pre-filled from the chart-level properties');
+        // The two TEXT colours are separate rows and start EMPTY: empty means "follow the line colour",
+        // which is what a form written before they existed means.
+        t.equal(aColour('Label colour').value, '', 'axes', 'the tick-label colour starts empty (follows)');
+        t.equal(aColour('Name colour').value, '', 'axes', 'and so does the axis-name colour');
         t.equal(aField('Name').value, 'Inside', 'axes', 'including its name');
         // Move it to the other side and make it invisible.
         const posSel = aField('Position');
@@ -2579,8 +2593,8 @@ module.exports = async (t) => {
         $('axisAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal(aField('Position').disabled, false, 'axes', 'Add axis enables its fields');
         t.equal($('axisDel').disabled, false, 'axes', 'and offers Delete');
-        aField('Colour').value = '#00AA00';
-        aField('Colour').dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        aColour('Line colour').value = '#00AA00';
+        aColour('Line colour').dispatchEvent(new s.window.Event('input', { bubbles: true }));
         posted.length = 0;
         $('axisSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         const ax = posted[posted.length - 1];

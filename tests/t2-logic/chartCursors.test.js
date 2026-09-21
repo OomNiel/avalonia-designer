@@ -188,7 +188,11 @@ module.exports = async (t) => {
     t.ok(/protected override void OnPointerMoved/.test(cs) && /DragCursorTo\(/.test(cs), 'runtime',
         'dragging a cursor line moves it');
     t.ok(/_dragMode is 1 or 3/.test(cs), 'runtime', 'the vertical line moves X, the horizontal line Y');
-    t.ok(/ShowCursorMenu\(\)/.test(cs), 'runtime', 'right-clicking opens the cursor menu');
+    t.ok(/ShowChartMenu\(\)/.test(cs), 'runtime', 'right-clicking opens the chart menu');
+    t.ok(/Header = "Choose spreadsheet…"/.test(cs), 'runtime',
+        "the workbook picker is the menu's first item (it used to be a drawn button)");
+    t.ok(/browseItem\.Click \+= \(_, _\) => _ = BrowseForFile\(\)/.test(cs), 'runtime',
+        'and it calls the same BrowseForFile the button used to');
     t.ok(/Readout: follow the mouse/.test(cs) && /Readout: top right corner/.test(cs), 'runtime',
         'the menu offers both readout positions');
     t.ok(/Add cursor/.test(cs) && /Remove cursor/.test(cs) && /Reset cursors to the middle/.test(cs)
@@ -196,11 +200,13 @@ module.exports = async (t) => {
         'and the add/remove/reset/copy actions the user asked for');
     t.ok(/ValueAt\(/.test(cs), 'runtime',
         'the readout interpolates between samples (the cursors move freely)');
-    t.ok(/Protected Overrides Sub OnKeyDown/.test(vb) && /Private Sub ShowCursorMenu/.test(vb), 'runtime',
+    t.ok(/Protected Overrides Sub OnKeyDown/.test(vb) && /Private Sub ShowChartMenu/.test(vb), 'runtime',
         'the VB twin carries the same input handling');
+    t.ok(/Header = "Choose spreadsheet…"/.test(vb), 'runtime',
+        'and the same spreadsheet entry at the top of its menu');
     // Menu ticks are TEXT, not check marks: MenuItem.IsChecked does not exist in Avalonia 11.0, which
     // the bundled control still has to build against.
-    t.ok(!/IsChecked/.test(between(cs, 'private void ShowCursorMenu', 'private static FormattedText MakeText')),
+    t.ok(!/IsChecked/.test(between(cs, 'private void ShowChartMenu', 'private static FormattedText MakeText')),
         'runtime', 'the menu carries its state in the item text (Avalonia 11.0 has no MenuItem.IsChecked)');
 
     // --- 12. Follow trace: the crossing sits on the selected trace unless it is switched off ---

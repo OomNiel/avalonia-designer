@@ -79,9 +79,11 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // that names a property the old copy does not have fails to compile. So the marker moves
             // with either. History: `PlotBackOpacityProperty` (the first release, detected nothing),
             // `XYSeries` (multi-series), `ChartCursor` (cursors), `DrawnColor` (a following cursor takes
-            // the followed series' colour, 2026-09-20), `LegendMargin` (the legend's inner margin) and
-            // now `Padding`, the room between the chart's border and its frame — both added the same day.
-            marker: 'Padding'
+            // the followed series' colour, 2026-09-20), `LegendMargin` (the legend's inner margin),
+            // `Padding` (the room between the chart's border and its frame, 2026-09-20) and now
+            // `PlotBackBrush` (the background gradient, 2026-09-21) — the newest thing the Properties
+            // panel writes, as a property element and as a terse `PlotBackBrush="#RRGGBB"`.
+            marker: 'PlotBackBrush'
         }
     ];
 }

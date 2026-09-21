@@ -233,6 +233,11 @@
         legendBody: $('legendBody'),
         legendSave: $('legendSave'),
         legendCancel: $('legendCancel'),
+        gradientModal: $('gradientModal'),
+        gradientTitle: $('gradientTitle'),
+        gradientBody: $('gradientBody'),
+        gradientSave: $('gradientSave'),
+        gradientCancel: $('gradientCancel'),
         cellHighlight: $('cellHighlight'),
         rulerH: $('rulerH'),
         rulerV: $('rulerV'),
@@ -2835,6 +2840,8 @@
                     if (p.key === 'Axis') openAxisEditor(msg.name, msg.chartAxes || {});
                     // 'Legend' opens the legend editor (side, font, frame, backcolour).
                     if (p.key === 'Legend') openLegendEditor(msg.name, msg.legendInfo || {});
+                    // 'Background Gradient' opens the gradient editor (a real Avalonia brush).
+                    if (p.key === 'Gradient') openGradientEditor(msg.name, msg.brushInfo || {});
                     // 'Cursors' opens the cursor editor (up to two draggable crosshairs).
                     if (p.key === 'Cursors') openCursorEditor(msg.name, msg.cursorInfo || {});
                 });
@@ -3748,6 +3755,7 @@
             if (!els.seriesModal.hidden) closeSeriesEditor();
             if (!els.axisModal.hidden) closeAxisEditor();
             if (!els.legendModal.hidden) closeLegendEditor();
+            if (!els.gradientModal.hidden) closeGradientEditor();
             if (!els.cursorModal.hidden) closeCursorEditor();
             if (!els.codeModal.hidden) closeCodeFixes();
         }
@@ -5002,8 +5010,19 @@
         const colour = seriesColor(String(shown.axisColor || '#666666'), (v) => { ensure().axisColor = v; });
         colour[0].disabled = locked;
         colour[1].disabled = locked;
-        els.axisFields.appendChild(seriesField('Colour', colour,
-            'The axis line, its ticks, its tick labels and its name. A colour name (White, Teal…) or #RRGGBB.'));
+        els.axisFields.appendChild(seriesField('Line colour', colour,
+            'The axis line and its ticks. A colour name (White, Teal…) or #RRGGBB.'));
+        // The two TEXT colours are separate and start EMPTY: empty means "use the line colour above",
+        // which is exactly what a form written before they existed means.
+        for (const [caption, key, hint] of [
+            ['Label colour', 'tickLabelColor', 'The numbers along this axis. Empty = the line colour above.'],
+            ['Name colour', 'nameColor', 'The axis name (or the spreadsheet’s column header). Empty = the line colour above.']
+        ]) {
+            const cell = seriesColor(String(shown[key] || ''), (v) => { ensure()[key] = v; });
+            cell[0].disabled = locked;
+            cell[1].disabled = locked;
+            els.axisFields.appendChild(seriesField(caption, cell, hint));
+        }
         bool('Major ticks', 'showMajorTicks', 'The ticks at the labelled values.');
         const majorLen = seriesNumber(String(shown.majorTickLength || '6'), (v) => { ensure().majorTickLength = v; });
         majorLen.disabled = locked;
@@ -5129,6 +5148,72 @@
     els.legendCancel.addEventListener('click', closeLegendEditor);
     els.legendModal.addEventListener('click', (e) => {
         if (e.target === els.legendModal) closeLegendEditor(); // click outside the box
+    });
+
+    /* Background Gradient editor (GrumpyCharts) — Avalonia has no brush LITERAL, so a gradient cannot
+       be an attribute: this editor writes a real LinearGradientBrush / RadialGradientBrush /
+       ConicGradientBrush inside the chart's .PlotBackBrush property element, and reads it back from
+       there. Type None removes the element, so the chart keeps its plain Plot Backcolour. */
+    let gradientEdit = null; // { name, values } while the modal is open
+    const BRUSH_TYPES = ['None', 'Linear', 'Radial', 'Conic'];
+
+    function renderGradientEditor() {
+        els.gradientBody.innerHTML = '';
+        if (!gradientEdit) return;
+        const v = gradientEdit.values;
+        const type = document.createElement('select');
+        for (const kind of BRUSH_TYPES) {
+            const o = document.createElement('option');
+            o.value = kind;
+            o.textContent = kind;
+            type.appendChild(o);
+        }
+        type.value = BRUSH_TYPES.indexOf(String(v.type)) >= 0 ? String(v.type) : 'None';
+        v.type = type.value;
+        type.addEventListener('change', () => {
+            v.type = type.value;
+            renderGradientEditor();   // the angle row only belongs to a Linear brush
+        });
+        els.gradientBody.appendChild(seriesField('Type', type,
+            'None removes the brush and the chart keeps its Plot Backcolour. Linear follows the angle; Radial and Conic spread from the middle of the chart.'));
+
+        const off = v.type === 'None';
+        const colour = (caption, key, hint) => {
+            const cell = seriesColor(String(v[key] || ''), (x) => { v[key] = x; });
+            cell[0].disabled = off;
+            cell[1].disabled = off;
+            els.gradientBody.appendChild(seriesField(caption, cell, hint));
+        };
+        colour('Start colour', 'start', 'Where the gradient begins. A colour name (White, Teal…) or #RRGGBB.');
+        colour('Middle colour', 'middle',
+            'Optional: a third stop half way along. Leave it empty for a plain two-colour gradient.');
+        colour('End colour', 'end', 'Where the gradient ends. Both ends are needed — without them the brush is removed.');
+
+        const linear = v.type === 'Linear';
+        const angle = seriesNumber(
+            String(v.angle == null || v.angle === '' ? '45' : v.angle), (x) => { v.angle = x; });
+        angle.disabled = !linear;
+        els.gradientBody.appendChild(seriesField('Angle (degrees)', angle,
+            linear
+                ? '0 = left to right, 90 = top to bottom, 45 = corner to corner.'
+                : 'Only a Linear gradient has an angle — Radial and Conic spread from the middle.'));
+    }
+    function openGradientEditor(name, info) {
+        gradientEdit = { name: name || null, values: Object.assign({}, info || {}) };
+        els.gradientTitle.textContent = 'Background Gradient' + (gradientEdit.name ? ' — ' + gradientEdit.name : '');
+        renderGradientEditor();
+        els.gradientModal.hidden = false;
+    }
+    function closeGradientEditor() { els.gradientModal.hidden = true; gradientEdit = null; }
+    els.gradientSave.addEventListener('click', () => {
+        if (gradientEdit) {
+            post({ type: 'saveChartGradient', name: gradientEdit.name, values: gradientEdit.values });
+        }
+        closeGradientEditor();
+    });
+    els.gradientCancel.addEventListener('click', closeGradientEditor);
+    els.gradientModal.addEventListener('click', (e) => {
+        if (e.target === els.gradientModal) closeGradientEditor(); // click outside the box
     });
 
     /* Cursor editor (GrumpyCharts) — up to two draggable cursors, each with its own orientation,

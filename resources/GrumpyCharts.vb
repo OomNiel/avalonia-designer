@@ -299,8 +299,30 @@ Namespace Global.AvaloniaCharts
         ''' <summary>Draw this axis at all.</summary>
         Public Property ShowAxis As Boolean = True
 
-        ''' <summary>Colour of the axis line, its ticks, its labels and its name.</summary>
+        ''' <summary>Colour of the axis line and its ticks. The tick labels and the name follow it unless
+        ''' their own colours are set.</summary>
         Public Property AxisColor As Color = Color.Parse("#666666")
+
+        ''' <summary>Colour of this axis' tick labels. Nothing = follow AxisColor, which is what every
+        ''' form written before this existed means.</summary>
+        Public Property TickLabelColor As Color?
+
+        ''' <summary>Colour of this axis' name. Nothing = follow AxisColor.</summary>
+        Public Property NameColor As Color?
+
+        ''' <summary>The colour the tick labels are drawn in: their own, else the axis colour.</summary>
+        Public ReadOnly Property LabelColor As Color
+            Get
+                Return If(TickLabelColor.HasValue, TickLabelColor.Value, AxisColor)
+            End Get
+        End Property
+
+        ''' <summary>The colour the axis name is drawn in: its own, else the axis colour.</summary>
+        Public ReadOnly Property AxisNameColor As Color
+            Get
+                Return If(NameColor.HasValue, NameColor.Value, AxisColor)
+            End Get
+        End Property
 
         ''' <summary>Draw the ticks at the labelled values.</summary>
         Public Property ShowMajorTicks As Boolean = True
@@ -332,6 +354,8 @@ Namespace Global.AvaloniaCharts
                 .Position = Position,
                 .ShowAxis = ShowAxis,
                 .AxisColor = AxisColor,
+                .TickLabelColor = TickLabelColor,
+                .NameColor = NameColor,
                 .ShowMajorTicks = ShowMajorTicks,
                 .MajorTickLength = MajorTickLength,
                 .ShowMinorTicks = ShowMinorTicks,
@@ -726,6 +750,14 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly PlotBackOpacityProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(PlotBackOpacity), 100.0)
 
+        ''' <summary>An optional background BRUSH for the whole chart - a real Avalonia gradient
+        ''' (LinearGradientBrush, RadialGradientBrush or ConicGradientBrush), written in XAML as a property
+        ''' element: &lt;charts:GrumpyXYPlot.PlotBackBrush&gt;… . When it is set it is painted over the same
+        ''' area (the whole control) and REPLACES PlotBackColor and its opacity, which stay the fallback for
+        ''' a chart without a brush.</summary>
+        Public Shared ReadOnly PlotBackBrushProperty As StyledProperty(Of Brush) =
+            AvaloniaProperty.Register(Of ChartBase, Brush)(NameOf(PlotBackBrush), Nothing)
+
         ' ---- gridlines ------------------------------------------------------------------------
         Public Shared ReadOnly ShowGridProperty As StyledProperty(Of Boolean) =
             AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(ShowGrid), True)
@@ -808,6 +840,9 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly FirstDataRowProperty As StyledProperty(Of Integer) =
             AvaloniaProperty.Register(Of ChartBase, Integer)(NameOf(FirstDataRow), 2)
 
+        ''' <summary>Kept so forms written when the chart drew its own "…" button still compile - the button
+        ''' is gone (it sits in the right-click menu now: "Choose spreadsheet…"), so this value changes
+        ''' nothing at all.</summary>
         Public Shared ReadOnly ShowBrowseProperty As StyledProperty(Of Boolean) =
             AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(ShowBrowse), False)
 
@@ -1024,7 +1059,7 @@ Namespace Global.AvaloniaCharts
             AffectsRender(Of ChartBase)(
                 ShowBorderProperty, BorderBrushProperty, BorderThicknessProperty,
                 PaddingProperty, CornerRadiusProperty,
-                PlotBackColorProperty, PlotBackOpacityProperty,
+                PlotBackColorProperty, PlotBackOpacityProperty, PlotBackBrushProperty,
                 ShowGridProperty, GridColorProperty, GridThicknessProperty, GridStyleProperty,
                 ShowAxesProperty, AxisColorProperty,
                 ShowMajorTicksProperty, MajorTickLengthProperty,
@@ -1033,7 +1068,7 @@ Namespace Global.AvaloniaCharts
                 ShowAxisTitlesProperty, XAxisTitleProperty, YAxisTitleProperty,
                 ShowTitleProperty, TitleProperty, TitleColorProperty, TitlePositionProperty, TitleFontSizeProperty,
                 SourceFileProperty, XColumnProperty, YColumnProperty, HeaderRowProperty, FirstDataRowProperty,
-                ShowBrowseProperty, ShowLegendProperty, LegendFontSizeProperty,
+                ShowLegendProperty, LegendFontSizeProperty,
                 LegendPositionProperty, LegendBackColorProperty, LegendShowFrameProperty,
                 LegendBorderBrushProperty, LegendBorderThicknessProperty, LegendCornerRadiusProperty,
                 LegendMarginProperty,
@@ -1105,6 +1140,17 @@ Namespace Global.AvaloniaCharts
             End Get
             Set(value As Double)
                 SetValue(PlotBackOpacityProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>An optional background brush (e.g. a gradient) for the whole chart; wins over
+        ''' PlotBackColor when set.</summary>
+        Public Property PlotBackBrush As Brush
+            Get
+                Return GetValue(PlotBackBrushProperty)
+            End Get
+            Set(value As Brush)
+                SetValue(PlotBackBrushProperty, value)
             End Set
         End Property
 
@@ -1792,22 +1838,19 @@ Namespace Global.AvaloniaCharts
             End Try
         End Function
 
-        ''' <summary>True when the "…" file picker is drawn: asked for, or the chart has no data.</summary>
-        Private ReadOnly Property BrowseVisible As Boolean
-            Get
-                Return ShowBrowse OrElse _lastPlotCount = 0
-            End Get
-        End Property
+        ''' <summary>True when at least one series has points to draw.</summary>
+        Private Function HasAnyData() As Boolean
+            Return _lastPlotCount > 0
+        End Function
 
-        ''' <summary>Clicking the drawn "…" button loads a file.</summary>
-        ''' <summary>Clicking the drawn "…" button loads a file; a cursor line is grabbed and dragged; a
-        ''' click on the legend switches a trace; a right-click opens the cursor menu.</summary>
+        ''' <summary>Clicking a cursor line grabs and drags it; a click on the legend switches a trace; a
+        ''' right-click opens the chart menu (the spreadsheet picker, and the cursors).</summary>
         Protected Overrides Sub OnPointerPressed(e As PointerPressedEventArgs)
             MyBase.OnPointerPressed(e)
             Dim position = e.GetPosition(Me)
 
             If e.GetCurrentPoint(Me).Properties.IsRightButtonPressed Then
-                ShowCursorMenu()
+                ShowChartMenu()
                 e.Handled = True
                 Return
             End If
@@ -1846,12 +1889,6 @@ Namespace Global.AvaloniaCharts
                 e.Handled = True
                 Return
             Next
-            If BrowseVisible AndAlso _browseRect.Contains(position) Then
-#Disable Warning BC42358 ' deliberately fire-and-forget: a pointer event cannot await the dialog
-                BrowseForFile()
-#Enable Warning BC42358
-                e.Handled = True
-            End If
         End Sub
 
         ''' <summary>Drags the grabbed cursor, and keeps a mouse-following readout with the pointer.</summary>
@@ -2001,7 +2038,6 @@ Namespace Global.AvaloniaCharts
 
         ' ---- drawing --------------------------------------------------------------------------
 
-        Private _browseRect As Rect
         ''' <summary>The plot rectangle of the last render, so a dragged cursor can be converted back
         ''' into data units with the same mapping the renderer used.</summary>
         Private _plotRect As Rect
@@ -2179,9 +2215,10 @@ Namespace Global.AvaloniaCharts
             Dim content = frame.Deflate(pad)
 
             ' The chart's OWN plate comes first, filling the whole interior - not just the plot area,
-            ' so the title and the axis labels sit on the chart's colour, not on the form's.
+            ' so the title and the axis labels sit on the chart's colour, not on the form's. A gradient
+            ' brush, when one is set, takes the plate's place and covers exactly the same area.
             Dim opacity = Math.Clamp(PlotBackOpacity, 0, 100) / 100.0
-            Dim plate As New SolidColorBrush(PlotBackColor, opacity)
+            Dim plate As Brush = If(PlotBackBrush, CType(New SolidColorBrush(PlotBackColor, opacity), Brush))
             context.DrawRectangle(plate, Nothing, New RoundedRect(frame, radius))
 
             Dim plots = BuildPlots()
@@ -2238,7 +2275,6 @@ Namespace Global.AvaloniaCharts
                 DrawTitle(context, titleText, plotRect, content)
                 DrawLegend(context)
                 DrawMessage(context, plotRect, Nothing)
-                DrawBrowseButton(context, frame)
                 Return
             End If
 
@@ -2287,14 +2323,16 @@ Namespace Global.AvaloniaCharts
 
             ' Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry
             ' its own tint without touching the rest of the chart).
-            context.DrawRectangle(plate, Nothing, plotRect)
+            ' Plot-area fill (same colour as the plate, drawn explicitly so the plot can later carry
+            ' its own tint without touching the rest of the chart). With a brush the plate has already
+            ' painted this area: re-painting the smaller rect would re-map a gradient onto it.
+            If PlotBackBrush Is Nothing Then context.DrawRectangle(plate, Nothing, plotRect)
 
             If _lastPlotCount = 0 Then
                 DrawFrame(context, frame, radius, frameWidth)
                 DrawTitle(context, titleText, plotRect, content)
                 DrawLegend(context)
                 DrawMessage(context, plotRect, seriesError)
-                DrawBrowseButton(context, frame)
                 Return
             End If
 
@@ -2372,7 +2410,6 @@ Namespace Global.AvaloniaCharts
             DrawFrame(context, frame, radius, frameWidth)
             DrawTitle(context, titleText, plotRect, content)
             DrawLegend(context)
-            DrawBrowseButton(context, frame)
         End Sub
 
         ''' <summary>The tick label texts of an axis (empty when it draws no labels).</summary>
@@ -2392,7 +2429,7 @@ Namespace Global.AvaloniaCharts
             Dim text = If(Not String.IsNullOrWhiteSpace(axis.Name), axis.Name,
                           If(Not String.IsNullOrWhiteSpace(chartTitle), chartTitle, fromSheet))
             If String.IsNullOrWhiteSpace(text) Then Return Nothing
-            Return MakeText(text, axis.TickLabelFontSize, axis.AxisColor)
+            Return MakeText(text, axis.TickLabelFontSize, axis.AxisNameColor)
         End Function
 
         ''' <summary>The gutter width one Y axis occupies: its tick overhang, its labels and its name.</summary>
@@ -2402,7 +2439,7 @@ Namespace Global.AvaloniaCharts
             If axis.ShowAxis AndAlso axis.ShowMajorTicks Then tickOut = Math.Max(0, axis.MajorTickLength)
             Dim widest As Double = 0
             For Each label In TickLabels(axis, range)
-                widest = Math.Max(widest, MakeText(label, axis.TickLabelFontSize, axis.AxisColor).Width)
+                widest = Math.Max(widest, MakeText(label, axis.TickLabelFontSize, axis.LabelColor).Width)
             Next
             Dim name = AxisName(axis, chartTitle, fromSheet)
             Return 4 + tickOut + widest + (If(name Is Nothing, 0, name.Height + 6))
@@ -2414,7 +2451,7 @@ Namespace Global.AvaloniaCharts
             Dim tickOut As Double = 0
             If axis.ShowAxis AndAlso axis.ShowMajorTicks Then tickOut = Math.Max(0, axis.MajorTickLength)
             Dim labelHeight As Double = 0
-            If TickLabels(axis, range).Count > 0 Then labelHeight = MakeText("0", axis.TickLabelFontSize, axis.AxisColor).Height
+            If TickLabels(axis, range).Count > 0 Then labelHeight = MakeText("0", axis.TickLabelFontSize, axis.LabelColor).Height
             Dim name = AxisName(axis, chartTitle, fromSheet)
             Return 4 + tickOut + labelHeight + (If(name Is Nothing, 0, name.Height + 6))
         End Function
@@ -2450,7 +2487,7 @@ Namespace Global.AvaloniaCharts
             For Each tick In range.Ticks()
                 Dim text = If(index < labels.Count, labels(index), FormatNumber(tick, range.TickStep))
                 index += 1
-                Dim label = MakeText(text, axis.TickLabelFontSize, axis.AxisColor)
+                Dim label = MakeText(text, axis.TickLabelFontSize, axis.LabelColor)
                 Dim y = range.ToPixel(tick, plotRect.Bottom, -plotRect.Height) - label.Height / 2
                 Dim textX = If(isRight, x + tickOut + 2, x - tickOut - 2 - label.Width)
                 If axis.ShowTickLabels Then context.DrawText(label, New Point(textX, y))
@@ -2494,12 +2531,12 @@ Namespace Global.AvaloniaCharts
                 Next
             End If
 
-            Dim labelHeight = MakeText("0", axis.TickLabelFontSize, axis.AxisColor).Height
+            Dim labelHeight = MakeText("0", axis.TickLabelFontSize, axis.LabelColor).Height
             Dim index As Integer = 0
             For Each tick In range.Ticks()
                 Dim text = If(index < labels.Count, labels(index), FormatNumber(tick, range.TickStep))
                 index += 1
-                Dim label = MakeText(text, axis.TickLabelFontSize, axis.AxisColor)
+                Dim label = MakeText(text, axis.TickLabelFontSize, axis.LabelColor)
                 Dim x = range.ToPixel(tick, plotRect.X, plotRect.Width) - label.Width / 2
                 Dim textY = If(isTop, y - tickOut - 2 - label.Height, y + tickOut + 2)
                 If axis.ShowTickLabels Then context.DrawText(label, New Point(x, textY))
@@ -2571,7 +2608,7 @@ Namespace Global.AvaloniaCharts
         End Sub
 
         Private Sub DrawMessage(context As DrawingContext, plotRect As Rect, message As String)
-            Dim text = If(String.IsNullOrWhiteSpace(message), "No data — set SourceFile, or add a series", message)
+            Dim text = If(String.IsNullOrWhiteSpace(message), "No data — right-click to choose a spreadsheet, or add a series", message)
             Dim brush = Color.Parse("#909090")
             Dim formatted = MakeText(text, 12, brush)
             If formatted.Width > plotRect.Width Then
@@ -2590,19 +2627,6 @@ Namespace Global.AvaloniaCharts
             End If
             context.DrawText(formatted, New Point(plotRect.X + (plotRect.Width - formatted.Width) / 2,
                                                   plotRect.Y + (plotRect.Height - formatted.Height) / 2))
-        End Sub
-
-        Private Sub DrawBrowseButton(context As DrawingContext, frame As Rect)
-            _browseRect = Nothing
-            If Not BrowseVisible Then Return
-            Dim boxSize As Double = 18
-            Dim rect As New Rect(frame.Right - boxSize - 4, frame.Y + 4, boxSize, boxSize)
-            _browseRect = rect
-            context.DrawRectangle(New SolidColorBrush(Color.Parse("#F0F0F0")),
-                                  New Pen(New SolidColorBrush(Color.Parse("#C0C0C0")), 1),
-                                  New RoundedRect(rect, New Avalonia.CornerRadius(3)))
-            Dim dots = MakeText("…", 12, Color.Parse("#505050"))
-            context.DrawText(dots, New Point(rect.X + (boxSize - dots.Width) / 2, rect.Y + (boxSize - dots.Height) / 2))
         End Sub
 
         ' ---- cursors --------------------------------------------------------------------------
@@ -2752,30 +2776,27 @@ Namespace Global.AvaloniaCharts
             Dim name = LegendName(trace, plots.IndexOf(trace))
             Dim tag = "C" & (index + 1)
 
+            ' The panel's TEXT is a fixed palette now: the series line keeps that trace's colour, and the
+            ' numbers are always white on the always-black panel below.
             Dim head = MakeText(tag & "  " & name, 11, trace.LineColor)
-            Dim body = If(parts.Count > 0, MakeText(String.Join("   ", parts), 11, color), Nothing)
-            Dim deltaText = If(delta Is Nothing, Nothing, MakeText(delta, 11, deltaColor))
+            Dim body = If(parts.Count > 0, MakeText(String.Join("   ", parts), 11, Colors.White), Nothing)
+            Dim deltaText = If(delta Is Nothing, Nothing, MakeText(delta, 11, Colors.White))
             Dim width = Math.Min(Math.Max(Math.Max(head.Width, If(body Is Nothing, 0.0, body.Width)),
                                           If(deltaText Is Nothing, 0.0, deltaText.Width)) + 12,
                                  Math.Max(20, plot.Width - 8))
             Dim height = head.Height + If(body Is Nothing, 0.0, body.Height + 2) +
                          If(deltaText Is Nothing, 0.0, deltaText.Height + 7) + 10
 
-            ' Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot
-            ' and clear of the "…" file picker in the top right corner.
+            ' Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot.
             Dim follow = ReadoutPosition = CursorReadout.FollowMouse AndAlso _hasPointer
             Dim rx = If(follow, _pointer.X + 14, plot.Right - 6 - width)
             Dim ry = If(follow, _pointer.Y + 14, plot.Y + 6)
             rx = Math.Clamp(rx, plot.X + 4, Math.Max(plot.X + 4, plot.Right - 4 - width))
             ry = Math.Clamp(ry, plot.Y + 4, Math.Max(plot.Y + 4, plot.Bottom - 4 - height))
             Dim rect As New Rect(rx, ry, width, height)
-            If _browseRect.Width > 0 AndAlso rect.Intersects(_browseRect) Then
-                rect = New Rect(rect.X, Math.Min(_browseRect.Bottom + 6, Math.Max(plot.Y + 4, plot.Bottom - 4 - height)),
-                                rect.Width, rect.Height)
-            End If
             _readoutRect = rect
 
-            context.DrawRectangle(New SolidColorBrush(PlotBackColor, 0.92),
+            context.DrawRectangle(New SolidColorBrush(Colors.Black),
                                   New Pen(New SolidColorBrush(color), 1),
                                   New RoundedRect(rect, New Avalonia.CornerRadius(3)))
             context.DrawText(head, New Point(rect.X + 6, rect.Y + 5))
@@ -2890,13 +2911,27 @@ Namespace Global.AvaloniaCharts
             Await clipboard.SetTextAsync(_readoutText)
         End Sub
 
-        ''' <summary>The chart's right-click menu: which cursors are switched on, where the readout sits,
-        ''' and add / remove / reset / copy. Nothing here is written back to the form — the saved defaults
-        ''' are the ones the Cursor Editor sets, and a restart starts from those again.
+        ''' <summary>The chart's right-click menu: choosing the spreadsheet, which cursors are switched on,
+        ''' where the readout sits, and add / remove / reset / copy. Nothing here is written back to the
+        ''' form — the saved defaults are the ones the Cursor Editor sets, and a restart starts from those
+        ''' again.
         ''' The state is carried in the item's TEXT (a leading tick) rather than in a check box: menu item
         ''' ticks arrived in Avalonia 11.1, and the bundled control still has to build on 11.0.</summary>
-        Private Sub ShowCursorMenu()
+        Private Sub ShowChartMenu()
             Dim items As New List(Of Object)()
+
+            ' The spreadsheet picker lives here now, at the top: it is the one action on the chart that is
+            ' not about cursors. (It used to be a "…" button drawn on the chart's surface.)
+            Dim browseItem As New MenuItem With {.Header = "Choose spreadsheet…"}
+            AddHandler browseItem.Click,
+                Sub(sender, args)
+#Disable Warning BC42358 ' deliberately fire-and-forget: a menu click cannot await the dialog
+                    BrowseForFile()
+#Enable Warning BC42358
+                End Sub
+            items.Add(browseItem)
+            items.Add(New Separator())
+
             For i = 0 To Math.Min(Cursors.Count, MaxCursors) - 1
                 Dim index = i
                 Dim toggle As New MenuItem With {.Header = If(Cursors(i).Enabled, "✓ ", "    ") & "Cursor " & (i + 1)}

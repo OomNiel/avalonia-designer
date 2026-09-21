@@ -791,6 +791,14 @@ public class XamlRenderer
                 }
                 continue;
             }
+            // …and its background brush: <charts:GrumpyXYPlot.PlotBackBrush><LinearGradientBrush>…
+            // Property elements never reach ApplyProperty (the type map is attribute-driven), so
+            // without this the gradient exists in the running app but not in the designer preview.
+            if (child.Name.LocalName.EndsWith(".PlotBackBrush", StringComparison.Ordinal))
+            {
+                chart.PlotBackBrush = ReadBrush(child);
+                continue;
+            }
 
             AvaloniaCharts.ChartSeries? series = child.Name.LocalName switch
             {
@@ -828,6 +836,88 @@ public class XamlRenderer
         }
         return axis;
     }
+
+    /// <summary>
+    /// The brush inside a brush-typed PROPERTY ELEMENT — the chart's
+    /// <c>&lt;charts:GrumpyXYPlot.PlotBackBrush&gt;</c> holding a
+    /// <c>&lt;LinearGradientBrush&gt;</c> / <c>&lt;RadialGradientBrush&gt;</c> /
+    /// <c>&lt;ConicGradientBrush&gt;</c> / <c>&lt;SolidColorBrush&gt;</c> — or null when the element
+    /// holds no brush at all (which is also how "no gradient" reads back). Only the shapes the
+    /// designer can produce are understood; anything else leaves the property alone.
+    /// </summary>
+    private static Brush? ReadBrush(XElement holding)
+    {
+        var el = holding.Elements().FirstOrDefault();
+        if (el is null) return null;
+
+        GradientStops Stops()
+        {
+            var stops = new GradientStops();
+            foreach (var e in el.Elements().Where(e => e.Name.LocalName == "GradientStop"))
+            {
+                var text = Attr(e, "Color") ?? "#000000";
+                Color colour;
+                try { colour = Color.Parse(text); }
+                catch
+                {
+                    try { colour = Color.Parse("#" + text); } catch { colour = Colors.Black; }
+                }
+                // Offsets are written either as a fraction ("0.5") or as a percentage ("50%").
+                var offset = (Attr(e, "Offset") ?? "0").Trim();
+                var percent = offset.EndsWith("%", StringComparison.Ordinal);
+                if (percent) offset = offset.Substring(0, offset.Length - 1);
+                var value = double.TryParse(offset, NumberStyles.Float, CultureInfo.InvariantCulture, out var o) ? o : 0;
+                stops.Add(new GradientStop(colour, percent ? value / 100 : value));
+            }
+            return stops;
+        }
+
+        RelativePoint Point(XElement e, string name, RelativePoint fallback)
+        {
+            var text = Attr(e, name);
+            if (string.IsNullOrWhiteSpace(text)) return fallback;
+            try { return RelativePoint.Parse(text!); } catch { return fallback; }
+        }
+
+        switch (el.Name.LocalName)
+        {
+            case "SolidColorBrush":
+            {
+                var text = Attr(el, "Color") ?? "#000000";
+                try { return new SolidColorBrush(Color.Parse(text), 1); }
+                catch { return new SolidColorBrush(Color.Parse("#" + text), 1); }
+            }
+            case "LinearGradientBrush":
+            {
+                var brush = new LinearGradientBrush { GradientStops = Stops() };
+                brush.StartPoint = Point(el, "StartPoint", brush.StartPoint);
+                brush.EndPoint = Point(el, "EndPoint", brush.EndPoint);
+                return brush;
+            }
+            case "RadialGradientBrush":
+            {
+                var brush = new RadialGradientBrush { GradientStops = Stops() };
+                brush.Center = Point(el, "Center", brush.Center);
+                brush.GradientOrigin = Point(el, "GradientOrigin", brush.GradientOrigin);
+                return brush;
+            }
+            case "ConicGradientBrush":
+            {
+                var brush = new ConicGradientBrush { GradientStops = Stops() };
+                brush.Center = Point(el, "Center", brush.Center);
+                var angle = Attr(el, "Angle");
+                if (angle is not null && double.TryParse(angle, NumberStyles.Float, CultureInfo.InvariantCulture, out var a))
+                    brush.Angle = a;
+                return brush;
+            }
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>An attribute's value by local name, or null when the element doesn't carry it.</summary>
+    private static string? Attr(XElement el, string name) =>
+        el.Attributes().FirstOrDefault(a => a.Name.LocalName == name)?.Value?.Trim();
 
     private static void ApplyProperty(object target, string propName, string value)
     {
@@ -931,9 +1021,21 @@ public class XamlRenderer
             // them (a Point property can't take a raw string), so the preview wouldn't draw lines.
             try { return Avalonia.Point.Parse(value); } catch { return new Point(0, 0); }
         }
-        if (tn is "Avalonia.Media.IBrush" or "Avalonia.Media.Brush" or "Avalonia.Media.ISolidColorBrush")
+        if (tn is "Avalonia.Media.IBrush" or "Avalonia.Media.Brush" or "Avalonia.Media.ISolidColorBrush" or "Avalonia.Media.SolidColorBrush")
         {
-            try { return Brush.Parse(value); } catch { return Brushes.White; }
+            try
+            {
+                // Brush.Parse hands back an IMMUTABLE brush (ImmutableSolidColorBrush). A property
+                // typed IBrush accepts that, but one typed `Brush` — the chart's PlotBackBrush — does
+                // not: SetValue threw "cannot be converted to type 'Avalonia.Media.Brush'" and the
+                // caller swallows individual failures, so the preview silently kept the default while
+                // the running app (real XAML loader) showed the brush. Hand back something assignable.
+                var parsed = Brush.Parse(value);
+                if (targetType.IsInstanceOfType(parsed)) return parsed;
+                if (parsed is ISolidColorBrush solid) return new SolidColorBrush(solid.Color, solid.Opacity);
+                return parsed;
+            }
+            catch { return Brushes.White; }
         }
         if (tn == "Avalonia.Media.FontFamily")
         {

@@ -233,8 +233,33 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.11.1` (2026-09-20) — released on GitHub (*Latest*); the file for the Marketplace upload. THIS is the file
-> to upload.** Two small requests made at the end of the `0.11.0` session: **`Padding`** on a chart (a
+> **`0.11.2` (2026-09-21) — released on GitHub (*Latest*); the file for the Marketplace upload. THIS is the
+> file to upload** (it also carries everything in `0.11.1`, whose number is spent). Four chart appearance
+> requests: the cursor readout is now **always white on black** (its border and series line still take the
+> selected series' colour), the axis editor's single colour row became **three** (line, tick labels, name —
+> either text colour empty follows the line), the chart gained a **Background Gradient** (`PlotBackBrush`:
+> Real `LinearGradientBrush` / `RadialGradientBrush` / `ConicGradientBrush` XAML with three stops and an angle
+> for the linear kind), and the spreadsheet picker **moved into the chart's right-click menu** with its **Browse
+> Button row removed** from the Properties list (`ShowBrowse` survives as a documented no-op so older forms keep
+> compiling). **The bug of the release, found by the new pixel test:** the preview renders through the host's
+> *programmatic builder*, which had never read a brush property element — and `Brush.Parse` returns an
+> **immutable** brush that a `Brush`-typed property refuses, an exception the builder swallowed per property, so
+> **every `Brush`-typed attribute had silently kept its default in the preview** since long before this version.
+> The `GrumpyCharts` staleness marker moved to `PlotBackBrush` (the first time it guards against XAML an old copy
+> cannot even *resolve*). Suite **6,437 assertions, 0 failed** (**6,484** with `AVALONIA_COMPLIANCE_RESET=1` —
+> the T5 audit re-verifies both charts' whole property list). Docs ride inside: `CHANGELOG` `[0.11.2]` (+ the
+> `0.11.1` entry's "…"-button sentence annotated as since-moved), `README`, `USER_MANUAL` §19.2/19.4/19.7/19.8,
+> `CONTROLS`.
+>
+> Plain VSIX — `avalonia-designer-0.11.2.vsix`, **1,059,485 bytes**, sha256
+> `9b79c5a158563341110c2ddc3c8398ed58f0d3f4efedf15e1f6e96a2083c1615` — built by `npm run package` (**117
+> files**, no source maps) *after* the docs pass, so the documentation inside it is current (that ordering is
+> why the hash is written here after packaging, not before). Manifest `Version="0.11.2"`, extension id
+> unchanged (`grumpy.avalonia-designer`) and **no `PreRelease` attribute** — the upload goes out on the normal
+> channel.
+>
+> **`0.11.1` (2026-09-20) — released on GitHub (*Latest*); never uploaded — superseded by `0.11.2` above.**
+> Two small requests made at the end of the `0.11.0` session: **`Padding`** on a chart (a
 > `Thickness`: the room between the chart's border and everything it draws inside it — the title, the legend bar
 > and the plot area with its axis furniture. The border itself does not move and the chart's backcolour still
 > reaches it, so the band is chart, not form; `LegendMargin` is its sibling one level in) and the **Series
@@ -248,8 +273,7 @@ listing when that release is uploaded — a repo-only README edit does not.
 >
 > Plain VSIX — `avalonia-designer-0.11.1.vsix`, **1,050,403 bytes**, sha256
 > `819f0cee3351ce25a4c324c11631ce01379d2d2750e4fc5a97a31707cbc042ec` — built by `npm run package` (**117
-> files**) *after* the docs pass, so the documentation inside it is current (that ordering is why the hash is
-> written here after packaging, not before). Manifest `Version="0.11.1"`, extension id unchanged
+> files**) *after* the docs pass. Manifest `Version="0.11.1"`, extension id unchanged
 > (`grumpy.avalonia-designer`) and **no `PreRelease` attribute** — the upload goes out on the normal channel.
 >
 > **`0.11.0` (2026-09-20) — released on GitHub and marked *Latest*; uploaded to the Marketplace and verified
@@ -382,7 +406,7 @@ listing when that release is uploaded — a repo-only README edit does not.
 >
 > **`0.10.11` is released on GitHub and was never uploaded.** The Marketplace listing carried `0.10.10`
 > (published 2026-09-17) until **`0.11.0` went live on 2026-09-20** (verified: version, channel and hash, and
-> 20 installs at the time of the check). Both are superseded as upload candidates by **`0.11.1`** above.
+> 20 installs at the time of the check). Both are superseded as upload candidates by **`0.11.2`** above.
 >
 > **The docs ride inside the VSIX, so the released file carries the documentation of 2026-09-20 12:42** — the
 > chart chapter in `USER_MANUAL.md` §19.1–19.8 (placing, data, the Series/Axis/Legend editors, the spreadsheet

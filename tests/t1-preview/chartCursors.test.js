@@ -354,18 +354,95 @@ module.exports = async (t) => {
         const secondOff = await renderPng(host, form('ReadoutPosition="TopRight"',
             cursor('Orientation="Vertical" X="1" Color="#FF8C00"')
             + cursor('Orientation="Vertical" X="4" Color="#8000FF" Enabled="False"')), W, H);
-        t.equal(ink(oneCursor.img, PURPLE, TEXT_COL).n, 0, 'chart-cursors',
-            'with ONE cursor the panel reports no difference at all');
-        t.ok(ink(twoCursors.img, PURPLE, TEXT_COL).n > 20, 'chart-cursors',
-            'with TWO the difference row is drawn, in the other cursor\'s colour',
-            `purple in the text column=${ink(twoCursors.img, PURPLE, TEXT_COL).n}`);
+        // The readout's palette is FIXED: a black panel, white X/Y values, the cursor's colour on the
+        // border and the series' colour on the tag line. A palette RULE is best measured RELATIVELY:
+        // the panel is found by its own black box, and re-rendering the same cursor in another colour
+        // must change the border while leaving the numbers byte-identically coloured.
+        const greenCursor = await renderPng(host, form('ReadoutPosition="TopRight"',
+            cursor('Orientation="Vertical" X="1" Color="#00FF00"')), W, H);
+        const BLACK = (r, g, b) => r < 40 && g < 40 && b < 40;
+        // The values are white, but white text on a black box is mostly ANTI-ALIASED: almost no pixel
+        // reaches pure white, so "bright and neutral" is the honest probe (the orange border, the
+        // series' blue and the delta's purple are all strongly chromatic and fall out of it).
+        const BRIGHT = (r, g, b) => r > 150 && g > 150 && b > 150
+            && Math.abs(r - g) < 40 && Math.abs(g - b) < 40;
+        // The pair's hairline is the delta colour at 50 % OVER BLACK ((64,0,128) for #8000FF). The tag
+        // line's own blends ((45,125,210) darkened) also land in this family, so only the *growth* of
+        // this ink is evidence — the hairline is one long row.
+        const DIM_PURPLE = (r, g, b) => b > 90 && b - g > 70 && r < 120;
+        const readoutBox = (img) => {
+            const b = ink(img, BLACK, PANEL_ALL);
+            return { x0: b.minX + 1, x1: b.maxX, y0: b.minY + 1, y1: b.maxY };
+        };
+        // Strictly INSIDE the panel: the border itself is painted in the cursor's colour.
+        const readoutInner = (img) => {
+            const b = readoutBox(img);
+            return { x0: b.x0 + 4, x1: b.x1 - 4, y0: b.y0 + 4, y1: b.y1 - 4 };
+        };
+        const readoutText = (img) => ink(img, BRIGHT, readoutInner(img)).n;
+        const readoutBorder = (img, match) => ink(img, match, readoutBox(img)).n;
+
+        t.ok(ink(oneCursor.img, BLACK, PANEL_ALL).n > 800, 'chart-cursors',
+            'the readout panel is drawn on a black box, whatever the chart behind it is',
+            `black=${ink(oneCursor.img, BLACK, PANEL_ALL).n}`);
+        // The rule, measured as a WHOLE PANEL: two renders that differ only in the cursor's colour
+        // must produce a panel whose contents are pixel-identical, with the cursor's colour appearing
+        // only on the border. (Antialiasing makes per-glyph colour probes brittle; a diff does not
+        // care which pixel is which.)
+        const REDDISH = (r, g, b) => r > g + 40 && r > b + 40;
+        const GREENISH = (r, g, b) => g > r + 40 && g > b + 40;
+        {
+            const b = readoutBox(oneCursor.img);
+            // Grown by 3 px so the border RING is included: the black box alone is the interior, and
+            // that part is identical by construction (which is the point of the rule).
+            const box = { x0: b.x0 - 3, x1: b.x1 + 3, y0: b.y0 - 3, y1: b.y1 + 3 };
+            let same = 0, diff = 0, orangeOnly = 0, greenOnly = 0;
+            for (let y = box.y0; y < box.y1; y++) {
+                for (let x = box.x0; x < box.x1; x++) {
+                    const i = (y * oneCursor.img.width + x) * 4;
+                    const o = [oneCursor.img.data[i], oneCursor.img.data[i + 1], oneCursor.img.data[i + 2]];
+                    const g = [greenCursor.img.data[i], greenCursor.img.data[i + 1], greenCursor.img.data[i + 2]];
+                    if (o[0] === g[0] && o[1] === g[1] && o[2] === g[2]) { same++; continue; }
+                    diff++;
+                    if (REDDISH(...o) && GREENISH(...g)) orangeOnly++;
+                    else if (GREENISH(...g)) greenOnly++;
+                }
+            }
+            t.ok(same > 300, 'chart-cursors',
+                'the panels of two differently coloured cursors share their contents exactly',
+                `same=${same} diff=${diff}`);
+            t.ok(diff > 10, 'chart-cursors', 'and differ only where the cursor colour shows',
+                `diff=${diff}`);
+            t.ok(orangeOnly + greenOnly >= diff * 0.6, 'chart-cursors',
+                'every one of those pixels is the cursor-coloured border',
+                `border=${orangeOnly + greenOnly} of ${diff}`);
+        }
+        t.ok(readoutText(oneCursor.img) > 10, 'chart-cursors',
+            'and its X/Y values are drawn in white', `bright=${readoutText(oneCursor.img)}`);
+        t.ok(Math.abs(readoutText(greenCursor.img) - readoutText(oneCursor.img)) <= 8, 'chart-cursors',
+            'the numbers keep their colour when the cursor is drawn in another one',
+            `bright orange=${readoutText(oneCursor.img)} green=${readoutText(greenCursor.img)}`);
+        t.ok(ink(oneCursor.img, BLUE_TRACE, readoutInner(oneCursor.img)).n > 15, 'chart-cursors',
+            'and the series line keeps that series\' colour',
+            `series ink=${ink(oneCursor.img, BLUE_TRACE, readoutInner(oneCursor.img)).n}`);
+        const purpleOne = ink(oneCursor.img, DIM_PURPLE, readoutInner(oneCursor.img)).n;
+        const purpleTwo = ink(twoCursors.img, DIM_PURPLE, readoutInner(twoCursors.img)).n;
+        t.ok(readoutText(twoCursors.img) > readoutText(oneCursor.img) + 10, 'chart-cursors',
+            'with TWO cursors the panel gains a white difference row',
+            `text ${readoutText(oneCursor.img)} -> ${readoutText(twoCursors.img)}`);
+        t.ok(purpleTwo > purpleOne + 40, 'chart-cursors',
+            'and that row is marked with a hairline in the OTHER cursor\'s colour',
+            `dim purple ${purpleOne} -> ${purpleTwo}`);
         t.ok(ink(twoCursors.img, ORANGE, PANEL_ALL).maxY > ink(oneCursor.img, ORANGE, PANEL_ALL).maxY + 5,
             'chart-cursors', 'and the panel grew a line taller to hold it',
             `${ink(oneCursor.img, ORANGE, PANEL_ALL).maxY} -> ${ink(twoCursors.img, ORANGE, PANEL_ALL).maxY}`);
         // "When 2 cursors are ACTIVE" is the condition: a declared-but-switched-off second cursor
         // changes nothing — no line, no difference row.
-        t.equal(ink(secondOff.img, PURPLE).n, 0, 'chart-cursors',
-            'a second cursor that is switched off draws nothing and adds no difference row');
+        t.ok(ink(secondOff.img, DIM_PURPLE, readoutInner(secondOff.img)).n <= purpleOne + 5, 'chart-cursors',
+            'a second cursor that is switched off draws nothing and adds no difference row',
+            `${ink(secondOff.img, DIM_PURPLE, readoutInner(secondOff.img)).n} vs ${purpleOne}`);
+        t.equal(ink(secondOff.img, PURPLE, { x0: 0, x1: 240, y0: 0, y1: 130 }).n, 0,
+            'chart-cursors', 'and its own colour appears nowhere left of the panel either');
         t.equal(ink(secondOff.img, ORANGE, PANEL_ALL).maxY, ink(oneCursor.img, ORANGE, PANEL_ALL).maxY,
             'chart-cursors', 'so the panel is exactly as tall as with a single cursor');
 

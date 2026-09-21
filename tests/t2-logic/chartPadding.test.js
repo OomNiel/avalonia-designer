@@ -129,9 +129,10 @@ module.exports = async (t) => {
             `${lang} anchors a Right legend to the padded rect`);
         t.equal(count(source, '_legendRect = new Rect(frame.') + count(source, '_legendRect = New Rect(frame.'), 0, lang,
             `${lang} leaves no legend rectangle on the frame (the bar moves in with the padding)`);
-        // The '…' browse button is chrome, not chart content: it stays in the corner of the frame.
-        t.equal(count(source, 'frame.Right - boxSize - 4, frame.Y + 4, boxSize, boxSize'), 1, lang,
-            `${lang} keeps the browse button in the frame's corner (it is chrome, not chart content)`);
+        // The '…' browse button is gone from the surface (it is the right-click menu's first item now),
+        // so nothing is drawn in the frame's corner any more.
+        t.equal(count(source, 'DrawBrowseButton'), 0, lang,
+            `${lang} draws no browse button on the chart surface`);
         // ...but the chart's own background and its border still reach the frame: the plate fill and
         // the frame outline are the two uses of RoundedRect(frame, radius).
         t.equal(count(source, 'RoundedRect(frame, radius)'), 2, lang,

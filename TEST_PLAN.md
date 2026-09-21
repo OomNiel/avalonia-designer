@@ -1,6 +1,24 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-20 · Status: **full suite green on this machine — 6,306 passed / 0 failed / 0 skipped (51 s)**
+Date: 2026-09-21 · Status: **full suite green on this machine — 6,437 passed / 0 failed / 0 skipped (48 s)**
+
+> 2026-09-21: **`0.11.2`** added 113 assertions for four chart appearance changes — a gradient background
+> brush, three axis colours, a white-on-black cursor readout and the workbook picker moving into the
+> right-click menu. Two new files (`t2-logic/chartAppearance` 100, `t1-preview/chartAppearance` 13), plus 18
+> more the changes forced into existing files: `bundledComponents` +2 (the staleness marker moved) and the
+> rest from **stale** assertions reworked in the chart files (the browse button is no longer drawn or offered,
+> the readout's panel colour rule changed, the axis editor's single colour row became three). **6,306 →
+> 6,437**, or **6,484** with `AVALONIA_COMPLIANCE_RESET=1`: the T5 audit re-checks both charts on its own
+> because their property lists changed (cache: the gitignored `tests/compliance.json`), and the difference here
+> is larger than the ±2 of previous releases because far more controls are cached now.
+> The pixel file is the one that proved what one pixel never could: a gradient makes two plate points **differ**
+> where a plain colour makes them **identical** — and it is what exposed the host bug below.
+>
+> **Found while writing the pixels, and fixed:** the preview renders through the host's *programmatic
+> builder*, which never read a brush property element, and `Brush.Parse` returns an **immutable** brush that
+> a `Brush`-typed property refuses — the thrown exception was swallowed per property, so **any** `Brush`-typed
+> attribute had silently kept its default in the preview. Both are host-side changes with no test of their
+> own; the gradient assertions above cover them end to end.
 
 > 2026-09-20 (later): **`0.11.1`** added 82 assertions — a chart **`Padding`** and the Series editor's
 > spinner-field width fix. Two new files (`t1-preview/chartPadding` 24, `t2-logic/chartPadding` 56) plus
@@ -419,6 +437,13 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.11.2 (2026-09-21) — chart appearance: gradient background, three axis colours, white-on-black readout, no browse button
+
+| File | New | What it pins |
+|---|---|---|
+| `t2-logic/chartAppearance.test.js` | 100 | Both twins and the editor seams: the browse button's removal (and that `ShowBrowse` still compiles a no-op); the readout's palette (`Colors.White` values, `SolidColorBrush(Colors.Black)`, series-coloured tag line and border, and that the old 92%-opacity backcolour tint is gone); `TickLabelColor`/`NameColor` with `LabelColor`/`AxisNameColor` falling back to `AxisColor` in **one** place, drawn by the ticks and the name while the pen keeps `AxisColor`; and a real `writeChartAxes` → `chartAxesOf` round-trip plus `writeChartBrush` → `chartBrushOf` for all three gradient kinds, three and two stops, corner-to-corner and `0%,50%`→`100%,50%` at 0°, replace-not-stack, `None` removal, a half-formed brush refused and a foreign brush read back as `None`. |
+| `t1-preview/chartAppearance.test.js` | 13 | Pixels through the real host: the same two plate corners are **identical** for a plain colour and **different** under a linear gradient (measured at the first and last stop); radial and conic are **not flat** (counted across the plate margin at y=4 — a radial brush's four corners match by construction, and a strip lower down crosses gridlines and reports ~29 shades even for one colour); removing the brush restores the plain chart; a solid brush written as an attribute paints the plate (the host fix); and the corner the browse button occupied holds **no** `#C0C0C0`-ish ink — for an empty chart, for one with `ShowBrowse="True"`, and with the *"no data"* advice still drawn in the middle. |
 
 ### 0.11.1 (2026-09-20) — a chart `Padding`, and the spinner boxes line up
 
