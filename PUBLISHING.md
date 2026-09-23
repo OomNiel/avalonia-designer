@@ -233,8 +233,36 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.11.11` (2026-09-21) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
-> the Marketplace upload. THIS is the file to upload.** It carries everything in `0.11.3` … `0.11.10`, whose
+> **`0.11.12` (2026-09-23) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
+> the Marketplace upload. THIS is the file to upload.**
+>
+> **Artefact:** `avalonia-designer-0.11.12.vsix`, **1,159,385 bytes**, sha256
+> **`c7405e6cabe99d39a865da7c4ca9c4aaef36587e6a6a759922c28df2c83fce4d`**, 118 files (0 source maps),
+> manifest `Version="0.11.12"` and **no `PreRelease` attribute** (a plain, stable upload). Commit
+> **`3b431c9`** on `main`, annotated tag **`v0.11.12`**, pushed (`c788cc9..3b431c9 main`). **Verified:** local
+> `sha256sum` and the GitHub release asset (`avalonia-designer-0.11.12.vsix`, the only asset on the release).
+> Suite **7,549 passed / 0 failed** (and the same with `AVALONIA_COMPLIANCE_RESET=1`); host, C# probe and VB
+> probe 0 warnings / 0 errors.
+>
+> **What it adds:** the **waterfall** chart (`charts:GrumpyWaterfallPlot`, the sixth type) — one spreadsheet
+> column per **sampleset**, stood behind the next and joined by a mesh, with its own projector
+> (`Elevation`, `Azimuth`, `Z Spacing`, `Zoom`, drag to turn), `Ribbon`/`Translucent`/`Lines` styles,
+> `Sampleset`/`Value`/`Split` colour modes, the connector mesh rows, `MaxPoints` thinning on one stride for
+> every set, no cursors by design, and a **Z Column** row per series in the Series editor. The **filled
+> surface between the sets** (`SurfaceFill` / `SurfaceToFloor` and everything that followed) was built on
+> 2026-09-22 and **removed again by hand before this release**, so it is not in the file and those four
+> attributes do not exist on the control. Docs ride inside: `CHANGELOG` `[0.11.12]`, `README` §7,
+> `USER_MANUAL` §19.12, `CONTROLS.md`, `TEST_PLAN.md`.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.11.12.vsix` → leave **Pre-release
+> unchecked** → then confirm with `flags: 914` that the version is `0.11.12` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it
+> is the user's.** Locally the same file is installed as `grumpy.avalonia-designer@0.11.12` (the old
+> `0.11.11` folder is pruned by VS Code on the next window reload), and the preview host was rebuilt inside
+> it (`dotnet build host/PreviewerHost.csproj`, 0 warnings / 0 errors).
+>
+> **`0.11.11` (2026-09-21) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); then the file
+> for the Marketplace upload, now superseded by `0.11.12`.** It carries everything in `0.11.3` … `0.11.10`, whose
 > numbers are spent (all were built and installed on this machine during the day and are superseded).
 >
 > **Artefact:** `avalonia-designer-0.11.11.vsix`, **1,110,164 bytes**, sha256
