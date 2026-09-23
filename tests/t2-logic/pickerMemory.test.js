@@ -61,13 +61,18 @@ module.exports = async (t) => {
     }
 
     // The marker moved on again when the Data Selector arrived: the panel now writes SourceSheet /
-    // SourceKind / DataFile, which an older copy cannot compile (2026-09-21), and it is the newest
-    // token in BOTH twins — which is what refreshes existing projects.
+    // SourceKind / DataFile, which an older copy cannot compile (2026-09-21). It moved once more on
+    // 2026-09-22, when the bar and the pie lost their cursors and gained a hover readout and the pie
+    // gained HoverExplode — then to the waterfall type, then to `IsFilled` when every chart gained the
+    // fill/restore menu entry (a behaviour change, which no XAML attribute reveals), then up to the
+    // waterfall's filled surface (`SurfaceFill` / `SurfaceToFloor`) and back down again when that was
+    // removed — so the marker is `IsFilled` once more, the newest token the shipped file carries. It stays
+    // the newest token in BOTH twins, which is what refreshes existing projects.
     for (const [lang, file] of [['C#', 'GrumpyCharts.cs'], ['VB', 'GrumpyCharts.vb']]) {
         const marker = bundledComponentSpecs(lang === 'VB')
             .find((s) => s.kind === 'GrumpyCharts').marker;
-        t.equal(marker, 'SourceSheet', `chart-${lang}`,
-            `${lang}: the GrumpyCharts staleness marker is the newest thing the designer writes`);
+        t.equal(marker, 'IsFilled', `chart-${lang}`,
+            `${lang}: the GrumpyCharts staleness marker is the newest thing an existing project needs`);
         has(read(file), marker, `chart-${lang}`,
             `${lang}: so the shipped file never looks stale (and a project's old copy is refreshed)`);
     }

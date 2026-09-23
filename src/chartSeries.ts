@@ -69,16 +69,34 @@ export const CHART_AXIS_LEGACY_ATTRS = [
     'ShowTickLabels', 'TickLabelFontSize', 'ShowAxisTitles', 'XAxisTitle', 'YAxisTitle'
 ];
 
-/** The bundled chart tags: the two LINE charts, the two CATEGORY charts (bar and area) and the pie. */
+/** The bundled chart tags: the two LINE charts, the two CATEGORY charts (bar and area), the pie and the
+ *  waterfall. */
 export function isChartTag(tag: string): boolean {
     return tag === 'GrumpyLinePlot' || tag === 'GrumpyXYPlot' || tag === 'GrumpyBarPlot'
-        || tag === 'GrumpyAreaPlot' || tag === 'GrumpyPiePlot';
+        || tag === 'GrumpyAreaPlot' || tag === 'GrumpyPiePlot' || tag === 'GrumpyWaterfallPlot';
 }
 
 /** True for the charts whose data is drawn as cartesian series (a line, a bar or a filled area).
- *  The pie is the exception: it has no frame, no axes and no cursors. */
+ *  The pie and the waterfall are the exceptions: the pie has no frame, and the waterfall's three axes
+ *  are drawn in PROJECTION, so neither has the 2D axis furniture to edit. */
 export function isCartesianChartTag(tag: string): boolean {
-    return isChartTag(tag) && tag !== 'GrumpyPiePlot';
+    return isChartTag(tag) && tag !== 'GrumpyPiePlot' && tag !== 'GrumpyWaterfallPlot';
+}
+
+/** True for the charts whose data comes from ordinary SERIES elements — a line, an X,Y plot, a bar, an
+ *  area, and the waterfall, whose series ARE its samplesets (one column per set). The pie is the
+ *  exception: its wedges live in its own `.Slices` property element. */
+export function isSeriesChartTag(tag: string): boolean {
+    return isCartesianChartTag(tag) || tag === 'GrumpyWaterfallPlot';
+}
+
+/** The charts that carry draggable cursors, i.e. the ones whose right-click menu and Properties list
+ *  have a Cursors entry. A cursor reads a value BETWEEN two samples, which is what a line chart has;
+ *  a bar is one reading per category and the pie has no frame at all, so those two report the element
+ *  under the pointer in the readout panel instead (the C# `SupportsCursors` / `SupportsHoverReadout`).
+ *  Keep this in step with the C#: `GrumpyBarPlot.SupportsCursors` is false, the pie's always was. */
+export function supportsCursors(tag: string): boolean {
+    return isCartesianChartTag(tag) && tag !== 'GrumpyBarPlot';
 }
 
 /** The series element tag a chart holds — the chart tag decides the series type. A bar or an area
@@ -88,6 +106,7 @@ export function isCartesianChartTag(tag: string): boolean {
 export function seriesTagFor(chartTag: string): string {
     if (chartTag === 'GrumpyPiePlot') return 'PieSlice';
     return chartTag === 'GrumpyLinePlot' || chartTag === 'GrumpyBarPlot' || chartTag === 'GrumpyAreaPlot'
+        || chartTag === 'GrumpyWaterfallPlot'
         ? 'LineSeries'
         : 'XYSeries';
 }
@@ -601,16 +620,29 @@ export function chartSeriesFields(node: Element): Record<string, string> {
 
 /** Every series of a chart, ready for the Series editor: the explicit children in order, or — for a
  *  chart that still draws the implicit single line — one entry seeded from its own styling rows.
- *  `defX`/`defY` carry the column the series falls back to, for the editor's placeholders. */
+ *  `defX`/`defY` carry the column the series falls back to, for the editor's placeholders.
+ *
+ *  The WATERFALL is special-cased: its series ARE samplesets (one slice each along the depth axis), so
+ *  the editor labels that column "Z Column" and the fallback walks ONE column per set (C, D, E … from the
+ *  chart's own First Set Column) instead of the X,Y plots' B/C, D/E pairing. The two extra row fields are
+ *  editor metadata, never XAML attributes: `zColumn` says "this row is a sampleset", `zFirst` is the
+ *  column the walk starts at (so + Add series can place the next one), and `writeChartSeries` ignores
+ *  both because it only writes CHART_SERIES_FIELDS. */
 export function chartSeriesOf(el: Element): Record<string, string>[] {
     const kids = chartSeriesChildren(el);
     const type = localName(el.tagName) === 'GrumpyLinePlot' ? 'Line' : 'XY';
+    const waterfall = localName(el.tagName) === 'GrumpyWaterfallPlot';
+    // The waterfall's samplesets start at the chart's own YColumn ("First Set Column"), else C — the
+    // same rule the C# applies in `SamplesetColumn`.
+    const firstSet = readAttr(el, 'YColumn', 'C');
+    const setMeta: Record<string, string> = waterfall ? { zColumn: 'True', zFirst: firstSet } : {};
     if (kids.length === 0) {
         const seeded: Record<string, string> = {
             src: '-1',
             type,
             defX: readAttr(el, 'XColumn', 'B'),
-            defY: readAttr(el, 'YColumn', 'C')
+            defY: firstSet,
+            ...setMeta
         };
         for (const f of CHART_SERIES_FIELDS) {
             // The implicit line is styled by the CHART's properties, so pre-fill from them. The
@@ -626,9 +658,9 @@ export function chartSeriesOf(el: Element): Record<string, string>[] {
         return {
             src: String(i),
             type: localName(kid.tagName) === 'LineSeries' ? 'Line' : 'XY',
-            // Empty = the chart's own X column (common) or this series' place in the B/C, D/E pairing.
             defX: fields.axisMode === 'PerSeries' && fields.type !== 'Line' ? pair.x : readAttr(el, 'XColumn', 'B'),
-            defY: pair.y,
+            defY: waterfall ? columnAfter(firstSet, i) : pair.y,
+            ...setMeta,
             ...fields
         };
     });

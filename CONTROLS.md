@@ -157,12 +157,14 @@ internal/template parts have no published summary and are described by role inst
 | Bar Chart | `charts:GrumpyBarPlot` | One bar per category, from a baseline that is always on the scale: **Grouped**, **Stacked** or **Stacked100** (share of the whole). The categories are the sheet's X-column **names**. Bar Width and Bar Corner Radius shape the bars. Minimum 0 included; legend, cursors, axes and the gradient all work as on the line plot. | ✅ Toolbox *(Charts)* |
 | Area Chart | `charts:GrumpyAreaPlot` | Each series as a filled shape under its line: **Plain**, **Stacked** or **Stacked100**, with Area Opacity for the fill (the line on top stays opaque). Categories come from the X column's names, as on the bar chart. | ✅ Toolbox *(Charts)* |
 | Pie Chart | `charts:GrumpyPiePlot` | One wedge per labelled value from the workbook's **label + value** columns (or typed `Labels`/`Values`), coloured from a 10-colour palette. **Doughnut Hole**, **Start Angle**, **Slice Gap** and the slice outline are properties; the **Slices** editor names the wedges that should differ (colour, Explode, off). The legend lists the slices with a tick box each; there are no gridlines, axes or cursors. | ✅ Toolbox *(Charts)* |
+| Waterfall | `charts:GrumpyWaterfallPlot` | A projected 3D surface: one **sampleset per spreadsheet column** (a sweep, a run, a pass), stood behind the next and joined by a mesh, with the cube turnable by dragging. **Ribbon Style** (`Ribbon` / `Translucent` / `Lines`), **Ribbon Opacity**, **Colour Mode** (`Sampleset` / `Value` heat map / `Split` at a limit) with **Heat Min** / **Heat Max** / **Split Value** / **Below** & **Above Colour**, the mesh rows (**Show Connectors**, **Connector Colour / Thickness / Step**), **Max Points**, and the view (**Elevation**, **Azimuth**, **Z Spacing**, **Zoom**, **Z Axis Title**). Series rows carry a **Z Column**; no cursors (there is no cartesian frame). | ✅ Toolbox *(Charts)* |
 
-Both come from the bundled **`GrumpyCharts.cs` / `.vb`** file (namespace `using:AvaloniaCharts`), copied
+All of them come from the bundled **`GrumpyCharts.cs` / `.vb`** file (namespace `using:AvaloniaCharts`), copied
 into every new project next to the other helpers — no package, no image file, nothing to install. See
 **USER_MANUAL §19, "The charting tools"** for the full walkthrough.
 
-- **Data**: `Values` (line plot / bar / area / pie) or `Points` (X,Y plot) for typed-in data, or `SourceFile`
+- **Data**: `Values` (line plot / bar / area / pie) or `Points` (X,Y plot) for typed-in data, `SampleSets` for a
+  waterfall written by hand (`"1,2,3; 4,5,6"` = two sets of three samples), or `SourceFile`
   → an `.xlsx` workbook (row 1 names the columns, data from row 2; columns `B/C`, `D/E`, `F/G` … per series).
   `LiveUpdate` re-reads the file on save. The **Data Selector** button (`Data — Select data…`) picks the
   **source** (`Spreadsheet` or, not read yet, `Data Files`), the **workbook** and — new in 0.11.7 — **which
@@ -171,7 +173,15 @@ into every new project next to the other helpers — no package, no image file, 
   kept only so older forms still compile.
 - **Series** (`Series — Edit series…`): one line per series, each with its own columns, colour, thickness,
   line style, markers, `AxisMode` (Common / Per series) and `Visible` switch. Order in the list = draw
-  order.
+  order. **On a waterfall each row is one SAMPLESET** — its own **Z Column** and its own legend name — and
+  the Z numbers run along the depth axis.
+- **A waterfall's own rows**: `RibbonStyle` (`Ribbon` / `Translucent` / `Lines`), `RibbonOpacity`,
+  `ColorMode` (`Sampleset` / `Value` / `Split`) with `HeatMin`, `HeatMax`, `SplitValue`, `BelowColor` and
+  `AboveColor`, the mesh (`ShowConnectors`, `ConnectorColor`, `ConnectorThickness`, `ConnectorStep`),
+  `MaxPoints`, and the view — `Elevation`, `Azimuth`, `ZSpacing`, `Zoom` and the depth axis' own
+  `ZAxisTitle`. Its floor gridlines and its three projected axes use the ordinary axis rows above. The
+  corridors between the sets are **left open**: an earlier "Fill The Roof" / "Block Walls" surface was
+  removed before release, so those four attributes do not exist on the control.
 - **Axis** (`Axis — Edit axes…`): the chart's two **common** axes plus an optional X and/or Y axis per
   *Per series* series — side (Left/Right, Top/Bottom), major/minor ticks and their sizes, tick labels and
   their font size, the axis name, and **three independent colours**: `AxisColor` (the line and its ticks),

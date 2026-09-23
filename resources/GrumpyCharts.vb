@@ -40,6 +40,7 @@ Imports Avalonia.Controls
 Imports Avalonia.Input
 Imports Avalonia.Input.Platform
 Imports Avalonia.Interactivity
+Imports Avalonia.Layout
 Imports Avalonia.Media
 Imports Avalonia.Metadata
 Imports Avalonia.Platform.Storage
@@ -184,6 +185,57 @@ Namespace Global.AvaloniaCharts
         ''' <summary>A data file such as a CSV — named by DataFile, not read yet.</summary>
         DataFiles
     End Enum
+
+    ''' <summary>How a GrumpyWaterfallPlot draws each of its samplesets.</summary>
+    Public Enum WaterfallStyle
+        ''' <summary>A filled ribbon under each trace, drawn solid, so a nearer set hides the ones behind
+        ''' it (the default) — the classic waterfall.</summary>
+        Ribbon
+        ''' <summary>The same ribbon drawn see-through: the depth reads as layers instead of as occlusion.</summary>
+        Translucent
+        ''' <summary>No fill at all: the traces and their connectors make a wireframe mesh.</summary>
+        Lines
+    End Enum
+
+    ''' <summary>What decides the colour of a GrumpyWaterfallPlot's traces and mesh.</summary>
+    Public Enum WaterfallColorMode
+        ''' <summary>One colour per sampleset — the series' own colour, the way the pie colours its slices
+        ''' (the default).</summary>
+        Sampleset
+        ''' <summary>A heat map by amplitude: the value picks the colour between HeatMin and HeatMax, so a
+        ''' peak's tip is the map's top colour and its base the bottom one.</summary>
+        Value
+        ''' <summary>Two colours either side of SplitValue — a limit line rather than a palette.</summary>
+        Split
+    End Enum
+
+    ''' <summary>Reads SampleSets="1,2,3; 4,5,6" from XAML: one sampleset per semicolon-separated group,
+    ''' the sample points comma-separated inside it. This is what a waterfall sketches with when there is no
+    ''' workbook at hand — a real capture names one column per sampleset instead.</summary>
+    Public Class DoubleSetConverter
+        Inherits TypeConverter
+
+        Public Overrides Function CanConvertFrom(context As ITypeDescriptorContext, sourceType As Type) As Boolean
+            Return sourceType Is GetType(String) OrElse MyBase.CanConvertFrom(context, sourceType)
+        End Function
+
+        Public Overrides Function ConvertFrom(context As ITypeDescriptorContext, culture As CultureInfo, value As Object) As Object
+            Dim text = TryCast(value, String)
+            If text Is Nothing Then Return MyBase.ConvertFrom(context, culture, value)
+            Dim sets As New List(Of Double())()
+            For Each group In text.Split(New Char() {";"c, ControlChars.Cr, ControlChars.Lf}, StringSplitOptions.RemoveEmptyEntries)
+                Dim points As New List(Of Double)()
+                For Each token In group.Split(New Char() {","c, " "c, ControlChars.Tab}, StringSplitOptions.RemoveEmptyEntries)
+                    Dim parsed As Double
+                    If Double.TryParse(token.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, parsed) Then
+                        points.Add(parsed)
+                    End If
+                Next
+                If points.Count > 0 Then sets.Add(points.ToArray())
+            Next
+            Return sets.ToArray()
+        End Function
+    End Class
 
     ''' <summary>Reads Values="4,9,6,12" from XAML into a Double array.</summary>
     Public Class DoubleArrayConverter
@@ -1226,6 +1278,34 @@ Namespace Global.AvaloniaCharts
         ''' <summary>The rectangle the readout was drawn in (kept for tests and future hit-testing).</summary>
         Private _readoutRect As Rect
 
+        ''' <summary>
+        ''' The text and colours of one readout panel: the black plate a reading appears in. Kept as a
+        ''' value so the two paths that show one — a cursor, and whatever the pointer is over on a chart
+        ''' that reports it (see <see cref="SupportsHoverReadout"/>) — can build it their own way and still
+        ''' share one piece of drawing code, so the two can never drift apart.
+        ''' </summary>
+        Friend NotInheritable Class ReadoutPanel
+            ''' <summary>The first line: what the reading belongs to ("C1  North", "North").</summary>
+            Friend Head As String = String.Empty
+            ''' <summary>The colour of that line — the cursor's own drawn colour, or the element's.</summary>
+            Friend HeadColor As Color = Colors.White
+            ''' <summary>The numbers under it, or Nothing when the reading has none.</summary>
+            Friend Body As String
+            ''' <summary>The cursor pair's |ΔX| / |ΔY| row, or Nothing. Never set for a hovered element.</summary>
+            Friend Delta As String
+            ''' <summary>The colour the panel is outlined in, and the hairline above the delta row.</summary>
+            Friend Accent As Color = Colors.White
+            ''' <summary>The colour of that hairline: the OTHER cursor's drawn colour.</summary>
+            Friend DeltaColor As Color = Colors.White
+            ''' <summary>Draw the panel beside the pointer instead of in the plot's top right corner.</summary>
+            Friend FollowPointer As Boolean
+        End Class
+
+        ''' <summary>What the pointer is over on a chart that reports it, or Nothing when it is over
+        ''' nothing (see <see cref="SupportsHoverReadout"/>). Rebuilt by <see cref="UpdateHover"/> while
+        ''' the pointer moves and cleared when it leaves the chart.</summary>
+        Friend Hover As ReadoutPanel
+
         ''' <summary>One cursor's clickable parts, in control coordinates, plus the values its readout
         ''' reports — kept so the panel can compare TWO cursors without recomputing anything.</summary>
         Private NotInheritable Class CursorHit
@@ -2126,10 +2206,24 @@ Namespace Global.AvaloniaCharts
             End Get
         End Property
 
-        ''' <summary>False when a draggable crosshair makes no sense on this chart type (the pie).</summary>
+        ''' <summary>False when a draggable crosshair makes no sense on this chart type (the pie and the
+        ''' bar): the chart's right-click menu then carries no cursor entries at all.</summary>
         Protected Overridable ReadOnly Property SupportsCursors As Boolean
             Get
                 Return True
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' True when the chart reports what is under the pointer in the readout panel — a bar's category
+        ''' and value, a pie slice's name, value and share of the total. The chart type decides what that
+        ''' is: <see cref="UpdateHover"/> fills <see cref="Hover"/> in as the pointer moves and the shared
+        ''' panel draws it exactly as it draws a cursor's readout. On a pie the slice under the pointer
+        ''' also pops out of the ring by <see cref="GrumpyPiePlot.HoverExplode"/> pixels.
+        ''' </summary>
+        Friend Overridable ReadOnly Property SupportsHoverReadout As Boolean
+            Get
+                Return False
             End Get
         End Property
 
@@ -2317,6 +2411,9 @@ Namespace Global.AvaloniaCharts
             Dim position = e.GetPosition(Me)
 
             If e.GetCurrentPoint(Me).Properties.IsRightButtonPressed Then
+                ' Focus before the menu opens: the menu itself takes the keyboard, and a filled chart has to
+                ' still answer Esc after the menu has closed (see OnKeyDown).
+                Focus()
                 ShowChartMenu()
                 e.Handled = True
                 Return
@@ -2358,7 +2455,8 @@ Namespace Global.AvaloniaCharts
             Next
         End Sub
 
-        ''' <summary>Drags the grabbed cursor, and keeps a mouse-following readout with the pointer.</summary>
+        ''' <summary>Drags the grabbed cursor, keeps a mouse-following readout with the pointer, and
+        ''' re-reads what the pointer is over on a chart that reports it.</summary>
         Protected Overrides Sub OnPointerMoved(e As PointerEventArgs)
             MyBase.OnPointerMoved(e)
             Dim position = e.GetPosition(Me)
@@ -2369,10 +2467,29 @@ Namespace Global.AvaloniaCharts
                 DragCursorTo(position)
                 Return
             End If
+            ' A chart that reports what is under the pointer redraws as the mouse moves, because its
+            ' panel follows the pointer; a cursor's readout only redraws while it follows the mouse and
+            ' a cursor is switched on.
+            If SupportsHoverReadout Then
+                UpdateHover(position, _plotRect)
+                If moved Then InvalidateVisual()
+                Return
+            End If
             ' Only a chart that is reporting at the pointer needs redrawing while the mouse moves.
             If moved AndAlso ReadoutPosition = CursorReadout.FollowMouse AndAlso LiveCursorIndexes().Count > 0 Then
                 InvalidateVisual()
             End If
+        End Sub
+
+        ''' <summary>Forgets what the pointer was over when it leaves the chart, so the readout goes
+        ''' with it instead of staying on screen with nothing under it. (A cursor's readout keeps its own
+        ''' behaviour: it is reporting from where the cursor is, not from where the mouse is.)</summary>
+        Protected Overrides Sub OnPointerExited(e As PointerEventArgs)
+            MyBase.OnPointerExited(e)
+            If Not SupportsHoverReadout Then Return
+            Hover = Nothing
+            ClearHover()
+            InvalidateVisual()
         End Sub
 
         Protected Overrides Sub OnPointerReleased(e As PointerReleasedEventArgs)
@@ -2386,12 +2503,19 @@ Namespace Global.AvaloniaCharts
         End Sub
 
         ''' <summary>
-        ''' The cursor keys. With a cursor switched on, the left/right arrows move the selected cursor
-        ''' one sample along X and up/down choose which trace the readout reports. Without a cursor the
-        ''' keys are left alone, so the chart does not swallow the arrow keys of the window around it.
+        ''' The cursor keys, and Esc. Esc puts a FILLED chart back where it came from (see FillContainer),
+        ''' whatever else this chart's keys do — and it is only swallowed while the chart really is filled, so
+        ''' a dialog around it keeps its own Esc. With a cursor switched on, left/right move the selected
+        ''' cursor one sample along X and up/down choose which trace the readout reports; without a cursor the
+        ''' arrow keys are left alone, so the chart does not swallow the keys of the window around it.
         ''' </summary>
         Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
             MyBase.OnKeyDown(e)
+            If e.Key = Key.Escape AndAlso _filled Then
+                RestorePlacement()
+                e.Handled = True
+                Return
+            End If
             Dim live = LiveCursorIndexes()
             If live.Count = 0 Then Return
             If e.Key <> Key.Left AndAlso e.Key <> Key.Right AndAlso e.Key <> Key.Up AndAlso e.Key <> Key.Down Then Return
@@ -2444,6 +2568,11 @@ Namespace Global.AvaloniaCharts
 
         Protected Overrides Sub OnDetachedFromVisualTree(e As VisualTreeAttachmentEventArgs)
             StopWatcher()
+            ' A chart that leaves the tree must not keep its container's layout event alive.
+            If _fillHost IsNot Nothing Then
+                RemoveHandler _fillHost.LayoutUpdated, AddressOf OnFillHostLaidOut
+                _fillHost = Nothing
+            End If
             MyBase.OnDetachedFromVisualTree(e)
         End Sub
 
@@ -2534,7 +2663,7 @@ Namespace Global.AvaloniaCharts
 
         ''' <summary>The name a series shows in the legend: its own Title, else the spreadsheet's
         ''' Y-column header, else "Series n".</summary>
-        Private Function LegendName(one As Plot, index As Integer) As String
+        Friend Function LegendName(one As Plot, index As Integer) As String
             If one.Definition IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(one.Definition.Title) Then
                 Return one.Definition.Title
             End If
@@ -2798,6 +2927,10 @@ Namespace Global.AvaloniaCharts
             If PlotBackBrush Is Nothing Then context.DrawRectangle(plate, Nothing, plotRect)
 
             If _lastPlotCount = 0 Then
+                ' Nothing is drawn, so nothing can be under the pointer: a readout left over from before
+                ' the data went away would otherwise hang on screen over an empty chart.
+                ClearHover()
+                Hover = Nothing
                 DrawFrame(context, frame, radius, frameWidth)
                 DrawTitle(context, titleText, plotRect, content)
                 DrawLegend(context)
@@ -2866,6 +2999,10 @@ Namespace Global.AvaloniaCharts
             DrawFrame(context, frame, radius, frameWidth)
             DrawTitle(context, titleText, plotRect, content)
             DrawLegend(context)
+
+            ' And then the readout of whatever the pointer is over (a bar, a slice), because that is a
+            ' tooltip: it belongs on top of everything the chart itself drew.
+            If SupportsHoverReadout Then DrawHoverReadout(context, plotRect)
         End Sub
 
         ''' <summary>
@@ -3261,19 +3398,50 @@ Namespace Global.AvaloniaCharts
             Dim name = LegendName(trace, plots.IndexOf(trace))
             Dim tag = "C" & (index + 1)
 
-            ' The panel's TEXT is a fixed palette now: the series line keeps that trace's colour, and the
-            ' numbers are always white on the always-black panel below.
-            Dim head = MakeText(tag & "  " & name, 11, trace.LineColor)
-            Dim body = If(parts.Count > 0, MakeText(String.Join("   ", parts), 11, Colors.White), Nothing)
-            Dim deltaText = If(delta Is Nothing, Nothing, MakeText(delta, 11, Colors.White))
+            ' The panel's TEXT is a fixed palette: the head line keeps its own colour (that trace's, for a
+            ' cursor), the numbers are always white and the plate is always black.
+            _readoutText = tag & " " & name & If(parts.Count > 0, ": " & String.Join(", ", parts), String.Empty) &
+                           If(delta Is Nothing, String.Empty, " | " & delta)
+            DrawReadoutPanel(context, plot,
+                             New ReadoutPanel With {
+                                 .Head = tag & "  " & name,
+                                 .HeadColor = trace.LineColor,
+                                 .Body = If(parts.Count > 0, String.Join("   ", parts), Nothing),
+                                 .Delta = delta,
+                                 .Accent = color,
+                                 .DeltaColor = deltaColor,
+                                 .FollowPointer = ReadoutPosition = CursorReadout.FollowMouse AndAlso _hasPointer})
+        End Sub
+
+        ''' <summary>
+        ''' Draws the readout of whatever the pointer is over, on a chart that reports it (see
+        ''' <see cref="SupportsHoverReadout"/>). It is the SAME panel a cursor uses — one black plate, the
+        ''' element's name in the element's own colour, the numbers in white underneath — so a hovered bar
+        ''' and a cursor's crossing read alike.
+        ''' </summary>
+        Private Sub DrawHoverReadout(context As DrawingContext, plot As Rect)
+            If Hover Is Nothing Then Return
+            DrawReadoutPanel(context, plot, Hover)
+        End Sub
+
+        ''' <summary>
+        ''' Draws one readout panel: a black plate outlined in the reading's own colour, the head line in
+        ''' the element's colour, the numbers in white under it, and — for a pair of cursors — the
+        ''' |ΔX| / |ΔY| row under a hairline in the OTHER cursor's colour. It sits beside the pointer or in
+        ''' the plot's top right corner, and is kept inside the plot either way.
+        ''' </summary>
+        Private Sub DrawReadoutPanel(context As DrawingContext, plot As Rect, panel As ReadoutPanel)
+            Dim head = MakeText(panel.Head, 11, panel.HeadColor)
+            Dim body = If(String.IsNullOrEmpty(panel.Body), Nothing, MakeText(panel.Body, 11, Colors.White))
+            Dim delta = If(String.IsNullOrEmpty(panel.Delta), Nothing, MakeText(panel.Delta, 11, Colors.White))
             Dim width = Math.Min(Math.Max(Math.Max(head.Width, If(body Is Nothing, 0.0, body.Width)),
-                                          If(deltaText Is Nothing, 0.0, deltaText.Width)) + 12,
+                                          If(delta Is Nothing, 0.0, delta.Width)) + 12,
                                  Math.Max(20, plot.Width - 8))
             Dim height = head.Height + If(body Is Nothing, 0.0, body.Height + 2) +
-                         If(deltaText Is Nothing, 0.0, deltaText.Height + 7) + 10
+                         If(delta Is Nothing, 0.0, delta.Height + 7) + 10
 
             ' Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot.
-            Dim follow = ReadoutPosition = CursorReadout.FollowMouse AndAlso _hasPointer
+            Dim follow = panel.FollowPointer AndAlso _hasPointer
             Dim rx = If(follow, _pointer.X + 14, plot.Right - 6 - width)
             Dim ry = If(follow, _pointer.Y + 14, plot.Y + 6)
             rx = Math.Clamp(rx, plot.X + 4, Math.Max(plot.X + 4, plot.Right - 4 - width))
@@ -3282,21 +3450,18 @@ Namespace Global.AvaloniaCharts
             _readoutRect = rect
 
             context.DrawRectangle(New SolidColorBrush(Colors.Black),
-                                  New Pen(New SolidColorBrush(color), 1),
+                                  New Pen(New SolidColorBrush(panel.Accent), 1),
                                   New RoundedRect(rect, New Avalonia.CornerRadius(3)))
             context.DrawText(head, New Point(rect.X + 6, rect.Y + 5))
             If body IsNot Nothing Then context.DrawText(body, New Point(rect.X + 6, rect.Y + 5 + head.Height + 2))
-            If deltaText IsNot Nothing Then
+            If delta IsNot Nothing Then
                 ' A hairline over the pair's row, so "this line is about both cursors" is visible at a
                 ' glance rather than only in its colour.
                 Dim lineY = rect.Y + 5 + head.Height + If(body Is Nothing, 0.0, body.Height + 2) + 3
-                context.DrawLine(New Pen(New SolidColorBrush(deltaColor, 0.5), 1),
+                context.DrawLine(New Pen(New SolidColorBrush(panel.DeltaColor, 0.5), 1),
                     New Point(rect.X + 6, lineY), New Point(rect.Right - 6, lineY))
-                context.DrawText(deltaText, New Point(rect.X + 6, lineY + 3))
+                context.DrawText(delta, New Point(rect.X + 6, lineY + 3))
             End If
-
-            _readoutText = tag & " " & name & If(parts.Count > 0, ": " & String.Join(", ", parts), String.Empty) &
-                           If(delta Is Nothing, String.Empty, " | " & delta)
         End Sub
 
         ''' <summary>The trace's Y at x: linearly interpolated between the two samples around it (the
@@ -3341,6 +3506,20 @@ Namespace Global.AvaloniaCharts
             Return If(text = "-0", "0", text)
         End Function
 
+        ''' <summary>A readout number for a hovered element (a bar's value, a slice's value): trailing
+        ''' zeros trimmed, and independent of CursorDecimals, which is the cursor readout's own setting
+        ''' on a chart that has crosshairs.</summary>
+        Friend Shared Function FormatReading(value As Double) As String
+            Dim text = value.ToString("0.####", CultureInfo.CurrentCulture)
+            Return If(text = "-0", "0", text)
+        End Function
+
+        ''' <summary>One element's share of the chart's total, as the pie's readout shows it: one decimal,
+        ''' trimmed, then the percent sign.</summary>
+        Friend Shared Function FormatShare(share As Double) As String
+            Return FormatNumber(share, 0.1) & " %"
+        End Function
+
         Private Shared Function MakeCursorPen(color As Color, thickness As Double, style As CursorStyle) As IPen
             Dim pen As New Pen(New SolidColorBrush(color), Math.Max(0.5, thickness), DashForCursor(style))
             pen.LineCap = If(style = CursorStyle.Dot, PenLineCap.Round, PenLineCap.Flat)
@@ -3362,7 +3541,22 @@ Namespace Global.AvaloniaCharts
             End Select
         End Function
 
-        ' ---- cursor input ---------------------------------------------------------------------
+        ' ---- pointer input: the cursor drag, and what the pointer is over ---------------------
+
+        ''' <summary>
+        ''' Hit-tests the pointer on a chart that reports what is under it (see
+        ''' <see cref="SupportsHoverReadout"/>), setting <see cref="Hover"/> or leaving it Nothing. Called
+        ''' on every mouse move with the coordinates of the plot area as the last render laid it out — a
+        ''' chart remembers the shapes it drew (the bars, the wedges) and tests those, so the answer always
+        ''' matches the picture on screen. The default does nothing: a chart with cursors reports through
+        ''' them.
+        ''' </summary>
+        Friend Overridable Sub UpdateHover(point As Point, plot As Rect)
+        End Sub
+
+        ''' <summary>Forgets the element the pointer was over (called when the pointer leaves the chart).</summary>
+        Friend Overridable Sub ClearHover()
+        End Sub
 
         ''' <summary>Moves the cursor being dragged. The vertical line changes X, the horizontal line Y,
         ''' and the handle at the crossing point both at once — the same lines the user sees. A cursor that
@@ -3396,7 +3590,140 @@ Namespace Global.AvaloniaCharts
             Await clipboard.SetTextAsync(_readoutText)
         End Sub
 
-        ''' <summary>The chart's right-click menu: choosing the spreadsheet, which cursors are switched on,
+        ' ---- filling the container (the menu's Fill / Restore, and the Esc key) ------------------
+
+        ''' <summary>True while the chart fills its container (see FillContainer).</summary>
+        Private _filled As Boolean
+
+        ''' <summary>The container whose layout is watched while the chart is filled, so the fill keeps matching
+        ''' it when the window is resized.</summary>
+        Private _fillHost As Control
+
+        ' Exactly what the fill found, so RestorePlacement puts it back — including the "the form does not name
+        ' it" states (Width/Height and Canvas.Left/Top are NaN when they are not set).
+        Private _keepWidth As Double
+        Private _keepHeight As Double
+        Private _keepLeft As Double
+        Private _keepTop As Double
+        Private _keepHAlign As HorizontalAlignment
+        Private _keepVAlign As VerticalAlignment
+        Private _keepMargin As Thickness
+        Private _keepZ As Integer
+        Private _keepRow As Integer
+        Private _keepColumn As Integer
+        Private _keepRowSpan As Integer
+        Private _keepColumnSpan As Integer
+
+        ''' <summary>True while this chart fills its container.</summary>
+        Public ReadOnly Property IsFilled As Boolean
+            Get
+                Return _filled
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' FILLS the chart's container: the chart is stretched, moved to the container's corner, made the size
+        ''' of the container and raised above its siblings, so a small form still gets a chart you can read. The
+        ''' placement the fill found is remembered, so RestorePlacement — the other entry in the chart's own
+        ''' right-click menu, or the Esc key — puts it back exactly.
+        ''' <para>
+        ''' What "the container" means depends on what the chart sits in: a Canvas child is moved to (0,0) and
+        ''' sized to the canvas, a Grid child also spans every row and column (so its rectangle really is the
+        ''' container's and not one cell's), and any other parent is filled with that parent's own rectangle. A
+        ''' StackPanel or WrapPanel lays its children out in a line, so a filled chart there covers them instead
+        ''' of sharing the space — which is what "fill" asks for.
+        ''' </para>
+        ''' <para>Runtime only: the saved form is not touched, exactly like a cursor drag. False when the chart
+        ''' is already filled or has no parent to fill.</para>
+        ''' </summary>
+        Public Function FillContainer() As Boolean
+            Dim host = TryCast(Parent, Visual)
+            If _filled OrElse host Is Nothing Then Return False
+            _keepWidth = Width
+            _keepHeight = Height
+            _keepHAlign = HorizontalAlignment
+            _keepVAlign = VerticalAlignment
+            _keepMargin = Margin
+            _keepZ = ZIndex
+            _keepLeft = Canvas.GetLeft(Me)
+            _keepTop = Canvas.GetTop(Me)
+            _keepRow = Grid.GetRow(Me)
+            _keepColumn = Grid.GetColumn(Me)
+            _keepRowSpan = Grid.GetRowSpan(Me)
+            _keepColumnSpan = Grid.GetColumnSpan(Me)
+            _filled = True
+            ApplyFill(host)
+            ' A filled chart has to keep up with its container: without this a window resize would leave it the
+            ' size it had when the menu entry was clicked.
+            Dim container = TryCast(host, Control)
+            If container IsNot Nothing Then
+                _fillHost = container
+                AddHandler container.LayoutUpdated, AddressOf OnFillHostLaidOut
+            End If
+            Focus()
+            Return True
+        End Function
+
+        ''' <summary>Puts the chart back exactly where FillContainer found it: the chart's own menu offers it, the
+        ''' Esc key does it, and code may call it. False when the chart was not filled.</summary>
+        Public Function RestorePlacement() As Boolean
+            If Not _filled Then Return False
+            _filled = False
+            If _fillHost IsNot Nothing Then
+                RemoveHandler _fillHost.LayoutUpdated, AddressOf OnFillHostLaidOut
+                _fillHost = Nothing
+            End If
+            Width = _keepWidth
+            Height = _keepHeight
+            HorizontalAlignment = _keepHAlign
+            VerticalAlignment = _keepVAlign
+            Margin = _keepMargin
+            ZIndex = _keepZ
+            Canvas.SetLeft(Me, _keepLeft)
+            Canvas.SetTop(Me, _keepTop)
+            Grid.SetRow(Me, _keepRow)
+            Grid.SetColumn(Me, _keepColumn)
+            Grid.SetRowSpan(Me, _keepRowSpan)
+            Grid.SetColumnSpan(Me, _keepColumnSpan)
+            Return True
+        End Function
+
+        ''' <summary>The fill itself: the chart takes the container's whole rectangle and sits on top of its
+        ''' siblings. A Grid child spans the grid first, so the rectangle is the container's own and not one
+        ''' cell's.</summary>
+        Private Sub ApplyFill(host As Visual)
+            HorizontalAlignment = HorizontalAlignment.Stretch
+            VerticalAlignment = VerticalAlignment.Stretch
+            Margin = New Thickness(0)
+            If TypeOf host Is Canvas Then
+                Canvas.SetLeft(Me, 0)
+                Canvas.SetTop(Me, 0)
+            End If
+            Dim grid = TryCast(host, Grid)
+            If grid IsNot Nothing Then
+                Grid.SetRow(Me, 0)
+                Grid.SetColumn(Me, 0)
+                Grid.SetRowSpan(Me, Math.Max(1, grid.RowDefinitions.Count))
+                Grid.SetColumnSpan(Me, Math.Max(1, grid.ColumnDefinitions.Count))
+            End If
+            ZIndex = Math.Max(1000, _keepZ)
+            Width = Math.Max(1, host.Bounds.Width)
+            Height = Math.Max(1, host.Bounds.Height)
+        End Sub
+
+        ''' <summary>Keeps a filled chart the size of its container when the container changes size.</summary>
+        Private Sub OnFillHostLaidOut(sender As Object, e As EventArgs)
+            If Not _filled Then Return
+            Dim host = TryCast(Parent, Visual)
+            If host Is Nothing Then Return
+            Dim width = Math.Max(1, host.Bounds.Width)
+            Dim height = Math.Max(1, host.Bounds.Height)
+            If Math.Abs(Width - width) > 0.5 Then Width = width
+            If Math.Abs(Height - height) > 0.5 Then Height = height
+        End Sub
+
+        ''' <summary>The chart's right-click menu: choosing the spreadsheet, FILLING THE CONTAINER (and putting
+        ''' the chart back), which cursors are switched on,
         ''' where the readout sits, and add / remove / reset / copy. Nothing here is written back to the
         ''' form — the saved defaults are the ones the Cursor Editor sets, and a restart starts from those
         ''' again.
@@ -3415,6 +3742,29 @@ Namespace Global.AvaloniaCharts
 #Enable Warning BC42358
                 End Sub
             items.Add(browseItem)
+
+            ' Filling the container is offered on EVERY chart, cursors or not: it is the one way to read a
+            ' chart on a crowded form. The label says what the click will do, so the same entry is both the
+            ' dock and the undock, and the restore half carries the Esc hint because Esc does the same thing.
+            Dim fillItem As New MenuItem With {
+                .Header = If(_filled, "Restore the original position  (Esc)", "Fill the container")}
+            AddHandler fillItem.Click, Sub(sender As Object, e As RoutedEventArgs)
+                                          If _filled Then
+                                              RestorePlacement()
+                                          Else
+                                              FillContainer()
+                                          End If
+                                      End Sub
+            items.Add(fillItem)
+
+            ' A chart that has no cursors (the pie and the bar) gets no cursor entries at all: the toggles,
+            ' the readout position, add / remove / reset and "copy readout" are every one of them about
+            ' cursors. Those charts report what is under the pointer in the readout panel instead (see
+            ' SupportsHoverReadout), and which slice or series is switched on is the legend's business.
+            If Not SupportsCursors Then
+                OpenChartMenu(items)
+                Return
+            End If
             items.Add(New Separator())
 
             For i = 0 To Math.Min(Cursors.Count, MaxCursors) - 1
@@ -3457,12 +3807,17 @@ Namespace Global.AvaloniaCharts
             items.Add(New Separator())
             items.Add(copyItem)
 
+            OpenChartMenu(items)
+        End Sub
+
+        ''' <summary>Opens the chart's own menu at the pointer.</summary>
+        Private Sub OpenChartMenu(items As List(Of Object))
             Dim menu As New ContextMenu With {.ItemsSource = items, .PlacementTarget = Me}
             menu.Open(Me)
         End Sub
 
         ''' <summary>Resolves the common axis' names: the explicit properties win, then the sheet's headers.</summary>
-        Private Shared Function MakeText(text As String, size As Double, color As Color) As FormattedText
+        Friend Shared Function MakeText(text As String, size As Double, color As Color) As FormattedText
             Return New FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
                                      New Typeface(FontFamily.Default), Math.Max(6, size), New SolidColorBrush(color))
         End Function
@@ -3480,7 +3835,7 @@ Namespace Global.AvaloniaCharts
             Return pen
         End Function
 
-        Private Shared Function DashFor(style As ChartLineStyle) As IDashStyle
+        Friend Shared Function DashFor(style As ChartLineStyle) As IDashStyle
             Select Case style
                 Case ChartLineStyle.Dash
                     Return New DashStyle(New Double() {4, 3}, 0)
@@ -3493,7 +3848,7 @@ Namespace Global.AvaloniaCharts
             End Select
         End Function
 
-        Private Shared Function FormatNumber(value As Double, tickStep As Double) As String
+        Friend Shared Function FormatNumber(value As Double, tickStep As Double) As String
             Dim decimals As Integer = 0
             If tickStep < 1 Then decimals = Math.Min(6, CInt(Math.Ceiling(-Math.Log10(tickStep))) + 1)
             Dim text = value.ToString("0." & New String("#"c, Math.Max(0, decimals)), CultureInfo.CurrentCulture)
@@ -3534,6 +3889,20 @@ Namespace Global.AvaloniaCharts
             If range._max <= range._min Then range._max = range._min + range.TickStep
             Return range
         End Function
+
+        ''' <summary>The fitted minimum (the scale's own bottom).</summary>
+        Friend ReadOnly Property Min As Double
+            Get
+                Return _min
+            End Get
+        End Property
+
+        ''' <summary>The fitted maximum (the scale's own top).</summary>
+        Friend ReadOnly Property Max As Double
+            Get
+                Return _max
+            End Get
+        End Property
 
         ''' <summary>A 1, 2 or 5 (times a power of ten) step that gives roughly the target tick count.</summary>
         Private Shared Function NiceStep(span As Double, target As Integer) As Double
@@ -3822,6 +4191,24 @@ Namespace Global.AvaloniaCharts
             End Get
         End Property
 
+        ''' <summary>
+        ''' A bar chart has no cursors, and its right-click menu therefore carries nothing but the
+        ''' spreadsheet picker. A crosshair reads a value BETWEEN two samples, which is what a line chart
+        ''' has; a bar is one reading per category, so there is nothing to interpolate — the bar under the
+        ''' pointer is reported in the readout panel instead (see SupportsHoverReadout).
+        ''' </summary>
+        Protected Overrides ReadOnly Property SupportsCursors As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        Friend Overrides ReadOnly Property SupportsHoverReadout As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
         Protected Overrides Function InlineData() As ChartData
             ' Not named 'values': VB is case-insensitive and would match the property above.
             Dim samples = If(Values, Array.Empty(Of Double)())
@@ -3833,6 +4220,56 @@ Namespace Global.AvaloniaCharts
 
         Protected Overrides Sub SetInlineData(xs As Double(), ys As Double())
             Values = ys
+        End Sub
+
+        ''' <summary>One bar as the last render drew it, for hit-testing the pointer. A bar is a rectangle,
+        ''' so the test needs no more than that — plus what the readout has to say about it.</summary>
+        Private NotInheritable Class BarHit
+            Friend Rect As Rect
+            ''' <summary>The point's own name (the axis' category), or its X number when it has none.</summary>
+            Friend Category As String = String.Empty
+            ''' <summary>The series' name, or empty when this chart draws a single series: with one bar per
+            ''' category there is nothing to tell apart, so the readout leaves the name out.</summary>
+            Friend Series As String = String.Empty
+            Friend Value As Double
+            Friend Fill As Color = Colors.White
+        End Class
+
+        ''' <summary>Every bar the last render drew, in drawing order, for the pointer test.</summary>
+        Private ReadOnly _barHits As New List(Of BarHit)()
+
+        ''' <summary>The bar in _barHits the pointer is over, or −1. Nothing moves for a bar, so this only
+        ''' saves rebuilding the same readout on every mouse move.</summary>
+        Private _hoverBar As Integer = -1
+
+        ''' <summary>
+        ''' Finds the bar under the pointer — the rectangles the last render drew, tested back to front so
+        ''' the topmost of any that overlap wins — and fills in the readout: the category the pointer is
+        ''' over, the series it belongs to when the chart draws more than one, and its value.
+        ''' </summary>
+        Friend Overrides Sub UpdateHover(point As Point, plot As Rect)
+            For i = _barHits.Count - 1 To 0 Step -1
+                Dim hit = _barHits(i)
+                If Not hit.Rect.Contains(point) Then Continue For
+                If _hoverBar = i Then Return   ' still the same bar: the panel just follows the mouse
+                _hoverBar = i
+                Hover = New ReadoutPanel With {
+                    .Head = hit.Category,
+                    .HeadColor = hit.Fill,
+                    .Body = If(hit.Series.Length > 0,
+                               hit.Series & "   " & FormatReading(hit.Value),
+                               FormatReading(hit.Value)),
+                    .Accent = hit.Fill,
+                    .FollowPointer = True}
+                Return
+            Next
+            ClearHover()
+        End Sub
+
+        ''' <summary>Forgets the hovered bar, so its readout goes with the pointer.</summary>
+        Friend Overrides Sub ClearHover()
+            _hoverBar = -1
+            Hover = Nothing
         End Sub
 
         Protected Overrides Sub OnPropertyChanged(change As AvaloniaPropertyChangedEventArgs)
@@ -3850,10 +4287,13 @@ Namespace Global.AvaloniaCharts
         ''' scale is fitted to the stack's totals (see ChartBase.StackSeries).
         ''' </summary>
         Friend Overrides Sub DrawSeriesLayer(context As DrawingContext, plots As List(Of Plot), plot As Rect)
+            _barHits.Clear()
             If plots.Count = 0 Then Return
             Dim stacked = BarMode <> BarMode.Grouped
             Dim bands = If(stacked, StackBands(plots, BarMode = BarMode.Stacked100), Nothing)
             Dim radius = Math.Max(0, BarCornerRadius)
+            ' Whether the readout has to name the series a bar belongs to: with one series it is obvious.
+            Dim seriesDrawn = plots.Where(Function(p) p.Visible AndAlso p.Data.Ys.Length > 0).Count()
 
             For s = 0 To plots.Count - 1
                 Dim p = plots(s)
@@ -3885,6 +4325,18 @@ Namespace Global.AvaloniaCharts
                     Dim bottom = YAt(p, plot, bases(i))
                     Dim bar As New Rect(x - width / 2, Math.Min(top, bottom), width, Math.Abs(bottom - top))
                     context.DrawRectangle(fill, Nothing, New RoundedRect(bar, radius))
+
+                    ' Remembered so the pointer can be tested against it (see UpdateHover). The value is the
+                    ' series' own, not the height the bar reaches: on a stacked chart the second series' bar
+                    ' starts where the first ended, and its reading is what it adds, not the total so far.
+                    _barHits.Add(New BarHit With {
+                        .Rect = bar,
+                        .Category = If(i < p.Data.Labels.Length AndAlso Not String.IsNullOrWhiteSpace(p.Data.Labels(i)),
+                                       p.Data.Labels(i),
+                                       FormatNumber(p.Data.Xs(i), 1)),
+                        .Series = If(seriesDrawn > 1, LegendName(p, s), String.Empty),
+                        .Value = p.Data.Ys(i),
+                        .Fill = p.LineColor})
                 Next
             Next
         End Sub
@@ -4101,6 +4553,11 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly SliceBorderThicknessProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of GrumpyPiePlot, Double)(NameOf(SliceBorderThickness), 1.0R)
 
+        ''' <summary>How far the slice under the pointer pops out of the ring, in pixels (10 by default,
+        ''' 0 = it stays put and only the readout follows the pointer).</summary>
+        Public Shared ReadOnly HoverExplodeProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyPiePlot, Double)(NameOf(HoverExplode), 10.0R)
+
         ''' <summary>The wedge values (used when the chart has no workbook).</summary>
         <TypeConverter(GetType(DoubleArrayConverter))>
         Public Property Values As Double()
@@ -4173,6 +4630,16 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
+        ''' <summary>How far the slice under the pointer pops out of the ring, in pixels.</summary>
+        Public Property HoverExplode As Double
+            Get
+                Return GetValue(HoverExplodeProperty)
+            End Get
+            Set(value As Double)
+                SetValue(HoverExplodeProperty, value)
+            End Set
+        End Property
+
         ''' <summary>
         ''' The slices the form names: one element per slice that should differ from the palette —
         ''' &lt;charts:PieSlice Title="North" LineColor="#E4572E" Explode="8"/&gt;. A slice the form does not
@@ -4196,6 +4663,17 @@ Namespace Global.AvaloniaCharts
         Protected Overrides ReadOnly Property SupportsCursors As Boolean
             Get
                 Return False
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' The pie reports the slice under the pointer: it pops out of the ring by HoverExplode pixels and
+        ''' its name, its value and its share of the total appear in the readout panel. That is what
+        ''' replaces the cursors here — there is no cartesian frame for a crosshair to read.
+        ''' </summary>
+        Friend Overrides ReadOnly Property SupportsHoverReadout As Boolean
+            Get
+                Return True
             End Get
         End Property
 
@@ -4225,7 +4703,7 @@ Namespace Global.AvaloniaCharts
             If change.Property Is ValuesProperty OrElse change.Property Is LabelsProperty OrElse
                change.Property Is DoughnutPercentProperty OrElse change.Property Is StartAngleProperty OrElse
                change.Property Is SliceGapProperty OrElse change.Property Is SliceBorderColorProperty OrElse
-               change.Property Is SliceBorderThicknessProperty Then
+               change.Property Is SliceBorderThicknessProperty OrElse change.Property Is HoverExplodeProperty Then
                 Reload()
             End If
         End Sub
@@ -4239,6 +4717,81 @@ Namespace Global.AvaloniaCharts
 
         ''' <summary>Stand-ins for the slices the form does not name, kept so the legend's tick boxes stick.</summary>
         Private ReadOnly _sliceStubs As New Dictionary(Of String, PieSlice)()
+
+        ''' <summary>
+        ''' One wedge as the last render drew it, for hit-testing the pointer. The centre kept here is the
+        ''' PIE's, not the slice's exploded one, and the angles are its ends before the gap was taken off:
+        ''' while a slice is popped out it has to stay "under the pointer", so the test is against the pie as
+        ''' it stands rather than against a picture that has just moved out from under the mouse.
+        ''' </summary>
+        Private NotInheritable Class SliceHit
+            ''' <summary>Which plot this wedge was drawn from (its index in the chart's own list).</summary>
+            Friend Index As Integer
+            ''' <summary>The pie's centre.</summary>
+            Friend Centre As Point
+            ''' <summary>The outer radius.</summary>
+            Friend Radius As Double
+            ''' <summary>The hole's radius (0 for a solid pie).</summary>
+            Friend Inner As Double
+            ''' <summary>The wedge's first edge, in the pie's own degrees (0° = 12 o'clock, clockwise).</summary>
+            Friend From As Double
+            ''' <summary>Its second edge, in the same degrees.</summary>
+            Friend [To] As Double
+            Friend Title As String = String.Empty
+            Friend Value As Double
+            ''' <summary>Its share of the visible total, in percent.</summary>
+            Friend Share As Double
+            Friend Fill As Color = Colors.White
+        End Class
+
+        ''' <summary>Every wedge the last render drew, in drawing order, for the pointer test.</summary>
+        Private ReadOnly _sliceHits As New List(Of SliceHit)()
+
+        ''' <summary>The plot index of the wedge the pointer is over, or −1. It only affects the picture:
+        ''' that slice pops out by HoverExplode pixels (see DrawSeriesLayer).</summary>
+        Private _hoverSlice As Integer = -1
+
+        ''' <summary>
+        ''' Finds the wedge under the pointer: inside the ring — a doughnut's hole belongs to no slice — and
+        ''' between that wedge's own two edges, so the pointer over a gap clears the readout instead of
+        ''' blaming a neighbour. The angles are the very degrees the drawing used, so the two cannot
+        ''' disagree.
+        ''' </summary>
+        Friend Overrides Sub UpdateHover(point As Point, plot As Rect)
+            For Each hit In _sliceHits
+                Dim dx = point.X - hit.Centre.X
+                Dim dy = point.Y - hit.Centre.Y
+                Dim distance = Math.Sqrt(dx * dx + dy * dy)
+                If distance > hit.Radius OrElse distance < hit.Inner Then Continue For
+                If Not InWedge(hit, dx, dy) Then Continue For
+                ' Still the same slice: the panel just follows the mouse (nothing to rebuild).
+                If _hoverSlice = hit.Index Then Return
+                _hoverSlice = hit.Index
+                Hover = New ReadoutPanel With {
+                    .Head = hit.Title,
+                    .HeadColor = hit.Fill,
+                    .Body = FormatReading(hit.Value) & "   " & FormatShare(hit.Share),
+                    .Accent = hit.Fill,
+                    .FollowPointer = True}
+                Return
+            Next
+            ClearHover()
+        End Sub
+
+        ''' <summary>Forgets the hovered wedge, so its readout goes with the pointer.</summary>
+        Friend Overrides Sub ClearHover()
+            _hoverSlice = -1
+            Hover = Nothing
+        End Sub
+
+        ''' <summary>True when the vector from the pie's centre to the pointer falls inside one wedge's two
+        ''' edges. OnCircle takes the same degrees, so the test and the drawing agree.</summary>
+        Private Shared Function InWedge(hit As SliceHit, dx As Double, dy As Double) As Boolean
+            Dim degrees = Math.Atan2(dy, dx) * 180.0 / Math.PI
+            Dim relative = (degrees - hit.From) Mod 360.0
+            If relative < 0 Then relative += 360.0
+            Return relative <= hit.[To] - hit.From
+        End Function
 
         ''' <summary>
         ''' One plot per SLICE, which is what makes the shared machinery work: the legend lists the slices
@@ -4290,9 +4843,12 @@ Namespace Global.AvaloniaCharts
         ''' Draws the wedges. Each one is an arc out at the radius and back in at the ring's inner radius
         ''' (or back to the centre for a solid pie), which is one closed path either way — so a doughnut is
         ''' the same drawing with a hole in it. A slice may explode outwards along its own middle, and the
-        ''' gap is taken off both of its edges so the gaps stay even.
+        ''' slice under the pointer pops out by HoverExplode pixels on top of that; the gap is taken off both
+        ''' of a slice's edges so the gaps stay even. Every wedge is remembered as it is drawn, which is what
+        ''' the pointer is tested against afterwards (see UpdateHover).
         ''' </summary>
         Friend Overrides Sub DrawSeriesLayer(context As DrawingContext, plots As List(Of Plot), plot As Rect)
+            _sliceHits.Clear()
             Dim total As Double = 0
             For Each p In plots
                 If p.Visible AndAlso p.Data.HasData Then total += Math.Max(0, p.Data.Ys(0))
@@ -4309,7 +4865,8 @@ Namespace Global.AvaloniaCharts
             If SliceBorderThickness > 0 Then border = MakePen(SliceBorderColor, SliceBorderThickness, ChartLineStyle.Solid)
             Dim angle = StartAngle - 90.0    ' 0° is 12 o'clock; -90° is where a circle's 0 radian sits
 
-            For Each p In plots
+            For i = 0 To plots.Count - 1
+                Dim p = plots(i)
                 If Not p.Visible OrElse Not p.Data.HasData Then Continue For
                 Dim value = Math.Max(0, p.Data.Ys(0))
                 If value <= 0 Then Continue For
@@ -4322,10 +4879,12 @@ Namespace Global.AvaloniaCharts
 
                 Dim origin = centre
                 Dim exploded = TryCast(p.Definition, PieSlice)
-                If exploded IsNot Nothing AndAlso exploded.Explode > 0 Then
+                Dim push As Double = If(exploded Is Nothing, 0.0, exploded.Explode)
+                If i = _hoverSlice Then push += Math.Max(0, HoverExplode)
+                If push > 0 Then
                     Dim middle = (from + [to]) / 2 * Math.PI / 180.0
-                    origin = New Point(centre.X + Math.Cos(middle) * exploded.Explode,
-                                       centre.Y + Math.Sin(middle) * exploded.Explode)
+                    origin = New Point(centre.X + Math.Cos(middle) * push,
+                                       centre.Y + Math.Sin(middle) * push)
                 End If
 
                 Dim large = [to] - from > 180.0
@@ -4342,6 +4901,18 @@ Namespace Global.AvaloniaCharts
                     g.EndFigure(True)
                 End Using
                 context.DrawGeometry(New SolidColorBrush(p.LineColor), border, geometry)
+
+                _sliceHits.Add(New SliceHit With {
+                    .Index = i,
+                    .Centre = centre,
+                    .Radius = radius,
+                    .Inner = inner,
+                    .From = from,
+                    .[To] = [to],
+                    .Title = If(p.Data.Labels.Length > 0, p.Data.Labels(0), "Slice " & (i + 1).ToString(CultureInfo.InvariantCulture)),
+                    .Value = value,
+                    .Share = value / total * 100.0,
+                    .Fill = p.LineColor})
             Next
         End Sub
 
@@ -4349,6 +4920,1213 @@ Namespace Global.AvaloniaCharts
         Private Shared Function OnCircle(centre As Point, radius As Double, degrees As Double) As Point
             Dim radians = degrees * Math.PI / 180.0
             Return New Point(centre.X + Math.Cos(radians) * radius, centre.Y + Math.Sin(radians) * radius)
+        End Function
+    End Class
+
+    ''' <summary>
+    ''' A WATERFALL (spectral) chart: successive samplesets drawn one behind the other as 3D traces — the
+    ''' sample points run across X, each sample's value stands up the Y axis, and every successive set of
+    ''' samples recedes along the depth (Z) axis. This is the picture a spectrum analyser draws while it
+    ''' captures: one sweep per trace, and a peak that walks across the samples from set to set is a ridge the
+    ''' eye can follow.
+    ''' <para>
+    ''' Avalonia has no 3D, so the view is an ORTHOGRAPHIC PROJECTION computed here: the data is mapped into a
+    ''' unit cube (x = samples, y = value, z = set), the cube is turned to Azimuth and seen from Elevation, and
+    ''' every point is projected to a pixel. The traces are then painted from the FARTHEST set to the nearest,
+    ''' so a solid ribbon hides the ones behind it — the painter's algorithm, and what makes a flat picture read
+    ''' as depth. Zoom scales the fitted picture.
+    ''' </para>
+    ''' <para>
+    ''' ONE SERIES IS ONE SAMPLESET — its own spreadsheet column, so the columns C, D, E … are sets 1, 2, 3 … and
+    ''' the row number is the sample point. That is what makes the Series editor, the legend, its tick boxes and
+    ''' the per-series colours work here unchanged: a set's name in the legend is its own Title.
+    ''' </para>
+    ''' <para>
+    ''' The picture can be turned while the app runs: dragging the chart changes the angle, and the saved form is
+    ''' not touched by that (set Elevation and Azimuth to make an angle permanent). The pointer reports the
+    ''' sample it is over in the readout panel; there are no cursors, because a crosshair on a projected cube has
+    ''' nothing to read.
+    ''' </para>
+    ''' </summary>
+    Public Class GrumpyWaterfallPlot
+        Inherits ChartBase
+
+        ''' <summary>The implicit single sampleset, used only when the chart has no series elements.</summary>
+        Public Shared ReadOnly ValuesProperty As StyledProperty(Of Double()) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double())(NameOf(Values))
+
+        ''' <summary>Several samplesets written inline, one per semicolon-separated group
+        ''' (SampleSets="1,2,3; 4,5,6") — a sketch without a workbook. A real capture names one column per
+        ''' sampleset instead (one series each).</summary>
+        Public Shared ReadOnly SampleSetsProperty As StyledProperty(Of Double()()) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double()())(NameOf(SampleSets))
+
+        ''' <summary>How each sampleset is drawn (see WaterfallStyle).</summary>
+        Public Shared ReadOnly RibbonStyleProperty As StyledProperty(Of WaterfallStyle) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, WaterfallStyle)(NameOf(RibbonStyle))
+
+        ''' <summary>How solid a translucent ribbon is, in percent.</summary>
+        Public Shared ReadOnly RibbonOpacityProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double)(NameOf(RibbonOpacity), 80.0R)
+
+        ''' <summary>What decides the colour of a trace (see WaterfallColorMode).</summary>
+        Public Shared ReadOnly ColorModeProperty As StyledProperty(Of WaterfallColorMode) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, WaterfallColorMode)(NameOf(ColorMode))
+
+        ''' <summary>The value the heat map's low end sits at (NaN = the data's own least value).</summary>
+        Public Shared ReadOnly HeatMinProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double)(NameOf(HeatMin), Double.NaN)
+
+        ''' <summary>The value the heat map's top end sits at (NaN = the data's own largest value).</summary>
+        Public Shared ReadOnly HeatMaxProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double)(NameOf(HeatMax), Double.NaN)
+
+        ''' <summary>The value the Split colour mode changes colour at (0 puts one colour below zero and
+        ''' another above it, which is how a negative excursion is made obvious).</summary>
+        Public Shared ReadOnly SplitValueProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double)(NameOf(SplitValue))
+
+        ''' <summary>The colour of everything below SplitValue.</summary>
+        Public Shared ReadOnly BelowColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Color)(NameOf(BelowColor), Color.Parse("#2D7DD2"))
+
+        ''' <summary>The colour of everything above SplitValue.</summary>
+        Public Shared ReadOnly AboveColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Color)(NameOf(AboveColor), Color.Parse("#E4572E"))
+
+        ''' <summary>Join the samplesets with the connectors that make the mesh (off = bare traces).</summary>
+        Public Shared ReadOnly ShowConnectorsProperty As StyledProperty(Of Boolean) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Boolean)(NameOf(ShowConnectors), True)
+
+        ''' <summary>Colour of those connectors in the Sampleset and Split colour modes (the Value mode draws
+        ''' them as part of the heat map instead).</summary>
+        Public Shared ReadOnly ConnectorColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Color)(NameOf(ConnectorColor), Color.Parse("#6B7A8F"))
+
+        ''' <summary>How thick the connectors are (0 = invisible).</summary>
+        Public Shared ReadOnly ConnectorThicknessProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double)(NameOf(ConnectorThickness), 1.0R)
+
+        ''' <summary>One connector every N drawn samples; 0 puts them where they stay readable (about forty per
+        ''' trace), which is what a 2048-point set needs.</summary>
+        Public Shared ReadOnly ConnectorStepProperty As StyledProperty(Of Integer) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Integer)(NameOf(ConnectorStep))
+
+        ''' <summary>How many samples of a trace are DRAWN at most (0 = every one). A 2048-point set thinned to
+        ''' 512 still shows every peak that survives at screen resolution, and the picture stays interactive
+        ''' while it is being turned. The stride is the SAME for every trace, because the mesh joins sample i of
+        ''' one set to sample i of the next — thin them differently and the connectors would lean.</summary>
+        Public Shared ReadOnly MaxPointsProperty As StyledProperty(Of Integer) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Integer)(NameOf(MaxPoints), 512)
+
+        ''' <summary>How far above the floor the chart is seen from, in degrees (0 = edge on, 89 = straight
+        ''' down). 30 shows the ribbons and the mesh at once.</summary>
+        Public Shared ReadOnly ElevationProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double)(NameOf(Elevation), 30.0R)
+
+        ''' <summary>Where the cube is turned to, in degrees (45 is the usual three-quarter view, with the sets
+        ''' receding to the right).</summary>
+        Public Shared ReadOnly AzimuthProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double)(NameOf(Azimuth), 45.0R)
+
+        ''' <summary>How deep the samplesets stand apart, as a fraction of the fitted depth: 1 uses all of it,
+        ''' 0.5 packs them half as deep.</summary>
+        Public Shared ReadOnly ZSpacingProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double)(NameOf(ZSpacing), 1.0R)
+
+        ''' <summary>Scales the fitted picture: 1 fits the cube into the frame, 1.2 makes it larger than the
+        ''' frame (the edges then leave it), 0.8 leaves a margin.</summary>
+        Public Shared ReadOnly ZoomProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, Double)(NameOf(Zoom), 1.0R)
+
+        ''' <summary>The name along the depth axis — what one step in it is ("Sweep", "Run"). Each set's own
+        ''' name in the legend comes from its series Title.</summary>
+        Public Shared ReadOnly ZAxisTitleProperty As StyledProperty(Of String) =
+            AvaloniaProperty.Register(Of GrumpyWaterfallPlot, String)(NameOf(ZAxisTitle))
+
+        ''' <summary>The sampleset of a chart that has no series elements.</summary>
+        <TypeConverter(GetType(DoubleArrayConverter))>
+        Public Property Values As Double()
+            Get
+                Return GetValue(ValuesProperty)
+            End Get
+            Set(value As Double())
+                SetValue(ValuesProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Several samplesets written inline, one per semicolon-separated group.</summary>
+        <TypeConverter(GetType(DoubleSetConverter))>
+        Public Property SampleSets As Double()()
+            Get
+                Return GetValue(SampleSetsProperty)
+            End Get
+            Set(value As Double()())
+                SetValue(SampleSetsProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Ribbon, translucent ribbon, or lines only.</summary>
+        Public Property RibbonStyle As WaterfallStyle
+            Get
+                Return GetValue(RibbonStyleProperty)
+            End Get
+            Set(value As WaterfallStyle)
+                SetValue(RibbonStyleProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How solid a translucent ribbon is, in percent.</summary>
+        Public Property RibbonOpacity As Double
+            Get
+                Return GetValue(RibbonOpacityProperty)
+            End Get
+            Set(value As Double)
+                SetValue(RibbonOpacityProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>What colours the traces.</summary>
+        Public Property ColorMode As WaterfallColorMode
+            Get
+                Return GetValue(ColorModeProperty)
+            End Get
+            Set(value As WaterfallColorMode)
+                SetValue(ColorModeProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Where the heat map's low end sits (NaN = the data's own least value).</summary>
+        Public Property HeatMin As Double
+            Get
+                Return GetValue(HeatMinProperty)
+            End Get
+            Set(value As Double)
+                SetValue(HeatMinProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Where the heat map's top end sits (NaN = the data's own largest value).</summary>
+        Public Property HeatMax As Double
+            Get
+                Return GetValue(HeatMaxProperty)
+            End Get
+            Set(value As Double)
+                SetValue(HeatMaxProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The value the Split colour mode changes colour at.</summary>
+        Public Property SplitValue As Double
+            Get
+                Return GetValue(SplitValueProperty)
+            End Get
+            Set(value As Double)
+                SetValue(SplitValueProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The colour below the split value.</summary>
+        Public Property BelowColor As Color
+            Get
+                Return GetValue(BelowColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(BelowColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The colour above the split value.</summary>
+        Public Property AboveColor As Color
+            Get
+                Return GetValue(AboveColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(AboveColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Draw the mesh that joins the samplesets.</summary>
+        Public Property ShowConnectors As Boolean
+            Get
+                Return GetValue(ShowConnectorsProperty)
+            End Get
+            Set(value As Boolean)
+                SetValue(ShowConnectorsProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The colour of the connectors.</summary>
+        Public Property ConnectorColor As Color
+            Get
+                Return GetValue(ConnectorColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(ConnectorColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The thickness of the connectors.</summary>
+        Public Property ConnectorThickness As Double
+            Get
+                Return GetValue(ConnectorThicknessProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ConnectorThicknessProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>One connector every N drawn samples (0 = automatic).</summary>
+        Public Property ConnectorStep As Integer
+            Get
+                Return GetValue(ConnectorStepProperty)
+            End Get
+            Set(value As Integer)
+                SetValue(ConnectorStepProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How many samples of a trace are drawn at most (0 = all of them).</summary>
+        Public Property MaxPoints As Integer
+            Get
+                Return GetValue(MaxPointsProperty)
+            End Get
+            Set(value As Integer)
+                SetValue(MaxPointsProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The angle the chart is seen from, in degrees above the floor.</summary>
+        Public Property Elevation As Double
+            Get
+                Return GetValue(ElevationProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ElevationProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Where the cube is turned to, in degrees.</summary>
+        Public Property Azimuth As Double
+            Get
+                Return GetValue(AzimuthProperty)
+            End Get
+            Set(value As Double)
+                SetValue(AzimuthProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How deep the samplesets stand apart.</summary>
+        Public Property ZSpacing As Double
+            Get
+                Return GetValue(ZSpacingProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ZSpacingProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Scales the fitted picture.</summary>
+        Public Property Zoom As Double
+            Get
+                Return GetValue(ZoomProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ZoomProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The name along the depth axis.</summary>
+        Public Property ZAxisTitle As String
+            Get
+                Return GetValue(ZAxisTitleProperty)
+            End Get
+            Set(value As String)
+                SetValue(ZAxisTitleProperty, value)
+            End Set
+        End Property
+
+        Protected Overrides ReadOnly Property ImplicitXFromIndex As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        ''' <summary>The ribbons fill down to zero, so zero is always on the amplitude scale.</summary>
+        Protected Overrides ReadOnly Property ZeroBaseline As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        ''' <summary>No cartesian frame: this chart draws its own three axes in projection, so the base's axis
+        ''' furniture steps aside and the drawing gets the whole frame.</summary>
+        Protected Overrides ReadOnly Property HasCartesianAxes As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property SupportsCursors As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        ''' <summary>The pointer reports the sample under it — there is nothing else on this chart to grab, and
+        ''' the numbers it reads are the whole point of a waterfall.</summary>
+        Friend Overrides ReadOnly Property SupportsHoverReadout As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        Protected Overrides Function InlineData() As ChartData
+            Dim samples = If(Values, Array.Empty(Of Double)())
+            Return New ChartData With {
+                .Xs = Enumerable.Range(0, samples.Length).Select(Function(i) CDbl(i)).ToArray(),
+                .Ys = samples
+            }
+        End Function
+
+        Protected Overrides Sub SetInlineData(xs As Double(), ys As Double())
+            Values = ys
+        End Sub
+
+        Protected Overrides Sub OnPropertyChanged(change As AvaloniaPropertyChangedEventArgs)
+            MyBase.OnPropertyChanged(change)
+            If change.Property Is ValuesProperty OrElse change.Property Is SampleSetsProperty Then
+                ' The data itself changed: the read is cached, so it has to be dropped as well.
+                Reload()
+            ElseIf change.Property Is RibbonStyleProperty OrElse change.Property Is RibbonOpacityProperty OrElse
+                   change.Property Is ColorModeProperty OrElse change.Property Is HeatMinProperty OrElse
+                   change.Property Is HeatMaxProperty OrElse change.Property Is SplitValueProperty OrElse
+                   change.Property Is BelowColorProperty OrElse change.Property Is AboveColorProperty OrElse
+                   change.Property Is ShowConnectorsProperty OrElse change.Property Is ConnectorColorProperty OrElse
+                   change.Property Is ConnectorThicknessProperty OrElse change.Property Is ConnectorStepProperty OrElse
+                   change.Property Is MaxPointsProperty OrElse change.Property Is ElevationProperty OrElse
+                   change.Property Is AzimuthProperty OrElse change.Property Is ZSpacingProperty OrElse
+                   change.Property Is ZoomProperty OrElse change.Property Is ZAxisTitleProperty Then
+                ' Appearance: the data is fine, only the picture has to be drawn again.
+                InvalidateVisual()
+            End If
+        End Sub
+
+        ''' <summary>The colours of the Value mode's heat map, from the least value to the greatest: a spectrum
+        ''' analyser's blue → cyan → green → yellow → red.</summary>
+        Private Shared ReadOnly HeatPalette As Color() = {
+            Color.Parse("#1B2A6B"), Color.Parse("#1E88E5"), Color.Parse("#43A047"), Color.Parse("#FDD835"),
+            Color.Parse("#E53935")
+        }
+
+        ''' <summary>The colours the samplesets take when a chart written INLINE has no series to colour them:
+        ''' successive sets must be tellable apart, so they walk a palette the way the pie's slices do.</summary>
+        Private Shared ReadOnly SetPalette As Color() = {
+            Color.Parse("#2D7DD2"), Color.Parse("#E4572E"), Color.Parse("#3FA34D"), Color.Parse("#F2A541"),
+            Color.Parse("#8367C7"), Color.Parse("#00A6A6"), Color.Parse("#C05780"), Color.Parse("#6B7A8F"),
+            Color.Parse("#8CB369"), Color.Parse("#B5651D")
+        }
+
+        ''' <summary>One projected sample, kept so the pointer can be tested against the picture that is on
+        ''' screen rather than against the model.</summary>
+        Private NotInheritable Class SampleHit
+            Friend Screen As Point
+            Friend SetIndex As Integer
+            Friend Name As String = String.Empty
+            Friend Fill As Color = Colors.White
+            Friend Sample As Double
+            Friend Value As Double
+        End Class
+
+        ''' <summary>Every sample the last render drew, for the pointer test.</summary>
+        Private ReadOnly _sampleHits As New List(Of SampleHit)()
+
+        ''' <summary>The sample the pointer is over (or Nothing), kept so the panel is only rebuilt when the
+        ''' pointer moves from one sample to another.</summary>
+        Private _hoverSample As SampleHit
+
+        ''' <summary>Dragging the chart turns the view. Runtime state only: the angles a form opens with are
+        ''' its Elevation and Azimuth properties.</summary>
+        Private _rotateDrag As Boolean
+        Private _rotateFrom As Point
+        Private _rotateElevation As Double
+        Private _rotateAzimuth As Double
+
+        ''' <summary>
+        ''' The ORTHOGRAPHIC VIEW: a point of the unit cube (x = samples 0…1, y = value 0…1, z = sampleset 0…1)
+        ''' to a pixel. Built once per render from the two angles, the zoom and the plot area, then asked for
+        ''' every point — which is why projecting a whole 2048-point set is nothing more than a multiply and an
+        ''' add per coordinate.
+        ''' </summary>
+        Private NotInheritable Class WaterfallView
+            Friend CosAzimuth As Double
+            Friend SinAzimuth As Double
+            Friend CosElevation As Double
+            Friend SinElevation As Double
+            Friend Scale As Double
+            Friend Origin As Point
+
+            ''' <summary>To the screen: turn the cube by the azimuth, tip it by the elevation, drop the depth.</summary>
+            Friend Function Project(x As Double, y As Double, z As Double) As Point
+                Dim turned = x * CosAzimuth + z * SinAzimuth
+                Dim viewDepth = -x * SinAzimuth + z * CosAzimuth
+                Dim up = y * CosElevation + viewDepth * SinElevation
+                Return New Point(Origin.X + turned * Scale, Origin.Y - up * Scale)
+            End Function
+
+            ''' <summary>How near the eye a point is: the larger, the nearer. This is what puts the traces in
+            ''' paint order (farthest first), so a nearer ribbon hides the ones behind it. The sign matters and
+            ''' is easy to get backwards — with the screen directions this projection produces, the floor's
+            ''' z = 0 edge is the FRONT one, and drawing that first would let the ribbons at the back paint over
+            ''' the ones in front (measured: the far set showed 27% more of itself than the near one, which is
+            ''' what a backwards painter's order looks like).</summary>
+            Friend Function Depth(x As Double, y As Double, z As Double) As Double
+                Dim viewDepth = -x * SinAzimuth + z * CosAzimuth
+                Return y * SinElevation - viewDepth * CosElevation
+            End Function
+
+            ''' <summary>The screen direction of a step along one of the world axes, as a unit vector in pixels.
+            ''' The tick marks and the labels of the projected axes are laid out with it.</summary>
+            Friend Function Direction(dx As Double, dy As Double, dz As Double) As Point
+                Dim turned = dx * CosAzimuth + dz * SinAzimuth
+                Dim depth = -dx * SinAzimuth + dz * CosAzimuth
+                Dim up = dy * CosElevation + depth * SinElevation
+                Dim length = Math.Sqrt(turned * turned + up * up)
+                If length <= 0 Then Return New Point(0, -1)
+                Return New Point(turned / length, -up / length)
+            End Function
+        End Class
+
+        ''' <summary>
+        ''' The chart's data in the picture's own terms: the two scales (what value is 0 and what is 1 in the
+        ''' cube), the depth each sampleset stands at, and the view itself. Every drawing step is handed one of
+        ''' these, so no step has to remember how a value becomes a pixel.
+        ''' </summary>
+        Private NotInheritable Class WaterfallWorld
+            Friend View As WaterfallView
+            Friend Xs As AxisRange = New AxisRange()
+            Friend Ys As AxisRange = New AxisRange()
+            Friend Sets As Integer
+            Friend Depth As Double = 1.0
+
+            ''' <summary>The samples, across the cube from 0 to 1.</summary>
+            Friend Function UnitX(x As Double) As Double
+                Return Clamp01((x - Xs.Min) / Math.Max(0.000000001, Xs.Max - Xs.Min))
+            End Function
+
+            ''' <summary>The values, up the cube from 0 to 1.</summary>
+            Friend Function UnitY(y As Double) As Double
+                Return Clamp01((y - Ys.Min) / Math.Max(0.000000001, Ys.Max - Ys.Min))
+            End Function
+
+            ''' <summary>How deep one sampleset stands: the first at the front, the last at the back. A chart
+            ''' with a single set stands it in the middle of the depth, where the floor is widest.</summary>
+            Friend Function UnitZ(setIndex As Integer) As Double
+                If Sets <= 1 Then Return Depth / 2
+                Return setIndex / CDbl(Sets - 1) * Depth
+            End Function
+
+            ''' <summary>A point of the picture.</summary>
+            Friend Function At(x As Double, y As Double, setIndex As Integer) As Point
+                Return View.Project(UnitX(x), UnitY(y), UnitZ(setIndex))
+            End Function
+
+            ''' <summary>A point on the floor, where the ribbons end and the gridlines run.</summary>
+            Friend Function Base(x As Double, setIndex As Integer) As Point
+                Return View.Project(UnitX(x), UnitY(0), UnitZ(setIndex))
+            End Function
+
+            Private Shared Function Clamp01(value As Double) As Double
+                If value < 0 Then Return 0
+                If value > 1 Then Return 1
+                Return value
+            End Function
+        End Class
+
+        ''' <summary>The view for one render: the angles clamped to what can be drawn, then FITTED — the cube's
+        ''' own corners decide the scale, so the picture can never leave the frame by accident, whatever the
+        ''' angles are.</summary>
+        Private Function MakeView(plot As Rect) As WaterfallView
+            Dim elevationAngle = Math.Clamp(Elevation, 0, 89) * Math.PI / 180.0
+            Dim azimuthAngle = Azimuth * Math.PI / 180.0
+            Dim view As New WaterfallView With {
+                .CosElevation = Math.Cos(elevationAngle),
+                .SinElevation = Math.Sin(elevationAngle),
+                .CosAzimuth = Math.Cos(azimuthAngle),
+                .SinAzimuth = Math.Sin(azimuthAngle),
+                .Scale = 1,
+                .Origin = New Point(0, 0)}
+            Dim depth = Math.Clamp(ZSpacing, 0.1, 4)
+            Dim minX = Double.MaxValue
+            Dim maxX = Double.MinValue
+            Dim minY = Double.MaxValue
+            Dim maxY = Double.MinValue
+            For Each x In New Double() {0, 1}
+                For Each y In New Double() {0, 1}
+                    For Each z In New Double() {0, depth}
+                        Dim corner = view.Project(x, y, z)
+                        minX = Math.Min(minX, corner.X)
+                        maxX = Math.Max(maxX, corner.X)
+                        minY = Math.Min(minY, corner.Y)
+                        maxY = Math.Max(maxY, corner.Y)
+                    Next
+                Next
+            Next
+            Dim wide = Math.Max(0.000001, maxX - minX)
+            Dim tall = Math.Max(0.000001, maxY - minY)
+            view.Scale = Math.Min(plot.Width / wide, plot.Height / tall) * Math.Clamp(Zoom, 0.2, 5)
+            view.Origin = New Point(
+                plot.X + (plot.Width - wide * view.Scale) / 2 - minX * view.Scale,
+                plot.Y + (plot.Height - tall * view.Scale) / 2 - minY * view.Scale)
+            Return view
+        End Function
+
+        ''' <summary>
+        ''' One sampleset per series: the series' own Y column, else the chart's YColumn and then the next column
+        ''' along (C, D, E …), read with the sample NUMBER along X — a spectrum per column is how a capture is
+        ''' laid out.
+        ''' </summary>
+        Friend Overrides Function BuildPlots() As List(Of Plot)
+            Dim plots As New List(Of Plot)()
+            If Series.Count = 0 Then
+                Dim sets = SampleSets
+                If sets IsNot Nothing AndAlso sets.Length > 0 Then
+                    ' A chart sketched inline: one sampleset per semicolon-separated group, each in its own
+                    ' colour of the palette so successive sets can be told apart.
+                    For i = 0 To sets.Length - 1
+                        plots.Add(New Plot With {
+                            .Data = New ChartData With {
+                                .Xs = Enumerable.Range(1, sets(i).Length).Select(Function(n) CDbl(n)).ToArray(),
+                                .Ys = sets(i)
+                            },
+                            .LineColor = SetPalette(i Mod SetPalette.Length),
+                            .LineThickness = LineThickness,
+                            .LineStyle = LineStyle})
+                    Next
+                Else
+                    plots.Add(New Plot With {
+                        .Data = Sampleset(Nothing, If(YColumn, "C")),
+                        .LineColor = LineColor,
+                        .LineThickness = LineThickness,
+                        .LineStyle = LineStyle})
+                End If
+            Else
+                For i = 0 To Series.Count - 1
+                    Dim one = Series(i)
+                    plots.Add(New Plot With {
+                        .Data = Sampleset(one, SamplesetColumn(one, i)),
+                        .Definition = one,
+                        .LineColor = one.LineColor,
+                        .LineThickness = one.LineThickness,
+                        .LineStyle = one.LineStyle,
+                        .Visible = one.Visible})
+                Next
+            End If
+
+            ' ONE sample axis and ONE amplitude axis for the whole picture: the sets are stacked along the
+            ' depth, so a scale per series would draw two peaks at two heights and claim they are equal.
+            Dim xs = plots.SelectMany(Function(p) p.Data.Xs).ToList()
+            Dim ys = plots.SelectMany(Function(p) p.Data.Ys).ToList()
+            ys.Add(0.0)   ' the ribbons fill down to zero
+            If xs.Count = 0 Then
+                xs.Add(0.0)
+                xs.Add(1.0)
+            End If
+            If ys.Count = 0 Then
+                ys.Add(0.0)
+                ys.Add(1.0)
+            End If
+            Dim xr = AxisRange.Over(xs, MinX, MaxX, 6, 1)
+            Dim yr = AxisRange.Over(ys, MinY, MaxY, 5, 5)
+            For Each one In plots
+                one.XRange = xr
+                one.YRange = yr
+            Next
+            Return plots
+        End Function
+
+        ''' <summary>The column one sampleset reads: the series' own, else the chart's YColumn and then the next
+        ''' column along (C, D, E …).</summary>
+        Private Function SamplesetColumn(one As ChartSeries, index As Integer) As String
+            If Not String.IsNullOrWhiteSpace(one.YColumn) Then Return one.YColumn
+            Return SpreadsheetReader.ColumnAfter(If(YColumn, "C"), index)
+        End Function
+
+        ''' <summary>One sampleset's values, with the samples numbered the way an analyser numbers them: the
+        ''' reader counts rows from 0, a waterfall counts sample POINTS from 1. The result is a copy, because
+        ''' what was read is cached for every chart that reads those columns.</summary>
+        Private Function Sampleset(one As ChartSeries, yColumn As String) As ChartData
+            Dim data = DataFor(If(XColumn, "B"), yColumn, True)
+            If data.Error IsNot Nothing Then Return data
+            Return New ChartData With {
+                .Xs = data.Xs.Select(Function(x) x + 1).ToArray(),
+                .Ys = data.Ys,
+                .Labels = data.Labels,
+                .XTitle = data.XTitle,
+                .YTitle = data.YTitle}
+        End Function
+
+        ''' <summary>
+        ''' Draws the picture: the floor and the three axes first, then the samplesets from the faintest
+        ''' (farthest) to the nearest, each set's ribbon or trace followed by its own thin trace line and then
+        ''' the connectors that join it to the set in front. Drawing the connectors there, and not in a pass of
+        ''' their own, is what lets a nearer ribbon cover the mesh behind it — the mesh only shows where it would
+        ''' really be seen.
+        ''' </summary>
+        Friend Overrides Sub DrawSeriesLayer(context As DrawingContext, plots As List(Of Plot), plot As Rect)
+            _sampleHits.Clear()
+            Dim visible = plots.Where(Function(p) p.Visible AndAlso p.Data.HasData).ToList()
+            If visible.Count = 0 Then Return
+
+            Dim world As New WaterfallWorld With {
+                .View = MakeView(plot),
+                .Sets = visible.Count,
+                .Depth = Math.Clamp(ZSpacing, 0.1, 4)}
+            world.Xs = visible(0).XRange
+            world.Ys = visible(0).YRange
+            ' The heat map's ends default to the DATA's own least and greatest value (not the scale's), so the
+            ' picture uses the whole map: a peak is the map's top colour, whatever the axis' round numbers are.
+            Dim samples = visible.SelectMany(Function(p) p.Data.Ys).ToList()
+            Dim low As Double = If(Double.IsNaN(HeatMin), If(samples.Count > 0, samples.Min(), 0.0), HeatMin)
+            Dim high As Double = If(Double.IsNaN(HeatMax), If(samples.Count > 0, samples.Max(), 1.0), HeatMax)
+            If high <= low Then high = low + 1
+
+            ' ONE stride for every set, and the last sample always kept, so the mesh joins like to like.
+            Dim count = visible.Max(Function(p) p.Data.Xs.Length)
+            Dim stride As Integer = 1
+            If MaxPoints > 0 AndAlso count > MaxPoints Then stride = CInt(Math.Ceiling(count / CDbl(MaxPoints)))
+            Dim kept As New List(Of Integer)()
+            For i = 0 To count - 1 Step stride
+                kept.Add(i)
+            Next
+            If count > 0 AndAlso kept(kept.Count - 1) <> count - 1 Then kept.Add(count - 1)
+
+            DrawFloor(context, world, visible.Count)
+
+            ' Farthest first, decided by the projection itself (the two angles say which set is the far one).
+            Dim order = Enumerable.Range(0, visible.Count).
+                OrderBy(Function(i) world.View.Depth(0.5, 0.5, world.UnitZ(i))).ToList()
+            Dim everyNth As Integer = If(ConnectorStep > 0, ConnectorStep, Math.Max(1, kept.Count \ 40))
+
+            For rank = 0 To order.Count - 1
+                Dim setIndex = order(rank)
+                Dim trace = visible(setIndex)
+                Dim xs = kept.Where(Function(i) i < trace.Data.Xs.Length).
+                    Select(Function(i) trace.Data.Xs(i)).ToArray()
+                Dim ys = kept.Where(Function(i) i < trace.Data.Ys.Length).
+                    Select(Function(i) trace.Data.Ys(i)).ToArray()
+                If xs.Length < 2 Then Continue For
+
+                ' The set in FRONT of this one is the next in the paint order, so its connectors are drawn
+                ' here — over this ribbon, and before the ribbon that will cover them.
+                Dim front As Plot = Nothing
+                Dim frontSet = setIndex
+                If rank + 1 < order.Count Then
+                    front = visible(order(rank + 1))
+                    frontSet = order(rank + 1)
+                End If
+
+                DrawRibbon(context, world, setIndex, xs, ys, trace, low, high)
+                DrawTrace(context, world, setIndex, xs, ys, trace, low, high)
+                If ShowConnectors AndAlso front IsNot Nothing Then
+                    DrawConnectors(context, world, setIndex, xs, ys, front, frontSet, low, high, kept, everyNth)
+                End If
+                RecordSamples(world, setIndex, xs, ys, trace)
+            Next
+        End Sub
+
+        ''' <summary>The key that decides whether the hover panel has to be rebuilt: the sample the pointer is
+        ''' over, which changes as the picture is turned even while the pointer stands still.</summary>
+        Private Shared Function HoverKey(hit As SampleHit) As String
+            If hit Is Nothing Then Return String.Empty
+            Return hit.SetIndex & "|" & hit.Sample & "|" & hit.Value
+        End Function
+
+        ''' <summary>Finds the sample nearest the pointer — the projected positions of the last render, so the
+        ''' answer matches the picture, and a radius in pixels, so the pointer has to be near something to
+        ''' report it.</summary>
+        Friend Overrides Sub UpdateHover(point As Point, plot As Rect)
+            Dim best As SampleHit = Nothing
+            Dim nearest As Double = 16
+            For Each hit In _sampleHits
+                Dim dx = hit.Screen.X - point.X
+                Dim dy = hit.Screen.Y - point.Y
+                Dim distance = Math.Sqrt(dx * dx + dy * dy)
+                If distance >= nearest Then Continue For
+                nearest = distance
+                best = hit
+            Next
+            If HoverKey(best) = HoverKey(_hoverSample) Then Return
+            _hoverSample = best
+            If best Is Nothing Then
+                Hover = Nothing
+                Return
+            End If
+            Hover = New ReadoutPanel With {
+                .Head = best.Name,
+                .HeadColor = best.Fill,
+                .Body = "X " & FormatReading(best.Sample) & "   Y " & FormatReading(best.Value),
+                .Accent = best.Fill,
+                .FollowPointer = True}
+        End Sub
+
+        ''' <summary>Forgets the sample the pointer was over.</summary>
+        Friend Overrides Sub ClearHover()
+            _hoverSample = Nothing
+            Hover = Nothing
+        End Sub
+
+        ''' <summary>Dragging turns the picture: sideways turns the azimuth, up and down change the elevation
+        ''' it is seen from (drag down to look from higher). The saved form is not touched — the angles a form
+        ''' opens with are its Elevation and Azimuth properties.</summary>
+        Protected Overrides Sub OnPointerPressed(e As PointerPressedEventArgs)
+            MyBase.OnPointerPressed(e)
+            If Not e.GetCurrentPoint(Me).Properties.IsLeftButtonPressed Then Return
+            _rotateDrag = True
+            _rotateFrom = e.GetPosition(Me)
+            _rotateElevation = Elevation
+            _rotateAzimuth = Azimuth
+            Focus()
+            e.Pointer.Capture(Me)
+            e.Handled = True
+        End Sub
+
+        Protected Overrides Sub OnPointerMoved(e As PointerEventArgs)
+            MyBase.OnPointerMoved(e)
+            If Not _rotateDrag Then Return
+            Dim position = e.GetPosition(Me)
+            Elevation = Math.Clamp(_rotateElevation + (position.Y - _rotateFrom.Y) * 0.5, 2, 89)
+            Azimuth = _rotateAzimuth + (position.X - _rotateFrom.X) * 0.5
+            InvalidateVisual()
+        End Sub
+
+        Protected Overrides Sub OnPointerReleased(e As PointerReleasedEventArgs)
+            MyBase.OnPointerReleased(e)
+            If Not _rotateDrag Then Return
+            _rotateDrag = False
+            e.Pointer.Capture(Nothing)
+            e.Handled = True
+        End Sub
+
+        ''' <summary>Remembers a trace's projected samples, so the pointer can be tested against them.</summary>
+        Private Sub RecordSamples(world As WaterfallWorld, setIndex As Integer, xs As Double(), ys As Double(),
+                                  trace As Plot)
+            Dim name = LegendName(trace, setIndex)
+            For i = 0 To xs.Length - 1
+                _sampleHits.Add(New SampleHit With {
+                    .Screen = world.At(xs(i), ys(i), setIndex),
+                    .SetIndex = setIndex,
+                    .Name = name,
+                    .Fill = trace.LineColor,
+                    .Sample = xs(i),
+                    .Value = ys(i)})
+            Next
+        End Sub
+
+        ''' <summary>
+        ''' The floor the traces stand on, with its gridlines and its three axes. Reading a 3D picture needs the
+        ''' floor more than anything else: it is what says how deep the sets stand and where the value zero is.
+        ''' The axes are drawn where a reader expects them — samples across the front, values up the left, sets
+        ''' receding along the depth — and every one of them takes its colour, thickness and font from the
+        ''' chart-level axis properties, because a projected axis is not one of the base's two cartesian axes.
+        ''' </summary>
+        Private Sub DrawFloor(context As DrawingContext, world As WaterfallWorld, sets As Integer)
+            Dim xMin = world.Xs.Min
+            Dim xMax = world.Xs.Max
+            Dim last = sets - 1
+            Dim axisPen = MakePen(AxisColor, 1, ChartLineStyle.Solid)
+
+            ' The floor's outline, and the grid on it: the sample lines run back along the depth, the set lines
+            ' run across. Both are drawn first, so the traces cover them where they stand in front.
+            If ShowGrid Then
+                Dim gridPen = MakePen(GridColor, GridThickness, GridStyle)
+                For Each tick In world.Xs.Ticks()
+                    context.DrawLine(gridPen, world.Base(tick, 0), world.Base(tick, last))
+                Next
+                Dim setStep = Math.Max(1, sets \ 20)
+                For setIndex = 0 To sets - 1 Step setStep
+                    context.DrawLine(gridPen, world.Base(xMin, setIndex), world.Base(xMax, setIndex))
+                Next
+            End If
+
+            context.DrawLine(axisPen, world.Base(xMax, 0), world.Base(xMax, last))
+            context.DrawLine(axisPen, world.Base(xMax, last), world.Base(xMin, last))
+            If Not ShowAxes Then Return
+
+            ' The three axes themselves: X along the front floor edge, Y up the left, Z back along the depth.
+            Dim front = world.Base(xMin, 0)
+            Dim xEnd = world.Base(xMax, 0)
+            Dim yEnd = world.View.Project(world.UnitX(xMin), 1, world.UnitZ(0))
+            Dim zEnd = world.Base(xMin, last)
+            context.DrawLine(axisPen, front, xEnd)
+            context.DrawLine(axisPen, front, yEnd)
+            If sets > 1 Then context.DrawLine(axisPen, front, zEnd)
+
+            Dim down = world.View.Direction(0, -1, 0)
+            Dim left = world.View.Direction(-1, 0, 0)
+            Dim tickLength = Math.Max(0, MajorTickLength)
+            Dim font = TickLabelFontSize
+
+            For Each value In world.Xs.Ticks()
+                Dim at = world.Base(value, 0)
+                If ShowMajorTicks Then
+                    context.DrawLine(axisPen, at, New Point(at.X + down.X * tickLength, at.Y + down.Y * tickLength))
+                End If
+                If Not ShowTickLabels Then Continue For
+                Dim text = MakeText(FormatNumber(value, world.Xs.TickStep), font, AxisColor)
+                context.DrawText(text, New Point(at.X - text.Width / 2 + down.X * (tickLength + 2),
+                                                 at.Y + down.Y * (tickLength + 2)))
+            Next
+
+            For Each value In world.Ys.Ticks()
+                Dim at = world.View.Project(world.UnitX(xMin), world.UnitY(value), world.UnitZ(0))
+                If ShowMajorTicks Then
+                    context.DrawLine(axisPen, at, New Point(at.X + left.X * tickLength, at.Y + left.Y * tickLength))
+                End If
+                If Not ShowTickLabels Then Continue For
+                Dim text = MakeText(FormatNumber(value, world.Ys.TickStep), font, AxisColor)
+                context.DrawText(text, New Point(at.X + left.X * (tickLength + 2) - text.Width,
+                                                 at.Y - text.Height / 2))
+            Next
+
+            ' The depth ticks are the samplesets themselves, numbered the way the legend lists them. With a wall
+            ' of sets they would overprint each other, so they are thinned out.
+            If sets > 1 Then
+                Dim setStep = Math.Max(1, sets \ 12)
+                For setIndex = 0 To sets - 1 Step setStep
+                    Dim at = world.Base(xMin, setIndex)
+                    If ShowMajorTicks Then
+                        context.DrawLine(axisPen, at, New Point(at.X + left.X * tickLength, at.Y + left.Y * tickLength))
+                    End If
+                    If Not ShowTickLabels Then Continue For
+                    Dim text = MakeText((setIndex + 1).ToString(CultureInfo.CurrentCulture), font, AxisColor)
+                    context.DrawText(text, New Point(at.X + left.X * (tickLength + 2) - text.Width,
+                                                     at.Y - text.Height / 2))
+                Next
+            End If
+
+            If Not ShowAxisTitles Then Return
+            DrawAxisTitle(context, XAxisTitle, xEnd, down, tickLength + 4, font)
+            DrawAxisTitle(context, YAxisTitle, yEnd, New Point(0, -1), tickLength + 4, font)
+            DrawAxisTitle(context, ZAxisTitle, zEnd, left, tickLength + 4, font)
+        End Sub
+
+        ''' <summary>One axis name, offset from the end of its axis along SIDE so it reads beside the axis
+        ''' rather than on top of it.</summary>
+        Private Sub DrawAxisTitle(context As DrawingContext, title As String, at As Point, side As Point,
+                                  gap As Double, font As Double)
+            If String.IsNullOrWhiteSpace(title) Then Return
+            Dim text = MakeText(title, font, AxisColor)
+            context.DrawText(text, New Point(at.X + side.X * gap - text.Width / 2, at.Y + side.Y * gap - text.Height))
+        End Sub
+
+        ''' <summary>
+        ''' One sampleset's fill, by style and colour: a solid ribbon in its own colour, the same see-through, or
+        ''' the heat map — and in the Split mode two bands either side of the limit (see DrawSplitRibbon). The
+        ''' Lines style fills nothing at all.
+        ''' </summary>
+        Private Sub DrawRibbon(context As DrawingContext, world As WaterfallWorld, setIndex As Integer,
+                               xs As Double(), ys As Double(), trace As Plot, low As Double, high As Double)
+            If RibbonStyle = WaterfallStyle.Lines Then Return
+            Dim opacity As Double = If(RibbonStyle = WaterfallStyle.Translucent,
+                                       Math.Clamp(RibbonOpacity, 0, 100) / 100.0, 1.0)
+            If ColorMode = WaterfallColorMode.Split Then
+                DrawSplitRibbon(context, world, setIndex, xs, ys, opacity)
+                Return
+            End If
+
+            Dim fill As IBrush = If(ColorMode = WaterfallColorMode.Value,
+                                    HeatBrush(world, setIndex, low, high),
+                                    New SolidColorBrush(trace.LineColor, opacity))
+
+            Dim geometry As New StreamGeometry()
+            Using g = geometry.Open()
+                g.BeginFigure(world.Base(xs(0), setIndex), True)
+                For i = 0 To xs.Length - 1
+                    g.LineTo(world.At(xs(i), ys(i), setIndex))
+                Next
+                g.LineTo(world.At(xs(xs.Length - 1), world.Ys.Min, setIndex))
+                g.EndFigure(True)
+            End Using
+            context.DrawGeometry(fill, Nothing, geometry)
+        End Sub
+
+        ''' <summary>
+        ''' The Split mode's two fills for one sampleset: the part of the ribbon BELOW SplitValue in one colour
+        ''' and the part above it in the other, so a limit is visible in the picture instead of in a legend. The
+        ''' trace is cut exactly where it crosses the limit — the top edge is a straight line between two samples,
+        ''' so the crossing is a linear interpolation — which is what makes the two regions meet on a clean line
+        ''' rather than on a stair.
+        ''' </summary>
+        Private Sub DrawSplitRibbon(context As DrawingContext, world As WaterfallWorld, setIndex As Integer,
+                                    xs As Double(), ys As Double(), opacity As Double)
+            Dim limit = SplitValue
+            Dim below As New SolidColorBrush(BelowColor, opacity)
+            Dim above As New SolidColorBrush(AboveColor, opacity)
+
+            ' Everything up to the limit — the whole ribbon where the trace stays under it.
+            Dim lowGeometry As New StreamGeometry()
+            Using g = lowGeometry.Open()
+                g.BeginFigure(world.Base(xs(0), setIndex), True)
+                For i = 0 To xs.Length - 1
+                    g.LineTo(world.At(xs(i), Math.Min(ys(i), limit), setIndex))
+                Next
+                g.LineTo(world.Base(xs(xs.Length - 1), setIndex))
+                g.EndFigure(True)
+            End Using
+            context.DrawGeometry(below, Nothing, lowGeometry)
+
+            ' …and the runs that stand above it, each one closed along the limit itself.
+            Dim cursor = 0
+            While cursor < xs.Length
+                If ys(cursor) <= limit Then
+                    cursor += 1
+                    Continue While
+                End If
+                Dim start = cursor
+                While cursor + 1 < xs.Length AndAlso ys(cursor + 1) > limit
+                    cursor += 1
+                End While
+                Dim finish = cursor
+                Dim geometry As New StreamGeometry()
+                Using g = geometry.Open()
+                    g.BeginFigure(RunEnd(xs, ys, world, setIndex, start, True, limit), True)
+                    For k = start To finish
+                        g.LineTo(world.At(xs(k), ys(k), setIndex))
+                    Next
+                    g.LineTo(RunEnd(xs, ys, world, setIndex, finish, False, limit))
+                    g.EndFigure(True)
+                End Using
+                context.DrawGeometry(above, Nothing, geometry)
+                cursor += 1
+            End While
+        End Sub
+
+        ''' <summary>Where a run of over-the-limit samples meets the limit: the crossing on the segment coming
+        ''' into it, or the sampleset's own first sample when the run starts there (and the same at the far end).</summary>
+        Private Shared Function RunEnd(xs As Double(), ys As Double(), world As WaterfallWorld, setIndex As Integer,
+                                       index As Integer, entry As Boolean, limit As Double) As Point
+            If entry Then
+                If index = 0 Then Return world.At(xs(0), limit, setIndex)
+                Return world.At(CrossX(xs(index - 1), ys(index - 1), xs(index), ys(index), limit), limit, setIndex)
+            End If
+            If index >= xs.Length - 1 Then Return world.At(xs(xs.Length - 1), limit, setIndex)
+            Return world.At(CrossX(xs(index), ys(index), xs(index + 1), ys(index + 1), limit), limit, setIndex)
+        End Function
+
+        ''' <summary>The X where the top edge between two samples passes the limit (a straight line, so the
+        ''' crossing is the linear interpolation between the two values).</summary>
+        Private Shared Function CrossX(x0 As Double, v0 As Double, x1 As Double, v1 As Double, limit As Double) As Double
+            Dim span = v1 - v0
+            If Math.Abs(span) < 0.000000000001 Then Return x1
+            Return x0 + (x1 - x0) * ((limit - v0) / span)
+        End Function
+
+        ''' <summary>
+        ''' One sampleset's own trace line, drawn over its ribbon. In the Split mode the line is cut at the limit
+        ''' too, so the outline agrees with the fill; in the Value mode it carries the heat map's gradient, which is
+        ''' what makes a peak's own tip the map's top colour.
+        ''' </summary>
+        Private Sub DrawTrace(context As DrawingContext, world As WaterfallWorld, setIndex As Integer,
+                              xs As Double(), ys As Double(), trace As Plot, low As Double, high As Double)
+            Dim thickness = If(trace.LineThickness > 0, trace.LineThickness, 1.0)
+            If ColorMode = WaterfallColorMode.Split Then
+                DrawSplitTrace(context, world, setIndex, xs, ys, thickness)
+                Return
+            End If
+            Dim brush As IBrush = If(ColorMode = WaterfallColorMode.Value,
+                                     HeatBrush(world, setIndex, low, high),
+                                     New SolidColorBrush(trace.LineColor))
+            DrawPolyline(context, world, setIndex, xs, ys, MakeBrushPen(brush, thickness, trace.LineStyle))
+        End Sub
+
+        ''' <summary>A pen over an arbitrary brush, so a trace can be drawn with the heat map's gradient. The
+        ''' base's own MakePen takes a colour, which a gradient is not.</summary>
+        Private Shared Function MakeBrushPen(brush As IBrush, thickness As Double, style As ChartLineStyle) As IPen
+            Dim pen As New Pen(brush, Math.Max(0.5, thickness), DashFor(style))
+            pen.LineCap = If(style = ChartLineStyle.Dot, PenLineCap.Round, PenLineCap.Flat)
+            Return pen
+        End Function
+
+        ''' <summary>Draws one sampleset's top edge as a single line.</summary>
+        Private Shared Sub DrawPolyline(context As DrawingContext, world As WaterfallWorld, setIndex As Integer,
+                                        xs As Double(), ys As Double(), pen As IPen)
+            Dim geometry As New StreamGeometry()
+            Using g = geometry.Open()
+                g.BeginFigure(world.At(xs(0), ys(0), setIndex), False)
+                For i = 1 To xs.Length - 1
+                    g.LineTo(world.At(xs(i), ys(i), setIndex))
+                Next
+                g.EndFigure(False)
+            End Using
+            context.DrawGeometry(Nothing, pen, geometry)
+        End Sub
+
+        ''' <summary>The Split mode's trace line, cut at the limit: one geometry for the parts below it and one for
+        ''' the parts above, so the outline is drawn in two passes rather than segment by segment.</summary>
+        Private Sub DrawSplitTrace(context As DrawingContext, world As WaterfallWorld, setIndex As Integer,
+                                   xs As Double(), ys As Double(), thickness As Double)
+            Dim limit = SplitValue
+            Dim belowPen = MakePen(BelowColor, thickness, ChartLineStyle.Solid)
+            Dim abovePen = MakePen(AboveColor, thickness, ChartLineStyle.Solid)
+            Dim belowGeometry As New StreamGeometry()
+            Dim aboveGeometry As New StreamGeometry()
+            Using b = belowGeometry.Open()
+                Using a = aboveGeometry.Open()
+                    For i = 1 To xs.Length - 1
+                        Dim x0 = xs(i - 1)
+                        Dim v0 = ys(i - 1)
+                        Dim x1 = xs(i)
+                        Dim v1 = ys(i)
+                        If (v0 <= limit) = (v1 <= limit) Then
+                            Dim straight = If(v0 <= limit, b, a)
+                            straight.BeginFigure(world.At(x0, v0, setIndex), False)
+                            straight.LineTo(world.At(x1, v1, setIndex))
+                            straight.EndFigure(False)
+                            Continue For
+                        End If
+                        Dim crossing = CrossX(x0, v0, x1, v1, limit)
+                        Dim lower = If(v0 <= limit, b, a)
+                        Dim upper = If(v0 <= limit, a, b)
+                        lower.BeginFigure(world.At(x0, v0, setIndex), False)
+                        lower.LineTo(world.At(crossing, limit, setIndex))
+                        lower.EndFigure(False)
+                        upper.BeginFigure(world.At(crossing, limit, setIndex), False)
+                        upper.LineTo(world.At(x1, v1, setIndex))
+                        upper.EndFigure(False)
+                    Next
+                End Using
+            End Using
+            context.DrawGeometry(Nothing, belowPen, belowGeometry)
+            context.DrawGeometry(Nothing, abovePen, aboveGeometry)
+        End Sub
+
+        ''' <summary>
+        ''' The connectors: for every kept sample, a line from this set's value to the next nearer set's value at
+        ''' the SAME sample — the mesh that turns a row of separate traces into a surface. They are coloured the way
+        ''' the traces are: the heat map's gradient in the Value mode (so the mesh reads as the same field as the
+        ''' ribbons), the split colours in the Split mode, and the connector colour otherwise.
+        ''' </summary>
+        Private Sub DrawConnectors(context As DrawingContext, world As WaterfallWorld, setIndex As Integer,
+                                   xs As Double(), ys As Double(), front As Plot, frontSet As Integer,
+                                   low As Double, high As Double, kept As List(Of Integer), everyNth As Integer)
+            If ConnectorThickness <= 0 Then Return
+            Dim thickness = ConnectorThickness
+            If ColorMode = WaterfallColorMode.Split Then
+                DrawSplitConnectors(context, world, setIndex, xs, ys, front, frontSet, thickness, kept, everyNth)
+                Return
+            End If
+            Dim brush As IBrush = If(ColorMode = WaterfallColorMode.Value,
+                                     HeatBrush(world, setIndex, low, high),
+                                     New SolidColorBrush(ConnectorColor))
+            Dim pen = MakeBrushPen(brush, thickness, ChartLineStyle.Solid)
+
+            Dim geometry As New StreamGeometry()
+            Using g = geometry.Open()
+                Dim i = 0
+                While i < xs.Length
+                    Dim index = kept(Math.Min(i, kept.Count - 1))
+                    If index < front.Data.Xs.Length AndAlso index < front.Data.Ys.Length Then
+                        g.BeginFigure(world.At(xs(i), ys(i), setIndex), False)
+                        g.LineTo(world.At(front.Data.Xs(index), front.Data.Ys(index), frontSet))
+                        g.EndFigure(False)
+                    End If
+                    i += everyNth
+                End While
+            End Using
+            context.DrawGeometry(Nothing, pen, geometry)
+        End Sub
+
+        ''' <summary>The mesh in the Split mode: every connector is cut at the limit, so the part of the surface
+        ''' above it is drawn in the "above" colour — which is what shows a peak rising out of the floor.</summary>
+        Private Sub DrawSplitConnectors(context As DrawingContext, world As WaterfallWorld, setIndex As Integer,
+                                        xs As Double(), ys As Double(), front As Plot, frontSet As Integer,
+                                        thickness As Double, kept As List(Of Integer), everyNth As Integer)
+            Dim limit = SplitValue
+            Dim belowGeometry As New StreamGeometry()
+            Dim aboveGeometry As New StreamGeometry()
+            Using b = belowGeometry.Open()
+                Using a = aboveGeometry.Open()
+                    Dim i = 0
+                    While i < xs.Length
+                        Dim index = Math.Min(kept(Math.Min(i, kept.Count - 1)),
+                                             Math.Min(front.Data.Xs.Length, front.Data.Ys.Length) - 1)
+                        If index < 0 Then
+                            i += everyNth
+                            Continue While
+                        End If
+                        Dim near = front.Data.Ys(index)
+                        Dim farValue = ys(i)
+                        Dim startPoint = world.At(xs(i), farValue, setIndex)
+                        Dim endPoint = world.At(front.Data.Xs(index), near, frontSet)
+                        ' The connector is a straight line in space, and the projection is linear, so the limit is
+                        ' crossed the same fraction of the way on screen as it is in the values.
+                        Dim crossing As Double = 0.5
+                        If Math.Abs(near - farValue) >= 0.000000000001 Then
+                            crossing = Math.Clamp((limit - farValue) / (near - farValue), 0, 1)
+                        End If
+                        Dim at As New Point(startPoint.X + (endPoint.X - startPoint.X) * crossing,
+                                            startPoint.Y + (endPoint.Y - startPoint.Y) * crossing)
+                        Dim lower = If(farValue <= limit, b, a)
+                        Dim upper = If(farValue <= limit, a, b)
+                        lower.BeginFigure(startPoint, False)
+                        lower.LineTo(at)
+                        lower.EndFigure(False)
+                        upper.BeginFigure(at, False)
+                        upper.LineTo(endPoint)
+                        upper.EndFigure(False)
+                        i += everyNth
+                    End While
+                End Using
+            End Using
+            context.DrawGeometry(Nothing, MakePen(BelowColor, thickness, ChartLineStyle.Solid), belowGeometry)
+            context.DrawGeometry(Nothing, MakePen(AboveColor, thickness, ChartLineStyle.Solid), aboveGeometry)
+        End Sub
+
+        ''' <summary>
+        ''' The Value mode's brush for ONE sampleset: a gradient that runs up the amplitude axis, so any point of
+        ''' the ribbon — or of a connector drawn with the same brush — is coloured by its own value, a peak's tip in
+        ''' the map's top colour and its foot in the bottom one. That is the picture a spectrum waterfall is read
+        ''' for. Each set needs its own brush (the sets stand at different depths), and the gradient's axis is laid
+        ''' PERPENDICULAR to the sample axis: with a slanted view a simply vertical gradient would tint by screen
+        ''' height rather than by value, and the colour bands would not sit level with the data.
+        ''' </summary>
+        Private Function HeatBrush(world As WaterfallWorld, setIndex As Integer, low As Double, high As Double) As IBrush
+            Dim startPoint = world.View.Project(0, world.UnitY(low), world.UnitZ(setIndex))
+            Dim endPoint = world.View.Project(0, world.UnitY(high), world.UnitZ(setIndex))
+            Dim alongX = world.View.Direction(1, 0, 0)
+            Dim up As New Point(alongX.Y, -alongX.X)
+            If up.Y > 0 Then up = New Point(-up.X, -up.Y)
+            Dim span = (endPoint.X - startPoint.X) * up.X + (endPoint.Y - startPoint.Y) * up.Y
+            If span < 1 Then
+                ' The value axis has collapsed on screen (edge on), so a gradient would be one flat colour.
+                Return New SolidColorBrush(HeatColor((low + high) / 2, low, high))
+            End If
+            Dim stops As New GradientStops()
+            For i = 0 To HeatPalette.Length - 1
+                stops.Add(New GradientStop(HeatPalette(i), i / CDbl(HeatPalette.Length - 1)))
+            Next
+            Return New LinearGradientBrush With {
+                .StartPoint = New RelativePoint(startPoint, RelativeUnit.Absolute),
+                .EndPoint = New RelativePoint(New Point(startPoint.X + up.X * span, startPoint.Y + up.Y * span),
+                                              RelativeUnit.Absolute),
+                .GradientStops = stops}
+        End Function
+
+        ''' <summary>The heat map's colour for one value (needed when the value axis is edge on): the value's
+        ''' place between the two ends picks a stop, blended between the two colours it falls between.</summary>
+        Private Shared Function HeatColor(value As Double, low As Double, high As Double) As Color
+            Dim place As Double = 0.5
+            If high - low > 0 Then place = Math.Clamp((value - low) / (high - low), 0, 1)
+            Dim scaled = place * (HeatPalette.Length - 1)
+            Dim index = Math.Min(HeatPalette.Length - 2, CInt(Math.Floor(scaled)))
+            Dim f = scaled - index
+            Dim first = HeatPalette(index)
+            Dim second = HeatPalette(index + 1)
+            Return Color.FromArgb(255,
+                CByte(Math.Round(first.R + (second.R - first.R) * f)),
+                CByte(Math.Round(first.G + (second.G - first.G) * f)),
+                CByte(Math.Round(first.B + (second.B - first.B) * f)))
         End Function
     End Class
 

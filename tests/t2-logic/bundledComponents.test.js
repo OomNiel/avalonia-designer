@@ -121,8 +121,17 @@ internal static class PickerFolderMemory { internal static string? LastFolder { 
     // the newest token the current file has: not the pre-series `PlotBackOpacityProperty` (every copy ever
     // shipped has it, so it detected nothing), not `XYSeries` (the multi-series copies have it), and no
     // longer `ChartCursor`, `DrawnColor`, `LegendMargin` or `Padding` either.
+    // 2026-09-22, later: the `GrumpyWaterfallPlot` type. And then the FILL / RESTORE feature: every chart's
+    // right-click menu gained "Fill the container" / "Restore the original position (Esc)". That adds no
+    // XAML attribute, so the trap is different — the copy in ChartTestCS already carried the waterfall
+    // marker, so a marker still on `GrumpyWaterfallPlot` called that copy CURRENT and the user got neither
+    // the new menu nor a refresh prompt. A behaviour change in an existing type moves the marker too.
+    // 2026-09-22, later still: the chart grew the FILLED SURFACE between the sets (`SurfaceFill`,
+    // `SurfaceColor`, `SurfaceOpacity`), the band under each one (`SurfaceToFloor`), the solid block and
+    // the tiled roof — but all of that was since REMOVED, so the marker is back to `IsFilled` (fill/restore),
+    // the newest token the current file ships.
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'SourceSheet', 'spec',
+    t.equal(chartSpec.marker, 'IsFilled', 'spec',
         'the GrumpyCharts marker is the newest token in the current bundled file');
     const oldCsCharts = `// GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb).
 public sealed class ChartSeries { public double[] Xs = Array.Empty<double>(); }
@@ -135,7 +144,7 @@ public sealed class Axis { public AxisPosition Position { get; set; } }`;
     // A copy WITH cursors but from before they inherited the traced series' colour.
     const cursorEraCsCharts = `${seriesEraCsCharts}
 public sealed class ChartCursor { public CursorOrientation Orientation { get; set; } }`;
-    const curCsCharts = `${cursorEraCsCharts}
+    const sheetEraCsCharts = `${cursorEraCsCharts}
 public sealed class CursorHit { internal Color DrawnColor = Colors.Transparent; }
 public sealed class ChartBase { public static readonly StyledProperty<double> LegendMarginProperty = null!; }
 public sealed class ChartShell { public static readonly StyledProperty<Thickness> PaddingProperty = null!; }
@@ -148,6 +157,17 @@ public class PieSlice : ChartSeries { }
 public sealed class ChartData
 {
     public static readonly StyledProperty<string?> SourceSheetProperty = null!;
+}`;
+    // The copy that is current up to the Data Selector, but from before the bar and the pie reported
+    // what is under the pointer: it has no HoverExplode, and it would keep offering "Add cursor" on a
+    // bar. 2026-09-22, the newest gap.
+    // The copy that is current up to the bar/pie hover readout, but from before the WATERFALL type: the
+    // toolbox now writes <charts:GrumpyWaterfallPlot …>, which such a copy cannot resolve at all.
+    // 2026-09-22, the newest gap.
+    const hoverEraCsCharts = `${sheetEraCsCharts}
+public sealed class PieHover
+{
+    public static readonly StyledProperty<double> HoverExplodeProperty = null!;
 }`;
     t.equal(isStaleBundledCopy(oldCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'a chart file from before the series classes is stale (this broke ChartTestCS)');
@@ -181,8 +201,26 @@ public sealed class BrushHost { public static readonly StyledProperty<Brush?> Pl
 internal static class ChartPickerMemory { internal static string? LastFolder { get; set; } }`;
     t.equal(isStaleBundledCopy(brushEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'and one with the gradient and the picker memory but neither the bar, area nor pie types');
-    t.equal(isStaleBundledCopy(curCsCharts, false, 'GrumpyCharts'), false, 'detect',
-        'the current chart file is current');
+    t.equal(isStaleBundledCopy(sheetEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with the Data Selector but before the bar and pie hover readout (HoverExplode)');
+    t.equal(isStaleBundledCopy(hoverEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with the hover readout but before the waterfall type (the toolbox writes it now)');
+    // Exactly the copy ChartTestCS was left holding: the waterfall type is there but the fill/restore
+    // feature is not, so the marker has moved past it and it is stale.
+    const waterfallEraCsCharts = `${hoverEraCsCharts}
+public class GrumpyWaterfallPlot : ChartBase { }`;
+    t.equal(isStaleBundledCopy(waterfallEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with the waterfall but before fill/restore was current');
+    // Fill/restore is the newest feature now (the filled surface between the sets was removed again),
+    // so this is the copy in every refreshed project — it carries `IsFilled`, the marker.
+    const fillEraCsCharts = `${waterfallEraCsCharts}
+public abstract class ChartBase
+{
+    public bool IsFilled => false;
+    public bool FillContainer() => false;
+}`;
+    t.equal(isStaleBundledCopy(fillEraCsCharts, false, 'GrumpyCharts'), false, 'detect',
+        'the current chart file is current (fill/restore is the newest feature)');
     t.equal(isStaleBundledCopy(`${oldCsCharts}\n// hand-tweaked below`, false, 'GrumpyCharts'), true, 'detect',
         'an old chart file with extra edits still refreshes (the bundled header is intact)');
     const oldVbCharts = `' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs).
@@ -208,7 +246,11 @@ Public Class GrumpyPiePlot
 End Class
 Public Class PieSlice
 End Class
-Public Shared ReadOnly SourceSheetProperty As StyledProperty(Of String) = Nothing`;
+Public Shared ReadOnly SourceSheetProperty As StyledProperty(Of String) = Nothing
+Public Shared ReadOnly HoverExplodeProperty As StyledProperty(Of Double) = Nothing
+Public Class GrumpyWaterfallPlot
+End Class
+Public ReadOnly Property IsFilled As Boolean`;
     t.equal(isStaleBundledCopy(oldVbCharts, true, 'GrumpyCharts'), true, 'detect',
         'a VB chart file from before the series classes is stale');
     t.equal(isStaleBundledCopy(curVbCharts, true, 'GrumpyCharts'), false, 'detect',

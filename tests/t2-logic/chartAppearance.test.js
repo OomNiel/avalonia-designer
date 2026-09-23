@@ -117,13 +117,21 @@ module.exports = async (t) => {
         t.equal(/SolidColorBrush\(PlotBackColor, 0\.92\)/.test(source), false, lang,
             `${lang} has dropped the plate-tinted panel background`);
     }
+    // 2026-09-22: the panel's drawing moved into one shared method (DrawReadoutPanel, described by a
+    // ReadoutPanel value), so the cursor's readout and a hovering chart's readout cannot drift apart.
+    // What the two assertions below pin is unchanged: the HEAD LINE takes the traced series' colour,
+    // the PANEL BORDER takes the cursor's own drawn colour.
     both("keeps the series line in the traced series' colour", {
-        cs: /MakeText\(tag \+ "  " \+ name, 11, trace\.LineColor\)/,
-        vb: /MakeText\(tag & "  " & name, 11, trace\.LineColor\)/
+        cs: /HeadColor = trace\.LineColor/,
+        vb: /\.HeadColor = trace\.LineColor/
     });
     both("keeps the panel border in the cursor's colour", {
-        cs: /new Pen\(new SolidColorBrush\(color\), 1\)/,
-        vb: /New Pen\(New SolidColorBrush\(color\), 1\)/
+        cs: /new Pen\(new SolidColorBrush\(panel\.Accent\), 1\)/,
+        vb: /New Pen\(New SolidColorBrush\(panel\.Accent\), 1\)/
+    });
+    both('and takes that accent from the cursor the panel belongs to', {
+        cs: /Accent = color,/,
+        vb: /\.Accent = color,/
     });
 
     // ---------------------------------------------------------------- 2. three axis colours

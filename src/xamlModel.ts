@@ -69,7 +69,8 @@ export function isEventAttribute(name: string): boolean {
  *  chartSeries.ts, which imports THIS module — so the xmlns:charts declaration can be ensured without
  *  a circular import. */
 export const CHARTS_TAGS = [
-    'GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAreaPlot', 'GrumpyPiePlot'
+    'GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAreaPlot', 'GrumpyPiePlot',
+    'GrumpyWaterfallPlot'
 ];
 
 /**

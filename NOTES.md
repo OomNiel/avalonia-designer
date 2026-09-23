@@ -3663,3 +3663,59 @@ panel whose colour rule changed, and the axis colour row that became three. A fo
 again, and far more controls are cached now than the ±2 of earlier releases). Host, C# probe and VB probe are
 all 0 warnings / 0 errors.
 
+---
+
+### §146 — a 3D waterfall, and the fill that was removed again (2026-09-22/23, 0.11.12)
+
+**The chart.** `GrumpyWaterfallPlot` is the sixth type: one `Plot` per **sampleset** (one spreadsheet column
+per sweep), each at its own depth, joined by a mesh. Its own `WaterfallView` projector
+(`turned = x·cosAz + z·sinAz`, `up = y·cosEl + depth·sinEl`) is fitted from the cube's eight corners, so no
+angle can push the picture out of the frame; `WaterfallWorld.UnitZ(set) = set/(Sets-1)·Depth` stands the first
+set at the front edge and the last at the back. **The sign of the depth term is load-bearing**: with it
+flipped, the `z = 0` edge became the FAR one and the far ribbon painted over the near ones (measured: 27 % more
+ink for the far set). The heat map spans the **data** min/max, not `AxisRange` — the rounded axis numbers
+squeezed the map into its middle stops so a peak's tip never reached the top colour. `MaxPoints` (512, 0 = all)
+thins each trace with the **same stride for every set**, so the mesh joins like to like, and `ConnectorStep`
+spaces the connectors (0 = about forty per trace) so a 2048-point set still reads as a surface and stays
+interactive while being dragged. Cursors are off (`SupportsCursors => false`): there is no cartesian frame.
+The series editor marks a waterfall's rows with two editor-only fields (`zColumn: 'True'`, `zFirst`) and labels
+the row **Z Column** — the user's own words were *"There is no Z Column row in the Series editor"*.
+
+**The fill experiment, and why it is not here.** Between 2026-09-22 and the release, the chart grew a filled
+surface between neighbouring sets (`SurfaceFill` = "Fill The Roof", `SurfaceColor`, `SurfaceOpacity`,
+`SurfaceToFloor` = "Block Walls"), then a solid "terrain block" (colour-mode surface + end faces + non-zero
+fill rule), then a mesh-tiled roof, then a flat-shaded **quilt**, then a sealed roof. It was **removed again by
+hand on 2026-09-23**: the open corridors are the point of the chart, and a ribbon plus its mesh already reads
+each set against its neighbours. Four lessons are worth keeping, because they were all measured and they cost
+most of a day:
+
+- **A folded outline cancels itself.** Two jagged traces cross many times, so a corridor traced as one polygon
+  folds over itself, and under the default **even-odd** fill rule the overlap *cancels*: 314 px painted where a
+  whole band was expected — the "still see through" report. `g.SetFillRule(FillRule.NonZero)` is the fix.
+- **The fill must be cut from the same vertices as the mesh.** Traced through every sample while the mesh only
+  joins the connector vertices, the fill is a *finer* surface and the mesh floats above it (the roof looks
+  untiled). The needle test in `t1-preview/waterfallRender` proved the fix: the fill reaches within 13 px of a
+  needle apex at `ConnectorStep="1"` and 9 px at 3, but stays 39 px below it at step 2 — parity is the proof
+  that the fill's vertices are the connector's.
+- **A seam is a hole, and a clamp in *both* axes is a wedge.** Two tiles that merely share an edge leave a
+  hairline of background once antialiased, so each tile was stroked in its own colour; and a rail whose data
+  has run out must hold its **last value at the tile's own x** (a level extension). Clamping its x as well
+  tapered the strip into a wedge with the background beside it: measured as **136,985 px** of "rain" through in
+  a plan view.
+- **"If it rains from the top of the graph, no water should reach the floor" is measurable.** Rendered at
+  `Elevation="89"` (looking straight down the value axis) each screen **column** is a line of falling water, so
+  the test counts background pixels between the first and last roof pixel of every column *that carries roof* —
+  0 px sealed, 36,996 px with the fill off (the control that proves the measurement can fail). NB the plot's
+  axis range is wider than the data by about one sample step at the left; that bare strip is not a roof hole.
+
+**The marker lesson.** The staleness marker chased the experiment up (`SurfaceFill` → `SurfaceToFloor` →
+`RoofVertices` → `RoofVertex`) and then had to come back down to **`IsFilled`** when the feature was removed —
+a marker cannot name a feature that no longer exists, so a project refreshed during the experiment keeps the
+extra code and is not reported stale (harmless: the panel no longer offers the attributes and no saved form
+asks for a fill). The general rule stands: **the marker is the newest token the current copy ships**, and any
+behaviour change in a bundled file moves it.
+
+**Suite:** 6,946 → 7,549 with the waterfall (+603: `t2-logic/waterfall` **174** source contracts and
+`t1-preview/waterfallRender` **25** measured pixels), and the removal took its own ~106 assertions back out
+(7,655 → 7,549). Host, C# probe and VB probe are all 0 warnings / 0 errors.
+

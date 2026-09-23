@@ -69,6 +69,10 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'Bar Chart', tag: 'GrumpyBarPlot', group: TOOLBOX_CATEGORY_CHARTS },
     { label: 'Area Chart', tag: 'GrumpyAreaPlot', group: TOOLBOX_CATEGORY_CHARTS },
     { label: 'Pie Chart', tag: 'GrumpyPiePlot', group: TOOLBOX_CATEGORY_CHARTS },
+    // The waterfall (2026-09-22): successive SAMPLESETS drawn as 3D traces — samples across X, values
+    // up Y, and each set receding along the depth — with the mesh that joins them. One series is one
+    // sampleset, so a capture is one spreadsheet column per set.
+    { label: 'Waterfall', tag: 'GrumpyWaterfallPlot', group: TOOLBOX_CATEGORY_CHARTS },
     { label: 'Panel', tag: 'Panel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'Grid', tag: 'Grid', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'StackPanel', tag: 'StackPanel', group: TOOLBOX_CATEGORY_LAYOUT },

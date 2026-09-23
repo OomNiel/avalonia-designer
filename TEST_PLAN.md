@@ -1,7 +1,23 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-21 · Status: **full suite green on this machine — 6,946 passed / 0 failed / 0 skipped (49 s)**
+Date: 2026-09-23 · Status: **full suite green on this machine — 7,549 passed / 0 failed / 0 skipped (57 s)**
 
+> 2026-09-23: **`0.11.12`** added 603 assertions for the **waterfall chart** (`charts:GrumpyWaterfallPlot`,
+> the sixth chart type) and its **Z Column** series row. Two new files: `t2-logic/waterfall` (**174**) and
+> `t1-preview/waterfallRender` (**25**, every claim about the projected picture measured off the PNG), plus
+> the changes they forced into `t2-logic/chartSeries`, `t3-webview/designer`, `t2-logic/chartAppearance` and
+> the staleness-marker fixtures. **6,946 → 7,549.**
+>
+> The same day's **filled surface between the sets** (`SurfaceFill` / "Fill The Roof", `SurfaceToFloor` /
+> "Block Walls" and the tiled-quilt roof that followed) was built, measured, and then **removed again by
+> hand before it shipped** — the open corridors are what the chart is for — so its ~106 assertions went out
+> with it: 7,655 → **7,549**. The `GrumpyCharts` staleness marker went `SourceSheet` → `ChartPickerMemory` →
+> `GrumpyBarPlot` → **`SurfaceFill` → `SurfaceToFloor` → `RoofVertices` → `RoofVertex` → back down to
+> `IsFilled`**, which is the newest token the current copy ships. Worth remembering: a marker that names a
+> *removed* feature cannot be the token that finds a copy which still has it — a project refreshed during
+> that experiment keeps the extra code (harmless: the attributes are gone from the panel, and the corridors
+> are open because the XAML no longer asks for a fill).
+>
 > 2026-09-21: **`0.11.11`** (the line `0.11.3`…`0.11.11`) added 509 assertions across the chart work: the
 > three new chart types and their editors, the Data Selector, the picker memories and the two false reports
 > the fixes chased away. New files: `t2-logic/newCharts` (130), `t1-preview/newChartsRender` (15),
@@ -453,6 +469,26 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.11.12 (2026-09-23) — the waterfall chart, and a feature that was removed again
+
+- `tests/t2-logic/waterfall.test.js` (new, **174**) — the source contract of the sixth chart type: its own
+  property registrations on **both twins**, the six toolbox/editor wires (`chartSeries` marking a series row
+  as a sampleset with a **Z Column**, the panel's rows, the help text), the paint order of the projected
+  drawing (floor → ribbons → traces → connectors, and the per-set depth ordering that makes the near set
+  hide the far one), the Value/Split colour modes reaching the traces, and the staleness marker.
+- `tests/t1-preview/waterfallRender.test.js` (new, **25**) — the picture, measured: the projection keeps
+  each set HIGHER on screen than the one behind it (that is the depth axis, and the one thing a 3D waterfall
+  must show), a `Value` chart really carries the heat map (four of its five stops appear on the surface), the
+  `Split` mode cuts at the threshold (both colours present, the above-limit one above), the **mesh** is drawn
+  in the connector colour and survives the fills, a 2048-point set renders thinned and in a sane time, and
+  the corridor-fill experiment's own tests (the tile gap, the flat quilt run, the plan-view "rain test") went
+  out with the feature.
+- `tests/t2-logic/bundledComponents.test.js` — the era fixtures walk the marker down again: a copy with the
+  filled surface still compiles against the chart, so it is **not** reported stale on that account either
+  way; the check that matters is that the **shipped** file always looks current.
+
+
 
 ### 0.11.11 (2026-09-21) — bar / area / pie charts, the Data Selector, and the pages a chart can read
 

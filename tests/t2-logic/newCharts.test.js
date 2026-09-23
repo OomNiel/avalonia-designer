@@ -133,9 +133,13 @@ module.exports = async (t) => {
     const barMode = barRows.find((r) => r.key === 'BarMode');
     t.equal(barMode.options.join(','), 'Grouped,Stacked,Stacked100', 'properties', 'Bar Mode offers the three C# BarMode values');
     const barEditors = barRows.filter((r) => r.kind === 'button').map((r) => r.key);
-    for (const key of ['Series', 'Axis', 'Legend', 'Cursors', 'Gradient']) {
+    for (const key of ['Series', 'Axis', 'Legend', 'Gradient']) {
         t.ok(barEditors.includes(key), 'properties', `the bar chart offers the ${key} editor`);
     }
+    // 2026-09-22: the BAR lost its cursors — a crosshair reads a value BETWEEN two samples, and a bar is
+    // one reading per category — so its Properties list has no Cursors row and its right-click menu has
+    // no cursor entries. It reports the bar under the pointer in the readout panel instead.
+    t.ok(!barEditors.includes('Cursors'), 'properties', 'but no Cursors editor (a bar has no crosshair)');
 
     const areaRows = propRows('GrumpyAreaPlot');
     const areaKeys = areaRows.map((r) => r.key);
@@ -151,7 +155,7 @@ module.exports = async (t) => {
     const pieRows = propRows('GrumpyPiePlot');
     const pieKeys = pieRows.map((r) => r.key);
     for (const key of ['Labels', 'Values', 'DoughnutPercent', 'StartAngle', 'SliceGap', 'SliceBorderColor',
-        'SliceBorderThickness', 'Data', 'Gradient']) {
+        'SliceBorderThickness', 'HoverExplode', 'Data', 'Gradient']) {
         t.ok(pieKeys.includes(key), 'properties', `the pie has a ${key} row`);
     }
     const pieEditors = pieRows.filter((r) => r.kind === 'button').map((r) => r.key);
@@ -165,7 +169,7 @@ module.exports = async (t) => {
     // ---------------------------------------------------------------- defaults
     for (const [key, value] of [['BarMode', 'Grouped'], ['BarWidth', '0.8'], ['BarCornerRadius', '0'],
     ['AreaMode', 'Plain'], ['AreaOpacity', '60'], ['DoughnutPercent', '0'], ['SliceGap', '0'],
-    ['SliceBorderThickness', '1']]) {
+    ['SliceBorderThickness', '1'], ['HoverExplode', '10']]) {
         t.equal(defaultFor(key), value, 'defaults', `${key} defaults to ${value}`);
     }
     t.ok(defaultFor('SliceBorderColor'), 'defaults', 'the slice border has a default colour');
@@ -183,8 +187,8 @@ module.exports = async (t) => {
     }
 
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'SourceSheet', 'marker',
-        'the staleness marker is the newest thing the designer writes (types, then attributes)');
+    t.equal(chartSpec.marker, 'IsFilled', 'marker',
+        'the staleness marker is the newest thing an existing project needs (types, attributes, behaviour)');
     const vbSpec = bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts');
     t.equal(vbSpec.marker, chartSpec.marker, 'marker', 'both languages use the same marker');
 
@@ -192,16 +196,18 @@ module.exports = async (t) => {
     for (const [name, text] of [['C#', cs], ['VB', vb]]) {
         for (const token of ['GrumpyBarPlot', 'GrumpyAreaPlot', 'GrumpyPiePlot', 'PieSlice', 'BarMode',
             'AreaMode', 'Stacked100', 'DoughnutPercent', 'SliceBorderThickness', 'StackBands',
-            'NamedXAxis', 'ZeroToHundred', 'XPadUnits', 'Labels']) {
+            'NamedXAxis', 'ZeroToHundred', 'XPadUnits', 'Labels', 'HoverExplode', 'SupportsHoverReadout',
+            'ReadoutPanel', 'UpdateHover']) {
             t.ok(text.includes(token), 'twins', `${name} ships ${token}`);
         }
     }
-    // The three drawing methods exist in both, and each one draws its own shape.
+    // The drawing methods exist in both, and each one draws its own shape: the base line layer, the bar,
+    // the area, the pie — and (2026-09-22) the waterfall.
     for (const [name, text, draw] of [
         ['C#', cs, /private protected override void DrawSeriesLayer/],
         ['VB', vb, /Friend Overrides Sub DrawSeriesLayer/]]) {
         const count = (text.match(new RegExp(draw.source, 'g')) || []).length;
-        t.equal(count, 3, 'twins', `${name} has the base layer plus the three new shapes (${count})`);
+        t.equal(count, 4, 'twins', `${name} has the base layer plus the four chart-type layers (${count})`);
     }
     // The label+value reader a pie needs, and the X-column text it keeps as a point's name.
     for (const [name, text] of [['C#', cs], ['VB', vb]]) {

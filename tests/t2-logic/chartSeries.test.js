@@ -169,6 +169,44 @@ module.exports = async (t) => {
     t.equal(seeded[0].lineColor, '#00AA00', 'read', 'the implicit entry is seeded from the chart styling');
     t.equal(seeded[0].markerSize, '12', 'read', 'every legacy styling row is seeded');
 
+    // --- 6a. the WATERFALL's series are SAMPLESETS: the same attribute, read as the set's column ---
+    // A waterfall draws one slice per set along its depth (Z) axis, so its series' column is that set's
+    // samples and the editor labels the row "Z Column". The fallback walks ONE column per set (C, D, E …
+    // from the chart's own First Set Column) — not the X,Y plots' B/C, D/E pairing, which would make
+    // series 2 read E and leave D unused. Reported missing by Grumpy 2026-09-22 (10 sets of 2048 points).
+    const wf = chartModel('GrumpyWaterfallPlot', 'YColumn="C"', `
+      <charts:LineSeries Title="Sweep 1"/>
+      <charts:LineSeries Title="Sweep 2"/>
+      <charts:LineSeries Title="Sweep 3" YColumn="H"/>`);
+    const wfRows = chartSeriesOf(wf.el);
+    t.equal(wfRows.map((s) => s.zColumn).join(','), 'True,True,True', 'read',
+        'every waterfall entry is marked as a sampleset (so the editor offers Z Column)');
+    t.equal(wfRows.map((s) => s.defY).join(','), 'C,D,E', 'read',
+        'the sampleset fallback walks one column per set (C, D, E …), not the X/Y pairing');
+    t.equal(wfRows[2].yColumn, 'H', 'read', 'a set that names its own column keeps it');
+    t.equal(wfRows[0].zFirst, 'C', 'read', 'the walk starts at the chart\'s First Set Column');
+    const wfFromD = chartModel('GrumpyWaterfallPlot', 'YColumn="D"',
+        '<charts:LineSeries/><charts:LineSeries/>');
+    t.equal(chartSeriesOf(wfFromD.el).map((s) => s.defY).join(','), 'D,E', 'read',
+        'and moves with that column (First Set Column = D → the sets read D, E, F …)');
+    const wfImplicit = chartModel('GrumpyWaterfallPlot', 'SampleSets="1,2; 3,4"', '');
+    const wfSeeded = chartSeriesOf(wfImplicit.el)[0];
+    t.equal(wfSeeded.zColumn, 'True', 'read',
+        'and the implicit single set of a chart with no series elements is a sampleset too');
+    t.ok(!twoSeries.some((s) => s.zColumn) && !seeded.some((s) => s.zColumn), 'read',
+        'an X,Y or line chart is untouched (its rows keep the Y Column label)');
+    t.equal(twoSeries.map((s) => s.defY).join(','), 'C,E', 'read',
+        'their fallback pairing is unchanged');
+
+    // The row writes the real ChartSeries.YColumn (the column a set reads); `zColumn`/`zFirst` are
+    // editor metadata and must never reach the XAML — the field list, not the message, decides.
+    t.ok(/seriesField\(row\.zColumn \? 'Z Column' : 'Y Column'/.test(js), 'ui',
+        "the modal labels a sampleset's column 'Z Column' (and a line's 'Y Column')");
+    t.ok(/row\.zColumn\s*\n?\s*\? 'Z ' \+ \(row\.yColumn \|\| row\.defY/.test(js), 'ui',
+        'the list summary shows the set column as Z as well');
+    t.ok(!CHART_SERIES_FIELDS.some((f) => /zColumn/i.test(f.key) || /^ZColumn$/.test(f.attr)), 'ui',
+        'no ZColumn attribute is invented — the C# reads a set\'s column from YColumn');
+
     // --- 6b. writing: order, additions, removals, and the legacy rows ---
     const add = chartModel('GrumpyXYPlot', 'LineColor="#00AA00"', '<charts:XYSeries Title="One" YColumn="C"/>');
     writeChartSeries(add.model, add.el,

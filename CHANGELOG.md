@@ -6,11 +6,54 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.11.11` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.11.12` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.11.12] - 2026-09-23 · *a waterfall you can turn: one spreadsheet column per sweep*
+
+The chart set gains a sixth control — a projected **3D waterfall**. It reads one spreadsheet **column per
+sampleset** (a sweep, a run, a pass, a temperature) and stands those sets one behind the other, joined by a
+mesh: the picture a spectrum waterfall is read for. Two requests drove it, both about the data side of that
+picture: *"Now please add some sample data for the Waterfall plot in a new sheet. Lets have 10 series of 2048
+points each. The values must range between 0 and 100."* and *"There is no Z Column row in the Series
+editor"*.
+
+### Added — the waterfall chart (`charts:GrumpyWaterfallPlot`, 2026-09-22)
+
+- **One column per sampleset.** The **Series** editor lists the sets, one row per sweep, each with its own
+  **Z Column** (the column that holds that sweep's values) and its own legend name — a 2048-row capture with
+  ten columns is ten sweeps. Just as on the other plots, the columns come from the workbook's own row 1, and
+  `SampleSets="1,2,3; 4,5,6"` writes a chart by hand without a workbook at all.
+- **Ribbon style** decides how a set is drawn: **Ribbon** (a solid fill under its trace, so a nearer set
+  hides the ones behind it — the classic waterfall), **Translucent** (the same fill see-through, so the depth
+  reads as layers) or **Lines** (no fill: traces and mesh only). **Ribbon Opacity** sets how solid a
+  translucent fill is.
+- **Colour mode** decides what the colour means: **Sampleset** (one colour per set, the default), **Value**
+  (a heat map by amplitude, so a peak's tip takes the top colour and its foot the bottom one — with
+  **Heat Min** / **Heat Max** to fix the range) or **Split** (two colours either side of **Split Value**, so
+  a limit is visible in the picture instead of in a legend). The gradient is laid perpendicular to the sample
+  axis, so the colour bands sit level with the data however the cube is turned.
+- **The mesh** joins the sets at the same sample, which is what turns a row of traces into a surface:
+  **Show Connectors**, **Connector Colour**, **Connector Thickness** and **Connector Step** (one connector
+  every N drawn samples; 0 spaces them so the mesh stays readable — about forty per trace).
+- **The view is a property.** **Elevation** (0 = edge on, 89 = almost straight down), **Azimuth** (45 = the
+  usual three-quarter view), **Z Spacing** (how deep the sets stand apart), **Zoom**, and the depth axis'
+  own **Z Axis Title** — plus drag-to-turn in the running app, which never writes back to the form. The
+  picture is fitted from the cube's own corners, so no angle can push it out of the frame.
+- **Its floor, its grid and its three projected axes** are the chart's ordinary axis rows — axis, tick-label
+  and name colours included. Line thickness, tick style and the legend work as they do on every other chart.
+- **No cursors, deliberately.** There is no cartesian frame to hang them on; the legend lists the samplesets
+  with a tick box each, and the mesh is what a reader measures against.
+- **The corridors between the sets are left open.** An experiment that filled them (a "Fill The Roof"
+  surface and "Block Walls") was built on 2026-09-22 and **removed again before this release**: the ope
+  corridors are what the chart is for, a ribbon and its mesh are enough to read each set against the others,
+  and the two attributes it added never shipped, so no form can be carrying them.
+- **Docs ride along**: `USER_MANUAL` §19.12 (a walkthrough with the sample-data recipe), `CONTROLS.md` (the
+  control table and its property list), `README` §7 (the chart set) and `TEST_PLAN.md` (what the two new
+  test files measure).
 
 ## [0.11.11] - 2026-09-21 · *the chart set grows up: three chart types, a Data Selector — and the page you actually wanted*
 

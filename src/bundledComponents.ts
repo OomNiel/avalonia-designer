@@ -97,7 +97,30 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // 2026-09-21, the Data Selector editor: the panel now also writes SourceKind, SourceSheet
             // and DataFile — three properties an older copy does not have, so a form saved with a page
             // choice would not compile against it. The marker moved to the newest ATTRIBUTE.
-            marker: 'SourceSheet'
+            // 2026-09-22: the BAR and the PIE lost their cursors and gained a hover readout, and the pie
+            // gained `HoverExplode` — an attribute the Slices/Properties panel writes, and a drawing the
+            // old copy does not have (it would keep offering "Add cursor" on a bar, and never pop a
+            // slice out). The marker moved to the newest member the panel writes.
+            // 2026-09-22, later: the WATERFALL arrived (`GrumpyWaterfallPlot`, `WaterfallStyle`,
+            // `WaterfallColorMode`, `SampleSets`, `Elevation`, `Azimuth`, …), so the toolbox can now write
+            // `<charts:GrumpyWaterfallPlot SampleSets="1,2; 3,4"/>` — XAML a copy that predates the type
+            // cannot compile at all. The marker is the newest TYPE the designer can write.
+            // 2026-09-22, later still: every chart gained FILL / RESTORE — right-click docks the chart over
+            // its container (`FillContainer`) and puts it back (`RestorePlacement`), Esc undocks. No XAML
+            // changes, which is exactly why this one is easy to miss: the running app compiles the
+            // project's OWN copy, so an un-refreshed project kept a chart menu WITHOUT the entry — the
+            // user saw "no new build and no refresh prompt", because the copy in the project already
+            // carried the previous marker (`GrumpyWaterfallPlot`), so it looked up to date.
+            // A behaviour/menu change in an EXISTING type is therefore a marker move like any other.
+            // 2026-09-22, later still: the chart grew the FILLED SURFACE between the sets
+            // (`SurfaceFill` = "Fill The Roof", `SurfaceColor`, `SurfaceOpacity`) and the band under each
+            // one (`SurfaceToFloor` = "Block Walls"), then the solid block, the tiled roof and the quilt —
+            // but all of that was since REMOVED from the chart (the open corridors between the sets are the
+            // default, unroofed picture again: a ribbon and its mesh are enough to read each set against the
+            // others). The new attributes are gone with it, so the XAML-trap that pushed the marker up no
+            // longer exists; the newest token the current file ships is back to `IsFilled` — the fill /
+            // restore behaviour added to every chart above.
+            marker: 'IsFilled'
         }
     ];
 }

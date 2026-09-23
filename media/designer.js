@@ -4748,12 +4748,15 @@
         sw.addEventListener('input', () => { txt.value = sw.value; onChange(sw.value); });
         return [sw, txt];
     }
-    /** The one-line summary shown for a series in the list. */
+    /** The one-line summary shown for a series in the list. A waterfall entry is one SAMPLESET, so its
+     *  column is labelled Z (the depth axis it sits on) rather than Y. */
     function seriesItemText(row, i) {
-        return (row.title || 'Series ' + (i + 1)) + '  ·  '
-            + (row.type === 'Line'
+        const line = row.zColumn
+            ? 'Z ' + (row.yColumn || row.defY || 'C')
+            : row.type === 'Line'
                 ? 'Y ' + (row.yColumn || 'C')
-                : 'X ' + (row.xColumn || 'B') + ', Y ' + (row.yColumn || 'C'))
+                : 'X ' + (row.xColumn || 'B') + ', Y ' + (row.yColumn || 'C');
+        return (row.title || 'Series ' + (i + 1)) + '  ·  ' + line
             + (row.axisMode === 'PerSeries' ? '  ·  own axis' : '');
     }
     function renderSeriesEditor() {
@@ -4799,10 +4802,15 @@
         els.seriesFields.appendChild(seriesField('Title', seriesText(row.title, (v) => { row.title = v; repaint(); },
             'The name shown in the legend and in this editor. Empty uses the spreadsheet column header, or “Series n” when there is none.')));
         if (row.type === 'Line') {
+            // A waterfall series is one SAMPLESET (a slice along the depth axis), so the same attribute is
+            // presented as the Z Column there: it names the spreadsheet column this set reads, and empty
+            // means the next column along from the chart’s First Set Column.
             const yIn = seriesText(row.yColumn, (v) => { row.yColumn = v; repaint(); },
-                'The spreadsheet column with this line’s values. Empty = the column shown in grey. A line plot’s X is the sample number (0, 1, 2…).');
+                row.zColumn
+                    ? 'The spreadsheet column with this sampleset’s values. Empty = the next column along from the chart’s First Set Column (C, D, E …), one column per set.'
+                    : 'The spreadsheet column with this line’s values. Empty = the column shown in grey. A line plot’s X is the sample number (0, 1, 2…).');
             yIn.placeholder = row.defY || '';
-            els.seriesFields.appendChild(seriesField('Y Column', yIn));
+            els.seriesFields.appendChild(seriesField(row.zColumn ? 'Z Column' : 'Y Column', yIn));
         } else {
             const xIn = seriesText(row.xColumn, (v) => { row.xColumn = v; repaint(); },
                 'The spreadsheet column with this series’ X values. Empty = the column shown in grey.');
@@ -4840,13 +4848,18 @@
             els.seriesFields.appendChild(note);
         }
     }
-    /** A brand-new series: the same defaults the control uses, in the next palette colour. */
+    /** A brand-new series: the same defaults the control uses, in the next palette colour. For a
+     *  waterfall entry the fallback column advances ONE column (C, D, E …), because each set is its own
+     *  column; for every other chart it advances the X,Y pairing (B/C, D/E …). */
     function seriesSeedRow(type, index, template) {
+        const zColumn = (template && template.zColumn) || '';
+        const zFirst = (template && template.zFirst) || 'C';
         return {
             src: '-1', type, title: '', xColumn: '', yColumn: '', axisMode: 'Common',
-            // Empty = the chart's own X column and this entry's place in the B/C, D/E, F/G pairing.
+            // Empty = the chart's own X column and this entry's place in the walk.
             defX: (template && template.defX) || 'B',
-            defY: columnAfter('C', index * 2),
+            defY: zColumn ? columnAfter(zFirst, index) : columnAfter('C', index * 2),
+            zColumn, zFirst,
             lineColor: SERIES_PALETTE[index % SERIES_PALETTE.length], lineThickness: '2',
             lineStyle: 'Solid', markerStyle: 'Dot', markerSize: '8', connected: 'True', visible: 'True'
         };
@@ -4860,6 +4873,9 @@
             yColumn: String(s.yColumn || ''),
             defX: String(s.defX || 'B'),
             defY: String(s.defY || 'C'),
+            // 'True' = this row is one sampleset of a waterfall chart, so its column row is the 'Z Column'.
+            zColumn: String(s.zColumn || ''),
+            zFirst: String(s.zFirst || 'C'),
             axisMode: s.axisMode === 'PerSeries' ? 'PerSeries' : 'Common',
             lineColor: String(s.lineColor || '#2D7DD2'),
             lineThickness: String(s.lineThickness || '2'),

@@ -2116,7 +2116,72 @@ list. It is the one place where a chart's data source is chosen:
 keeps its short element. The page is matched by NAME rather than by position, so reordering the tabs in
 your spreadsheet after choosing a page keeps the chart on the same sheet.
 
-**Sample data.** A workbook is enough to try each chart type: give it a page per chart, with the names it\nshould draw in column **B** and the values in column **C** (a second series in column **E**) — one page of\ncategories and values for a bar or area chart, one page of slice names and shares for a pie. Row 1 holds the\nnames of the columns and the data starts on row 2, which is what the defaults expect. Point a chart at the\nfile, pick the page in the Data Selector, and it draws — with the names, the series colours and the\ncategories the page itself defines.
+**Sample data.** A workbook is enough to try each chart type: give it a page per chart, with the names it
+should draw in column **B** and the values in column **C** (a second series in column **E**) — one page of
+categories and values for a bar or area chart, one page of slice names and shares for a pie, and one page
+of **sweeps for a waterfall: one column per sampleset**, with the samples down the rows. Row 1 holds the
+names of the columns and the data starts on row 2, which is what the defaults expect. Point a chart at the
+file, pick the page in the Data Selector, and it draws — with the names, the series colours and the
+categories the page itself defines.
+
+### 19.12 The waterfall chart (since 0.11.12)
+
+A **waterfall** (also called a *spectrum waterfall* or a *ridgeline*) draws a whole **family of traces one
+behind the other** instead of on top of each other, and joins them with a mesh. Where a line plot answers
+"what does this series do?", the waterfall answers **"how does this change from run to run?"** — one sweep
+per set, each a column of your spreadsheet.
+
+Place it from the **Charts** group in the toolbox: `charts:GrumpyWaterfallPlot`. Everything you know from
+the sections above still applies — the **Series**, **Axis**, **Legend** and **Background Gradient**
+editors, the title, border and padding rows, the `.xlsx` reader with its `LiveUpdate` reload, and the
+right-click menu. It has **no cursors**: there is no flat frame to hang them on, and the mesh is what a
+reader measures against.
+
+| Control | What it draws | Its own properties |
+|---------|---------------|--------------------|
+| **Waterfall** (`charts:GrumpyWaterfallPlot`) | A projected 3D surface: one set per **sampleset**, stood behind the next and joined by a mesh | **Ribbon Style** (`Ribbon` / `Translucent` / `Lines`), **Ribbon Opacity**, **Colour Mode** (`Sampleset` / `Value` / `Split`), **Heat Min / Heat Max**, **Split Value**, **Below / Above Colour**, **Show Connectors**, **Connector Colour / Thickness / Step**, **Max Points**, **Elevation**, **Azimuth**, **Z Spacing**, **Zoom**, **Z Axis Title** |
+
+**One column per set.** Open **Series — Edit series…** and each row is one sampleset: pick its **Z
+Column** (the column that holds that sweep's values) and give it a name for the legend. Ten columns of
+2048 rows is ten sweeps, and the Z numbers run along the depth axis, which is why the row is called **Z
+Column** rather than Y. Just as on the other charts the columns are read by **row 1's own headers**, and
+**Max Points** (512 by default) thins a long capture to what the screen can actually show, so a 2048-point
+sweep stays interactive while you turn it.
+
+**What a set looks like.** **Ribbon Style** is the biggest choice:
+
+- **Ribbon** fills the area under each trace, so a nearer set hides the part of the picture behind it —
+  the classic waterfall, closest to a real water falling over a weir.
+- **Translucent** keeps that fill but lets it show through, so the depth reads as layers of glass
+  (**Ribbon Opacity** is how solid it is).
+- **Lines** draws no fill at all: traces and mesh only, the clearest picture for reading individual peaks.
+
+**What the colour means.** **Colour Mode** decides, exactly as it does on the other charts: **Sampleset**
+(one colour per set, taken from its series colour), **Value** (a heat map by amplitude — a peak's tip takes
+the top colour and its foot the bottom one, with **Heat Min** / **Heat Max** to pin the range when several
+charts should be read against the same scale) or **Split** (two colours either side of **Split Value**, so a
+limit is visible in the picture instead of in a legend). The gradient is laid **perpendicular to the sample
+axis**, so the colour bands stay level with the data however you turn the cube.
+
+**The mesh is the point.** **Show Connectors** joins the sets sample by sample — those thin lines are what
+turn a row of separate traces into a surface, and they are the ones to count when you want to know where a
+peak in one run lines up in the next. **Connector Colour**, **Connector Thickness** and **Connector Step**
+(take one every N drawn samples; leave it 0 and the spacing is chosen for you, about forty per trace) shape
+it.
+
+**You can turn it.** **Elevation** (0 = level with the floor, 89 = nearly straight down), **Azimuth** (45
+is the usual three-quarter view), **Z Spacing** (how deep the sets stand apart) and **Zoom** are ordinary
+properties — and in the running app you can simply **drag the chart** to turn it. Dragging never changes the
+saved form; it only moves your viewpoint.
+
+**Sample data.** The workbook page that the manual's *Sample data* note describes works for a waterfall too,
+with one twist: the values do **not** go in column C. Give the page a column per sweep and set each series
+row's **Z Column** to it, leave the **Z Axis Title** as *Sweep* (or name it *Run*, *Pass*, *Channel*), and
+the chart draws a surface whose depth is your run number.
+
+> **A waterfall draws open corridors between the sets, on purpose.** A filled surface between two sweeps
+> hides the very thing the chart is for — the shape of each individual trace against its neighbours. A
+> ribbon and its mesh are enough; the picture is a family of traces, not a solid block.
 
 > **Charts need no packages or data files of their own.** The chart control is bundled into your project
 > like the other helpers; nothing is added to the `.csproj` beyond what the project already had.

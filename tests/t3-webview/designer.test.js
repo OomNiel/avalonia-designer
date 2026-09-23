@@ -2513,6 +2513,62 @@ module.exports = async (t) => {
         t.equal($('seriesModal').hidden, true, 'series', 'Cancel closes the editor');
     }
 
+    // --- 'Series' editor, WATERFALL: its series ARE samplesets (one slice each along the depth axis),
+    // so the column row is labelled 'Z Column' — the row Grumpy reported missing (2026-09-22) — and its
+    // placeholder walks ONE column per set (C, D, E …) instead of the X,Y plots' B/C, D/E pairing. The
+    // row writes the ordinary YColumn attribute: no new XAML property, so an existing project's bundled
+    // chart copy stays valid.
+    {
+        msg(frame([
+            { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+            { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+            { name: 'Wf1', type: 'GrumpyWaterfallPlot', x: 60, y: 60, w: 300, h: 180, parent: 'Body' }
+        ]));
+        const wfSeries = [
+            { src: '0', type: 'Line', title: 'Sweep 1', xColumn: '', yColumn: '', axisMode: 'Common', lineColor: '#2D7DD2', lineThickness: '2', lineStyle: 'Solid', markerStyle: 'Dot', markerSize: '8', connected: 'True', zColumn: 'True', zFirst: 'C', defY: 'C' },
+            { src: '1', type: 'Line', title: 'Sweep 2', xColumn: '', yColumn: '', axisMode: 'Common', lineColor: '#E4572E', lineThickness: '2', lineStyle: 'Solid', markerStyle: 'Dot', markerSize: '8', connected: 'True', zColumn: 'True', zFirst: 'C', defY: 'D' }
+        ];
+        msg({
+            type: 'properties', name: 'Wf1', properties: [
+                { key: 'Series', label: 'Series', kind: 'button', value: 'Edit series…' }
+            ], chartSeries: wfSeries, info: null
+        });
+        $('propsBody').querySelector('.prop-button')
+            .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal($('seriesModal').hidden, false, 'series-wf', 'the waterfall opens the same editor');
+        const wItems = () => $('seriesList').querySelectorAll('.series-item');
+        const wFields = () => [...$('seriesFields').querySelectorAll('.series-field')];
+        const wField = (caption) => {
+            const row = wFields().find((f) => f.textContent.trim().startsWith(caption));
+            return row ? row.querySelector('input, select') : null;
+        };
+        t.ok(/Z Column/.test($('seriesFields').textContent), 'series-wf',
+            'a sampleset offers a Z Column row');
+        t.ok(/Y Column/.test($('seriesFields').textContent) === false, 'series-wf',
+            'and not a second row called Y Column');
+        t.ok(/Z C/.test(wItems()[0].textContent) && /Z D/.test(wItems()[1].textContent), 'series-wf',
+            'the list summarises each set by its Z column (walking C, D …)');
+        // + Add series: the placeholder continues the walk (third set → E), not the X/Y pairing (G).
+        $('seriesAdd').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        t.equal(wItems().length, 3, 'series-wf', '+ Add series appends another sampleset');
+        t.equal(wField('Z Column').value, '', 'series-wf', 'a new set has no column of its own');
+        t.equal(wField('Z Column').placeholder, 'E', 'series-wf',
+            'its fallback is the next column along (E), not the X/Y pairing (G)');
+        const zIn = wField('Z Column');
+        zIn.value = 'L';
+        zIn.dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        t.ok(/Z L/.test(wItems()[2].textContent), 'series-wf',
+            'typing a column updates the list summary');
+        posted.length = 0;
+        $('seriesSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const wSave = posted[posted.length - 1];
+        t.equal(wSave.type, 'saveChartSeries', 'series-wf', 'Save posts saveChartSeries');
+        t.equal(wSave.items[2].yColumn, 'L', 'series-wf',
+            "the Z Column row is written as the series' YColumn (a real ChartSeries property)");
+        t.ok(!('zColumn' in wSave.items[2]) && !('zFirst' in wSave.items[2]), 'series-wf',
+            'the editor metadata never reaches the XAML');
+    }
+
     // --- 'Axis' editor (GrumpyCharts): the chart's two COMMON axes plus one X/Y pair per series that
     // is set to Per series. An axis has a side, a visibility switch, a colour, two tick sets, tick
     // labels and a name; a per-series axis can be added (tick "Own axis") and deleted again, and a

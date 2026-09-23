@@ -17,7 +17,42 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-21, fourth session — 0.11.11)
+## Where the last session left off (2026-09-23, fifth session — 0.11.12)
+
+**One new chart, and one feature deliberately not shipped.**
+
+**What went in** (full detail in `CHANGELOG.md` `[0.11.12]` and `NOTES.md` §146):
+
+- **The waterfall chart** (`charts:GrumpyWaterfallPlot`, the sixth type): one spreadsheet **column per
+  sampleset** (a sweep, a run, a pass), stood behind the next and joined by a mesh; its own projector with
+  **Elevation / Azimuth / Z Spacing / Zoom** and drag-to-turn; **Ribbon / Translucent / Lines** styles;
+  **Sampleset / Value (heat map) / Split** colour modes with a heat range and a split value; the mesh rows
+  (`ShowConnectors`, colour, thickness, `ConnectorStep`); `MaxPoints` thinning with one stride for every set;
+  no cursors, by design. The series editor lists the sets, each row carrying a **Z Column**.
+- **The filled surface between the sets was built and then removed again, by hand.** `SurfaceFill` ("Fill The
+  Roof"), `SurfaceColor`, `SurfaceOpacity` and `SurfaceToFloor` ("Block Walls") existed for a day — with a
+  solid terrain block, a mesh-tiled roof and finally a flat-shaded quilt — and are **not in this release**:
+  the open corridors are what the chart is for. Roughly 106 of its assertions went out with it (7,655 → 7,549).
+- **Docs**: `USER_MANUAL` §19.12, `CONTROLS.md` (table + property list), `README` §7 (six chart types, version
+  `0.11.12`), `CHANGELOG` `[0.11.12]`, `TEST_PLAN.md` (the new files and the marker's whole journey).
+
+**Three things to know before continuing:**
+
+1. **A form must not carry the removed attributes.** Any `.axaml` written during the experiment with
+   `SurfaceFill="True"` / `SurfaceToFloor="True"` will no longer compile against the current chart — those
+   four attributes are gone (`ChartTestCS/MainWindow.axaml` was cleaned up; a backup sits next to it).
+2. **The staleness marker is back to `IsFilled`** (it walked `SurfaceFill` → `SurfaceToFloor` → `RoofVertices`
+   → `RoofVertex` and came back down). A project refreshed during the experiment keeps the extra code and is
+   *not* reported stale — harmless, since the panel no longer offers the attributes and no saved form asks for
+   a fill. A marker cannot name a feature that no longer exists; see `NOTES.md` §146.
+3. **The rain rule is measurable and worth keeping in mind**: at `Elevation="89"` each screen column is a line
+   of falling water, so "no water reaches the floor" is counted per column. The filler surfaces are gone, but
+   the technique is in `NOTES.md` §146 for the next projected picture that has to be sealed.
+
+**State at hand-off:** suite **7,549 passed / 0 failed** (compliance re-audit clean), PROBLEMS clean, host and
+the VB matrix build 0/0, `package.json` = `0.11.12`.
+
+## Where the fourth session left off (2026-09-21, fourth session — 0.11.11)
 
 **The whole chart line is released together:** `0.11.3` … `0.11.11` were all built and installed on this
 machine during the day and go out as **one** version, because the Marketplace and the GitHub tag carry the

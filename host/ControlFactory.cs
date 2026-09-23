@@ -182,7 +182,11 @@ public class ControlFactory
             // and a pie whose slices come from typed Labels + Values (no workbook needed to look right).
             ["GrumpyBarPlot"] = n => $"<charts:GrumpyBarPlot x:Name=\"{n}\" Width=\"320\" Height=\"200\" Values=\"8,14,10,16,12\" Title=\"Bar chart\" ShowTitle=\"True\"/>",
             ["GrumpyAreaPlot"] = n => $"<charts:GrumpyAreaPlot x:Name=\"{n}\" Width=\"320\" Height=\"200\" Values=\"6,11,8,14,9,15\" Title=\"Area chart\" ShowTitle=\"True\"/>",
-            ["GrumpyPiePlot"] = n => $"<charts:GrumpyPiePlot x:Name=\"{n}\" Width=\"240\" Height=\"240\" Labels=\"North,South,East,West\" Values=\"32,24,18,26\" Title=\"Pie chart\" ShowTitle=\"True\" ShowLegend=\"False\"/>"
+            ["GrumpyPiePlot"] = n => $"<charts:GrumpyPiePlot x:Name=\"{n}\" Width=\"240\" Height=\"240\" Labels=\"North,South,East,West\" Values=\"32,24,18,26\" Title=\"Pie chart\" ShowTitle=\"True\" ShowLegend=\"False\"/>",
+            // The waterfall (2026-09-22) ships three samplesets inline (SampleSets: one set per ";"), so a
+            // freshly dropped chart shows the mesh and the depth immediately — a real capture names one
+            // spreadsheet column per sampleset instead (one series each).
+            ["GrumpyWaterfallPlot"] = n => $"<charts:GrumpyWaterfallPlot x:Name=\"{n}\" Width=\"360\" Height=\"240\" SampleSets=\"6,11,8,14,9,15,10,13; 9,7,14,11,16,12,9,15; 4,12,9,8,13,10,15,8\" Title=\"Waterfall\" ShowTitle=\"True\" ShowLegend=\"False\"/>"
         };
     }
 
@@ -266,7 +270,8 @@ public class ControlFactory
         ["GrumpyXYPlot"] = typeof(AvaloniaCharts.GrumpyXYPlot),
         ["GrumpyBarPlot"] = typeof(AvaloniaCharts.GrumpyBarPlot),
         ["GrumpyAreaPlot"] = typeof(AvaloniaCharts.GrumpyAreaPlot),
-        ["GrumpyPiePlot"] = typeof(AvaloniaCharts.GrumpyPiePlot)
+        ["GrumpyPiePlot"] = typeof(AvaloniaCharts.GrumpyPiePlot),
+        ["GrumpyWaterfallPlot"] = typeof(AvaloniaCharts.GrumpyWaterfallPlot)
     };
 
     public static Type? GetTypeForName(string name)

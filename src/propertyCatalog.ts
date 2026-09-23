@@ -1,5 +1,5 @@
 import { localName } from './xamlModel';
-import { isChartTag, isCartesianChartTag } from './chartSeries';
+import { isChartTag, isCartesianChartTag, isSeriesChartTag, supportsCursors } from './chartSeries';
 
 /**
  * Property descriptions for the designer's Properties panel.
@@ -66,6 +66,10 @@ const BAR_MODES = ['Grouped', 'Stacked', 'Stacked100'];
 
 /** How an area chart fills its series (the C# `AreaMode`). */
 const AREA_MODES = ['Plain', 'Stacked', 'Stacked100'];
+
+// The waterfall's own enums (the C# WaterfallStyle / WaterfallColorMode), in the same order.
+const WATERFALL_STYLES = ['Ribbon', 'Translucent', 'Lines'];
+const WATERFALL_COLOR_MODES = ['Sampleset', 'Value', 'Split'];
 const DOCK_OPTIONS = ['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom'];
 // PathPicker.PathType — which platform dialog the Browse button opens. SaveFile need not exist yet
 // (it is the “choose where to save” variant).
@@ -859,6 +863,7 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'SliceGap', label: 'Slice Gap', kind: 'number' },
         { key: 'SliceBorderColor', label: 'Slice Border Colour', kind: 'color', options: COLORS },
         { key: 'SliceBorderThickness', label: 'Slice Border Thickness', kind: 'number' },
+        { key: 'HoverExplode', label: 'Hover Explode', kind: 'number' },
         { key: 'Title', label: 'Title', kind: 'text' },
         { key: 'ShowTitle', label: 'Show Title', kind: 'dropdown', options: BOOL },
         { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
@@ -871,6 +876,66 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'BorderThickness', label: 'Border Thickness', kind: 'number' },
         { key: 'Padding', label: 'Padding', kind: 'text' },
         { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' }
+    ],
+    // The WATERFALL chart: the samples run across X (the sample NUMBER), each value stands up Y and every
+    // successive sampleset recedes along the depth. Its own rows are therefore the inline sets, the mesh,
+    // the colour mode and the VIEW (how far apart the sets stand and from where they are seen) — plus the
+    // chart-level axis rows further down, because its three axes are drawn in projection. No Axis editor
+    // and no scale rows: the sample axis follows the data and the value axis fits it.
+    GrumpyWaterfallPlot: [
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
+        { key: 'SampleSets', label: 'Sample Sets', kind: 'text' },
+        { key: 'Values', label: 'Values (one set)', kind: 'text' },
+        { key: 'Gradient', label: 'Background Gradient', kind: 'button' },
+        { key: 'YColumn', label: 'First Set Column', kind: 'text' },
+        { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
+        { key: 'FirstDataRow', label: 'First Data Row', kind: 'number' },
+        { key: 'LiveUpdate', label: 'Live Update', kind: 'dropdown', options: BOOL },
+        { key: 'RibbonStyle', label: 'Style', kind: 'dropdown', options: WATERFALL_STYLES },
+        { key: 'RibbonOpacity', label: 'Fill Opacity', kind: 'number' },
+        { key: 'ColorMode', label: 'Colour By', kind: 'dropdown', options: WATERFALL_COLOR_MODES },
+        { key: 'HeatMin', label: 'Heat Low', kind: 'number' },
+        { key: 'HeatMax', label: 'Heat High', kind: 'number' },
+        { key: 'SplitValue', label: 'Split Value', kind: 'number' },
+        { key: 'BelowColor', label: 'Below Colour', kind: 'color', options: COLORS },
+        { key: 'AboveColor', label: 'Above Colour', kind: 'color', options: COLORS },
+        { key: 'ShowConnectors', label: 'Connectors', kind: 'dropdown', options: BOOL },
+        { key: 'ConnectorColor', label: 'Connector Colour', kind: 'color', options: COLORS },
+        { key: 'ConnectorThickness', label: 'Connector Thickness', kind: 'number' },
+        { key: 'ConnectorStep', label: 'Connector Step', kind: 'number' },
+        { key: 'MaxPoints', label: 'Max Points', kind: 'number' },
+        { key: 'Elevation', label: 'Elevation (deg)', kind: 'number' },
+        { key: 'Azimuth', label: 'Azimuth (deg)', kind: 'number' },
+        { key: 'ZSpacing', label: 'Set Spacing', kind: 'number' },
+        { key: 'Zoom', label: 'Zoom', kind: 'number' },
+        { key: 'ZAxisTitle', label: 'Depth Axis Name', kind: 'text' },
+        { key: 'Title', label: 'Title', kind: 'text' },
+        { key: 'ShowTitle', label: 'Show Title', kind: 'dropdown', options: BOOL },
+        { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
+        { key: 'TitleColor', label: 'Title Colour', kind: 'color', options: COLORS },
+        { key: 'TitleFontSize', label: 'Title Size', kind: 'number' },
+        { key: 'PlotBackColor', label: 'Plot Backcolour', kind: 'color', options: COLORS },
+        { key: 'PlotBackOpacity', label: 'Plot Opacity', kind: 'number' },
+        { key: 'ShowBorder', label: 'Border', kind: 'dropdown', options: BOOL },
+        { key: 'BorderBrush', label: 'Border Colour', kind: 'color', options: COLORS },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'number' },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'ShowGrid', label: 'Floor Gridlines', kind: 'dropdown', options: BOOL },
+        { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS },
+        { key: 'GridThickness', label: 'Grid Thickness', kind: 'number' },
+        { key: 'GridStyle', label: 'Grid Style', kind: 'dropdown', options: CHART_LINE_STYLES },
+        { key: 'ShowAxes', label: 'Axes', kind: 'dropdown', options: BOOL },
+        { key: 'AxisColor', label: 'Axis Colour', kind: 'color', options: COLORS },
+        { key: 'ShowMajorTicks', label: 'Major Ticks', kind: 'dropdown', options: BOOL },
+        { key: 'MajorTickLength', label: 'Tick Length', kind: 'number' },
+        { key: 'ShowTickLabels', label: 'Tick Labels', kind: 'dropdown', options: BOOL },
+        { key: 'TickLabelFontSize', label: 'Tick Label Size', kind: 'number' },
+        { key: 'ShowAxisTitles', label: 'Axis Names', kind: 'dropdown', options: BOOL },
+        { key: 'XAxisTitle', label: 'Sample Axis Name', kind: 'text' },
+        { key: 'YAxisTitle', label: 'Value Axis Name', kind: 'text' },
+        { key: 'ShowLegend', label: 'Legend', kind: 'dropdown', options: BOOL },
+        { key: 'LegendFontSize', label: 'Legend Size', kind: 'number' }
     ],
     Line: [
         { key: 'Stroke', label: 'Line Colour', kind: 'color', options: COLORS },
@@ -1023,6 +1088,98 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
             + 'a hole half the radius.'
     },
     SliceGap: { kind: 'number', unit: '°', desc: 'The gap between two neighbouring slices in degrees (0 = they touch).' },
+
+    // --- GrumpyCharts: the waterfall's own rows (2026-09-22) ---
+    SampleSets: {
+        desc: 'Several samplesets written inline, one per semicolon-separated group: '
+            + '"1,2,3; 4,5,6" is two sets of three samples. Handy for sketching without a workbook — a '
+            + 'real capture names one spreadsheet column per set (one series each, C, D, E …).'
+    },
+    RibbonStyle: {
+        desc: 'How each sampleset is drawn: **Ribbon** (a solid fill under the trace, so a nearer set '
+            + 'hides the ones behind it — the classic waterfall), **Translucent** (the same fill, '
+            + 'see-through, so the depth reads as layers) or **Lines** (no fill at all: the traces and '
+            + 'the mesh make a wireframe).'
+    },
+    RibbonOpacity: {
+        kind: 'number', unit: '%',
+        desc: 'How solid a Translucent fill is (default 80). 100 makes it look like the Ribbon style; '
+            + 'lower values let the sets behind it glow through.'
+    },
+    ColorMode: {
+        desc: 'What decides the colour: **Sampleset** (one colour per set, from its series colour — the '
+            + 'default), **Value** (a heat map by amplitude: a peak\'s tip takes the map\'s top colour '
+            + 'and its foot the bottom one) or **Split** (two colours either side of Split Value, so a '
+            + 'limit is visible in the picture instead of in a legend).'
+    },
+    HeatMin: {
+        kind: 'number',
+        desc: 'The amplitude the heat map\'s low end sits at. Empty (the default) uses the data\'s own '
+            + 'least value, so the picture always uses the whole map.'
+    },
+    HeatMax: {
+        kind: 'number',
+        desc: 'The amplitude the heat map\'s top end sits at. Empty (the default) uses the data\'s own '
+            + 'greatest value.'
+    },
+    SplitValue: {
+        kind: 'number',
+        desc: 'The amplitude where the Split colour mode changes colour (0 puts one colour below zero and '
+            + 'the other above it, which is how a negative excursion is made obvious). The trace is cut '
+            + 'exactly where it crosses this value.'
+    },
+    BelowColor: { kind: 'color', options: COLORS, desc: 'The colour of everything below Split Value.' },
+    AboveColor: { kind: 'color', options: COLORS, desc: 'The colour of everything above Split Value.' },
+    ShowConnectors: {
+        desc: 'Join the samplesets with thin lines at the same sample — the mesh that turns a row of '
+            + 'separate traces into a surface. Off leaves the bare traces (and no fill either, in the '
+            + 'Lines style).'
+    },
+    ConnectorColor: { kind: 'color', options: COLORS, desc: 'The colour of the connectors (in the Value colour mode they take the heat map instead).' },
+    ConnectorThickness: { kind: 'number', unit: 'px', desc: 'How thick the connectors are (0 draws none).' },
+    ConnectorStep: {
+        kind: 'number',
+        desc: 'One connector every N drawn samples. Empty/0 (the default) spaces them so the mesh stays '
+            + 'readable — about forty per trace, which is what a 2048-point set needs.'
+    },
+    MaxPoints: {
+        kind: 'number',
+        desc: 'How many samples of a trace are DRAWN at most (512 by default, 0 = every one). A '
+            + '2048-point capture thinned to 512 still shows every peak that survives at screen '
+            + 'resolution, and the picture stays interactive while it is being turned. The stride is the '
+            + 'same for every set, so the mesh joins like to like.'
+    },
+    Elevation: {
+        kind: 'number', unit: '°',
+        desc: 'How far above the floor the chart is seen from (default 30): 0 is edge on (flat) and 89 '
+            + 'looks almost straight down. In the app you can also DRAG the chart to turn it.'
+    },
+    Azimuth: {
+        kind: 'number', unit: '°',
+        desc: 'Where the cube is turned to (default 45 — the usual three-quarter view with the sets '
+            + 'receding to the right). Changed live by dragging the chart, sideways this time.'
+    },
+    ZSpacing: {
+        kind: 'number', unit: '× depth',
+        desc: 'How deep the samplesets stand apart: 1 (the default) uses the whole fitted depth, 0.5 '
+            + 'packs them half as deep, 2 stretches the picture back.'
+    },
+    Zoom: {
+        kind: 'number', unit: '×',
+        desc: 'Scales the fitted picture: 1 (the default) fits the whole cube into the frame, 1.2 makes '
+            + 'it larger than the frame (the edges then leave it), 0.8 leaves a margin.'
+    },
+    ZAxisTitle: {
+        desc: 'The name along the depth axis — what one step of it means ("Sweep", "Run"). Each set\'s '
+            + 'own name in the legend comes from its series Title.'
+    },
+    HoverExplode: {
+        kind: 'number', unit: 'px',
+        desc: 'How far the slice under the **pointer** pops out of the ring while the mouse is over it '
+            + '(10 pixels by default, 0 = it stays put). The slice also reports itself in the readout '
+            + 'panel: its name, its value and its share of the total. Hovering never changes the saved '
+            + 'form — it is a reading, not a setting.'
+    },
     SliceBorderColor: { kind: 'color', options: COLORS, desc: 'The line drawn between two slices.' },
     SliceBorderThickness: { kind: 'number', unit: 'px', desc: 'How thick that line is (0 = the colours touch).' },
     Value: { kind: 'number', desc: 'The current value (Progress bar / Slider: 0-100; Number box: a number).' },
@@ -1447,8 +1604,30 @@ export const DEFAULTS: Record<string, string> = {
     // StartAngle already has its generic default above (the Arc shape uses it too); a pie's own
     // default is the same 0 — 12 o'clock.
     SliceGap: '0',
+    HoverExplode: '10',
     SliceBorderColor: '#FFFFFF',
     SliceBorderThickness: '1',
+    // --- GrumpyCharts: the waterfall (2026-09-22) ---
+    SampleSets: '',
+    RibbonStyle: 'Ribbon',
+    RibbonOpacity: '80',
+    ColorMode: 'Sampleset',
+    // Empty = "let the data decide", which is what the control's NaN default means.
+    HeatMin: '',
+    HeatMax: '',
+    SplitValue: '0',
+    BelowColor: '#2D7DD2',
+    AboveColor: '#E4572E',
+    ShowConnectors: 'True',
+    ConnectorColor: '#6B7A8F',
+    ConnectorThickness: '1',
+    ConnectorStep: '0',
+    MaxPoints: '512',
+    Elevation: '30',
+    Azimuth: '45',
+    ZSpacing: '1',
+    Zoom: '1',
+    ZAxisTitle: '',
     OnContent: 'On',
     OffContent: 'Off',
     Radius: '',
@@ -1632,10 +1811,20 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'ShowTitle', 'TitleColor', 'TitlePosition', 'TitleFontSize',
             'ShowLegend', 'LegendFontSize',
             // The category and pie charts (2026-09-20): how the shapes stand in their category, how
-            // full the area fill is, and the pie's ring, its start angle, the gaps and the slice
-            // outlines.
+            // full the area fill is, and the pie's ring, its start angle, the gaps, the slice
+            // outlines and how far the slice under the pointer pops out (2026-09-22).
             'BarMode', 'BarWidth', 'BarCornerRadius', 'AreaMode', 'AreaOpacity',
-            'DoughnutPercent', 'StartAngle', 'SliceGap', 'SliceBorderColor', 'SliceBorderThickness'
+            'DoughnutPercent', 'StartAngle', 'SliceGap', 'SliceBorderColor', 'SliceBorderThickness',
+            'HoverExplode',
+            // The waterfall (2026-09-22): the fill style and its opacity, the colour mode with its heat
+            // range and its split colours, the mesh, and the VIEW (the two angles, the set spacing and the
+            // zoom). Its floor gridlines and its three projected axes use the axis rows just above.
+            'RibbonStyle', 'RibbonOpacity', 'ColorMode', 'HeatMin', 'HeatMax', 'SplitValue',
+            'BelowColor', 'AboveColor', 'ShowConnectors', 'ConnectorColor', 'ConnectorThickness',
+            'ConnectorStep', 'MaxPoints', 'Elevation', 'Azimuth', 'ZSpacing', 'Zoom',
+            // The surface fill between the sets was removed from the chart (the open corridors between
+            // the sets are the default, unroofed picture), so the SurfaceFill / SurfaceColor /
+            // SurfaceOpacity / SurfaceToFloor rows are gone with it.
         ]
     },
     {
@@ -1654,8 +1843,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview',
             // The 2026-09-19 controls: switch state text, the masked box's mask and hint, number format
             'OnContent', 'OffContent', 'Mask', 'Watermark', 'FormatString',
-            // GrumpyCharts: the axis names (the spreadsheet's row-1 column headers by default)
-            'XAxisTitle', 'YAxisTitle'
+            // GrumpyCharts: the axis names (the spreadsheet's row-1 column headers by default), and the
+            // waterfall's depth-axis name.
+            'XAxisTitle', 'YAxisTitle', 'ZAxisTitle'
         ]
     },
     {
@@ -1674,7 +1864,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // and the optional fixed axis bounds (empty = auto-fit to the data). 'Points' is listed
             // under Appearance, where the point-defined shapes already keep it.
             'Values', 'Labels', 'SourceFile', 'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow',
-            'MinX', 'MaxX', 'MinY', 'MaxY'
+            'MinX', 'MaxX', 'MinY', 'MaxY',
+            // The waterfall's inline samplesets (see the row of the same name).
+            'SampleSets'
         ]
     },
     {
@@ -1955,8 +2147,10 @@ export function propertyDefsFor(
     // values. Series can share the chart's axis (Common) or be scaled on their own (Per series).
     // Shown at the TOP of the list. The BAR and AREA charts draw their series as rectangles/fills
     // instead of lines, but they are the same series in every other way, so they get the same four
-    // editors (their data comes from the X column's CATEGORY names).
-    if (isCartesianChartTag(tag)) {
+    // editors (their data comes from the X column's CATEGORY names). The WATERFALL's series are its
+    // SAMPLESETS, so it gets the Series and Legend editors but no Axis one: its three axes are drawn in
+    // projection and styled by the chart-level axis rows instead.
+    if (isSeriesChartTag(tag)) {
         topActions.push({
             key: 'Series',
             label: 'Series',
@@ -1965,16 +2159,23 @@ export function propertyDefsFor(
             desc: 'Adds, removes and reorders the lines this chart draws. Each series has its own '
                 + 'spreadsheet column(s), colour, line style, markers and join setting, and either shares '
                 + 'the chart\'s axis and columns (Common) or is scaled on its own (Per series).'
+                + (tag === 'GrumpyWaterfallPlot'
+                    ? ' **On a waterfall each entry is one SAMPLESET** — its own column, drawn further '
+                    + 'back along the depth than the one before it, and named by its Title in the legend. '
+                    + 'A capture of twenty sweeps is twenty entries, reading one column each.'
+                    : '')
         });
-        topActions.push({
-            key: 'Axis',
-            label: 'Axis',
-            kind: 'button',
-            value: 'Edit axes…',
-            desc: 'Sets up the chart\'s two common axes (where each one sits, its colour, ticks, tick '
-                + 'labels, name and font size) and gives any Per-series line its own X and/or Y axis. '
-                + 'A per-series axis can be deleted again to leave that side to the common axis.'
-        });
+        if (isCartesianChartTag(tag)) {
+            topActions.push({
+                key: 'Axis',
+                label: 'Axis',
+                kind: 'button',
+                value: 'Edit axes…',
+                desc: 'Sets up the chart\'s two common axes (where each one sits, its colour, ticks, tick '
+                    + 'labels, name and font size) and gives any Per-series line its own X and/or Y axis. '
+                    + 'A per-series axis can be deleted again to leave that side to the common axis.'
+            });
+        }
         topActions.push({
             key: 'Legend',
             label: 'Legend',
@@ -1986,6 +2187,12 @@ export function propertyDefsFor(
                 + 'tick box that switches that trace on and off. **Margin** adds space between the frame '
                 + 'and the entries inside it, on all four sides, so a framed legend does not look cramped.'
         });
+    }
+    // 'Cursors' opens the cursor editor for the charts that HAVE cursors: the two line charts and the
+    // area chart. The bar and the pie have none — a cursor reads a value BETWEEN two samples, a bar is
+    // one reading per category, and the pie has no frame — so their right-click menu carries no cursor
+    // entries either, and they report what is under the pointer in the readout panel instead.
+    if (supportsCursors(tag)) {
         topActions.push({
             key: 'Cursors',
             label: 'Cursors',

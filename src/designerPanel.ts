@@ -5,7 +5,7 @@ import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './x
 import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
     chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush, chartSlicesOf, writeChartSlices,
-    chartDataSourceOf, writeChartDataSource
+    chartDataSourceOf, writeChartDataSource, supportsCursors
 } from './chartSeries';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
@@ -5139,12 +5139,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             msg.dgCols = dgColsOf(el);
         }
         // The same for a chart's series, axes, legend and cursors (the 'Series'/'Axis'/'Legend'/
-        // 'Cursors' editors pre-fill from these) and for a pie's slices (the 'Slices' editor).
+        // 'Cursors' editors pre-fill from these) and for a pie's slices (the 'Slices' editor). The bar
+        // and the pie have no Cursors row, so nothing reads their cursor info — but the chart's own
+        // cursors (the ones a form already wrote) still round-trip through the Series-style save path.
         if (isChartTag(localName(el.tagName))) {
             msg.chartSeries = chartSeriesOf(el);
             msg.chartAxes = chartAxesOf(el);
             msg.legendInfo = chartLegendOf(el);
-            msg.cursorInfo = chartCursorsOf(el);
+            if (supportsCursors(localName(el.tagName))) msg.cursorInfo = chartCursorsOf(el);
             msg.brushInfo = chartBrushOf(el);
             msg.sliceInfo = chartSlicesOf(el);
             // The Data Selector editor's working copy (source kind, file, page, data file). The page

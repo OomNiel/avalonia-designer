@@ -91,6 +91,7 @@ using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Metadata;
 using Avalonia.Platform.Storage;
@@ -245,6 +246,31 @@ public enum DataSourceKind
     DataFiles
 }
 
+/// <summary>How a <see cref="GrumpyWaterfallPlot"/> draws each of its samplesets.</summary>
+public enum WaterfallStyle
+{
+    /// <summary>A filled ribbon under each trace, drawn solid, so a nearer set hides the ones behind it
+    /// (the default) — the classic waterfall.</summary>
+    Ribbon,
+    /// <summary>The same ribbon drawn see-through: the depth reads as layers instead of as occlusion.</summary>
+    Translucent,
+    /// <summary>No fill at all: the traces and their connectors make a wireframe mesh.</summary>
+    Lines
+}
+
+/// <summary>What decides the colour of a <see cref="GrumpyWaterfallPlot"/>'s traces and mesh.</summary>
+public enum WaterfallColorMode
+{
+    /// <summary>One colour per sampleset — the series' own colour, the way the pie colours its slices
+    /// (the default).</summary>
+    Sampleset,
+    /// <summary>A heat map by amplitude: the value picks the colour between HeatMin and HeatMax, so a
+    /// peak's tip is the map's top colour and its base the bottom one.</summary>
+    Value,
+    /// <summary>Two colours either side of SplitValue — a limit line rather than a palette.</summary>
+    Split
+}
+
 /// <summary>Reads <c>Values="4,9,6,12"</c> from XAML into a <see cref="double"/> array.</summary>
 public sealed class DoubleArrayConverter : TypeConverter
 {
@@ -298,6 +324,34 @@ public sealed class DoubleMatrixConverter : TypeConverter
             result[i, 1] = pairs[i][1];
         }
         return result;
+    }
+}
+
+/// <summary>Reads <c>SetValues="1,2,3; 4,5,6"</c> from XAML: one sampleset per semicolon-separated
+/// group, the sample points comma-separated inside it. This is what a waterfall sketches with when there
+/// is no workbook at hand — a real capture names one column per sampleset instead.</summary>
+public sealed class DoubleSetConverter : TypeConverter
+{
+    /// <inheritdoc/>
+    public override bool CanConvertFrom(ITypeDescriptorContext? context, Type sourceType)
+        => sourceType == typeof(string) || base.CanConvertFrom(context, sourceType);
+
+    /// <inheritdoc/>
+    public override object? ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value)
+    {
+        if (value is not string s) return base.ConvertFrom(context, culture, value);
+        var sets = new List<double[]>();
+        foreach (var group in s.Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var points = new List<double>();
+            foreach (var token in group.Split(new[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (double.TryParse(token.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
+                    points.Add(d);
+            }
+            if (points.Count > 0) sets.Add(points.ToArray());
+        }
+        return sets.ToArray();
     }
 }
 
@@ -1256,6 +1310,41 @@ public abstract class ChartBase : Control
     /// <summary>The cursor a drag is moving, and which of its lines the drag grabbed.</summary>
     private ChartCursor? _dragCursor;
 
+    /// <summary>
+    /// The text and colours of one readout panel: the black plate a reading appears in. Kept as a value
+    /// so the two paths that show one — a cursor, and whatever the pointer is over on a chart that
+    /// reports it (see <see cref="SupportsHoverReadout"/>) — can build it their own way and still share
+    /// one piece of drawing code, so the two can never drift apart.
+    /// </summary>
+    private protected sealed class ReadoutPanel
+    {
+        /// <summary>The first line: what the reading belongs to ("C1  North", "North").</summary>
+        internal string Head = string.Empty;
+
+        /// <summary>The colour of that line — the cursor's own drawn colour, or the element's.</summary>
+        internal Color HeadColor = Colors.White;
+
+        /// <summary>The numbers under it, or null when the reading has none.</summary>
+        internal string? Body;
+
+        /// <summary>The cursor pair's |ΔX| / |ΔY| row, or null. Never set for a hovered element.</summary>
+        internal string? Delta;
+
+        /// <summary>The colour the panel is outlined in, and the hairline above the delta row.</summary>
+        internal Color Accent = Colors.White;
+
+        /// <summary>The colour of that hairline: the OTHER cursor's drawn colour.</summary>
+        internal Color DeltaColor = Colors.White;
+
+        /// <summary>Draw the panel beside the pointer instead of in the plot's top right corner.</summary>
+        internal bool FollowPointer;
+    }
+
+    /// <summary>What the pointer is over on a chart that reports it, or null when it is over nothing
+    /// (see <see cref="SupportsHoverReadout"/>). Rebuilt by <see cref="UpdateHover"/> while the pointer
+    /// moves and cleared when it leaves the chart.</summary>
+    private protected ReadoutPanel? Hover;
+
     /// <summary>One cursor's clickable parts, in control coordinates, plus the values its readout
     /// reports — kept so the panel can compare TWO cursors without recomputing anything.</summary>
     private sealed class CursorHit
@@ -1785,8 +1874,18 @@ public abstract class ChartBase : Control
     /// </summary>
     protected virtual bool HasCartesianAxes => true;
 
-    /// <summary>False when a draggable crosshair makes no sense on this chart type (the pie).</summary>
+    /// <summary>False when a draggable crosshair makes no sense on this chart type (the pie and the
+    /// bar): the chart's right-click menu then carries no cursor entries at all.</summary>
     protected virtual bool SupportsCursors => true;
+
+    /// <summary>
+    /// True when the chart reports what is under the pointer in the readout panel — a bar's category and
+    /// value, a pie slice's name, value and share of the total. The chart type decides what that is:
+    /// <see cref="UpdateHover"/> fills <see cref="Hover"/> in as the pointer moves and the shared panel
+    /// draws it exactly as it draws a cursor's readout. On a pie the slice under the pointer also pops
+    /// out of the ring by <see cref="GrumpyPiePlot.HoverExplode"/> pixels.
+    /// </summary>
+    private protected virtual bool SupportsHoverReadout => false;
 
     /// <summary>
     /// True when the X axis is a list of CATEGORIES and should be labelled with each point's own name
@@ -1954,6 +2053,9 @@ public abstract class ChartBase : Control
 
         if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed)
         {
+            // Focus before the menu opens: the menu itself takes the keyboard, and a filled chart has to
+            // still answer Esc after the menu has closed (see OnKeyDown).
+            Focus();
             ShowChartMenu();
             e.Handled = true;
             return;
@@ -1992,7 +2094,8 @@ public abstract class ChartBase : Control
         }
     }
 
-    /// <summary>Drags the grabbed cursor, and keeps a mouse-following readout with the pointer.</summary>
+    /// <summary>Drags the grabbed cursor, keeps a mouse-following readout with the pointer, and re-reads
+    /// what the pointer is over on a chart that reports it.</summary>
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
@@ -2005,8 +2108,29 @@ public abstract class ChartBase : Control
             DragCursorTo(position);
             return;
         }
+        // A chart that reports what is under the pointer redraws as the mouse moves, because its panel
+        // follows the pointer; a cursor's readout only redraws while it follows the mouse and a cursor
+        // is switched on.
+        if (SupportsHoverReadout)
+        {
+            UpdateHover(position, _plotRect);
+            if (moved) InvalidateVisual();
+            return;
+        }
         // Only a chart that is reporting at the pointer needs redrawing while the mouse moves.
         if (moved && ReadoutPosition is CursorReadout.FollowMouse && LiveCursorIndexes().Count > 0) InvalidateVisual();
+    }
+
+    /// <summary>Forgets what the pointer was over when it leaves the chart, so the readout goes with it
+    /// instead of staying on screen with nothing under it. (A cursor's readout keeps its own behaviour:
+    /// it is reporting from where the cursor is, not from where the mouse is.)</summary>
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        if (!SupportsHoverReadout) return;
+        Hover = null;
+        ClearHover();
+        InvalidateVisual();
     }
 
     /// <inheritdoc/>
@@ -2022,13 +2146,22 @@ public abstract class ChartBase : Control
     }
 
     /// <summary>
-    /// The cursor keys. With a cursor switched on, ←/→ move the selected cursor one sample along X
-    /// and ↑/↓ choose which trace the readout reports. Without a cursor the keys are left alone, so
-    /// the chart does not swallow the arrow keys of the window around it.
+    /// The cursor keys, and Esc. Esc puts a FILLED chart back where it came from (see
+    /// <see cref="FillContainer"/>), whatever else this chart's keys do — and it is only swallowed while
+    /// the chart really is filled, so a dialog around it keeps its own Esc. With a cursor switched on,
+    /// ←/→ move the selected cursor one sample along X and ↑/↓ choose which trace the readout reports;
+    /// without a cursor the arrow keys are left alone, so the chart does not swallow the keys of the
+    /// window around it.
     /// </summary>
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (e.Key is Key.Escape && _filled)
+        {
+            RestorePlacement();
+            e.Handled = true;
+            return;
+        }
         var live = LiveCursorIndexes();
         if (live.Count == 0) return;
         if (e.Key is not (Key.Left or Key.Right or Key.Up or Key.Down)) return;
@@ -2078,6 +2211,12 @@ public abstract class ChartBase : Control
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         StopWatcher();
+        // A chart that leaves the tree must not keep its container's layout event alive.
+        if (_fillHost is not null)
+        {
+            _fillHost.LayoutUpdated -= OnFillHostLaidOut;
+            _fillHost = null;
+        }
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -2269,6 +2408,10 @@ public abstract class ChartBase : Control
 
         if (_lastPlotCount == 0)
         {
+            // Nothing is drawn, so nothing can be under the pointer: a readout left over from before the
+            // data went away would otherwise hang on screen over an empty chart.
+            ClearHover();
+            Hover = null;
             DrawFrame(context, frame, radius, frameWidth);
             DrawTitle(context, titleText, plot, content);
             DrawLegend(context);
@@ -2341,6 +2484,10 @@ public abstract class ChartBase : Control
         DrawFrame(context, frame, radius, frameWidth);
         DrawTitle(context, titleText, plot, content);
         DrawLegend(context);
+
+        // And then the readout of whatever the pointer is over (a bar, a slice), because that is a
+        // tooltip: it belongs on top of everything the chart itself drew.
+        if (SupportsHoverReadout) DrawHoverReadout(context, plot);
     }
 
     /// <summary>
@@ -2439,7 +2586,7 @@ public abstract class ChartBase : Control
 
     /// <summary>The name a series shows in the legend: its own Title, else the spreadsheet's Y-column
     /// header, else "Series n".</summary>
-    private string LegendName(Plot plot, int index)
+    private protected string LegendName(Plot plot, int index)
     {
         if (plot.Definition is { Title: { } title } && !string.IsNullOrWhiteSpace(title)) return title;
         if (!string.IsNullOrWhiteSpace(plot.Data.YTitle)) return plot.Data.YTitle;
@@ -2950,19 +3097,54 @@ public abstract class ChartBase : Control
             deltaColor = (first.Index == index ? second : first).DrawnColor;
         }
 
-        // The panel's TEXT is a fixed palette now: the series line keeps that trace's colour, and the
-        // numbers are always white on the always-black panel below. A reading therefore looks the same
-        // on every chart, whatever the series colour or the chart's own background is.
-        var head = MakeText(tag + "  " + name, 11, trace.LineColor);
-        var body = parts.Count > 0 ? MakeText(string.Join("   ", parts), 11, Colors.White) : null;
-        var deltaText = delta is null ? null : MakeText(delta, 11, Colors.White);
-        var width = Math.Min(Math.Max(Math.Max(head.Width, body?.Width ?? 0), deltaText?.Width ?? 0) + 12,
+        _readoutText = tag + " " + name + (parts.Count > 0 ? ": " + string.Join(", ", parts) : string.Empty)
+                     + (delta is null ? string.Empty : " | " + delta);
+
+        // The panel's TEXT is a fixed palette: the head line keeps its own colour (that trace's, for a
+        // cursor), the numbers are always white and the plate is always black. A reading therefore looks
+        // the same on every chart, whatever the series colour or the chart's own background is.
+        DrawReadoutPanel(context, plot, new ReadoutPanel
+        {
+            Head = tag + "  " + name,
+            HeadColor = trace.LineColor,
+            Body = parts.Count > 0 ? string.Join("   ", parts) : null,
+            Delta = delta,
+            Accent = color,
+            DeltaColor = deltaColor,
+            FollowPointer = ReadoutPosition is CursorReadout.FollowMouse && _hasPointer
+        });
+    }
+
+    /// <summary>
+    /// Draws the readout of whatever the pointer is over, on a chart that reports it (see
+    /// <see cref="SupportsHoverReadout"/>). It is the SAME panel a cursor uses — one black plate, the
+    /// element's name in the element's own colour, the numbers in white underneath — so a hovered bar and
+    /// a cursor's crossing read alike.
+    /// </summary>
+    private void DrawHoverReadout(DrawingContext context, Rect plot)
+    {
+        if (Hover is null) return;
+        DrawReadoutPanel(context, plot, Hover);
+    }
+
+    /// <summary>
+    /// Draws one readout panel: a black plate outlined in the reading's own colour, the head line in the
+    /// element's colour, the numbers in white under it, and — for a pair of cursors — the |ΔX| / |ΔY| row
+    /// under a hairline in the OTHER cursor's colour. It sits beside the pointer or in the plot's top
+    /// right corner, and is kept inside the plot either way.
+    /// </summary>
+    private void DrawReadoutPanel(DrawingContext context, Rect plot, ReadoutPanel panel)
+    {
+        var head = MakeText(panel.Head, 11, panel.HeadColor);
+        var body = string.IsNullOrEmpty(panel.Body) ? null : MakeText(panel.Body!, 11, Colors.White);
+        var delta = string.IsNullOrEmpty(panel.Delta) ? null : MakeText(panel.Delta!, 11, Colors.White);
+        var width = Math.Min(Math.Max(Math.Max(head.Width, body?.Width ?? 0), delta?.Width ?? 0) + 12,
                              Math.Max(20, plot.Width - 8));
         var height = head.Height + (body is null ? 0 : body.Height + 2)
-                   + (deltaText is null ? 0 : deltaText.Height + 7) + 10;
+                   + (delta is null ? 0 : delta.Height + 7) + 10;
 
         // Where it goes: beside the pointer, or in the corner. Either way it is kept inside the plot.
-        var follow = ReadoutPosition is CursorReadout.FollowMouse && _hasPointer;
+        var follow = panel.FollowPointer && _hasPointer;
         var rx = follow ? _pointer.X + 14 : plot.Right - 6 - width;
         var ry = follow ? _pointer.Y + 14 : plot.Y + 6;
         rx = Math.Clamp(rx, plot.X + 4, Math.Max(plot.X + 4, plot.Right - 4 - width));
@@ -2971,21 +3153,18 @@ public abstract class ChartBase : Control
         _readoutRect = rect;
 
         context.DrawRectangle(new SolidColorBrush(Colors.Black),
-            new Pen(new SolidColorBrush(color), 1), new RoundedRect(rect, new CornerRadius(3)));
+            new Pen(new SolidColorBrush(panel.Accent), 1), new RoundedRect(rect, new CornerRadius(3)));
         context.DrawText(head, new Point(rect.X + 6, rect.Y + 5));
         if (body is not null) context.DrawText(body, new Point(rect.X + 6, rect.Y + 5 + head.Height + 2));
-        if (deltaText is not null)
+        if (delta is not null)
         {
             // A hairline over the pair's row, so "this line is about both cursors" is visible at a
             // glance rather than only in its colour.
             var lineY = rect.Y + 5 + head.Height + (body is null ? 0 : body.Height + 2) + 3;
-            context.DrawLine(new Pen(new SolidColorBrush(deltaColor, 0.5), 1),
+            context.DrawLine(new Pen(new SolidColorBrush(panel.DeltaColor, 0.5), 1),
                 new Point(rect.X + 6, lineY), new Point(rect.Right - 6, lineY));
-            context.DrawText(deltaText, new Point(rect.X + 6, lineY + 3));
+            context.DrawText(delta, new Point(rect.X + 6, lineY + 3));
         }
-
-        _readoutText = tag + " " + name + (parts.Count > 0 ? ": " + string.Join(", ", parts) : string.Empty)
-                     + (delta is null ? string.Empty : " | " + delta);
     }
 
     /// <summary>The trace's Y at <paramref name="x"/>: linearly interpolated between the two samples
@@ -3037,6 +3216,19 @@ public abstract class ChartBase : Control
         return text == "-0" ? "0" : text;
     }
 
+    /// <summary>A readout number for a hovered element (a bar's value, a slice's value): trailing zeros
+    /// trimmed, and independent of <see cref="CursorDecimals"/>, which is the cursor readout's own
+    /// setting on a chart that has crosshairs.</summary>
+    private protected static string FormatReading(double value)
+    {
+        var text = value.ToString("0.####", CultureInfo.CurrentCulture);
+        return text == "-0" ? "0" : text;
+    }
+
+    /// <summary>One element's share of the chart's total, as the pie's readout shows it: one decimal,
+    /// trimmed, then the percent sign.</summary>
+    private protected static string FormatShare(double share) => FormatNumber(share, 0.1) + " %";
+
     private static IPen MakeCursorPen(Color color, double thickness, CursorStyle style)
         => new Pen(new SolidColorBrush(color), Math.Max(0.5, thickness), DashForCursor(style))
         {
@@ -3052,7 +3244,19 @@ public abstract class ChartBase : Control
         _ => null
     };
 
-    // ---- cursor input ----------------------------------------------------------------------
+    // ---- pointer input: the cursor drag, and what the pointer is over ------------------------
+
+    /// <summary>
+    /// Hit-tests the pointer on a chart that reports what is under it (see
+    /// <see cref="SupportsHoverReadout"/>), setting <see cref="Hover"/> or leaving it null. Called on
+    /// every mouse move with the coordinates of the plot area as the last render laid it out — a chart
+    /// remembers the shapes it drew (the bars, the wedges) and tests those, so the answer always matches
+    /// the picture on screen. The default does nothing: a chart with cursors reports through them.
+    /// </summary>
+    private protected virtual void UpdateHover(Point point, Rect plot) { }
+
+    /// <summary>Forgets the element the pointer was over (called when the pointer leaves the chart).</summary>
+    private protected virtual void ClearHover() { }
 
     /// <summary>Moves the cursor being dragged. The vertical line changes X, the horizontal line Y,
     /// and the handle at the crossing point both at once — the same lines the user sees. A cursor that
@@ -3082,7 +3286,132 @@ public abstract class ChartBase : Control
         _ = clipboard.SetTextAsync(_readoutText);
     }
 
-    /// <summary>The chart's right-click menu: choosing the spreadsheet, which cursors are switched on,
+    // ---- filling the container (the menu's Fill / Restore, and the Esc key) -------------------
+
+    /// <summary>True while the chart fills its container (see <see cref="FillContainer"/>).</summary>
+    private bool _filled;
+
+    /// <summary>The container whose layout is watched while the chart is filled, so the fill keeps matching
+    /// it when the window is resized.</summary>
+    private Control? _fillHost;
+
+    // Exactly what the fill found, so RestorePlacement puts it back — including the "the form does not name
+    // it" states (Width/Height and Canvas.Left/Top are NaN when they are not set).
+    private double _keepWidth, _keepHeight, _keepLeft, _keepTop;
+    private HorizontalAlignment _keepHAlign;
+    private VerticalAlignment _keepVAlign;
+    private Thickness _keepMargin;
+    private int _keepZ, _keepRow, _keepColumn, _keepRowSpan, _keepColumnSpan;
+
+    /// <summary>True while this chart fills its container.</summary>
+    public bool IsFilled => _filled;
+
+    /// <summary>
+    /// FILLS the chart's container: the chart is stretched, moved to the container's corner, made the size
+    /// of the container and raised above its siblings, so a small form still gets a chart you can read. The
+    /// placement the fill found is remembered, so <see cref="RestorePlacement"/> — the other entry in the
+    /// chart's own right-click menu, or the Esc key — puts it back exactly.
+    /// <para>
+    /// What "the container" means depends on what the chart sits in: a Canvas child is moved to (0,0) and
+    /// sized to the canvas, a Grid child also spans every row and column (so its rectangle really is the
+    /// container's and not one cell's), and any other parent is filled with that parent's own rectangle. A
+    /// StackPanel or WrapPanel lays its children out in a line, so a filled chart there covers them instead
+    /// of sharing the space — which is what "fill" asks for.
+    /// </para>
+    /// <para>Runtime only: the saved form is not touched, exactly like a cursor drag. False when the chart
+    /// is already filled or has no parent to fill.</para>
+    /// </summary>
+    public bool FillContainer()
+    {
+        if (_filled || Parent is not Visual host) return false;
+        _keepWidth = Width;
+        _keepHeight = Height;
+        _keepHAlign = HorizontalAlignment;
+        _keepVAlign = VerticalAlignment;
+        _keepMargin = Margin;
+        _keepZ = ZIndex;
+        _keepLeft = Canvas.GetLeft(this);
+        _keepTop = Canvas.GetTop(this);
+        _keepRow = Grid.GetRow(this);
+        _keepColumn = Grid.GetColumn(this);
+        _keepRowSpan = Grid.GetRowSpan(this);
+        _keepColumnSpan = Grid.GetColumnSpan(this);
+        _filled = true;
+        ApplyFill(host);
+        // A filled chart has to keep up with its container: without this a window resize would leave it the
+        // size it had when the menu entry was clicked.
+        if (host is Control container)
+        {
+            _fillHost = container;
+            container.LayoutUpdated += OnFillHostLaidOut;
+        }
+        Focus();
+        return true;
+    }
+
+    /// <summary>Puts the chart back exactly where <see cref="FillContainer"/> found it: the chart's own menu
+    /// offers it, the Esc key does it, and code may call it. False when the chart was not filled.</summary>
+    public bool RestorePlacement()
+    {
+        if (!_filled) return false;
+        _filled = false;
+        if (_fillHost is not null)
+        {
+            _fillHost.LayoutUpdated -= OnFillHostLaidOut;
+            _fillHost = null;
+        }
+        Width = _keepWidth;
+        Height = _keepHeight;
+        HorizontalAlignment = _keepHAlign;
+        VerticalAlignment = _keepVAlign;
+        Margin = _keepMargin;
+        ZIndex = _keepZ;
+        Canvas.SetLeft(this, _keepLeft);
+        Canvas.SetTop(this, _keepTop);
+        Grid.SetRow(this, _keepRow);
+        Grid.SetColumn(this, _keepColumn);
+        Grid.SetRowSpan(this, _keepRowSpan);
+        Grid.SetColumnSpan(this, _keepColumnSpan);
+        return true;
+    }
+
+    /// <summary>The fill itself: the chart takes the container's whole rectangle and sits on top of its
+    /// siblings. A Grid child spans the grid first, so the rectangle is the container's own and not one
+    /// cell's.</summary>
+    private void ApplyFill(Visual host)
+    {
+        HorizontalAlignment = HorizontalAlignment.Stretch;
+        VerticalAlignment = VerticalAlignment.Stretch;
+        Margin = default;
+        if (host is Canvas)
+        {
+            Canvas.SetLeft(this, 0);
+            Canvas.SetTop(this, 0);
+        }
+        if (host is Grid grid)
+        {
+            Grid.SetRow(this, 0);
+            Grid.SetColumn(this, 0);
+            Grid.SetRowSpan(this, Math.Max(1, grid.RowDefinitions.Count));
+            Grid.SetColumnSpan(this, Math.Max(1, grid.ColumnDefinitions.Count));
+        }
+        ZIndex = Math.Max(1000, _keepZ);
+        Width = Math.Max(1, host.Bounds.Width);
+        Height = Math.Max(1, host.Bounds.Height);
+    }
+
+    /// <summary>Keeps a filled chart the size of its container when the container changes size.</summary>
+    private void OnFillHostLaidOut(object? sender, EventArgs e)
+    {
+        if (!_filled || Parent is not Visual host) return;
+        var width = Math.Max(1, host.Bounds.Width);
+        var height = Math.Max(1, host.Bounds.Height);
+        if (Math.Abs(Width - width) > 0.5) Width = width;
+        if (Math.Abs(Height - height) > 0.5) Height = height;
+    }
+
+    /// <summary>The chart's right-click menu: choosing the spreadsheet, FILLING THE CONTAINER (and putting
+    /// the chart back), which cursors are switched on,
     /// where the readout sits, and add / remove / reset / copy. Nothing here is written back to the
     /// form — the saved defaults are the ones the Cursor Editor sets, and a restart starts from those
     /// again.
@@ -3099,6 +3428,29 @@ public abstract class ChartBase : Control
         var browseItem = new MenuItem { Header = "Choose spreadsheet…" };
         browseItem.Click += (_, _) => _ = BrowseForFile();
         items.Add(browseItem);
+
+        // Filling the container is offered on EVERY chart, cursors or not: it is the one way to read a
+        // chart on a crowded form. The label says what the click will do, so the same entry is both the
+        // dock and the undock, and the restore half carries the Esc hint because Esc does the same thing.
+        var fillItem = new MenuItem
+        {
+            Header = _filled ? "Restore the original position  (Esc)" : "Fill the container"
+        };
+        fillItem.Click += (_, _) =>
+        {
+            if (_filled) RestorePlacement(); else FillContainer();
+        };
+        items.Add(fillItem);
+
+        // A chart that has no cursors (the pie and the bar) gets no cursor entries at all: the toggles,
+        // the readout position, add / remove / reset and "copy readout" are every one of them about
+        // cursors. Those charts report what is under the pointer in the readout panel instead (see
+        // SupportsHoverReadout), and which slice or series is switched on is the legend's business.
+        if (!SupportsCursors)
+        {
+            OpenChartMenu(items);
+            return;
+        }
         items.Add(new Separator());
 
         for (var i = 0; i < Math.Min(Cursors.Count, MaxCursors); i++)
@@ -3154,11 +3506,17 @@ public abstract class ChartBase : Control
         items.Add(new Separator());
         items.Add(copyItem);
 
+        OpenChartMenu(items);
+    }
+
+    /// <summary>Opens the chart's own menu at the pointer.</summary>
+    private void OpenChartMenu(List<object> items)
+    {
         var menu = new ContextMenu { ItemsSource = items, PlacementTarget = this };
         menu.Open(this);
     }
 
-    private static FormattedText MakeText(string text, double size, Color color)
+    private protected static FormattedText MakeText(string text, double size, Color color)
         => new(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
             new Typeface(FontFamily.Default), Math.Max(6, size), new SolidColorBrush(color));
 
@@ -3174,7 +3532,7 @@ public abstract class ChartBase : Control
             LineCap = style == ChartLineStyle.Dot ? PenLineCap.Round : PenLineCap.Flat
         };
 
-    private static IDashStyle? DashFor(ChartLineStyle style) => style switch
+    private protected static IDashStyle? DashFor(ChartLineStyle style) => style switch
     {
         ChartLineStyle.Dash => new DashStyle(new double[] { 4, 3 }, 0),
         // A dash of ~0 with round caps is a dot; a true 0-length dash can vanish on some renderers.
@@ -3183,7 +3541,7 @@ public abstract class ChartBase : Control
         _ => null
     };
 
-    private static string FormatNumber(double value, double step)
+    private protected static string FormatNumber(double value, double step)
     {
         var decimals = step >= 1 ? 0 : Math.Min(6, (int)Math.Ceiling(-Math.Log10(step)) + 1);
         var text = value.ToString("0." + new string('#', Math.Max(0, decimals)), CultureInfo.CurrentCulture);
@@ -3225,6 +3583,12 @@ internal sealed class AxisRange
         if (range._max <= range._min) range._max = range._min + range.TickStep;
         return range;
     }
+
+    /// <summary>The fitted minimum (the scale's own bottom).</summary>
+    internal double Min => _min;
+
+    /// <summary>The fitted maximum (the scale's own top).</summary>
+    internal double Max => _max;
 
     /// <summary>A 1, 2 or 5 (times a power of ten) step that gives roughly <paramref name="target"/> ticks.</summary>
     private static double NiceStep(double span, int target)
@@ -3462,6 +3826,17 @@ public class GrumpyBarPlot : ChartBase
     /// <inheritdoc/>
     protected override bool ZeroToHundred => BarMode is BarMode.Stacked100;
 
+    /// <summary>
+    /// A bar chart has no cursors, and its right-click menu therefore carries nothing but the spreadsheet
+    /// picker. A crosshair reads a value BETWEEN two samples, which is what a line chart has; a bar is one
+    /// reading per category, so there is nothing to interpolate — the bar under the pointer is reported in
+    /// the readout panel instead (see <see cref="SupportsHoverReadout"/>).
+    /// </summary>
+    protected override bool SupportsCursors => false;
+
+    /// <inheritdoc/>
+    private protected override bool SupportsHoverReadout => true;
+
     /// <inheritdoc/>
     protected override ChartData InlineData()
     {
@@ -3476,6 +3851,62 @@ public class GrumpyBarPlot : ChartBase
     /// <inheritdoc/>
     protected override void SetInlineData(double[] xs, double[] ys) => Values = ys;
 
+    /// <summary>One bar as the last render drew it, for hit-testing the pointer. A bar is a rectangle, so
+    /// the test needs no more than that — plus what the readout has to say about it.</summary>
+    private sealed class BarHit
+    {
+        internal Rect Rect;
+        /// <summary>The point's own name (the axis' category), or its X number when it has none.</summary>
+        internal string Category = string.Empty;
+        /// <summary>The series' name, or empty when this chart draws a single series: with one bar per
+        /// category there is nothing to tell apart, so the readout leaves the name out.</summary>
+        internal string Series = string.Empty;
+        internal double Value;
+        internal Color Fill = Colors.White;
+    }
+
+    /// <summary>Every bar the last render drew, in drawing order, for the pointer test.</summary>
+    private readonly List<BarHit> _barHits = new();
+
+    /// <summary>The bar in <see cref="_barHits"/> the pointer is over, or −1. Nothing moves for a bar,
+    /// so this only saves rebuilding the same readout on every mouse move.</summary>
+    private int _hoverBar = -1;
+
+    /// <summary>
+    /// Finds the bar under the pointer — the rectangles the last render drew, tested back to front so the
+    /// topmost of any that overlap wins — and fills in the readout: the category the pointer is over, the
+    /// series it belongs to when the chart draws more than one, and its value.
+    /// </summary>
+    private protected override void UpdateHover(Point point, Rect plot)
+    {
+        for (var i = _barHits.Count - 1; i >= 0; i--)
+        {
+            var hit = _barHits[i];
+            if (!hit.Rect.Contains(point)) continue;
+            if (_hoverBar == i) return;   // still the same bar: the panel just follows the mouse
+            _hoverBar = i;
+            Hover = new ReadoutPanel
+            {
+                Head = hit.Category,
+                HeadColor = hit.Fill,
+                Body = hit.Series.Length > 0
+                    ? hit.Series + "   " + FormatReading(hit.Value)
+                    : FormatReading(hit.Value),
+                Accent = hit.Fill,
+                FollowPointer = true
+            };
+            return;
+        }
+        ClearHover();
+    }
+
+    /// <summary>Forgets the hovered bar, so its readout goes with the pointer.</summary>
+    private protected override void ClearHover()
+    {
+        _hoverBar = -1;
+        Hover = null;
+    }
+
     /// <summary>
     /// Draws one bar per point, per series. Grouped bars split the category's slot between the series
     /// (a switched-off series keeps its place, so the others do not jump sideways when it is toggled);
@@ -3484,10 +3915,13 @@ public class GrumpyBarPlot : ChartBase
     /// </summary>
     private protected override void DrawSeriesLayer(DrawingContext context, List<Plot> plots, Rect plot)
     {
+        _barHits.Clear();
         if (plots.Count == 0) return;
         var stacked = BarMode is not BarMode.Grouped;
         var bands = stacked ? StackBands(plots, BarMode is BarMode.Stacked100) : null;
         var radius = Math.Max(0, BarCornerRadius);
+        // Whether the readout has to name the series a bar belongs to: with one series it is obvious.
+        var seriesDrawn = plots.Count(p => p.Visible && p.Data.Ys.Length > 0);
 
         for (var s = 0; s < plots.Count; s++)
         {
@@ -3516,6 +3950,20 @@ public class GrumpyBarPlot : ChartBase
                 var bottom = YAt(p, plot, bases[i]);
                 var rect = new Rect(x - width / 2, Math.Min(top, bottom), width, Math.Abs(bottom - top));
                 context.DrawRectangle(fill, null, new RoundedRect(rect, radius));
+
+                // Remembered so the pointer can be tested against it (see UpdateHover). The value is the
+                // series' own, not the height the bar reaches: on a stacked chart the second series' bar
+                // starts where the first ended, and its reading is what it adds, not the total so far.
+                _barHits.Add(new BarHit
+                {
+                    Rect = rect,
+                    Category = i < p.Data.Labels.Length && !string.IsNullOrWhiteSpace(p.Data.Labels[i])
+                        ? p.Data.Labels[i]
+                        : FormatNumber(p.Data.Xs[i], 1),
+                    Series = seriesDrawn > 1 ? LegendName(p, s) : string.Empty,
+                    Value = p.Data.Ys[i],
+                    Fill = p.LineColor
+                });
             }
         }
     }
@@ -3691,10 +4139,15 @@ public class GrumpyPiePlot : ChartBase
     public static readonly StyledProperty<double> SliceBorderThicknessProperty =
         AvaloniaProperty.Register<GrumpyPiePlot, double>(nameof(SliceBorderThickness), 1d);
 
+    /// <summary>How far the slice under the pointer pops out of the ring, in pixels (10 by default,
+    /// 0 = it stays put and only the readout follows the pointer).</summary>
+    public static readonly StyledProperty<double> HoverExplodeProperty =
+        AvaloniaProperty.Register<GrumpyPiePlot, double>(nameof(HoverExplode), 10d);
+
     static GrumpyPiePlot()
     {
         AffectsRender<GrumpyPiePlot>(ValuesProperty, LabelsProperty, DoughnutPercentProperty, StartAngleProperty,
-            SliceGapProperty, SliceBorderColorProperty, SliceBorderThicknessProperty);
+            SliceGapProperty, SliceBorderColorProperty, SliceBorderThicknessProperty, HoverExplodeProperty);
         ValuesProperty.Changed.AddClassHandler<GrumpyPiePlot>((plot, _) => plot.Reload());
         LabelsProperty.Changed.AddClassHandler<GrumpyPiePlot>((plot, _) => plot.Reload());
     }
@@ -3722,6 +4175,9 @@ public class GrumpyPiePlot : ChartBase
     /// <summary>Thickness of that line.</summary>
     public double SliceBorderThickness { get => GetValue(SliceBorderThicknessProperty); set => SetValue(SliceBorderThicknessProperty, value); }
 
+    /// <summary>How far the slice under the pointer pops out of the ring, in pixels.</summary>
+    public double HoverExplode { get => GetValue(HoverExplodeProperty); set => SetValue(HoverExplodeProperty, value); }
+
     /// <summary>
     /// The slices the form names: one element per slice that should differ from the palette —
     /// <c>&lt;charts:PieSlice Title="North" LineColor="#E4572E" Explode="8"/&gt;</c>. A slice the form
@@ -3738,6 +4194,14 @@ public class GrumpyPiePlot : ChartBase
 
     /// <inheritdoc/>
     protected override bool SupportsCursors => false;
+
+    /// <summary>
+    /// The pie reports the slice under the pointer: it pops out of the ring by
+    /// <see cref="HoverExplode"/> pixels and its name, its value and its share of the total appear in the
+    /// readout panel. That is what replaces the cursors here — there is no cartesian frame for a
+    /// crosshair to read.
+    /// </summary>
+    private protected override bool SupportsHoverReadout => true;
 
     /// <inheritdoc/>
     protected override ChartData InlineData()
@@ -3767,6 +4231,87 @@ public class GrumpyPiePlot : ChartBase
 
     /// <summary>Stand-ins for the slices the form does not name, kept so the legend's tick boxes stick.</summary>
     private readonly Dictionary<string, PieSlice> _sliceStubs = new();
+
+    /// <summary>
+    /// One wedge as the last render drew it, for hit-testing the pointer. The centre kept here is the
+    /// PIE's, not the slice's exploded one, and the angles are its ends before the gap was taken off:
+    /// while a slice is popped out it has to stay "under the pointer", so the test is against the pie as
+    /// it stands rather than against a picture that has just moved out from under the mouse.
+    /// </summary>
+    private sealed class SliceHit
+    {
+        /// <summary>Which plot this wedge was drawn from (its index in the chart's own list).</summary>
+        internal int Index;
+        /// <summary>The pie's centre.</summary>
+        internal Point Centre;
+        /// <summary>The outer radius.</summary>
+        internal double Radius;
+        /// <summary>The hole's radius (0 for a solid pie).</summary>
+        internal double Inner;
+        /// <summary>The wedge's first edge, in the pie's own degrees (0° = 12 o'clock, clockwise).</summary>
+        internal double From;
+        /// <summary>Its second edge, in the same degrees.</summary>
+        internal double To;
+        internal string Title = string.Empty;
+        internal double Value;
+        /// <summary>Its share of the visible total, in percent.</summary>
+        internal double Share;
+        internal Color Fill = Colors.White;
+    }
+
+    /// <summary>Every wedge the last render drew, in drawing order, for the pointer test.</summary>
+    private readonly List<SliceHit> _sliceHits = new();
+
+    /// <summary>The plot index of the wedge the pointer is over, or −1. It only affects the picture:
+    /// that slice pops out by <see cref="HoverExplode"/> pixels (see <see cref="DrawSeriesLayer"/>).</summary>
+    private int _hoverSlice = -1;
+
+    /// <summary>
+    /// Finds the wedge under the pointer: inside the ring — a doughnut's hole belongs to no slice — and
+    /// between that wedge's own two edges, so the pointer over a gap clears the readout instead of
+    /// blaming a neighbour. The angles are the very degrees the drawing used, so the two cannot
+    /// disagree.
+    /// </summary>
+    private protected override void UpdateHover(Point point, Rect plot)
+    {
+        foreach (var hit in _sliceHits)
+        {
+            var dx = point.X - hit.Centre.X;
+            var dy = point.Y - hit.Centre.Y;
+            var distance = Math.Sqrt(dx * dx + dy * dy);
+            if (distance > hit.Radius || distance < hit.Inner) continue;
+            if (!InWedge(hit, dx, dy)) continue;
+            if (_hoverSlice == hit.Index) return;   // still the same slice: the panel just follows the mouse
+            _hoverSlice = hit.Index;
+            Hover = new ReadoutPanel
+            {
+                Head = hit.Title,
+                HeadColor = hit.Fill,
+                Body = FormatReading(hit.Value) + "   " + FormatShare(hit.Share),
+                Accent = hit.Fill,
+                FollowPointer = true
+            };
+            return;
+        }
+        ClearHover();
+    }
+
+    /// <summary>Forgets the hovered wedge, so its readout goes with the pointer.</summary>
+    private protected override void ClearHover()
+    {
+        _hoverSlice = -1;
+        Hover = null;
+    }
+
+    /// <summary>True when the vector from the pie's centre to the pointer falls inside one wedge's two
+    /// edges. <see cref="OnCircle"/> takes the same degrees, so the test and the drawing agree.</summary>
+    private static bool InWedge(SliceHit hit, double dx, double dy)
+    {
+        var degrees = Math.Atan2(dy, dx) * 180d / Math.PI;
+        var relative = (degrees - hit.From) % 360d;
+        if (relative < 0) relative += 360d;
+        return relative <= hit.To - hit.From;
+    }
 
     /// <summary>
     /// One plot per SLICE, which is what makes the shared machinery work: the legend lists the slices
@@ -3820,11 +4365,14 @@ public class GrumpyPiePlot : ChartBase
     /// <summary>
     /// Draws the wedges. Each one is an arc out at the radius and back in at the ring's inner radius (or
     /// back to the centre for a solid pie), which is one closed path either way — so a doughnut is the
-    /// same drawing with a hole in it. A slice may explode outwards along its own middle, and the gap is
-    /// taken off both of its edges so the gaps stay even.
+    /// same drawing with a hole in it. A slice may explode outwards along its own middle, and the slice
+    /// under the pointer pops out by <see cref="HoverExplode"/> pixels on top of that; the gap is taken
+    /// off both of a slice's edges so the gaps stay even. Every wedge is remembered as it is drawn, which
+    /// is what the pointer is tested against afterwards (see <see cref="UpdateHover"/>).
     /// </summary>
     private protected override void DrawSeriesLayer(DrawingContext context, List<Plot> plots, Rect plot)
     {
+        _sliceHits.Clear();
         var total = 0d;
         foreach (var p in plots) if (p.Visible && p.Data.HasData) total += Math.Max(0, p.Data.Ys[0]);
         if (total <= 0) return;
@@ -3840,8 +4388,9 @@ public class GrumpyPiePlot : ChartBase
             : null;
         var angle = StartAngle - 90d;   // 0° is 12 o'clock; -90° is where a circle's 0 radian sits
 
-        foreach (var p in plots)
+        for (var i = 0; i < plots.Count; i++)
         {
+            var p = plots[i];
             if (!p.Visible || !p.Data.HasData) continue;
             var value = Math.Max(0, p.Data.Ys[0]);
             if (value <= 0) continue;
@@ -3854,6 +4403,7 @@ public class GrumpyPiePlot : ChartBase
 
             var origin = centre;
             var explode = (p.Definition as PieSlice)?.Explode ?? 0d;
+            if (i == _hoverSlice) explode += Math.Max(0, HoverExplode);
             if (explode > 0)
             {
                 var middle = (from + to) / 2 * Math.PI / 180d;
@@ -3878,6 +4428,20 @@ public class GrumpyPiePlot : ChartBase
                 g.EndFigure(true);
             }
             context.DrawGeometry(new SolidColorBrush(p.LineColor), border, geometry);
+
+            _sliceHits.Add(new SliceHit
+            {
+                Index = i,
+                Centre = centre,
+                Radius = radius,
+                Inner = inner,
+                From = from,
+                To = to,
+                Title = p.Data.Labels.Length > 0 ? p.Data.Labels[0] : "Slice " + (i + 1),
+                Value = value,
+                Share = value / total * 100d,
+                Fill = p.LineColor
+            });
         }
     }
 
@@ -3886,6 +4450,1046 @@ public class GrumpyPiePlot : ChartBase
     {
         var radians = degrees * Math.PI / 180d;
         return new Point(centre.X + Math.Cos(radians) * radius, centre.Y + Math.Sin(radians) * radius);
+    }
+}
+
+/// <summary>
+/// A WATERFALL (spectral) chart: successive samplesets drawn one behind the other as 3D traces — the sample
+/// points run across X, each sample's value stands up the Y axis, and every successive set of samples
+/// recedes along the depth (Z) axis. This is the picture a spectrum analyser draws while it captures: one
+/// sweep per trace, and a peak that walks across the samples from set to set is a ridge the eye can follow.
+/// <para>
+/// Avalonia has no 3D, so the view is an ORTHOGRAPHIC PROJECTION computed here: the data is mapped into a
+/// unit cube (x = samples, y = value, z = set), the cube is turned to <see cref="Azimuth"/> and seen from
+/// <see cref="Elevation"/>, and every point is projected to a pixel. The traces are then painted from the
+/// FARTHEST set to the nearest, so a solid ribbon hides the ones behind it — the painter's algorithm, and
+/// what makes a flat picture read as depth. <see cref="Zoom"/> scales the fitted picture.
+/// </para>
+/// <para>
+/// ONE SERIES IS ONE SAMPLESET — its own spreadsheet column, so the columns C, D, E … are sets 1, 2, 3 …
+/// and the row number is the sample point. That is what makes the Series editor, the legend, its tick
+/// boxes and the per-series colours work here unchanged: a set's name in the legend is its own Title.
+/// </para>
+/// <para>
+/// The picture can be turned while the app runs: dragging the chart changes the angle, and the saved form
+/// is not touched by that (set <see cref="Elevation"/> and <see cref="Azimuth"/> to make an angle
+/// permanent). The pointer reports the sample it is over in the readout panel; there are no cursors,
+/// because a crosshair on a projected cube has nothing to read.
+/// </para>
+/// </summary>
+public class GrumpyWaterfallPlot : ChartBase
+{
+    /// <summary>The implicit single sampleset, used only when the chart has no series elements.</summary>
+    public static readonly StyledProperty<double[]?> ValuesProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double[]?>(nameof(Values));
+
+    /// <summary>Several samplesets written inline, one per semicolon-separated group
+    /// (<c>SampleSets="1,2,3; 4,5,6"</c>) — a sketch without a workbook. A real capture names one column
+    /// per sampleset instead (one series each).</summary>
+    public static readonly StyledProperty<double[][]?> SampleSetsProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double[][]?>(nameof(SampleSets));
+
+    /// <summary>How each sampleset is drawn (see <see cref="WaterfallStyle"/>).</summary>
+    public static readonly StyledProperty<WaterfallStyle> RibbonStyleProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, WaterfallStyle>(nameof(RibbonStyle));
+
+    /// <summary>How solid a translucent ribbon is, in percent.</summary>
+    public static readonly StyledProperty<double> RibbonOpacityProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double>(nameof(RibbonOpacity), 80d);
+
+    /// <summary>What decides the colour of a trace (see <see cref="WaterfallColorMode"/>).</summary>
+    public static readonly StyledProperty<WaterfallColorMode> ColorModeProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, WaterfallColorMode>(nameof(ColorMode));
+
+    /// <summary>The value the heat map's low end sits at (NaN = the data's own least value).</summary>
+    public static readonly StyledProperty<double> HeatMinProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double>(nameof(HeatMin), double.NaN);
+
+    /// <summary>The value the heat map's top end sits at (NaN = the data's own largest value).</summary>
+    public static readonly StyledProperty<double> HeatMaxProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double>(nameof(HeatMax), double.NaN);
+
+    /// <summary>The value the Split colour mode changes colour at (0 puts one colour below zero and
+    /// another above it, which is how a negative excursion is made obvious).</summary>
+    public static readonly StyledProperty<double> SplitValueProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double>(nameof(SplitValue));
+
+    /// <summary>The colour of everything below <see cref="SplitValue"/>.</summary>
+    public static readonly StyledProperty<Color> BelowColorProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, Color>(nameof(BelowColor), Color.Parse("#2D7DD2"));
+
+    /// <summary>The colour of everything above <see cref="SplitValue"/>.</summary>
+    public static readonly StyledProperty<Color> AboveColorProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, Color>(nameof(AboveColor), Color.Parse("#E4572E"));
+
+    /// <summary>Join the samplesets with the connectors that make the mesh (off = bare traces).</summary>
+    public static readonly StyledProperty<bool> ShowConnectorsProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, bool>(nameof(ShowConnectors), true);
+
+    /// <summary>Colour of those connectors in the Sampleset and Split colour modes (the Value mode draws
+    /// them as part of the heat map instead).</summary>
+    public static readonly StyledProperty<Color> ConnectorColorProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, Color>(nameof(ConnectorColor), Color.Parse("#6B7A8F"));
+
+    /// <summary>How thick the connectors are (0 = invisible).</summary>
+    public static readonly StyledProperty<double> ConnectorThicknessProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double>(nameof(ConnectorThickness), 1d);
+
+    /// <summary>One connector every N drawn samples; 0 puts them where they stay readable (about forty per
+    /// trace), which is what a 2048-point set needs.</summary>
+    public static readonly StyledProperty<int> ConnectorStepProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, int>(nameof(ConnectorStep));
+
+    /// <summary>How many samples of a trace are DRAWN at most (0 = every one). A 2048-point set thinned to
+    /// 512 still shows every peak that survives at screen resolution, and the picture stays interactive
+    /// while it is being turned. The stride is the SAME for every trace, because the mesh joins sample i of
+    /// one set to sample i of the next — thin them differently and the connectors would lean.</summary>
+    public static readonly StyledProperty<int> MaxPointsProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, int>(nameof(MaxPoints), 512);
+
+    /// <summary>How far above the floor the chart is seen from, in degrees (0 = edge on, 89 = straight
+    /// down). 30 shows the ribbons and the mesh at once.</summary>
+    public static readonly StyledProperty<double> ElevationProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double>(nameof(Elevation), 30d);
+
+    /// <summary>Where the cube is turned to, in degrees (45 is the usual three-quarter view, with the sets
+    /// receding to the right).</summary>
+    public static readonly StyledProperty<double> AzimuthProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double>(nameof(Azimuth), 45d);
+
+    /// <summary>How deep the samplesets stand apart, as a fraction of the fitted depth: 1 uses all of it,
+    /// 0.5 packs them half as deep.</summary>
+    public static readonly StyledProperty<double> ZSpacingProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double>(nameof(ZSpacing), 1d);
+
+    /// <summary>Scales the fitted picture: 1 fits the cube into the frame, 1.2 makes it larger than the
+    /// frame (the edges then leave it), 0.8 leaves a margin.</summary>
+    public static readonly StyledProperty<double> ZoomProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, double>(nameof(Zoom), 1d);
+
+    /// <summary>The name along the depth axis — what one step in it is ("Sweep", "Run"). Each set's own
+    /// name in the legend comes from its series Title.</summary>
+    public static readonly StyledProperty<string?> ZAxisTitleProperty =
+        AvaloniaProperty.Register<GrumpyWaterfallPlot, string?>(nameof(ZAxisTitle));
+
+    static GrumpyWaterfallPlot()
+    {
+        AffectsRender<GrumpyWaterfallPlot>(ValuesProperty, SampleSetsProperty, RibbonStyleProperty,
+            RibbonOpacityProperty, ColorModeProperty, HeatMinProperty, HeatMaxProperty, SplitValueProperty,
+            BelowColorProperty, AboveColorProperty, ShowConnectorsProperty, ConnectorColorProperty,
+            ConnectorThicknessProperty, ConnectorStepProperty, MaxPointsProperty, ElevationProperty,
+            AzimuthProperty, ZSpacingProperty, ZoomProperty, ZAxisTitleProperty);
+        ValuesProperty.Changed.AddClassHandler<GrumpyWaterfallPlot>((plot, _) => plot.Reload());
+    }
+
+    /// <summary>The sampleset of a chart that has no series elements.</summary>
+    [TypeConverter(typeof(DoubleArrayConverter))]
+    public double[]? Values { get => GetValue(ValuesProperty); set => SetValue(ValuesProperty, value); }
+
+    /// <summary>Several samplesets written inline, one per semicolon-separated group.</summary>
+    [TypeConverter(typeof(DoubleSetConverter))]
+    public double[][]? SampleSets { get => GetValue(SampleSetsProperty); set => SetValue(SampleSetsProperty, value); }
+
+    /// <summary>Ribbon, translucent ribbon, or lines only.</summary>
+    public WaterfallStyle RibbonStyle { get => GetValue(RibbonStyleProperty); set => SetValue(RibbonStyleProperty, value); }
+
+    /// <summary>How solid a translucent ribbon is, in percent.</summary>
+    public double RibbonOpacity { get => GetValue(RibbonOpacityProperty); set => SetValue(RibbonOpacityProperty, value); }
+
+    /// <summary>What colours the traces.</summary>
+    public WaterfallColorMode ColorMode { get => GetValue(ColorModeProperty); set => SetValue(ColorModeProperty, value); }
+
+    /// <summary>Where the heat map's low end sits (NaN = the data's own least value).</summary>
+    public double HeatMin { get => GetValue(HeatMinProperty); set => SetValue(HeatMinProperty, value); }
+
+    /// <summary>Where the heat map's top end sits (NaN = the data's own largest value).</summary>
+    public double HeatMax { get => GetValue(HeatMaxProperty); set => SetValue(HeatMaxProperty, value); }
+
+    /// <summary>The value the Split colour mode changes colour at.</summary>
+    public double SplitValue { get => GetValue(SplitValueProperty); set => SetValue(SplitValueProperty, value); }
+
+    /// <summary>The colour below the split value.</summary>
+    public Color BelowColor { get => GetValue(BelowColorProperty); set => SetValue(BelowColorProperty, value); }
+
+    /// <summary>The colour above the split value.</summary>
+    public Color AboveColor { get => GetValue(AboveColorProperty); set => SetValue(AboveColorProperty, value); }
+
+    /// <summary>Draw the mesh that joins the samplesets.</summary>
+    public bool ShowConnectors { get => GetValue(ShowConnectorsProperty); set => SetValue(ShowConnectorsProperty, value); }
+
+    /// <summary>The colour of the connectors.</summary>
+    public Color ConnectorColor { get => GetValue(ConnectorColorProperty); set => SetValue(ConnectorColorProperty, value); }
+
+    /// <summary>The thickness of the connectors.</summary>
+    public double ConnectorThickness { get => GetValue(ConnectorThicknessProperty); set => SetValue(ConnectorThicknessProperty, value); }
+
+    /// <summary>One connector every N drawn samples (0 = automatic).</summary>
+    public int ConnectorStep { get => GetValue(ConnectorStepProperty); set => SetValue(ConnectorStepProperty, value); }
+
+    /// <summary>How many samples of a trace are drawn at most (0 = all of them).</summary>
+    public int MaxPoints { get => GetValue(MaxPointsProperty); set => SetValue(MaxPointsProperty, value); }
+
+    /// <summary>The angle the chart is seen from, in degrees above the floor.</summary>
+    public double Elevation { get => GetValue(ElevationProperty); set => SetValue(ElevationProperty, value); }
+
+    /// <summary>Where the cube is turned to, in degrees.</summary>
+    public double Azimuth { get => GetValue(AzimuthProperty); set => SetValue(AzimuthProperty, value); }
+
+    /// <summary>How deep the samplesets stand apart.</summary>
+    public double ZSpacing { get => GetValue(ZSpacingProperty); set => SetValue(ZSpacingProperty, value); }
+
+    /// <summary>Scales the fitted picture.</summary>
+    public double Zoom { get => GetValue(ZoomProperty); set => SetValue(ZoomProperty, value); }
+
+    /// <summary>The name along the depth axis.</summary>
+    public string? ZAxisTitle { get => GetValue(ZAxisTitleProperty); set => SetValue(ZAxisTitleProperty, value); }
+
+    /// <inheritdoc/>
+    protected override bool ImplicitXFromIndex => true;
+
+    /// <summary>The ribbons fill down to zero, so zero is always on the amplitude scale.</summary>
+    protected override bool ZeroBaseline => true;
+
+    /// <summary>No cartesian frame: this chart draws its own three axes in projection, so the base's axis
+    /// furniture steps aside and the drawing gets the whole frame.</summary>
+    protected override bool HasCartesianAxes => false;
+
+    /// <inheritdoc/>
+    protected override bool SupportsCursors => false;
+
+    /// <summary>The pointer reports the sample under it — there is nothing else on this chart to grab, and
+    /// the numbers it reads are the whole point of a waterfall.</summary>
+    private protected override bool SupportsHoverReadout => true;
+
+    /// <inheritdoc/>
+    protected override ChartData InlineData()
+    {
+        var values = Values ?? Array.Empty<double>();
+        return new ChartData
+        {
+            Xs = Enumerable.Range(0, values.Length).Select(i => (double)i).ToArray(),
+            Ys = values
+        };
+    }
+
+    /// <inheritdoc/>
+    protected override void SetInlineData(double[] xs, double[] ys) => Values = ys;
+
+    /// <summary>The colours of the Value mode's heat map, from the least value to the greatest: a spectrum
+    /// analyser's blue → cyan → green → yellow → red.</summary>
+    private static readonly Color[] HeatPalette =
+    {
+        Color.Parse("#1B2A6B"), Color.Parse("#1E88E5"), Color.Parse("#43A047"), Color.Parse("#FDD835"),
+        Color.Parse("#E53935")
+    };
+
+    /// <summary>The colours the samplesets take when a chart written INLINE has no series to colour them:
+    /// successive sets must be tellable apart, so they walk a palette the way the pie's slices do.</summary>
+    private static readonly Color[] SetPalette =
+    {
+        Color.Parse("#2D7DD2"), Color.Parse("#E4572E"), Color.Parse("#3FA34D"), Color.Parse("#F2A541"),
+        Color.Parse("#8367C7"), Color.Parse("#00A6A6"), Color.Parse("#C05780"), Color.Parse("#6B7A8F"),
+        Color.Parse("#8CB369"), Color.Parse("#B5651D")
+    };
+
+    /// <summary>One projected sample, kept so the pointer can be tested against the picture that is on
+    /// screen rather than against the model.</summary>
+    private sealed class SampleHit
+    {
+        internal Point Screen;
+        internal int Set;
+        internal string Name = string.Empty;
+        internal Color Fill = Colors.White;
+        internal double Sample;
+        internal double Value;
+    }
+
+    /// <summary>Every sample the last render drew, for the pointer test.</summary>
+    private readonly List<SampleHit> _sampleHits = new();
+
+    /// <summary>The sample the pointer is over (or null), kept so the panel is only rebuilt when the
+    /// pointer moves from one sample to another.</summary>
+    private SampleHit? _hoverSample;
+
+    /// <summary>Dragging the chart turns the view. Runtime state only: the angles a form opens with are
+    /// its Elevation and Azimuth properties.</summary>
+    private bool _rotateDrag;
+    private Point _rotateFrom;
+    private double _rotateElevation;
+    private double _rotateAzimuth;
+
+    /// <summary>
+    /// The ORTHOGRAPHIC VIEW: a point of the unit cube (x = samples 0…1, y = value 0…1, z = sampleset 0…1)
+    /// to a pixel. Built once per render from the two angles, the zoom and the plot area, then asked for
+    /// every point — which is why projecting a whole 2048-point set is nothing more than a multiply and an
+    /// add per coordinate.
+    /// </summary>
+    private sealed class WaterfallView
+    {
+        internal double CosAzimuth, SinAzimuth, CosElevation, SinElevation;
+        internal double Scale;
+        internal Point Origin;
+
+        /// <summary>To the screen: turn the cube by the azimuth, tip it by the elevation, drop the depth.</summary>
+        internal Point Project(double x, double y, double z)
+        {
+            var turned = x * CosAzimuth + z * SinAzimuth;
+            var depth = -x * SinAzimuth + z * CosAzimuth;
+            var up = y * CosElevation + depth * SinElevation;
+            return new Point(Origin.X + turned * Scale, Origin.Y - up * Scale);
+        }
+
+        /// <summary>How near the eye a point is: the larger, the nearer. This is what puts the traces in
+        /// paint order (farthest first), so a nearer ribbon hides the ones behind it. The sign matters and
+        /// is easy to get backwards — with the screen directions this projection produces, the floor's
+        /// <c>z = 0</c> edge is the FRONT one, and drawing that first would let the ribbons at the back
+        /// paint over the ones in front (measured: the far set showed 27% more of itself than the near
+        /// one, which is what a backwards painter's order looks like).</summary>
+        internal double Depth(double x, double y, double z)
+        {
+            var depth = -x * SinAzimuth + z * CosAzimuth;
+            return y * SinElevation - depth * CosElevation;
+        }
+
+        /// <summary>The screen direction of a step along one of the world axes, as a unit vector in pixels.
+        /// The tick marks and the labels of the projected axes are laid out with it.</summary>
+        internal Point Direction(double dx, double dy, double dz)
+        {
+            var turned = dx * CosAzimuth + dz * SinAzimuth;
+            var depth = -dx * SinAzimuth + dz * CosAzimuth;
+            var up = dy * CosElevation + depth * SinElevation;
+            var length = Math.Sqrt(turned * turned + up * up);
+            return length <= 0 ? new Point(0, -1) : new Point(turned / length, -up / length);
+        }
+    }
+
+    /// <summary>
+    /// The chart's data in the picture's own terms: the two scales (what value is 0 and what is 1 in the
+    /// cube), the depth each sampleset stands at, and the view itself. Every drawing step is handed one of
+    /// these, so no step has to remember how a value becomes a pixel.
+    /// </summary>
+    private sealed class WaterfallWorld
+    {
+        internal WaterfallView View = null!;
+        internal AxisRange Xs = new();
+        internal AxisRange Ys = new();
+        internal int Sets;
+        internal double Depth = 1d;
+
+        /// <summary>The samples, across the cube from 0 to 1.</summary>
+        internal double UnitX(double x) => Clamp01((x - Xs.Min) / Math.Max(1e-9, Xs.Max - Xs.Min));
+
+        /// <summary>The values, up the cube from 0 to 1.</summary>
+        internal double UnitY(double y) => Clamp01((y - Ys.Min) / Math.Max(1e-9, Ys.Max - Ys.Min));
+
+        /// <summary>How deep one sampleset stands: the first at the front, the last at the back. A chart
+        /// with a single set stands it in the middle of the depth, where the floor is widest.</summary>
+        internal double UnitZ(int set) => Sets <= 1 ? Depth / 2 : set / (double)(Sets - 1) * Depth;
+
+        /// <summary>A point of the picture.</summary>
+        internal Point At(double x, double y, int set) => View.Project(UnitX(x), UnitY(y), UnitZ(set));
+
+        /// <summary>A point on the floor, where the ribbons end and the gridlines run.</summary>
+        internal Point Base(double x, int set) => View.Project(UnitX(x), UnitY(0), UnitZ(set));
+
+        private static double Clamp01(double value) => value < 0 ? 0 : value > 1 ? 1 : value;
+    }
+
+    /// <summary>The view for one render: the angles clamped to what can be drawn, then FITTED — the cube's
+    /// own corners decide the scale, so the picture can never leave the frame by accident, whatever the
+    /// angles are.</summary>
+    private WaterfallView MakeView(Rect plot)
+    {
+        var elevation = Math.Clamp(Elevation, 0, 89) * Math.PI / 180d;
+        var azimuth = Azimuth * Math.PI / 180d;
+        var view = new WaterfallView
+        {
+            CosElevation = Math.Cos(elevation),
+            SinElevation = Math.Sin(elevation),
+            CosAzimuth = Math.Cos(azimuth),
+            SinAzimuth = Math.Sin(azimuth),
+            Scale = 1,
+            Origin = default
+        };
+        var depth = Math.Clamp(ZSpacing, 0.1, 4);
+        var minX = double.MaxValue;
+        var maxX = double.MinValue;
+        var minY = double.MaxValue;
+        var maxY = double.MinValue;
+        foreach (var x in new[] { 0d, 1d })
+        {
+            foreach (var y in new[] { 0d, 1d })
+            {
+                foreach (var z in new[] { 0d, depth })
+                {
+                    var corner = view.Project(x, y, z);
+                    minX = Math.Min(minX, corner.X);
+                    maxX = Math.Max(maxX, corner.X);
+                    minY = Math.Min(minY, corner.Y);
+                    maxY = Math.Max(maxY, corner.Y);
+                }
+            }
+        }
+        var wide = Math.Max(1e-6, maxX - minX);
+        var tall = Math.Max(1e-6, maxY - minY);
+        view.Scale = Math.Min(plot.Width / wide, plot.Height / tall) * Math.Clamp(Zoom, 0.2, 5);
+        view.Origin = new Point(
+            plot.X + (plot.Width - wide * view.Scale) / 2 - minX * view.Scale,
+            plot.Y + (plot.Height - tall * view.Scale) / 2 - minY * view.Scale);
+        return view;
+    }
+
+    /// <summary>
+    /// One sampleset per series: the series' own Y column, else the chart's YColumn and then the next
+    /// column along (C, D, E …), read with the sample NUMBER along X — a spectrum per column is how a
+    /// capture is laid out.
+    /// </summary>
+    private protected override List<Plot> BuildPlots()
+    {
+        var plots = new List<Plot>();
+        if (Series.Count == 0)
+        {
+            var sets = SampleSets;
+            if (sets is { Length: > 0 })
+            {
+                // A chart sketched inline: one sampleset per semicolon-separated group, each in its own
+                // colour of the palette so successive sets can be told apart.
+                for (var i = 0; i < sets.Length; i++)
+                {
+                    plots.Add(new Plot
+                    {
+                        Data = new ChartData
+                        {
+                            Xs = Enumerable.Range(1, sets[i].Length).Select(n => (double)n).ToArray(),
+                            Ys = sets[i]
+                        },
+                        LineColor = SetPalette[i % SetPalette.Length],
+                        LineThickness = LineThickness,
+                        LineStyle = LineStyle
+                    });
+                }
+            }
+            else
+            {
+                plots.Add(new Plot
+                {
+                    Data = Sampleset(null, YColumn ?? "C"),
+                    LineColor = LineColor,
+                    LineThickness = LineThickness,
+                    LineStyle = LineStyle
+                });
+            }
+        }
+        else
+        {
+            for (var i = 0; i < Series.Count; i++)
+            {
+                var series = Series[i];
+                plots.Add(new Plot
+                {
+                    Data = Sampleset(series, SamplesetColumn(series, i)),
+                    Definition = series,
+                    LineColor = series.LineColor,
+                    LineThickness = series.LineThickness,
+                    LineStyle = series.LineStyle,
+                    Visible = series.Visible
+                });
+            }
+        }
+
+        // ONE sample axis and ONE amplitude axis for the whole picture: the sets are stacked along the
+        // depth, so a scale per series would draw two peaks at two heights and claim they are equal.
+        var xs = plots.SelectMany(p => p.Data.Xs).ToList();
+        var ys = plots.SelectMany(p => p.Data.Ys).ToList();
+        ys.Add(0d);   // the ribbons fill down to zero
+        if (xs.Count == 0) { xs.Add(0d); xs.Add(1d); }
+        if (ys.Count == 0) { ys.Add(0d); ys.Add(1d); }
+        var xr = AxisRange.Over(xs, MinX, MaxX, 6, 1);
+        var yr = AxisRange.Over(ys, MinY, MaxY, 5, 5);
+        foreach (var plot in plots)
+        {
+            plot.XRange = xr;
+            plot.YRange = yr;
+        }
+        return plots;
+    }
+
+    /// <summary>The column one sampleset reads: the series' own, else the chart's YColumn and then the next
+    /// column along (C, D, E …).</summary>
+    private string SamplesetColumn(ChartSeries series, int index)
+    {
+        if (!string.IsNullOrWhiteSpace(series.YColumn)) return series.YColumn!;
+        return SpreadsheetReader.ColumnAfter(YColumn ?? "C", index);
+    }
+
+    /// <summary>One sampleset's values, with the samples numbered the way an analyser numbers them: the
+    /// reader counts rows from 0, a waterfall counts sample POINTS from 1. The result is a copy, because
+    /// what was read is cached for every chart that reads those columns.</summary>
+    private ChartData Sampleset(ChartSeries? series, string yColumn)
+    {
+        var data = DataFor(series, XColumn ?? "B", yColumn, true);
+        if (data.Error is not null) return data;
+        return new ChartData
+        {
+            Xs = data.Xs.Select(x => x + 1).ToArray(),
+            Ys = data.Ys,
+            Labels = data.Labels,
+            XTitle = data.XTitle,
+            YTitle = data.YTitle
+        };
+    }
+
+    /// <summary>
+    /// Draws the picture: the floor and the three axes first, then the samplesets from the faintest
+    /// (farthest) to the nearest, each set's ribbon or trace followed by its own thin trace line and then
+    /// the connectors that join it to the set in front. Drawing the connectors there, and not in a pass of
+    /// their own, is what lets a nearer ribbon cover the mesh behind it — the mesh only shows where it
+    /// would really be seen.
+    /// </summary>
+    private protected override void DrawSeriesLayer(DrawingContext context, List<Plot> plots, Rect plot)
+    {
+        _sampleHits.Clear();
+        var visible = plots.Where(p => p.Visible && p.Data.HasData).ToList();
+        if (visible.Count == 0) return;
+
+        var world = new WaterfallWorld { View = MakeView(plot), Sets = visible.Count, Depth = Math.Clamp(ZSpacing, 0.1, 4) };
+        world.Xs = visible[0].XRange;
+        world.Ys = visible[0].YRange;
+        // The heat map's ends default to the DATA's own least and greatest value (not the scale's), so the
+        // picture uses the whole map: a peak is the map's top colour, whatever the axis' round numbers are.
+        var samples = visible.SelectMany(p => p.Data.Ys).ToList();
+        var low = double.IsNaN(HeatMin) ? (samples.Count > 0 ? samples.Min() : 0d) : HeatMin;
+        var high = double.IsNaN(HeatMax) ? (samples.Count > 0 ? samples.Max() : 1d) : HeatMax;
+        if (high <= low) high = low + 1;
+
+        // ONE stride for every set, and the last sample always kept, so the mesh joins like to like.
+        var count = visible.Max(p => p.Data.Xs.Length);
+        var stride = MaxPoints > 0 && count > MaxPoints ? (int)Math.Ceiling(count / (double)MaxPoints) : 1;
+        var kept = new List<int>();
+        for (var i = 0; i < count; i += stride) kept.Add(i);
+        if (count > 0 && kept[kept.Count - 1] != count - 1) kept.Add(count - 1);
+
+        DrawFloor(context, world, visible.Count);
+
+        // Farthest first, decided by the projection itself (the two angles say which set is the far one).
+        var order = Enumerable.Range(0, visible.Count)
+            .OrderBy(i => world.View.Depth(0.5, 0.5, world.UnitZ(i)))
+            .ToList();
+        var step = ConnectorStep > 0 ? ConnectorStep : Math.Max(1, kept.Count / 40);
+
+        for (var rank = 0; rank < order.Count; rank++)
+        {
+            var set = order[rank];
+            var trace = visible[set];
+            var xs = kept.Where(i => i < trace.Data.Xs.Length).Select(i => trace.Data.Xs[i]).ToArray();
+            var ys = kept.Where(i => i < trace.Data.Ys.Length).Select(i => trace.Data.Ys[i]).ToArray();
+            if (xs.Length < 2) continue;
+
+            // The set in FRONT of this one is the next in the paint order, so its connectors are drawn
+            // here — over this ribbon, and before the ribbon that will cover them.
+            var front = rank + 1 < order.Count ? visible[order[rank + 1]] : null;
+            var frontSet = rank + 1 < order.Count ? order[rank + 1] : set;
+
+            DrawRibbon(context, world, set, xs, ys, trace, low, high);
+            DrawTrace(context, world, set, xs, ys, trace, low, high);
+            if (ShowConnectors && front is not null)
+                DrawConnectors(context, world, set, xs, ys, front, frontSet, low, high, kept, step);
+            RecordSamples(world, set, xs, ys, trace);
+        }
+    }
+
+    /// <summary>The key that decides whether the hover panel has to be rebuilt: the sample the pointer is
+    /// over, which changes as the picture is turned even while the pointer stands still.</summary>
+    private static string HoverKey(SampleHit? hit)
+        => hit is null ? string.Empty : $"{hit.Set}|{hit.Sample}|{hit.Value}";
+
+    /// <summary>
+    /// Finds the sample nearest the pointer — the projected positions of the last render, so the answer
+    /// matches the picture, and a radius in pixels, so the pointer has to be near something to report it.
+    /// </summary>
+    private protected override void UpdateHover(Point point, Rect plot)
+    {
+        SampleHit? best = null;
+        var nearest = 16d;
+        foreach (var hit in _sampleHits)
+        {
+            var dx = hit.Screen.X - point.X;
+            var dy = hit.Screen.Y - point.Y;
+            var distance = Math.Sqrt(dx * dx + dy * dy);
+            if (distance >= nearest) continue;
+            nearest = distance;
+            best = hit;
+        }
+        if (HoverKey(best) == HoverKey(_hoverSample)) return;
+        _hoverSample = best;
+        Hover = best is null ? null : new ReadoutPanel
+        {
+            Head = best.Name,
+            HeadColor = best.Fill,
+            Body = "X " + FormatReading(best.Sample) + "   Y " + FormatReading(best.Value),
+            Accent = best.Fill,
+            FollowPointer = true
+        };
+    }
+
+    /// <summary>Forgets the sample the pointer was over.</summary>
+    private protected override void ClearHover()
+    {
+        _hoverSample = null;
+        Hover = null;
+    }
+
+    /// <summary>
+    /// Dragging turns the picture: sideways turns the azimuth, up and down change the elevation it is seen
+    /// from (drag down to look from higher). The saved form is not touched — the angles a form opens with
+    /// are its Elevation and Azimuth properties.
+    /// </summary>
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        _rotateDrag = true;
+        _rotateFrom = e.GetPosition(this);
+        _rotateElevation = Elevation;
+        _rotateAzimuth = Azimuth;
+        Focus();
+        e.Pointer.Capture(this);
+        e.Handled = true;
+    }
+
+    /// <inheritdoc/>
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+        if (!_rotateDrag) return;
+        var position = e.GetPosition(this);
+        Elevation = Math.Clamp(_rotateElevation + (position.Y - _rotateFrom.Y) * 0.5, 2, 89);
+        Azimuth = _rotateAzimuth + (position.X - _rotateFrom.X) * 0.5;
+        InvalidateVisual();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+        if (!_rotateDrag) return;
+        _rotateDrag = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
+    /// <summary>Remembers a trace's projected samples, so the pointer can be tested against them.</summary>
+    private void RecordSamples(WaterfallWorld world, int set, double[] xs, double[] ys, Plot plot)
+    {
+        var name = LegendName(plot, set);
+        for (var i = 0; i < xs.Length; i++)
+        {
+            _sampleHits.Add(new SampleHit
+            {
+                Screen = world.At(xs[i], ys[i], set),
+                Set = set,
+                Name = name,
+                Fill = plot.LineColor,
+                Sample = xs[i],
+                Value = ys[i]
+            });
+        }
+    }
+
+    /// <summary>
+    /// The floor the traces stand on, with its gridlines and its three axes. Reading a 3D picture needs the
+    /// floor more than anything else: it is what says how deep the sets stand and where the value zero is.
+    /// The axes are drawn where a reader expects them — samples across the front, values up the left,
+    /// sets receding along the depth — and every one of them takes its colour, thickness and font from the
+    /// chart-level axis properties, because a projected axis is not one of the base's two cartesian axes.
+    /// </summary>
+    private void DrawFloor(DrawingContext context, WaterfallWorld world, int sets)
+    {
+        var xMin = world.Xs.Min;
+        var xMax = world.Xs.Max;
+        var last = sets - 1;
+        var axisPen = MakePen(AxisColor, 1, ChartLineStyle.Solid);
+
+        // The floor's outline, and the grid on it: the sample lines run back along the depth, the set lines
+        // run across. Both are drawn first, so the traces cover them where they stand in front.
+        if (ShowGrid)
+        {
+            var gridPen = MakePen(GridColor, GridThickness, GridStyle);
+            foreach (var tick in world.Xs.Ticks())
+                context.DrawLine(gridPen, world.Base(tick, 0), world.Base(tick, last));
+            var setStep = Math.Max(1, sets / 20);
+            for (var set = 0; set < sets; set += setStep)
+                context.DrawLine(gridPen, world.Base(xMin, set), world.Base(xMax, set));
+        }
+
+        context.DrawLine(axisPen, world.Base(xMax, 0), world.Base(xMax, last));
+        context.DrawLine(axisPen, world.Base(xMax, last), world.Base(xMin, last));
+        if (!ShowAxes) return;
+
+        // The three axes themselves: X along the front floor edge, Y up the left, Z back along the depth.
+        var front = world.Base(xMin, 0);
+        var xEnd = world.Base(xMax, 0);
+        var yEnd = world.View.Project(world.UnitX(xMin), 1, world.UnitZ(0));
+        var zEnd = world.Base(xMin, last);
+        context.DrawLine(axisPen, front, xEnd);
+        context.DrawLine(axisPen, front, yEnd);
+        if (sets > 1) context.DrawLine(axisPen, front, zEnd);
+
+        var down = world.View.Direction(0, -1, 0);
+        var left = world.View.Direction(-1, 0, 0);
+        var tickLength = Math.Max(0, MajorTickLength);
+        var font = TickLabelFontSize;
+
+        foreach (var value in world.Xs.Ticks())
+        {
+            var at = world.Base(value, 0);
+            if (ShowMajorTicks)
+                context.DrawLine(axisPen, at, new Point(at.X + down.X * tickLength, at.Y + down.Y * tickLength));
+            if (!ShowTickLabels) continue;
+            var text = MakeText(FormatNumber(value, world.Xs.TickStep), font, AxisColor);
+            context.DrawText(text, new Point(at.X - text.Width / 2 + down.X * (tickLength + 2),
+                at.Y + down.Y * (tickLength + 2)));
+        }
+
+        foreach (var value in world.Ys.Ticks())
+        {
+            var at = world.View.Project(world.UnitX(xMin), world.UnitY(value), world.UnitZ(0));
+            if (ShowMajorTicks)
+                context.DrawLine(axisPen, at, new Point(at.X + left.X * tickLength, at.Y + left.Y * tickLength));
+            if (!ShowTickLabels) continue;
+            var text = MakeText(FormatNumber(value, world.Ys.TickStep), font, AxisColor);
+            context.DrawText(text, new Point(at.X + left.X * (tickLength + 2) - text.Width, at.Y - text.Height / 2));
+        }
+
+        // The depth ticks are the samplesets themselves, numbered the way the legend lists them. With a
+        // wall of sets they would overprint each other, so they are thinned out.
+        if (sets > 1)
+        {
+            var setStep = Math.Max(1, sets / 12);
+            for (var set = 0; set < sets; set += setStep)
+            {
+                var at = world.Base(xMin, set);
+                if (ShowMajorTicks)
+                    context.DrawLine(axisPen, at, new Point(at.X + left.X * tickLength, at.Y + left.Y * tickLength));
+                if (!ShowTickLabels) continue;
+                var text = MakeText((set + 1).ToString(CultureInfo.CurrentCulture), font, AxisColor);
+                context.DrawText(text, new Point(at.X + left.X * (tickLength + 2) - text.Width, at.Y - text.Height / 2));
+            }
+        }
+
+        if (!ShowAxisTitles) return;
+        DrawAxisTitle(context, XAxisTitle, xEnd, down, tickLength + 4, font);
+        DrawAxisTitle(context, YAxisTitle, yEnd, new Point(0, -1), tickLength + 4, font);
+        DrawAxisTitle(context, ZAxisTitle, zEnd, left, tickLength + 4, font);
+    }
+
+    /// <summary>One axis name, offset from the end of its axis along <paramref name="side"/> so it reads
+    /// beside the axis rather than on top of it.</summary>
+    private void DrawAxisTitle(DrawingContext context, string? title, Point end, Point side, double gap, double font)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return;
+        var text = MakeText(title!, font, AxisColor);
+        context.DrawText(text, new Point(end.X + side.X * gap - text.Width / 2, end.Y + side.Y * gap - text.Height));
+    }
+
+    /// <summary>
+    /// One sampleset's fill, by style and colour: a solid ribbon in its own colour, the same see-through, or
+    /// the heat map — and in the Split mode two bands either side of the limit (see
+    /// <see cref="DrawSplitRibbon"/>). The Lines style fills nothing at all.
+    /// </summary>
+    private void DrawRibbon(DrawingContext context, WaterfallWorld world, int set, double[] xs, double[] ys,
+                            Plot plot, double low, double high)
+    {
+        if (RibbonStyle is WaterfallStyle.Lines) return;
+        var opacity = RibbonStyle is WaterfallStyle.Translucent ? Math.Clamp(RibbonOpacity, 0, 100) / 100d : 1d;
+        if (ColorMode is WaterfallColorMode.Split)
+        {
+            DrawSplitRibbon(context, world, set, xs, ys, opacity);
+            return;
+        }
+
+        IBrush fill = ColorMode is WaterfallColorMode.Value
+            ? HeatBrush(world, set, low, high)
+            : new SolidColorBrush(plot.LineColor, opacity);
+
+        var geometry = new StreamGeometry();
+        using (var g = geometry.Open())
+        {
+            g.BeginFigure(world.Base(xs[0], set), true);
+            for (var i = 0; i < xs.Length; i++) g.LineTo(world.At(xs[i], ys[i], set));
+            g.LineTo(world.At(xs[xs.Length - 1], world.Ys.Min, set));
+            g.EndFigure(true);
+        }
+        context.DrawGeometry(fill, null, geometry);
+    }
+
+    /// <summary>
+    /// The Split mode's two fills for one sampleset: the part of the ribbon BELOW <see cref="SplitValue"/>
+    /// in one colour and the part above it in the other, so a limit is visible in the picture instead of in
+    /// a legend. The trace is cut exactly where it crosses the limit — the top edge is a straight line
+    /// between two samples, so the crossing is a linear interpolation — which is what makes the two regions
+    /// meet on a clean line rather than on a stair.
+    /// </summary>
+    private void DrawSplitRibbon(DrawingContext context, WaterfallWorld world, int set, double[] xs, double[] ys,
+                                 double opacity)
+    {
+        var limit = SplitValue;
+        var below = new SolidColorBrush(BelowColor, opacity);
+        var above = new SolidColorBrush(AboveColor, opacity);
+
+        // Everything up to the limit — the whole ribbon where the trace stays under it.
+        var low = new StreamGeometry();
+        using (var g = low.Open())
+        {
+            g.BeginFigure(world.Base(xs[0], set), true);
+            for (var i = 0; i < xs.Length; i++) g.LineTo(world.At(xs[i], Math.Min(ys[i], limit), set));
+            g.LineTo(world.Base(xs[xs.Length - 1], set));
+            g.EndFigure(true);
+        }
+        context.DrawGeometry(below, null, low);
+
+        // …and the runs that stand above it, each one closed along the limit itself.
+        for (var i = 0; i < xs.Length; i++)
+        {
+            if (ys[i] <= limit) continue;
+            var start = i;
+            while (i + 1 < xs.Length && ys[i + 1] > limit) i++;
+            var end = i;
+            var geometry = new StreamGeometry();
+            using (var g = geometry.Open())
+            {
+                g.BeginFigure(RunEnd(xs, ys, world, set, start, true, limit), true);
+                for (var k = start; k <= end; k++) g.LineTo(world.At(xs[k], ys[k], set));
+                g.LineTo(RunEnd(xs, ys, world, set, end, false, limit));
+                g.EndFigure(true);
+            }
+            context.DrawGeometry(above, null, geometry);
+        }
+    }
+
+    /// <summary>Where a run of over-the-limit samples meets the limit: the crossing on the segment coming
+    /// into it, or the sampleset's own first sample when the run starts there (and the same at the far end).</summary>
+    private static Point RunEnd(double[] xs, double[] ys, WaterfallWorld world, int set, int index, bool entry,
+                                double limit)
+    {
+        if (entry)
+        {
+            if (index == 0) return world.At(xs[0], limit, set);
+            return world.At(CrossX(xs[index - 1], ys[index - 1], xs[index], ys[index], limit), limit, set);
+        }
+        if (index >= xs.Length - 1) return world.At(xs[xs.Length - 1], limit, set);
+        return world.At(CrossX(xs[index], ys[index], xs[index + 1], ys[index + 1], limit), limit, set);
+    }
+
+    /// <summary>The X where the top edge between two samples passes the limit (a straight line, so the
+    /// crossing is the linear interpolation between the two values).</summary>
+    private static double CrossX(double x0, double v0, double x1, double v1, double limit)
+    {
+        var span = v1 - v0;
+        return Math.Abs(span) < 1e-12 ? x1 : x0 + (x1 - x0) * ((limit - v0) / span);
+    }
+
+    /// <summary>
+    /// One sampleset's own trace line, drawn over its ribbon. In the Split mode the line is cut at the limit
+    /// too, so the outline agrees with the fill; in the Value mode it carries the heat map's gradient, which
+    /// is what makes a peak's own tip the map's top colour.
+    /// </summary>
+    private void DrawTrace(DrawingContext context, WaterfallWorld world, int set, double[] xs, double[] ys,
+                           Plot plot, double low, double high)
+    {
+        var thickness = plot.LineThickness > 0 ? plot.LineThickness : 1;
+        if (ColorMode is WaterfallColorMode.Split)
+        {
+            DrawSplitTrace(context, world, set, xs, ys, thickness);
+            return;
+        }
+        var brush = ColorMode is WaterfallColorMode.Value
+            ? HeatBrush(world, set, low, high)
+            : new SolidColorBrush(plot.LineColor);
+        DrawPolyline(context, world, set, xs, ys, MakeBrushPen(brush, thickness, plot.LineStyle));
+    }
+
+    /// <summary>A pen over an arbitrary brush, so a trace can be drawn with the heat map's gradient. The
+    /// base's own MakePen takes a colour, which a gradient is not.</summary>
+    private static IPen MakeBrushPen(IBrush brush, double thickness, ChartLineStyle style)
+        => new Pen(brush, Math.Max(0.5, thickness), DashFor(style))
+        {
+            LineCap = style == ChartLineStyle.Dot ? PenLineCap.Round : PenLineCap.Flat
+        };
+
+    /// <summary>Draws one sampleset's top edge as a single line.</summary>
+    private static void DrawPolyline(DrawingContext context, WaterfallWorld world, int set, double[] xs, double[] ys, IPen pen)
+    {
+        var geometry = new StreamGeometry();
+        using (var g = geometry.Open())
+        {
+            g.BeginFigure(world.At(xs[0], ys[0], set), false);
+            for (var i = 1; i < xs.Length; i++) g.LineTo(world.At(xs[i], ys[i], set));
+            g.EndFigure(false);
+        }
+        context.DrawGeometry(null, pen, geometry);
+    }
+
+    /// <summary>The Split mode's trace line, cut at the limit: one geometry for the parts below it and one
+    /// for the parts above, so the outline is drawn in two passes rather than segment by segment.</summary>
+    private void DrawSplitTrace(DrawingContext context, WaterfallWorld world, int set, double[] xs, double[] ys,
+                                double thickness)
+    {
+        var limit = SplitValue;
+        var belowPen = MakePen(BelowColor, thickness, ChartLineStyle.Solid);
+        var abovePen = MakePen(AboveColor, thickness, ChartLineStyle.Solid);
+        var below = new StreamGeometry();
+        var above = new StreamGeometry();
+        using (var b = below.Open())
+        using (var a = above.Open())
+        {
+            for (var i = 1; i < xs.Length; i++)
+            {
+                var (x0, v0, x1, v1) = (xs[i - 1], ys[i - 1], xs[i], ys[i]);
+                if ((v0 <= limit) == (v1 <= limit))
+                {
+                    var g = v0 <= limit ? b : a;
+                    g.BeginFigure(world.At(x0, v0, set), false);
+                    g.LineTo(world.At(x1, v1, set));
+                    g.EndFigure(false);
+                    continue;
+                }
+                var cross = CrossX(x0, v0, x1, v1, limit);
+                var lower = v0 <= limit ? b : a;
+                var upper = v0 <= limit ? a : b;
+                lower.BeginFigure(world.At(x0, v0, set), false);
+                lower.LineTo(world.At(cross, limit, set));
+                lower.EndFigure(false);
+                upper.BeginFigure(world.At(cross, limit, set), false);
+                upper.LineTo(world.At(x1, v1, set));
+                upper.EndFigure(false);
+            }
+        }
+        context.DrawGeometry(null, belowPen, below);
+        context.DrawGeometry(null, abovePen, above);
+    }
+
+    /// <summary>
+    /// The connectors: for every kept sample, a line from this set's value to the next nearer set's value at
+    /// the SAME sample — the mesh that turns a row of separate traces into a surface. They are coloured the
+    /// way the traces are: the heat map's gradient in the Value mode (so the mesh reads as the same field as
+    /// the ribbons), the split colours in the Split mode, and the connector colour otherwise.
+    /// </summary>
+    private void DrawConnectors(DrawingContext context, WaterfallWorld world, int set, double[] xs, double[] ys,
+                                Plot front, int frontSet, double low, double high, List<int> kept, int step)
+    {
+        if (ConnectorThickness <= 0) return;
+        var thickness = ConnectorThickness;
+        IBrush brush = ColorMode is WaterfallColorMode.Value
+            ? HeatBrush(world, set, low, high)
+            : new SolidColorBrush(ConnectorColor);
+        var pen = MakeBrushPen(brush, thickness, ChartLineStyle.Solid);
+
+        if (ColorMode is WaterfallColorMode.Split)
+        {
+            DrawSplitConnectors(context, world, set, xs, ys, front, frontSet, thickness, kept, step);
+            return;
+        }
+
+        var geometry = new StreamGeometry();
+        using (var g = geometry.Open())
+        {
+            for (var i = 0; i < xs.Length; i += step)
+            {
+                var index = kept[Math.Min(i, kept.Count - 1)];
+                if (index >= front.Data.Xs.Length || index >= front.Data.Ys.Length) continue;
+                g.BeginFigure(world.At(xs[i], ys[i], set), false);
+                g.LineTo(world.At(front.Data.Xs[index], front.Data.Ys[index], frontSet));
+                g.EndFigure(false);
+            }
+        }
+        context.DrawGeometry(null, pen, geometry);
+    }
+
+    /// <summary>The mesh in the Split mode: every connector is cut at the limit, so the part of the surface
+    /// above it is drawn in the "above" colour — which is what shows a peak rising out of the floor.</summary>
+    private void DrawSplitConnectors(DrawingContext context, WaterfallWorld world, int set, double[] xs, double[] ys,
+                                     Plot front, int frontSet, double thickness, List<int> kept, int step)
+    {
+        var limit = SplitValue;
+        var below = new StreamGeometry();
+        var above = new StreamGeometry();
+        using (var b = below.Open())
+        using (var a = above.Open())
+        {
+            for (var i = 0; i < xs.Length; i += step)
+            {
+                var index = Math.Min(kept[Math.Min(i, kept.Count - 1)], Math.Min(front.Data.Xs.Length, front.Data.Ys.Length) - 1);
+                if (index < 0) continue;
+                var near = front.Data.Ys[index];
+                var far = ys[i];
+                var from = world.At(xs[i], far, set);
+                var to = world.At(front.Data.Xs[index], near, frontSet);
+                // The connector is a straight line in space, and the projection is linear, so the limit is
+                // crossed the same fraction of the way on screen as it is in the values.
+                var cross = Math.Abs(near - far) < 1e-12 ? 0.5 : Math.Clamp((limit - far) / (near - far), 0, 1);
+                var at = new Point(from.X + (to.X - from.X) * cross, from.Y + (to.Y - from.Y) * cross);
+                var lower = far <= limit ? b : a;
+                var upper = far <= limit ? a : b;
+                lower.BeginFigure(from, false);
+                lower.LineTo(at);
+                lower.EndFigure(false);
+                upper.BeginFigure(at, false);
+                upper.LineTo(to);
+                upper.EndFigure(false);
+            }
+        }
+        context.DrawGeometry(null, MakePen(BelowColor, thickness, ChartLineStyle.Solid), below);
+        context.DrawGeometry(null, MakePen(AboveColor, thickness, ChartLineStyle.Solid), above);
+    }
+
+    /// <summary>
+    /// The Value mode's brush for ONE sampleset: a gradient that runs up the amplitude axis, so any point of
+    /// the ribbon — or of a connector drawn with the same brush — is coloured by its own value, a peak's tip
+    /// in the map's top colour and its foot in the bottom one. That is the picture a spectrum waterfall is
+    /// read for. Each set needs its own brush (the sets stand at different depths), and the gradient's axis
+    /// is laid PERPENDICULAR to the sample axis: with a slanted view a simply vertical gradient would tint
+    /// by screen height rather than by value, and the colour bands would not sit level with the data.
+    /// </summary>
+    private IBrush HeatBrush(WaterfallWorld world, int set, double low, double high)
+    {
+        var from = world.View.Project(0, world.UnitY(low), world.UnitZ(set));
+        var to = world.View.Project(0, world.UnitY(high), world.UnitZ(set));
+        var alongX = world.View.Direction(1, 0, 0);
+        var up = new Point(alongX.Y, -alongX.X);
+        if (up.Y > 0) up = new Point(-up.X, -up.Y);
+        var span = (to.X - from.X) * up.X + (to.Y - from.Y) * up.Y;
+        if (span < 1)
+        {
+            // The value axis has collapsed on screen (edge on), so a gradient would be one flat colour.
+            return new SolidColorBrush(HeatColor((low + high) / 2, low, high));
+        }
+        var stops = new GradientStops();
+        for (var i = 0; i < HeatPalette.Length; i++)
+            stops.Add(new GradientStop(HeatPalette[i], i / (double)(HeatPalette.Length - 1)));
+        return new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(from, RelativeUnit.Absolute),
+            EndPoint = new RelativePoint(new Point(from.X + up.X * span, from.Y + up.Y * span), RelativeUnit.Absolute),
+            GradientStops = stops
+        };
+    }
+
+    /// <summary>The heat map's colour for one value (needed when the value axis is edge on, and for the
+    /// trace's own colour in that case): the value's place between the two ends picks a stop, blended
+    /// between the two colours it falls between.</summary>
+    private static Color HeatColor(double value, double low, double high)
+    {
+        var place = high - low <= 0 ? 0.5 : Math.Clamp((value - low) / (high - low), 0, 1);
+        var scaled = place * (HeatPalette.Length - 1);
+        var index = Math.Min(HeatPalette.Length - 2, (int)Math.Floor(scaled));
+        var f = scaled - index;
+        var a = HeatPalette[index];
+        var b = HeatPalette[index + 1];
+        return Color.FromArgb(255,
+            (byte)Math.Round(a.R + (b.R - a.R) * f),
+            (byte)Math.Round(a.G + (b.G - a.G) * f),
+            (byte)Math.Round(a.B + (b.B - a.B) * f));
     }
 }
 
