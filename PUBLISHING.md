@@ -233,6 +233,40 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
+> **`0.11.19` (2026-09-24) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); **THIS is the
+> file to upload to the Marketplace.** The listing still carries `0.11.15`, so this file brings it up to date
+> with everything in `0.11.16` → `0.11.19`: the 3D surface's height ramp (a per-band gradient mixed the
+> height with the depth), the missing crest at the top of the ramp, the off-screen colour palette,
+> `ZoomX`/`ZoomY` with four packed legend sliders, **Legend on/off** in the chart's right-click menu,
+> whole-page loading through the new `sheetShape` host verb, the stale-bundled-copy fix, and the install size.
+>
+> **Artefact:** `avalonia-designer-0.11.19.vsix`, **1,235,670 bytes**, sha256
+> **`11909e2a2b56bdab1930958f4902afd49eca27799628bf887ead320914c3a065`**, **118 files** (0 source maps),
+> manifest `Version="0.11.19"` and **no `PreRelease` attribute** (a plain, stable upload). Commit
+> **`354223a`** on `main`, annotated tag **`v0.11.19`**, pushed. Release URL:
+> <https://github.com/OomNiel/avalonia-designer/releases/tag/v0.11.19>. **Verified:** local `sha256sum`, and
+> the package's own contents read back out of the VSIX — the packaged `resources/GrumpyCharts.cs` opens with
+> `// BUNDLED-COPY: 0.11.19`, and the packaged `host/PreviewerHost.csproj` carries
+> `NETCoreSdkPortableRuntimeIdentifier` and `AppendRuntimeIdentifierToOutputPath`. Suite **8,100 passed /
+> 0 failed**; T1 (402) drives the real *trimmed* host through Skia, HarfBuzz and SQLite; the host, a generated
+> C# project and the VB matrix all 0 warnings / 0 errors.
+>
+> **What it changes:** the previewer host now builds for **one** platform — the SDK's portable RID, resolved at
+> build time on the machine that will run it — instead of twenty-six. `host/bin` went **578 MB → 24 MB**
+> (569 MB was `runtimes/**`, 304 MB of it `.pdb`), so a fresh install is ~24 MB rather than 583 MB;
+> `SelfContained=false` keeps the runtime behaviour identical and
+> `AppendRuntimeIdentifierToOutputPath=false` keeps the output in the folder the extension launches from (a RID
+> would move it there and the spawn fails — that is how it was found). A `-r win-x64` cross-build produces the
+> same 24 MB with `PreviewerHost.exe` and the Windows natives; the managed code is untouched. **On this
+> machine** the six accumulated installed copies were pruned from 3.5 GB to 29 MB, verified by rendering a
+> chart through the pruned host.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.11.19.vsix` → leave **Pre-release
+> unchecked** → then confirm with `flags: 914` that the version is `0.11.19` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
+> the user's.** `0.11.16` and `0.11.17` were never released, `0.11.18` is GitHub-only, and `0.11.15` (the
+> current listing) is superseded by this file.
+
 > **`0.11.18` (2026-09-24) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
 > the Marketplace upload. THIS is the file to upload.**
 >
