@@ -233,6 +233,41 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
+> **`0.11.18` (2026-09-24) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
+> the Marketplace upload. THIS is the file to upload.**
+>
+> **Artefact:** `avalonia-designer-0.11.18.vsix`, **1,232,723 bytes**, sha256
+> **`1bb7fcaf3f06a2508b5c97d9b40d742a92aff1f7c10cf397d4d4fa46ee045a23`**, **118 files** (0 source maps),
+> manifest `Version="0.11.18"` and **no `PreRelease` attribute** (a plain, stable upload). Commit
+> **`58100a9`** on `main`, annotated tag **`v0.11.18`**, pushed. Release URL:
+> <https://github.com/OomNiel/avalonia-designer/releases/tag/v0.11.18>. **Verified:** local `sha256sum`, and
+> the package's own contents read back out of the VSIX (**the packaged `resources/GrumpyCharts.cs` opens with
+> `// BUNDLED-COPY: 0.11.18`**, and `out/bundledComponents.js` carries the content rule). Suite **8,092
+> passed / 0 failed**; the host, a generated C# project and the VB matrix all 0 warnings / 0 errors.
+>
+> **What it changes:** the 3D surface's **height ramp is cut on the height's own levels** — a per-band
+> gradient mixed the height with the depth, so a flat plate spanned 0.66…0.97 of the ramp at elevation 31 —
+> and the triangle **at the ramp's maximum is filled again** (the *"open crests"* report: 0 → 9,482 sheet
+> pixels at value 25 of a 0…25 scale). The **colour palette stays on screen**; **`ZoomX`/`ZoomY`** (1…100 %
+> of the fitted size, ranges untouched) arrive with **two more legend sliders**, the four packed 26px apart;
+> the chart's right-click menu gained **Legend on/off**; and pointing a 3D chart at a page **loads the whole
+> dataset** (new host verb `sheetShape`: one series per data column, a stale slice window cleared, the width
+> window left alone).
+>
+> **Housekeeping — the stale-copy class is closed.** Every bundled resource now carries
+> `BUNDLED-COPY: <version>` in its header and "older" is decided by **comparing contents with the copy the
+> extension ships**, because a *drawing* change adds no marker token to look for — that is exactly how
+> `0.11.18`'s new sliders reached the designer preview while a running app still had two
+> (*"the new sliders is rendering in the designer preview but not during runtime"*).
+> `avaloniaDesigner.bundled.autoUpdate` (off by default) makes the refresh silent instead of asking, and the
+> staleness marker moved `CutToLevels` → `legendItem` for the projects that predate the content rule.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.11.18.vsix` → leave **Pre-release
+> unchecked** → then confirm with `flags: 914` that the version is `0.11.18` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
+> the user's.** `0.11.17` and `0.11.16` were packaged but never released (their numbers are spent);
+> `0.11.15` is superseded by this file.
+
 > **`0.11.15` (2026-09-24) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
 > the Marketplace upload. THIS is the file to upload.**
 >
