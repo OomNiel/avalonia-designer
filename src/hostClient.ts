@@ -224,6 +224,28 @@ export class HostClient {
         };
     }
 
+    /**
+     * The USED RANGE of one PAGE of an .xlsx workbook — its last row and its last column as a letter
+     * (`"CX"`). A 3-D chart reads one spreadsheet column per slice, so this is what says how many slices
+     * a page holds; `error` is set when the file or the page could not be read.
+     */
+    async sheetShape(file: string, sheet: string): Promise<{ rows: number; columns: string; error: string | null }> {
+        const r = await this.request('sheetShape', { file, sheet });
+        // An old host answers an unknown verb with a plain error, and the cure is a REBUILD (the extension
+        // ships the host's source; the binary that answers is the one built on this machine), so say that
+        // rather than "the page could not be measured".
+        const error = r.error
+            ? String(r.error)
+            : r.type !== 'sheetShapeResult'
+                ? 'The previewer host is too old to measure a page — rebuild it (dotnet build host/PreviewerHost.csproj).'
+                : null;
+        return {
+            rows: Number(r.rows ?? 0) || 0,
+            columns: r.columns ? String(r.columns) : '',
+            error
+        };
+    }
+
     /** Runs a read-only SELECT against the user's SQLite file for the design-time data preview. */
     async sqliteQuery(file: string, sql: string, limit = 200): Promise<SqliteResult> {
         const r = await this.request('sqlite', { file, op: 'query', sql, limit });

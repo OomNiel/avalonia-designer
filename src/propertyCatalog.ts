@@ -988,6 +988,10 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Azimuth', label: 'Azimuth (deg)', kind: 'number' },
         { key: 'ZSpacing', label: 'Sheet Depth', kind: 'number' },
         { key: 'Zoom', label: 'Zoom', kind: 'number' },
+        // The X and Y axes' own SIZE, in percent — a zoom, not a window: Min/Max X and Y are untouched, so
+        // the picture magnifies (and is clipped by the plot's frame) instead of showing a different range.
+        { key: 'ZoomX', label: 'X Axis Zoom %', kind: 'number' },
+        { key: 'ZoomY', label: 'Y Axis Zoom %', kind: 'number' },
         { key: 'XAxisTitle', label: 'Width Axis Name', kind: 'text' },
         { key: 'YAxisTitle', label: 'Height Axis Name', kind: 'text' },
         { key: 'ZAxisTitle', label: 'Depth Axis Name', kind: 'text' },
@@ -1975,6 +1979,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // WHICH SLICES are drawn.
             'Style', 'ColorBy', 'LowColor', 'HighColor', 'SolidOpacity', 'MeshColor', 'MeshThickness',
             'ShowBase', 'BaseColor',
+            // The X and Y axes' SIZE on screen (the axis zoom, 2026-09-24): 100 % is the fitted picture and
+            // the ranges the axes cover are untouched by it — a zoom, not another range window.
+            'ZoomX', 'ZoomY',
             'MinX', 'MaxX', 'MinY', 'MaxY', 'MinZ', 'MaxZ',
             // The surface fill between the sets was removed from the chart (the open corridors between
             // the sets are the default, unroofed picture), so the SurfaceFill / SurfaceColor /

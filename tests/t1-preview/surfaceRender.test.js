@@ -11,6 +11,10 @@
  *     at the hot end, Colour By="Sampleset" replaces both with the palette, and Heat Min/Max RE-PIN the
  *     ramp (a 40..50 window must push almost the whole sheet to the cold end, while 0..100 must be
  *     identical to leaving them alone);
+ *   - the ramp is a function of the HEIGHT and of nothing else: a sheet held at one height must come back as
+ *     ONE colour at every elevation and azimuth, and that colour must be the ramp's at that height (it used
+ *     to be a gradient laid across the SCREEN, which mixed the height with the depth by tan(Elevation) —
+ *     reported 2026-09-24 from the running app);
  *   - SolidOpacity really fades the metal: at 40 % the sheet loses most of its colour to the plate;
  *   - the legend of a surface is its RANGE WINDOW (MinX/MaxX, MinY/MaxY): a narrow width window must
  *     MAGNIFY the sheet (pixels per millimetre goes up, and a narrower window magnifies more), the value
@@ -64,6 +68,58 @@ const rgb = (img, x, y) => {
     return [img.data[i], img.data[i + 1], img.data[i + 2]];
 };
 const near = (a, b, slack) => a.every((v, i) => Math.abs(v - b[i]) <= slack);
+const RAMP_D = [0, 1, 2].map((i) => HIGH[i] - LOW[i]);
+const RAMP_LEN2 = RAMP_D[0] * RAMP_D[0] + RAMP_D[1] * RAMP_D[1] + RAMP_D[2] * RAMP_D[2];
+/** Where a colour sits on the Low→High ramp: 0 at LowColor, 1 at HighColor (unclamped). */
+const rampAt = (p) => ((p[0] - LOW[0]) * RAMP_D[0] + (p[1] - LOW[1]) * RAMP_D[1] + (p[2] - LOW[2]) * RAMP_D[2])
+    / RAMP_LEN2;
+/** True when the colour IS on the ramp (a pixel of the painted sheet, not of the palette or the plate). */
+const onRampColour = (p) => {
+    const t = Math.max(0, Math.min(1, rampAt(p)));
+    const c = [LOW[0] + RAMP_D[0] * t, LOW[1] + RAMP_D[1] * t, LOW[2] + RAMP_D[2] * t];
+    return Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]) <= 26;
+};
+/** How much of a picture's coloured surface lies on that ramp — 1 for the temperature colouring, far less
+ *  for the per-slice palette (the two things this file has to tell apart). */
+function rampShare(img) {
+    let on = 0, off = 0;
+    for (let y = 0; y < img.height; y++) {
+        for (let x = 0; x < img.width; x++) {
+            const p = rgb(img, x, y);
+            if (Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]) < 40) continue;
+            if (onRampColour(p)) on++; else off++;
+        }
+    }
+    return on + off === 0 ? 0 : on / (on + off);
+}
+/** Mean colourfulness (max channel − min channel) over the pixels a mask selects. */
+function meanChroma(img, mask) {
+    let n = 0, sum = 0;
+    for (let i = 0; i < mask.length; i++) {
+        if (!mask[i]) continue;
+        const x = i % img.width, y = (i - x) / img.width;
+        const p = rgb(img, x, y);
+        sum += Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]);
+        n++;
+    }
+    return n ? sum / n : 0;
+}
+/** The pixels the sheet occupies, as a flat mask (for comparing SHAPES between two renders). */
+function sheetMask(img) {
+    const mask = new Uint8Array(img.width * img.height);
+    for (let y = 0; y < img.height; y++) {
+        for (let x = 0; x < img.width; x++) {
+            const p = rgb(img, x, y);
+            mask[y * img.width + x] = Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]) < 40 ? 0 : 1;
+        }
+    }
+    return mask;
+}
+const maskDiff = (a, b) => {
+    let n = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++;
+    return n;
+};
 
 /** How many pixels carry a colour (used for the GREY mesh, which the sheet measure below ignores). */
 function measure(img, colour, slack) {
@@ -97,6 +153,7 @@ function sheetStats(img) {
     let bottom = -1;
     let cold = 0;
     let hot = 0;
+    let mid = 0;
     const d = [0, 1, 2].map((i) => HIGH[i] - LOW[i]);
     const len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
     for (let y = 0; y < img.height; y++) {
@@ -113,11 +170,12 @@ function sheetStats(img) {
             const t = ((p[0] - LOW[0]) * d[0] + (p[1] - LOW[1]) * d[1] + (p[2] - LOW[2]) * d[2]) / len2;
             if (t < 0.15) cold++;
             if (t > 0.75) hot++;
+            if (t >= 0.3 && t <= 0.7) mid++;
         }
     }
     return {
         n, wide: right < 0 ? 0 : right - left + 1, tall: bottom < 0 ? 0 : bottom - top + 1,
-        cold, hot, coldShare: n ? cold / n : 0, hotShare: n ? hot / n : 0
+        cold, hot, mid, coldShare: n ? cold / n : 0, hotShare: n ? hot / n : 0, midShare: n ? mid / n : 0
     };
 }
 
@@ -205,6 +263,98 @@ module.exports = async (t) => {
       SourceFile="${FIXTURE}" XColumn="B" ZRow="1" ShowTitle="False" ShowLegend="False" ${extra}>
 ${SIX}
     </charts:GrumpySurfacePlot>`;
+
+        // ---------------------------------------------------------------- the AXIS ZOOM is a zoom, not a range
+        // "please introduce a Zoom function for the X and Y axes … an actual zooming of the X/Y axes size
+        // keeping the range settings unchanged." Same chart, three sizes: the drawn picture must shrink while
+        // the SHAPE of what is drawn (which is the range) stays the same — and 100 %, which is the default,
+        // must be exactly the fitted size, with nothing above it (a bigger picture is only clipped by the
+        // plot box, so 100 % is the top of the scale — see the legend's zoom sliders).
+        // The chart is rendered FLAT in depth (ZSpacing 0.1) and without the legend, because the sheet's own
+        // depth is what a zoom does NOT scale: measuring the bounding box of a normal sheet mixes the two
+        // zoomed axes with the unzoomed depth, and the legend's band would shrink the plot on top of that.
+        const zoomPlot = (name, extra) => `    <charts:GrumpySurfacePlot x:Name="${name}" Width="${W}" Height="${H}"
+      SourceFile="${FIXTURE}" XColumn="B" ZRow="1" ShowTitle="False" ShowLegend="False" ZSpacing="0.1" ${extra}>
+${SIX}
+    </charts:GrumpySurfacePlot>`;
+        const zoomPlain = sheetStats((await shot(zoomPlot('SfZoom100', ''))).img);
+        const zoomBoth = sheetStats((await shot(zoomPlot('SfZoomBoth', 'ZoomX="50" ZoomY="50"'))).img);
+        const zoomNarrow = sheetStats((await shot(zoomPlot('SfZoomX50', 'ZoomX="50"'))).img);
+        const zoomFlat = sheetStats((await shot(zoomPlot('SfZoomY50', 'ZoomY="50"'))).img);
+        const zoomSame = sheetStats((await shot(zoomPlot('SfZoomSame', 'ZoomX="100" ZoomY="100"'))).img);
+        const zoomOver = sheetStats((await shot(zoomPlot('SfZoomOver', 'ZoomX="150" ZoomY="150"'))).img);
+        t.equal(`${zoomSame.wide}x${zoomSame.tall}x${zoomSame.n}`,
+            `${zoomPlain.wide}x${zoomPlain.tall}x${zoomPlain.n}`, 'zoom',
+            'ZoomX/ZoomY 100 % is exactly the fitted size, so a form that never mentions the zoom is unaffected');
+        t.equal(`${zoomOver.wide}x${zoomOver.tall}x${zoomOver.n}`,
+            `${zoomPlain.wide}x${zoomPlain.tall}x${zoomPlain.n}`, 'zoom',
+            'and a value ABOVE 100 % is clamped to the fitted size rather than clipped by the plot box');
+        t.ok(zoomBoth.wide < zoomPlain.wide * 0.65 && zoomBoth.wide > zoomPlain.wide * 0.35
+            && zoomBoth.tall < zoomPlain.tall * 0.65 && zoomBoth.tall > zoomPlain.tall * 0.35, 'zoom',
+            'half the fitted size on BOTH axes draws the sheet about half as wide and half as tall',
+            `${zoomPlain.wide}x${zoomPlain.tall} → ${zoomBoth.wide}x${zoomBoth.tall}`);
+        t.ok(zoomBoth.n < zoomPlain.n * 0.5, 'zoom',
+            'and it covers about a quarter of the plot area it did',
+            `${zoomPlain.n}px → ${zoomBoth.n}px of sheet`);
+        // One axis at a time is measured as the sheet's SHAPE, not as a bounding box: the other axis still
+        // spans its full length, so the box alone would barely move (and the sheet's DEPTH is not zoomed at
+        // all — that is what ZSpacing is for).
+        const aspect = (s) => s.wide / s.tall;
+        t.ok(aspect(zoomNarrow) < aspect(zoomPlain) * 0.7, 'zoom',
+            'X Axis Zoom 50 % alone draws the sheet half as wide FOR ITS HEIGHT',
+            `aspect ${aspect(zoomPlain).toFixed(2)} → ${aspect(zoomNarrow).toFixed(2)}`);
+        t.ok(aspect(zoomFlat) > aspect(zoomPlain) * 1.3, 'zoom',
+            'and Y Axis Zoom 50 % half as tall for its width',
+            `aspect ${aspect(zoomPlain).toFixed(2)} → ${aspect(zoomFlat).toFixed(2)}`);
+        t.ok(Math.abs(zoomBoth.coldShare - zoomPlain.coldShare) < 0.2, 'zoom',
+            'a smaller sheet is still the SAME sheet: the valleys and ridges keep their share of the picture, so '
+            + 'the zoom moved the axes and not the range the colour ramp stands for',
+            `cold share ${(zoomPlain.coldShare * 100).toFixed(1)}% → ${(zoomBoth.coldShare * 100).toFixed(1)}%`);
+
+        // ---------------------------------------------------------------- the legend: four PACKED sliders
+        // "Add sliders (next to the X/Y Range sliders) in the surface plot Legend for the X and Y zoom levels
+        // ranging from 1 to 100 %", then "place the sliders closer together - too much space in between
+        // sliders". Four tracks in the bar, each in its own colour: the two windows carry TWO handles (both
+        // their ends are draggable), the two zooms carry ONE (a size is a single number), and the columns
+        // stand one column apart — measured from the sliders' own handles, so the spacing is what a reader
+        // sees rather than what the code intends.
+        const LEGEND_RANGE_X = [0x4C, 0x9F, 0xDC];
+        const LEGEND_RANGE_Z = [0xD9, 0xA5, 0x19];
+        const LEGEND_ZOOM_X = [0x00, 0xE5, 0xFF];   // #00E5FF — how big the X axis is drawn
+        const LEGEND_ZOOM_Y = [0xFF, 0x00, 0xAA];   // #FF00AA — and the Y (height) axis
+        const colourStats = (img, colour) => {
+            let n = 0;
+            let sum = 0;
+            for (let y = 0; y < img.height; y++) {
+                for (let x = 0; x < img.width; x++) {
+                    const p = rgb(img, x, y);
+                    if (near(p, colour, 6)) { n++; sum += x; }
+                }
+            }
+            return { n, x: n ? sum / n : 0 };
+        };
+        const legendChart = `    <charts:GrumpySurfacePlot x:Name="SfLegend" Width="${W}" Height="${H}"
+      SourceFile="${FIXTURE}" XColumn="B" ZRow="1" ShowTitle="False" LegendPosition="Left">
+${SIX}
+    </charts:GrumpySurfacePlot>`;
+        const legendImg = (await shot(legendChart)).img;
+        const sliders = [LEGEND_RANGE_X, LEGEND_RANGE_Z, LEGEND_ZOOM_X, LEGEND_ZOOM_Y]
+            .map((colour) => colourStats(legendImg, colour));
+        const names = ['the X window', 'the Z window', 'X zoom', 'Y zoom'];
+        t.ok(sliders.every((s) => s.n > 60), 'legend',
+            'all four sliders are drawn in the bar, each in its own colour',
+            sliders.map((s, i) => `${names[i]}=${s.n}px`).join(' '));
+        t.ok(sliders[2].n < sliders[0].n * 0.75 && sliders[3].n < sliders[1].n * 0.75, 'legend',
+            'a zoom slider carries ONE handle and a window both of its ends',
+            `window ${sliders[0].n}/${sliders[1].n}px vs zoom ${sliders[2].n}/${sliders[3].n}px`);
+        const gaps = sliders.slice(1).map((s, i) => +(s.x - sliders[i].x).toFixed(1));
+        t.ok(gaps.every((g) => g > 18 && g < 32), 'legend',
+            'and they stand one column apart: close enough to read as one control group',
+            `centres ${sliders.map((s) => s.x.toFixed(1)).join(", ")} → gaps ${gaps.join(", ")}px`);
+        t.ok((sliders[3].x - sliders[0].x) < 100, 'legend',
+            'the four of them together take well under a sixth of the width (they used to leave a whole row of air '
+            + 'between each pair)',
+            `span ${(sliders[3].x - sliders[0].x).toFixed(1)}px`);
 
         // ---------------------------------------------------------------- the VIEW does not break the FILL
         // Reported 2026-09-23: "When rotating the plot to 90 deg I can see straight through the surface."
@@ -375,21 +525,105 @@ ${SIX}
         t.ok(solidSheet.cold > 3000 && solidSheet.hot > 500, 'ramp',
             'the default temperature ramp really spans the sheet: cold valleys AND hot ridges are drawn',
             `cold ${solidSheet.cold}px / hot ${solidSheet.hot}px`);
-        t.ok(solidSheet.coldShare > 0.15 && solidSheet.coldShare < 0.7 && solidSheet.hotShare > 0.01,
-            'ramp', 'and neither end swamps the other — it is a gradient, not a two-tone paint',
+        t.ok(solidSheet.coldShare > 0.05 && solidSheet.coldShare < 0.7 && solidSheet.hotShare > 0.05
+            && solidSheet.hotShare < 0.7, 'ramp',
+            'and neither end swamps the other — it is a gradient, not a two-tone paint',
             `cold ${(solidSheet.coldShare * 100).toFixed(1)}% / hot ${(solidSheet.hotShare * 100).toFixed(1)}%`);
+        t.ok(solidSheet.midShare > 0.15, 'ramp',
+            'and the middle of the ramp is a real part of the picture — every level shades some of the sheet',
+            `${(solidSheet.midShare * 100).toFixed(1)}% between 0.3 and 0.7 of the ramp`);
+        t.ok(rampShare(solid.img) > 0.85, 'ramp',
+            'every coloured pixel of the sheet is ON the Low→High ramp — the ramp is what paints it',
+            `${(rampShare(solid.img) * 100).toFixed(1)}% of the surface`);
 
-        // Heat Min/Max PIN the ramp: a window that matches the data must change nothing, and a narrow one
-        // must push everything below it to the cold end.
-        const sameRange = sheetStats((await shot(plot('Sf14', 'Style="Solid" HeatMin="0" HeatMax="100"'))).img);
+        // Heat Min/Max PIN the ramp — they pin its VALUES, which is what makes two charts comparable: a range
+        // that matches the data must change nothing, and a WIDER one must squeeze the sheet into the lower half
+        // of the ramp (that is the whole point of pinning). Both are measured as a change in the ramp's shares.
+        const sameRange = sheetStats((await shot(plot('Sf14', 'Style="Solid" HeatMin="0" HeatMax="50"'))).img);
         t.ok(Math.abs(sameRange.coldShare - solidSheet.coldShare) < 0.02
             && Math.abs(sameRange.hotShare - solidSheet.hotShare) < 0.02, 'ramp',
-            'a Heat range that matches the data is the same as leaving the ramp alone',
+            'a Heat range that matches the data is the same as leaving the ramp alone (0…50 is this data)',
             `${(sameRange.coldShare * 100).toFixed(1)}% vs ${(solidSheet.coldShare * 100).toFixed(1)}% cold`);
-        const pinned = sheetStats((await shot(plot('Sf15', 'Style="Solid" HeatMin="40" HeatMax="50"'))).img);
-        t.ok(pinned.coldShare > 0.8, 'ramp',
-            'a narrow Heat window re-pins the ramp: almost the whole sheet is at its cold end',
-            `cold ${(pinned.coldShare * 100).toFixed(1)}% (was ${(solidSheet.coldShare * 100).toFixed(1)}%)`);
+        const stretched = sheetStats((await shot(plot('Sf15', 'Style="Solid" HeatMin="0" HeatMax="100"'))).img);
+        t.ok(stretched.coldShare > solidSheet.coldShare + 0.05, 'ramp',
+            'a Heat range TWICE the data squeezes the sheet into the ramp\'s lower half, so more of it is cold',
+            `cold ${(solidSheet.coldShare * 100).toFixed(1)}% → ${(stretched.coldShare * 100).toFixed(1)}%`);
+
+        // ---------------------------------------------------------------- the ramp is a function of the HEIGHT
+        // Reported from the running app 2026-09-24: "the color gradient (temperature) should only apply to the
+        // y-axes. Currently it seems that the z-slices also apply the gradient starting at slice 1 to x-max."
+        // The ramp was a gradient laid across the SCREEN and built per band at that band's own depth — and on
+        // a tipped cube the screen position mixes a point's height with how far back it stands, by
+        // tan(Elevation) of the ramp. One height therefore came out a DIFFERENT colour from one slice to the
+        // next, which is exactly what their three-slice Z window showed. The ramp is now a cut of each drawn
+        // triangle on the ramp's own levels, so the colour is the height's and nothing else.
+        //
+        // The measurement needs no reference image and no knowledge of the projection: a sheet held at ONE
+        // height has to come back as ONE colour, at every angle — and that colour has to be the ramp's at that
+        // height. On the old code the same plate spanned 0.66…0.97 of the ramp, so it can fail.
+        const plateAt = (value, el, az, heat = 'HeatMin="0" HeatMax="100"') => `    <charts:GrumpySurfacePlot x:Name="SfPlate${value}_${el}_${az}" Width="320" Height="240"
+      SampleSets="${Array(5).fill(Array(12).fill(value).join(',')).join('; ')}" Style="Solid"
+      ColorBy="Temperature" LowColor="#1B2A6B" HighColor="#E53935" ${heat}
+      ShowTitle="False" ShowLegend="False" ShowAxes="False" GridStyle="None" BorderThickness="0"
+      Elevation="${el}" Azimuth="${az}"/>`;
+        const rampOf = (img) => {
+            const d = [0, 1, 2].map((i) => HIGH[i] - LOW[i]);
+            const len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            const ts = [];
+            for (let y = 0; y < img.height; y++) {
+                for (let x = 0; x < img.width; x++) {
+                    const p = rgb(img, x, y);
+                    if (Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]) < 40) continue;
+                    ts.push(((p[0] - LOW[0]) * d[0] + (p[1] - LOW[1]) * d[1] + (p[2] - LOW[2]) * d[2]) / len2);
+                }
+            }
+            if (ts.length === 0) return { n: 0, lo: 0, hi: 0, mid: 0 };
+            // The antialiased silhouette blends with the background, so the ends are trimmed: the claim is about
+            // the sheet's own pixels.
+            ts.sort((a, b) => a - b);
+            return {
+                n: ts.length, lo: ts[Math.floor(ts.length * 0.05)], hi: ts[Math.floor(ts.length * 0.95)],
+                mid: ts[Math.floor(ts.length / 2)]
+            };
+        };
+        for (const [el, az] of [[20, 28], [31, 28], [45, 28], [60, 28], [80, 28], [31, 90], [31, 135]]) {
+            const stats = rampOf((await shot(plateAt(40, el, az), 320, 240)).img);
+            t.ok(stats.n > 1500 && stats.hi - stats.lo < 0.05, 'height',
+                `a sheet held at ONE height is ONE colour at ${el}° elevation, ${az}° azimuth`,
+                `${stats.n}px spanning ${stats.lo.toFixed(2)}…${stats.hi.toFixed(2)} of the ramp`);
+            t.ok(Math.abs(stats.mid - 0.4) < 0.06, 'height',
+                `and that colour is the ramp's at that HEIGHT (40 of 0…100), not the screen's (${el}°/${az}°)`,
+                `measured ${stats.mid.toFixed(3)} of the ramp (the level step is a part of that spread)`);
+        }
+        // The ramp is read against the VALUES, so a plate at a known value must come back at that value's
+        // colour — the same claim as above, at three points, and the reason Heat Min/Max are worth pinning:
+        // they are the scale the colours are read against. 5 / 25 / 45 of a pinned 0…50 ramp are 0.10 / 0.50 /
+        // 0.90, and a NARROW pin (40…50) must put a plate at 45 in the middle of the ramp it defines.
+        for (const [value, want] of [[5, 0.1], [25, 0.5], [45, 0.9]]) {
+            const stats = rampOf((await shot(plateAt(value, 31, 28, 'HeatMin="0" HeatMax="50"'), 320, 240)).img);
+            t.ok(stats.n > 1500 && Math.abs(stats.mid - want) < 0.06, 'height',
+                `a plate at ${value} of a 0…50 ramp is drawn at ${want} of the colour ramp`,
+                `measured ${stats.mid.toFixed(3)} (${stats.n}px)`);
+        }
+        const narrowPin = rampOf((await shot(plateAt(45, 31, 28, 'HeatMin="40" HeatMax="50"'), 320, 240)).img);
+        t.ok(Math.abs(narrowPin.mid - 0.5) < 0.06, 'height',
+            'a NARROW Heat pin is a scale of its own: 45 of a 40…50 ramp is the middle of the colours',
+            `measured ${narrowPin.mid.toFixed(3)}`);
+
+        // A height sitting EXACTLY on the ramp's own maximum is still a height — its level is the LAST one,
+        // not one past it. The cut used to derive `first = levels` against `last = levels - 1`, so its loop
+        // never ran and those triangles were never filled: a sheet at the maximum vanished outright, and a
+        // CREST PLATEAU lying at its data's own maximum came out with its TOPS OPEN. Reported from the app
+        // 2026-09-24 ("the tops of the corrugated sheet are open") on a workbook whose crest sits exactly at
+        // its maximum. On the buggy build the first case below measured 0 sheet pixels against 9,486 a
+        // whisker below the maximum, so this can fail.
+        for (const [value, heat] of [[25, 'HeatMin="0" HeatMax="25"'], [25, 'HeatMin="0" HeatMax="25"'],
+        [20, 'HeatMin="0" HeatMax="20"']]) {
+            const stats = sheetStats((await shot(plateAt(value, 31, 28, heat), 320, 240)).img);
+            t.ok(stats.n > 1500, 'height',
+                `a sheet AT the ramp's maximum (${value}) is drawn — the last level, not one past it`,
+                `${stats.n}px of sheet`);
+        }
 
         // ---------------------------------------------------------------- one colour per SLICE
         const perSlice = await shot(plot('Sf16', 'Style="Solid" ColorBy="Sampleset"'));
@@ -397,16 +631,22 @@ ${SIX}
         t.ok(present >= 3, 'slices',
             'ColorBy="Sampleset" paints the slices in their own series colours',
             `${present} of 6 slice colours present`);
-        const sliceStats = sheetStats(perSlice.img);
-        t.ok(sliceStats.coldShare < solidSheet.coldShare, 'slices',
-            'and the temperature ramp is gone: the sheet is no longer coloured by height',
-            `cold ${(sliceStats.coldShare * 100).toFixed(1)}% (was ${(solidSheet.coldShare * 100).toFixed(1)}%)`);
+        t.ok(rampShare(perSlice.img) < 0.35, 'slices',
+            'and the temperature ramp is gone: only a little of the sheet still lies on the Low→High line '
+            + '(the antialiased edges), against almost all of it in Temperature mode',
+            `${(rampShare(perSlice.img) * 100).toFixed(1)}% on the ramp vs ${(rampShare(solid.img) * 100).toFixed(1)}%`);
 
         // ---------------------------------------------------------------- SolidOpacity
-        const faintSheet = sheetStats((await shot(plot('Sf17', 'Style="Solid" SolidOpacity="40"'))).img);
-        t.ok(faintSheet.n < solidSheet.n * 0.6, 'opacity',
+        // Measured over the sheet's OWN pixels (the mask of the opaque render), so the fade is compared on the
+        // same footprint: opacity blends the sheet towards the plate, which costs it its colourfulness.
+        const solidMask = sheetMask(solid.img);
+        const faint = await shot(plot('Sf17', 'Style="Solid" SolidOpacity="40"'));
+        const faintSheet = sheetStats(faint.img);
+        const solidChroma = meanChroma(solid.img, solidMask);
+        const faintChroma = meanChroma(faint.img, solidMask);
+        t.ok(faintChroma < solidChroma * 0.75, 'opacity',
             'SolidOpacity="40" fades the metal towards the plate — the sheet loses most of its colour',
-            `${solidSheet.n}px → ${faintSheet.n}px`);
+            `mean colourfulness ${solidChroma.toFixed(0)} → ${faintChroma.toFixed(0)} over the same pixels`);
         t.ok(faintSheet.n > 1000, 'opacity',
             'and the surface is still there (faded, not missing)', `${faintSheet.n}px`);
 
@@ -431,9 +671,20 @@ ${SIX}
         t.ok(Math.abs(windowY.wide - solidSheet.wide) <= 12 && windowY.tall > solidSheet.tall * 0.8,
             'window', 'a VALUE window re-fits the sheet in the frame — it does not crop a smaller picture',
             `${windowY.wide}x${windowY.tall} vs ${solidSheet.wide}x${solidSheet.tall}`);
-        t.ok(windowY.coldShare > solidSheet.coldShare + 0.02, 'window',
-            'and it really cuts the data: everything below the window flattens onto the window\'s floor',
-            `cold ${(solidSheet.coldShare * 100).toFixed(1)}% → ${(windowY.coldShare * 100).toFixed(1)}%`);
+        // A VALUE window is a SCALE, not a cut (the width window is the cut): a value below the window is drawn
+        // AT the window's floor. Measured on the SHAPE alone — the two plates land on top of each other —
+        // because the colour still reports the value, which is what a value ramp is for.
+        const inWindowPlate = 'MinX="0" MaxX="12" MinY="20" MaxY="50"';
+        const below = sheetMask((await shot(plateAt(0, 31, 28, inWindowPlate), 320, 240)).img);
+        const atFloor = sheetMask((await shot(plateAt(20, 31, 28, inWindowPlate), 320, 240)).img);
+        t.ok(maskDiff(below, atFloor) < 400, 'window',
+            'a height BELOW the window is drawn at the window\'s floor: a plate at 0 and one at 20 come out the same shape',
+            `${maskDiff(below, atFloor)}px differ`);
+        const belowOpen = sheetMask((await shot(plateAt(0, 31, 28), 320, 240)).img);
+        const atOpen = sheetMask((await shot(plateAt(20, 31, 28), 320, 240)).img);
+        t.ok(maskDiff(belowOpen, atOpen) > 2000, 'window',
+            'and with no window those same two plates are drawn at two different heights — so the test can fail',
+            `${maskDiff(belowOpen, atOpen)}px differ`);
         const bothWindows = sheetStats((await shot(plot('Sf21',
             'Style="Solid" MinX="50" MaxX="150" MinY="20" MaxY="50"'))).img);
         t.ok(bothWindows.wide / 100 > fullPxPerMm * 1.2, 'window',
@@ -466,9 +717,13 @@ ${SIX}
             'edge on (Elevation 0) shows the corrugated PROFILE as a tall wall of colour',
             `${solidSheet.n}px → ${flat.n}px of surface`);
         const top = sheetStats((await shot(plot('Sf23', 'Style="Solid" Elevation="89"'))).img);
-        t.ok(Math.abs(top.coldShare - solidSheet.coldShare) > 0.2, 'view',
-            'looking straight down collapses the height axis, and the ramp degenerates into one colour '
-            + 'instead of blanking the chart',
+        t.ok(top.n > solidSheet.n * 0.4, 'view',
+            'looking straight down still draws the sheet: the height axis collapses, the surface does not vanish',
+            `${solidSheet.n}px → ${top.n}px of surface`);
+        t.ok(Math.abs(top.coldShare - solidSheet.coldShare) < 0.15, 'view',
+            'and the COLOURS do not change with the view — the ramp reads the same from above as from the side, '
+            + 'which is the whole point of shading by height (before 2026-09-24 this swung by more than 20%: the '
+            + 'ramp was laid across the screen, so the eye decided the colour)',
             `cold ${(solidSheet.coldShare * 100).toFixed(1)}% → ${(top.coldShare * 100).toFixed(1)}%`);
         const turned = sheetStats((await shot(plot('Sf24', 'Style="Solid" Azimuth="10"'))).img);
         t.ok(Math.abs(turned.wide - solidSheet.wide) > 8 && Math.abs(turned.n - solidSheet.n) > 1000, 'view',
@@ -486,9 +741,10 @@ ${SIX}
         t.ok(solidSheet.wide > W * 0.4 && solidSheet.tall > H * 0.5, 'surface',
             'and it fills the frame the way a fitted 3D view should',
             `${solidSheet.wide}x${solidSheet.tall} in ${W}x${H}`);
-        t.ok(solidSheet.hot < solidSheet.cold, 'surface',
-            'the ridges occupy far less of the picture than the valleys — this is a sheet, not a wall',
-            `${solidSheet.hot}px of ridges vs ${solidSheet.cold}px of valleys`);
+        t.ok(solidSheet.cold > 1000 && solidSheet.mid > 1000 && solidSheet.hot > 1000, 'surface',
+            'a real sheet is shaded across its whole range: the ramp\'s cold end, its middle and its hot end each '
+            + 'cover a real area of it',
+            `cold ${solidSheet.cold}px / mid ${solidSheet.mid}px / hot ${solidSheet.hot}px`);
 
         // The same chart typed INLINE (SampleSets) is what a dropped toolbox control renders before a
         // workbook is chosen.
@@ -511,8 +767,7 @@ ${SIX}
         const SLIDER_X = [76, 159, 220];    // #4C9FDC — the width slider
         const SLIDER_Z = [217, 165, 25];    // #D9A519 — the slice (Z) slider
         const band = [Math.round(H * 0.72), H];
-        const bandCount = (img, colour) => measureBand(img, colour, band[0], band[1], 30);
-        // The shared helper pins ShowLegend="False", so these three renders are written out in full.
+        const bandCount = (img, colour) => measureBand(img, colour, band[0], band[1], 30);        // The shared helper pins ShowLegend="False", so these three renders are written out in full.
         const legendPlot = (name, extra) => `    <charts:GrumpySurfacePlot x:Name="${name}" Width="${W}" Height="${H}"
       SourceFile="${FIXTURE}" XColumn="B" ZRow="1" ShowTitle="False" ${extra}>
 ${SIX}
@@ -616,10 +871,10 @@ ${SIX}
         // is exactly the picture the block is meant to stand under.
         const BASE_RGB = [138, 109, 59];      // #8A6D3B
         const OTHER_RGB = [32, 64, 96];       // #204060
-        const plainBase = await shot(legendPlot('Sf34', 'Style="GridMeshSolid"'));
-        const withBase = await shot(legendPlot('Sf35', 'Style="GridMeshSolid" ShowBase="True" BaseColor="#8A6D3B"'));
-        const otherBase = await shot(legendPlot('Sf36', 'Style="GridMeshSolid" ShowBase="True" BaseColor="#204060"'));
-        const meshBase = await shot(legendPlot('Sf37', 'Style="GridMesh" ShowBase="True" BaseColor="#8A6D3B"'));
+        const plainBase = await shot(legendPlot('Sf34', 'Style="GridMeshSolid" ShowLegend="False"'));
+        const withBase = await shot(legendPlot('Sf35', 'Style="GridMeshSolid" ShowBase="True" BaseColor="#8A6D3B" ShowLegend="False"'));
+        const otherBase = await shot(legendPlot('Sf36', 'Style="GridMeshSolid" ShowBase="True" BaseColor="#204060" ShowLegend="False"'));
+        const meshBase = await shot(legendPlot('Sf37', 'Style="GridMesh" ShowBase="True" BaseColor="#8A6D3B" ShowLegend="False"'));
         t.ok(measure(plainBase.img, BASE_RGB, 12) < 40, 'base',
             'ShowBase is off unless it is asked for, so no block colour is drawn',
             `${measure(plainBase.img, BASE_RGB, 12)}px`);

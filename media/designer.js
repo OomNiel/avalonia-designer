@@ -2427,18 +2427,35 @@
         const rowH = 22;
         const maxPalH = (PALETTE_ROWS_VISIBLE * rowH + 10);
         pal.style.maxHeight = maxPalH + 'px';
+        // Where it goes: UNDER the property row it was opened from — never at the mouse. The row's own left
+        // edge is the anchor, and when the room to the right is not enough the popup FLIPS so that its right
+        // edges line up with the trigger's (the way the canvas context menu already flips). A last clamp puts
+        // it inside the window in both directions, so no cursor position, no narrow panel and no scrolled
+        // panel can leave half of the list hanging past an edge and unreachable.
+        const margin = 8;
         const r = trigger.getBoundingClientRect();
         const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
         const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+        // Cap the WIDTH to the window first, so a viewport narrower than the list cannot make it overflow:
+        // measured after the cap, the number below is the width it will really have. BOTH bounds have to be
+        // set — the stylesheet's own `min-width: 160px` outranks a `max-width` and would otherwise keep the
+        // box at 160px in a 150px webview, which is exactly how half the list stayed off-screen.
+        const cap = Math.max(80, Math.min(220, vw - 2 * margin));
+        pal.style.maxWidth = cap + 'px';
+        pal.style.minWidth = Math.min(160, cap) + 'px';
         const pw = pal.offsetWidth || 160;
         const ph = Math.min(pal.offsetHeight || maxPalH, maxPalH);
-        const left = Math.max(8, Math.min(r.left, vw - pw - 8));
+        let left = r.left;
+        if (left + pw > vw - margin) left = r.right - pw;
+        left = Math.max(margin, Math.min(left, vw - pw - margin));
         // Open DOWN below the property by default. Open UP instead when the property row sits in
         // the lower half of the window (below the vertical middle) — or whenever there isn't
-        // enough room below — so the list never runs off the bottom of the screen.
-        const openUp = r.top > vh / 2 || (r.bottom + 4 + ph > vh - 8);
+        // enough room below — so the list never runs off the bottom of the screen. Whichever way it
+        // goes, the result is then clamped into the window as well.
+        const openUp = r.top > vh / 2 || (r.bottom + 4 + ph > vh - margin);
+        const top = Math.max(margin, Math.min(openUp ? r.top - ph - 4 : r.bottom + 4, vh - ph - margin));
         pal.style.left = left + 'px';
-        pal.style.top = (openUp ? Math.max(8, r.top - ph - 4) : (r.bottom + 4)) + 'px';
+        pal.style.top = top + 'px';
         window.__colorPaletteOpen = true;
     }
     function closeColorPalette() {

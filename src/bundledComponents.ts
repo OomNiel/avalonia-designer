@@ -136,17 +136,71 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // X slider in a running app grew a false vertical PANEL at each end of the sheet, pinned to the
             // window edges (and a saved window showed them in the designer too). Again a drawing change in an
             // existing type — no property of the form changed at all — so the marker follows the new member.
-            marker: 'CutToWindow'
+            // 2026-09-24, later still: the TEMPERATURE ramp stopped being a gradient laid across the SCREEN.
+            // A brush can only know where a pixel is, and on a tipped cube the screen position mixes a point's
+            // height with how far back it stands, so one gradient per band coloured the same height
+            // differently from slice to slice by tan(Elevation) of the ramp — a narrow Z window showed it
+            // plainly (three slices, the plateau one shade at the front and another at the back). It is now a
+            // CUT of each drawn triangle on the ramp's own levels (`CutToLevels`), so the colour is the
+            // height's and nothing else. Another drawing change in an existing type: the marker moves again.
+            // 2026-09-24, last of the day: the surface's legend grew from two sliders to FOUR — the X and Z
+            // windows plus an axis ZOOM level for X and Y — the four of them packed one handle apart, and the
+            // chart's own right-click menu gained the Legend on/off toggle (`legendItem`). Reported from a
+            // running app as *"the new sliders are rendering in the designer preview but not during runtime"*
+            // and *"the right click legend on/off is not available in the runtime menu"*: the preview draws
+            // the host's copy of this file while the app compiles the PROJECT's own, and a stale copy carried
+            // `CutToLevels` already — so, exactly as with `BandTriangle` and `CutToWindow`, a change of this
+            // kind is invisible until the marker names something only the new copy has. `legendItem` is that
+            // token: no copy that lacks today's menu entry can draw today's legend either.
+            marker: 'legendItem'
         }
     ];
 }
 
 /**
- * True when `text` (the on-disk contents of a bundled component file) is an OLD copy of the
- * extension's own boilerplate: it has the bundled header but lacks the current version's marker.
+ * The line every bundled file carries at the top of its header, naming the release it was copied from:
+ * `// BUNDLED-COPY: 0.11.18` (the VB files use a `'` comment). It is what a reader — and the update
+ * notice — can quote, and what proves a project's copy came from a release rather than from a hand edit.
  */
-export function isStaleBundledCopy(text: string, vb: boolean, kind: BundledKind): boolean {
+export const BUNDLED_COPY_STAMP = 'BUNDLED-COPY: ';
+
+/** The version a bundled file's header stamp names, or null when it carries none (a copy older than the
+ *  stamp itself, i.e. from before 0.11.18). */
+export function bundledStampOf(text: string): string | null {
+    const line = text.split('\n', 4).find((l) => l.includes(BUNDLED_COPY_STAMP));
+    return line ? line.slice(line.indexOf(BUNDLED_COPY_STAMP) + BUNDLED_COPY_STAMP.length).trim() : null;
+}
+
+/** Two copies of the same bundled file, ignoring line endings and trailing whitespace (a project written
+ *  on another machine, or re-saved by an editor, must not read as "different"). */
+function sameBundledCopy(a: string, b: string): boolean {
+    const tidy = (s: string) => s.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '');
+    return tidy(a) === tidy(b);
+}
+
+/**
+ * True when `text` (the on-disk contents of a bundled component file) is an OLD copy of the extension's
+ * own boilerplate, and may therefore be replaced by the current one.
+ *
+ * Two rules, because one alone is not enough:
+ *
+ *  1. **It must be provably ours** — the bundled header is there. A file the user wrote or rewrote is
+ *     never touched.
+ *  2. **Its CONTENT must differ from the copy we ship** (`current`). This is the rule that catches a
+ *     *drawing* change — a new slider, a colour, an extra menu entry — which adds no property and no new
+ *     token to look for. Reported from a running app on 2026-09-24: *"the new sliders are rendering in
+ *     the designer preview but not during runtime"*. The preview draws the host's copy (always current)
+ *     while the app compiles the project's, and the old marker test could not see a change of that kind —
+ *     the copy carried the previous marker token, so nothing was detected and the app kept two sliders
+ *     where the preview showed four. The version STAMP says which release a copy came from; the CONTENT
+ *     decides whether it is the same copy.
+ *
+ * `current` is optional so the question can still be asked without the extension's own copy at hand; the
+ * answer is then the older marker test (what the pure callers and their fixtures rely on).
+ */
+export function isStaleBundledCopy(text: string, vb: boolean, kind: BundledKind, current?: string): boolean {
     const spec = bundledComponentSpecs(vb).find((s) => s.kind === kind);
-    if (!spec) return false;
-    return spec.bundled.test(text) && !text.includes(spec.marker);
+    if (!spec || !spec.bundled.test(text)) return false;
+    if (current != null && current !== '') return !sameBundledCopy(text, current);
+    return !text.includes(spec.marker);
 }

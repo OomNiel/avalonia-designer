@@ -116,6 +116,26 @@ module.exports = async (t) => {
             : /If _filled Then[\s\S]{0,80}RestorePlacement\(\)/.test(menuBody),
             lang, `${lang}: clicking it does whichever of the two the chart needs`);
 
+        // ---------------------------------------------------------------- the Legend on/off entry
+        // "Add Legend ON/OFF to the right-click menu": the reader decides whether the names are worth the
+        // room while LOOKING at the chart, so the toggle belongs with the other running-view entries. Every
+        // chart type has a legend, so it is added before the no-cursors gate as well — and, like them, it
+        // changes only the running chart (the tick in the label says which state it is in, since menu item
+        // ticks need Avalonia 11.1 and the bundled control still builds on 11.0).
+        t.ok(lang === 'cs'
+            ? /Header = \(ShowLegend \? "✓ " : "    "\) \+ "Legend"/.test(menuBody)
+            : /Header = If\(ShowLegend, "✓ ", "    "\) & "Legend"/.test(menuBody),
+            lang, `${lang}: the menu has a Legend entry carrying the tick in its own label`);
+        t.ok(lang === 'cs'
+            ? /ShowLegend = !ShowLegend;[\s\S]{0,60}InvalidateVisual\(\);/.test(menuBody)
+            : /ShowLegend = Not ShowLegend[\s\S]{0,60}InvalidateVisual\(\)/.test(menuBody),
+            lang, `${lang}: clicking it flips ShowLegend and redraws`);
+        t.ok(menuBody.indexOf(lang === 'cs' ? 'items.Add(legendItem);' : 'items.Add(legendItem)')
+            < menuBody.indexOf(lang === 'cs' ? 'if (!SupportsCursors)' : 'If Not SupportsCursors Then'),
+            lang, `${lang}: and it is added BEFORE the no-cursors early return — the bar and the pie get it too`);
+        t.ok(!/ShowLegend\s*=\s*(true|false);/.test(menuBody), lang,
+            `${lang}: the entry only ever TOGGLES it, so a running chart never hard-sets the form's value`);
+
         // ---------------------------------------------------------------- the Esc key
         const keys = text.slice(text.indexOf(lang === 'cs' ? 'protected override void OnKeyDown' : 'Protected Overrides Sub OnKeyDown'));
         const keysBody = keys.slice(0, 900);
@@ -138,7 +158,7 @@ module.exports = async (t) => {
 
     // ---------------------------------------------------------------- the twins stay twins
     for (const token of ['FillContainer', 'RestorePlacement', 'IsFilled', '_fillHost', 'ApplyFill',
-        'OnFillHostLaidOut', 'Fill the container', 'Restore the original position']) {
+        'OnFillHostLaidOut', 'Fill the container', 'Restore the original position', 'legendItem']) {
         t.equal(count(cs, token) > 0, count(vb, token) > 0, 'parity', `both twins carry ${token}`);
     }
     t.equal(count(cs, 'FillContainer'), count(vb, 'FillContainer'), 'parity',

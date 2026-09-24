@@ -70,10 +70,11 @@ module.exports = (t) => {
     // ---------------------------------------------------------------- its own properties, in both twins
     // Every one of them is what makes the chart usable: the data (Values/SampleSets/MaxPoints), what it is
     // made of (Style, the two colourings and their ramp ends, the mesh), where the slices stand (ZRow,
-    // ZStart, ZStep) and how it is seen (Elevation, Azimuth, ZSpacing, Zoom, ZAxisTitle).
+    // ZStart, ZStep), how it is seen (Elevation, Azimuth, ZSpacing, Zoom) and how big its axes are drawn
+    // (ZoomX/ZoomY, the axis zoom) — the depth axis's title (ZAxisTitle) aside.
     const OWN = ['Values', 'SampleSets', 'Style', 'ColorBy', 'LowColor', 'HighColor', 'HeatMin', 'HeatMax',
         'SolidOpacity', 'MeshColor', 'MeshThickness', 'ZRow', 'ZStart', 'ZStep', 'MaxPoints', 'Elevation',
-        'Azimuth', 'ZSpacing', 'Zoom', 'ZAxisTitle'];
+        'Azimuth', 'ZSpacing', 'Zoom', 'ZoomX', 'ZoomY', 'ZAxisTitle'];
     for (const [lang, text] of TWINS) {
         const body = bodyOf(text);
         for (const name of OWN) {
@@ -128,15 +129,39 @@ module.exports = (t) => {
             lang, `${lang}: GridMesh mode draws the mesh and NO solid`);
         t.ok(/Style (is not|<>)\s*SurfaceStyle\.Solid/.test(body), lang,
             `${lang}: and Solid mode draws the solid and NO mesh`);
-        // The temperature ramp is built from LowColor to HighColor, per band, along the HEIGHT axis — a
-        // simply vertical screen gradient would tint by screen position instead.
-        t.ok(/TemperatureBrush/.test(body), lang, `${lang}: the ramp has its own brush builder`);
-        t.ok(/new GradientStop\(LowColor, 0\)|New GradientStop\(LowColor, 0\)/.test(body), lang,
-            `${lang}: it starts at LowColor`);
-        t.ok(/new GradientStop\(HighColor, 1\)|New GradientStop\(HighColor, 1\)/.test(body), lang,
-            `${lang}: and ends at HighColor`);
-        t.ok(/UnitY\(low\)[\s\S]{0,120}?UnitY\(high\)/.test(body), lang,
-            `${lang}: the ramp runs along the projected height axis, so colour follows the VALUE`);
+        // The temperature ramp is a function of the HEIGHT VALUE and of nothing else: each drawn triangle is
+        // CUT on the ramp's own levels and every piece is filled with its level's colour. A brush cannot do
+        // that — it only knows where a pixel is, and on a tipped cube the screen position mixes a point's
+        // height with how far back it stands (moving along the eye ray changes the height without moving the
+        // pixel). One gradient per band therefore coloured one height differently from slice to slice, by
+        // tan(Elevation) of the ramp: reported 2026-09-24 from the running app, where a three-slice window
+        // shaded its own plateau two different greys while the designer (built from this file) looked right.
+        t.ok(/RampSteps\(world, slices\.Count - 1, rampLow, rampHigh\)/.test(body), lang,
+            `${lang}: the ramp is drawn in levels sized from the sheet's own screen height`);
+        t.ok(/CutToLevels\(/.test(body), lang,
+            `${lang}: the band's triangles are cut on those levels, so the colour follows the VALUE`);
+        t.ok(/Blend\(LowColor, HighColor, \(level \+ 0\.5\) \/ levels\)/.test(text), lang,
+            `${lang}: each level takes the ramp's colour at its middle, between LowColor and HighColor`);
+        t.ok(/ClipHalf\(/.test(body), lang,
+            `${lang}: and the cut is a real polygon clip, which is what puts the level line exactly on the value`);
+        // The ramp's own MAXIMUM is the LAST level, not one past it: without that clamp a triangle sitting
+        // exactly at the top produced first = levels against last = levels - 1 and was never filled, which is
+        // how a crest plateau at the data's maximum came out with its tops open (2026-09-24).
+        t.ok(lang === 'cs' ? /var top = levels - 1e-9;/.test(body) : /Dim top = levels - 0\.000000001/.test(body), lang,
+            `${lang}: a height at or above the ramp's top is clamped into the last level`);
+        t.ok(lang === 'cs'
+            ? /Math\.Clamp\(\(y0 - low\) \/ span \* levels, 0d, top\)/.test(body)
+            : /Math\.Clamp\(\(y0 - low\) \/ span \* levels, 0\.0, top\)/.test(body), lang,
+            `${lang}: and the clamp is applied to the height field itself, so no triangle can fall outside`);
+        t.ok(/Math\.Clamp\(levels, 8, /.test(body), lang,
+            `${lang}: the level count is bounded, so a sheet of many slices cannot flood the fill list`);
+        const def = lang === 'cs' ? 'private void DrawTemperatureFill' : 'Private Sub DrawTemperatureFill';
+        const fill = body.slice(body.indexOf(def), body.indexOf(def) + 3000);
+        t.ok(fill.length > 500, lang, `${lang}: the fill has a body of its own to check`);
+        t.ok(/Project\(/.test(fill) === false, lang,
+            `${lang}: the fill never asks where a point is on the SCREEN — that is what made it depth-dependent`);
+        t.ok(/TemperatureBrush/.test(text) === false, lang,
+            `${lang}: no per-band gradient is left anywhere (that was the shape that mixed in the depth)`);
         // The window: the axis scales come from the chart's own fixed-scale rows, so a window is an
         // auto-zoom, and the drawing is clipped to the plot box so it is a cut, not an overflow.
         t.ok(/AxisRange\.Over\([\s\S]{0,60}?MinX, MaxX/.test(text), lang,
@@ -186,7 +211,7 @@ module.exports = (t) => {
     t.ok(rows.length > 40, 'rows', 'the panel has its rows', `${rows.length} rows`);
     for (const key of ['Style', 'ColorBy', 'LowColor', 'HighColor', 'HeatMin', 'HeatMax', 'SolidOpacity',
         'MeshColor', 'MeshThickness', 'ZRow', 'ZStart', 'ZStep', 'MinX', 'MaxX', 'MinY', 'MaxY',
-        'XColumn', 'YColumn', 'Elevation', 'Azimuth', 'ZSpacing', 'Zoom']) {
+        'XColumn', 'YColumn', 'Elevation', 'Azimuth', 'ZSpacing', 'Zoom', 'ZoomX', 'ZoomY']) {
         t.ok(rows.some((r) => r.key === key), 'rows', `the panel can set ${key}`);
     }
     const colorBy = rows.find((r) => r.key === 'ColorBy');
@@ -199,15 +224,18 @@ module.exports = (t) => {
     // ---------------------------------------------------------------- the band FILL cannot cancel itself
     // Reported 2026-09-23: "as soon as two solid shaded areas overlap, they negate each other to show a black
     // area where they overlap" — and again from the RUNNING APP on 2026-09-24, where a sheet whose bands
-    // overlap showed the chart's own backcolour THROUGH them while the designer looked right. Four rules
-    // keep the sheet solid, and all four must hold in both twins:
+    // overlap showed the chart's own backcolour THROUGH them while the designer looked right. Four rules keep
+    // the sheet solid, and all four must hold in both twins. The first two are about a band's own fill (the
+    // Sampleset colouring fills a whole band at once; the Temperature colouring cuts its triangles into ramp
+    // levels, see above, and each level's pieces follow the same winding rule):
     //   - NON-ZERO winding, so the overlapping triangles a fold makes ADD instead of cancelling (the default
     //     even-odd rule fills a doubly-covered region as a hole);
     //   - ONE TRIANGLE PAIR per adjacent sample pair — never a quad, never a ribbon: a figure whose outline
     //     crosses itself has two loops wound OPPOSITE ways, so NonZero sums them to zero and drops the fill,
     //     and that hole is the plot's backcolour showing through. A triangle cannot cross itself;
-    //   - WINDING NORMALISATION (`BandTriangle`): every triangle takes the band's first winding sign, so the
-    //     triangles a fold overlaps accumulate winding ±2 rather than cancelling each other;
+    //   - WINDING NORMALISATION (`BandTriangle`, and `AddPolygon` for a level's cut pieces): every piece
+    //     takes its band's (or its level's) first winding sign, so the pieces a fold overlaps accumulate
+    //     winding ±2 rather than cancelling each other;
     //   - and the fill is drawn WITH a hairline outline of its own brush, so neighbouring bands — separate
     //     draw calls — cannot show the background through their shared edge.
     // A 2D crossing scan used to be computed here and never used; it cost O(samples²) per band (measured
@@ -217,7 +245,9 @@ module.exports = (t) => {
             `${lang}: the band fill uses the non-zero winding rule`);
         t.ok(/FlushRun|void Flush\(\)/.test(text), lang,
             `${lang}: and emits the fill per unbroken run of samples`);
-        const band = text.slice(text.indexOf('BandGeometry'), text.indexOf('BandGeometry') + 12000);
+        // The band's own geometry builder (the mesh AND the Sampleset fill) — taken from its DEFINITION, so
+        // the window of text below is about it and not about the temperature fill that now sits above it.
+        const band = text.slice(text.lastIndexOf('BandGeometry'), text.lastIndexOf('BandGeometry') + 5000);
         t.ok(/BandTriangle\(/.test(band), lang,
             `${lang}: each sample pair becomes TWO TRIANGLES — a shape that cannot cross itself, so no fold can cancel it`);
         t.ok(/crossings/.test(band) === false, lang,
@@ -307,11 +337,58 @@ module.exports = (t) => {
         t.ok(/must not reach the picture/.test(surface), lang, `${lang}: with the reason written down`);
     }
 
+    // ---------------------------------------------------------------- the AXIS ZOOM resizes the axes, it does
+    // not re-range them
+    // "please introduce a Zoom function for the X and Y axes. Zoom does not mean a range change, but an actual
+    // zooming of the X/Y axes size keeping the range settings unchanged." That promise is made in one place:
+    // an axis VALUE maps to its 0…1 unit position FIRST and is magnified only after that, so MinX/MaxX — and
+    // with them every tick label and slider — never see the zoom at all. Magnifying about the MIDDLE is what
+    // keeps the picture centred on what it was looking at instead of pushing it out of one corner.
+    for (const [lang, text] of TWINS) {
+        const surface = bodyOf(text);
+        const maps = lang === 'cs'
+            ? /UnitX\(double x\) => About\(Clamp01\(/
+            : /Function UnitX\(x As Double\)[\s\S]{0,200}?About\(Clamp01\(/;
+        t.ok(maps.test(surface), lang,
+            `${lang}: the axis range maps to 0…1 first and is magnified only after that, so a zoom cannot
+             move a range`);
+        t.ok(/0\.5 \+ \(unit - 0\.5\) \* factor/.test(surface), lang,
+            `${lang}: an axis is magnified about the MIDDLE of its fitted size, not about one end`);
+        t.ok(/Math\.Clamp\(ZoomX, MinZoomPercent, MaxZoomPercent\) \/ 100/.test(surface), lang,
+            `${lang}: X Axis Zoom % is a percentage of the FITTED size, 1…100 (a bigger picture would only be\n             clipped by the plot box, so 100 is the top of the scale)`);
+        t.ok(/Math\.Clamp\(ZoomY, MinZoomPercent, MaxZoomPercent\) \/ 100/.test(surface), lang,
+            `${lang}: and so is Y Axis Zoom %`);
+    }
+
+    // ---------------------------------------------------------------- the legend carries FOUR sliders
+    // "Add sliders (next to the X/Y Range sliders) in the surface plot Legend for the X and Y zoom levels
+    // ranging from 1 to 100 %" — and, straight after: "place the sliders closer together - too much space
+    // in between sliders". So the bar holds the two WINDOWS it already had plus a ZOOM level for each axis,
+    // each in its own colour, each zoom carrying ONE handle (a window has two ends to drag, a size has one),
+    // and the columns stand only as far apart as a handle needs.
+    for (const [lang, text] of TWINS) {
+        const surface = bodyOf(text);
+        t.ok(/RangeAxisCount(?: As Integer)? = 4/.test(surface), lang,
+            `${lang}: the legend lays out four sliders`);
+        t.ok(/ZoomAxisFirst/.test(surface) && /IsZoomAxis/.test(surface), lang,
+            `${lang}: and knows which of them size an axis instead of cutting a window`);
+        t.ok(/RangeColour/.test(surface), lang,
+            `${lang}: each slider gets its own colour, so four can be told apart`);
+        t.ok(/IsZoomAxis\(axis\)[\s\S]{0,200}?RangeHigh\(axis\)/.test(surface), lang,
+            `${lang}: a zoom slider is given ONE handle and a window both of its ends`);
+        t.ok(/RangeLabelText[\s\S]{0,200}?%/.test(surface), lang,
+            `${lang}: and says its percent ("X zoom 100 %")`);
+        t.ok(/RangeColumn(?: As Double)? = RangeLabelRoom \+ RangeHandle \* 2 \+ 2/.test(surface), lang,
+            `${lang}: a docked column is only as wide as the numbers plus the handle that has to clear its\n             track — sizing it off the row height is what left the air between the sliders`);
+        t.ok(/DragRangeTo[\s\S]{0,400}?IsZoomAxis\(axis\)/.test(surface), lang,
+            `${lang}: dragging a zoom slider sets that axis' percent (and nothing else)`);
+    }
+
     // ---------------------------------------------------------------- the staleness marker
     const spec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
     const vbSpec = bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(spec.marker, 'CutToWindow', 'marker',
-        'the marker is the width-window CUT — the newest thing the shipped file has that an old copy cannot show, because a DRAWING change in an existing type is invisible to it');
+    t.equal(spec.marker, 'legendItem', 'marker',
+        'the marker is the height-LEVEL ramp CUT — the newest thing the shipped file has that an old copy cannot show, because a DRAWING change in an existing type is invisible to it');
     t.equal(vbSpec.marker, spec.marker, 'marker', 'both languages use the same marker');
     for (const [lang, text] of TWINS) {
         t.ok(text.includes(spec.marker), lang, `${lang}: the shipped file never looks stale`);

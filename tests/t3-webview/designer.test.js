@@ -1258,6 +1258,47 @@ module.exports = async (t) => {
     const upTop = parseFloat(palette.style.top);
     t.ok(palette.hidden === false && upTop < 600 && upTop >= 8, 'palette', 'below the middle: popup opens ABOVE the property');
 
+    // The popup must never hang off an edge of the window. Reported from the running designer 2026-09-24:
+    // "when opening a colour palette (not the drop down colour picker) half the palette renders off-screen to
+    // the right — the popup's top-left corner is anchored to the mouse cursor position". It was anchored at
+    // the trigger's own top-left, which IS where the mouse is (the ▾ was just clicked), so a ▾ anywhere near
+    // the right edge put half the list past it; the old clamp's own floor of 8px then won, leaving the list
+    // `pw + 16 - vw` pixels outside. It now FLIPS so that its RIGHT edges line up with the trigger's, is
+    // clamped into the window in BOTH directions, and has its width capped to the window so that even a panel
+    // narrower than the list cannot overflow.
+    {
+        const rightBtn = backRow().querySelector('.color-drop');
+        rightBtn.getBoundingClientRect = () => ({ left: 900, top: 200, right: 926, bottom: 222, width: 26, height: 22, x: 900, y: 200 });
+        rightBtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        palette = $('colorPalette');
+        const iw = s.window.innerWidth || 1024;
+        const pw = palette.offsetWidth || 160;
+        const left = parseFloat(palette.style.left);
+        t.ok(left >= 8 && left + pw <= iw - 8, 'palette',
+            'a trigger with no room to its right: the whole popup is still inside the window',
+            `left ${left} + ${pw}px in ${iw}px`);
+        t.ok(Math.abs(left + pw - 926) < 0.5, 'palette',
+            'and it FLIPPED, so its right edges line up with the trigger\'s instead of running past the edge',
+            `popup ${left}…${left + pw}, trigger right edge 926`);
+        // A window narrower than the list: the width cap is what keeps it in, because there is nowhere to
+        // flip to. (jsdom has no layout, so the numbers the browser would measure are read off the style.)
+        // BOTH bounds matter: `min-width` outranks `max-width` in CSS, so a cap on the max alone left the box
+        // at its stylesheet 160px in a 150px webview — measured in the browser: the list hung 18px past the
+        // right edge with the cap "applied".
+        Object.defineProperty(s.window, 'innerWidth', { value: 150, configurable: true });
+        rightBtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const narrowStyle = $('colorPalette').style;
+        const maxW = parseFloat(narrowStyle.maxWidth);
+        const minW = parseFloat(narrowStyle.minWidth);
+        t.ok(maxW > 0 && maxW <= 150 - 16, 'palette',
+            'a window narrower than the list caps its WIDTH, so half of it cannot hang out either way',
+            `max-width ${maxW}px in a 150px window`);
+        t.ok(minW > 0 && minW <= 150 - 16, 'palette',
+            'and the stylesheet\'s own min-width is lowered with it, or the box stays 160px wide and overflows',
+            `min-width ${minW}px in a 150px window`);
+        Object.defineProperty(s.window, 'innerWidth', { value: iw, configurable: true });
+    }
+
     // --- typed properties commit on Enter / blur, NOT while typing ---
     // Every commit round-trips through the previewer (model edit -> re-render -> PNG -> properties
     // refresh -> this panel rebuilt), so applying a debounced edit mid-word made typing feel laggy.

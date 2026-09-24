@@ -28,6 +28,7 @@ const host = read('host/Program.cs');
 const web = read('media/designer.js');
 const panel = read('src/designerPanel.ts');
 const hostClient = read('src/hostClient.ts');
+const chartSeriesSource = read('src/chartSeries.ts');
 
 const CHARTS = ['GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAreaPlot', 'GrumpyPiePlot'];
 
@@ -107,6 +108,43 @@ module.exports = async (t) => {
     t.ok(/case 'saveChartDataSource'/.test(panel) && /writeChartDataSource/.test(panel), 'panel',
         'and saves the editor\'s choice');
 
+    // ---------------------------------------------------------------- the whole sheet, in one go
+    // "It seems that the Series editor has lost its feature to load all Z-series automatically when
+    // pointing the chart at a spreadsheet file. When selecting a spreadsheet file for the surface 3d
+    // plot the full dataset should be loaded." — a surface reads one COLUMN per slice and a slice is one
+    // series element, so saving a PAGE asks the host for the page's used range and writes the slices.
+    t.ok(/case "sheetShape"/.test(host), 'slices', 'the host answers a sheetShape request');
+    t.ok(/WorkbookShape/.test(host) && /WorkbookSheetPart/.test(host) && /CellReference/.test(host), 'slices',
+        'by reading the page\'s own cells (last row, last column) — empty cells and formats do not count');
+    t.ok(/sheet\{position\}\.xml|sheets\/sheet\{position\}\.xml|workbook\.xml\.rels/.test(host), 'slices',
+        'and it resolves the page\'s part through the workbook\'s relationship, else by tab position');
+    t.ok(/async sheetShape\(file: string, sheet: string\)/.test(hostClient), 'slices',
+        'the client exposes it as sheetShape(file, sheet)');
+    t.ok(/r\.type !== 'sheetShapeResult'/.test(hostClient) && /rebuild it/.test(hostClient), 'slices',
+        'and an OLD host (which answers an unknown verb with an error) is reported as needing a rebuild');
+    t.ok(/const sliceNote = await this\.loadSliceSeries\(doc, el\);/.test(panel), 'slices',
+        'the panel loads the slices when the source is saved');
+    t.ok(/private async loadSliceSeries\(/.test(panel) && /isSliceChartTag\(localName\(el\.tagName\)\)/.test(panel),
+        'slices', 'through a helper that only serves the slice charts (the surface)');
+    t.ok(/host\.sheetShape\(source\.file, source\.sheet\)/.test(panel), 'slices',
+        'which asks for the PAGE\'s shape');
+    t.ok(/sliceSeriesPlan\(kids, el\.getAttribute\('XColumn'\) \|\| 'B', shape\.columns\)/.test(panel), 'slices',
+        'and turns the page\'s last column into that many slices, counting from the chart\'s own X column');
+    t.ok(/applySliceSeries\(doc\.model, el, plan\)/.test(panel), 'slices',
+        'the plan is applied to the form');
+    // The list the author made is never touched — not even by reading the workbook for it.
+    t.ok(/kid\.attributes\.length > 0 \|\| kid\.childNodes\.length > 0\)\) return null;/.test(panel), 'slices',
+        'and a list with a property on ANY entry is left alone before the workbook is even opened');
+    // The waterfall reads one column per SWEEP, so the same rule serves it (its sweeps are slices too).
+    t.ok(/tag === 'GrumpySurfacePlot' \|\| tag === 'GrumpyWaterfallPlot'/.test(chartSeriesSource), 'slices',
+        'the waterfall is served by the same whole-sheet rule as the surface');
+    // "The full dataset should be loaded" has to mean SEEN: a slice window left over from an older, narrower
+    // page would hide almost everything that was just loaded.
+    t.ok(/doc\.model\.setProperty\(el, 'MinZ', ''\)/.test(panel) && /doc\.model\.setProperty\(el, 'MaxZ', ''\)/.test(panel),
+        'slices', 'loading the whole sheet also clears the stale SLICE window (Min Z / Max Z)');
+    t.ok(/hasRangeLegend\(localName\(el\.tagName\)\)/.test(panel), 'slices',
+        'and only on a chart that HAS such a window (the width window MinX/MaxX is left to the author)');
+
     // ---------------------------------------------------------------- the pickers keep their own memory
     t.ok(/kind: PickerKind = which === 'data' \? 'data' : 'workbook'/.test(panel), 'pickers',
         'the workbook and data-file pickers remember separate folders');
@@ -159,7 +197,7 @@ module.exports = async (t) => {
     // DRAWING change in an existing type, which a project's old copy silently lacks — see
     // bundledComponents.ts)
     const spec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(spec.marker, 'CutToWindow', 'marker',
+    t.equal(spec.marker, 'legendItem', 'marker',
         'the marker is the newest thing an existing project needs a refresh for');
     t.equal(bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts').marker, spec.marker, 'marker',
         'the same in both languages');

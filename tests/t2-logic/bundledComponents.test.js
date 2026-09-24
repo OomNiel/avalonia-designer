@@ -5,7 +5,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { isStaleBundledCopy, bundledComponentSpecs } = require('../../out/bundledComponents.js');
+const { isStaleBundledCopy, bundledComponentSpecs, bundledStampOf } = require('../../out/bundledComponents.js');
 
 module.exports = async (t) => {
     t.section('bundledComponents');
@@ -137,7 +137,7 @@ internal static class PickerFolderMemory { internal static string? LastFolder { 
     // already carried `GrumpySurfacePlot`, so it was never reported stale: a DRAWING change in an existing
     // type is a marker move like any other, and the new member is what an old copy lacks.
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'CutToWindow', 'spec',
+    t.equal(chartSpec.marker, 'legendItem', 'spec',
         'the GrumpyCharts marker is the newest token in the current bundled file');
     const oldCsCharts = `// GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb).
 public sealed class ChartSeries { public double[] Xs = Array.Empty<double>(); }
@@ -235,12 +235,24 @@ public abstract class ChartBase
 public class GrumpySurfacePlot : ChartBase { }`;
     t.equal(isStaleBundledCopy(surfaceEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'and one with the surface chart 3D but before its triangle band fill (the app still drew holes)');
-    // The current copy: the surface type AND the triangle fill that made the sheet solid.
-    const curCsCharts = `${surfaceEraCsCharts}
+    // The copy every project was refreshed to on 2026-09-24: the surface type, the triangle band fill and
+    // the width window that CUTS. The temperature ramp changed after that — a per-band gradient mixed the
+    // height with how far back a point stood — which is the newest gap, and a drawing change like the rest.
+    const triangleEraCsCharts = `${surfaceEraCsCharts}
 public static class BandFill { internal static double BandTriangle() => 0; }
 public static class WidthWindow { internal static double CutToWindow() => 0; }`;
+    t.equal(isStaleBundledCopy(triangleEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with the triangle band fill but before the ramp was cut on the height levels');
+    // The current copy: everything above plus the ramp cut on the height's own levels.
+    const levelEraCsCharts = `${triangleEraCsCharts}
+public static class HeightLevels { internal static double CutToLevels() => 0; }`;
+    t.equal(isStaleBundledCopy(levelEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with the level-cut ramp but before the legend grew its two zoom sliders (the copy a running\n         app had while the designer preview already showed four)');
+    // The current copy: everything above plus today's legend and menu entry.
+    const curCsCharts = `${levelEraCsCharts}
+private static readonly object legendItem = null;`;
     t.equal(isStaleBundledCopy(curCsCharts, false, 'GrumpyCharts'), false, 'detect',
-        'the current chart file is current (the triangle band fill is the newest thing it ships)');
+        'the current chart file is current (the four-slider legend and the Legend menu entry are the newest\n         things it ships)');
     t.equal(isStaleBundledCopy(`${oldCsCharts}\n// hand-tweaked below`, false, 'GrumpyCharts'), true, 'detect',
         'an old chart file with extra edits still refreshes (the bundled header is intact)');
     const oldVbCharts = `' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs).
@@ -278,12 +290,21 @@ Public ReadOnly Property IsFilled As Boolean`;
     // The VB twin of the surface-era copy: the type is there, the triangle band fill is not.
     t.equal(isStaleBundledCopy(curVbCharts, true, 'GrumpyCharts'), true, 'detect',
         'the same copy in VB (surface type, no triangle band fill) is stale too — a drawing fix is a marker move');
-    t.equal(isStaleBundledCopy(`${curVbCharts}
+    const triangleEraVbCharts = `${curVbCharts}
 Friend Function BandTriangle() As Double
 End Function
 Friend Function CutToWindow() As Double
-End Function`, true, 'GrumpyCharts'), false, 'detect',
-        'the current VB chart file is current');
+End Function`;
+    t.equal(isStaleBundledCopy(triangleEraVbCharts, true, 'GrumpyCharts'), true, 'detect',
+        'and the VB copy that has the triangle fill but not the level-cut ramp');
+    const levelEraVbCharts = `${triangleEraVbCharts}
+Friend Function CutToLevels() As Double
+End Function`;
+    t.equal(isStaleBundledCopy(levelEraVbCharts, true, 'GrumpyCharts'), true, 'detect',
+        'and the VB copy that has the level-cut ramp but not the four-slider legend');
+    t.equal(isStaleBundledCopy(`${levelEraVbCharts}
+Private Shared ReadOnly legendItem As Object = Nothing`, true, 'GrumpyCharts'), false,
+        'detect', 'the current VB chart file is current');
 
     // The SHIPPED resource files must never look stale: a marker that drifts out of the resources is
     // worse than none, because then every project's chart file is rewritten on every save.
@@ -367,4 +388,52 @@ End Function`, true, 'GrumpyCharts'), false, 'detect',
     const cs = bundledComponentSpecs(false).map((s) => s.file).sort();
     t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","GrumpyCharts.vb","PathPicker.vb"]', 'spec', 'VB spec file names');
     t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","GrumpyCharts.cs","PathPicker.cs"]', 'spec', 'C# spec file names');
+
+    // ---------------------------------------------------------------- the version STAMP every copy carries
+    // A release is where a project's copy and the extension's part company, so the version is stamped into
+    // each bundled header (`BUNDLED-COPY: 0.11.18`) and a copy that names another release can never pass as
+    // current. A release that forgets to re-stamp fails here, which is the whole point of doing it this way.
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    const stampFiles = fs.readdirSync(path.join(ROOT, 'resources')).filter((n) => /\.(cs|vb)$/.test(n)).sort();
+    t.ok(stampFiles.length >= 14, 'stamp', 'the bundled resources are all there', stampFiles.join(', '));
+    for (const name of stampFiles) {
+        const text = fs.readFileSync(path.join(ROOT, 'resources', name), 'utf8');
+        t.equal(bundledStampOf(text), pkg.version, 'stamp',
+            `resources/${name} names the release it was copied from`, `stamp: ${bundledStampOf(text)}`);
+    }
+    t.equal(bundledStampOf('// a file with no stamp at all\nclass X { }'), null, 'stamp',
+        'a copy from before the stamp existed reads as unstamped (not as current)');
+
+    // ---------------------------------------------------------------- "older" is a CONTENT question
+    // Reported from a running app on 2026-09-24: "the new sliders is rendering in the designer preview but
+    // not during runtime", and "the right click legend on/off not available in the right click menu in
+    // runtime". The preview draws the HOST's copy of the chart file while the app compiles the PROJECT's,
+    // and the reporter's copy carried every marker token of the day before — a drawing change (a slider, a
+    // colour, a menu entry) adds no token to look for, so nothing was detected and no refresh was offered.
+    // Comparing the CONTENT is what makes that class of change visible; the marker stays as the answer for a
+    // caller that does not have the shipped file at hand.
+    const shippedCs = fs.readFileSync(path.join(ROOT, 'resources', 'GrumpyCharts.cs'), 'utf8');
+    t.equal(isStaleBundledCopy(shippedCs, false, 'GrumpyCharts', shippedCs), false, 'content',
+        'a project copy that IS the shipped copy is current');
+    t.equal(isStaleBundledCopy(shippedCs.replace('RangeAxisCount', 'SomethingElse'), false, 'GrumpyCharts', shippedCs),
+        true, 'content',
+        'but one line different is stale — whatever that line is, and though every marker token is still there');
+    t.equal(isStaleBundledCopy(shippedCs.replace(/\n/g, '\r\n'), false, 'GrumpyCharts', shippedCs), false, 'content',
+        'line endings alone are not a difference (a project re-saved on Windows is not stale)');
+    t.equal(isStaleBundledCopy(`${shippedCs}\n// local tweak\n`, false, 'GrumpyCharts', shippedCs), true, 'content',
+        'and a copy with local edits is refreshable, exactly as the bundled-header rule always said');
+    t.equal(isStaleBundledCopy('// my own chart file\nclass X { }', false, 'GrumpyCharts', shippedCs), false, 'content',
+        'a file that is not our boilerplate at all is still never touched');
+    t.equal(isStaleBundledCopy(shippedCs, false, 'GrumpyCharts'), false, 'content',
+        'and without the shipped file at hand the answer is still the marker test (the older contract)');
+
+    // ---------------------------------------------------------------- the refresh can be automatic
+    const panelSource = fs.readFileSync(path.join(ROOT, 'src', 'designerPanel.ts'), 'utf8');
+    const auto = pkg.contributes.configuration.properties['avaloniaDesigner.bundled.autoUpdate'];
+    t.equal(auto?.default, false, 'auto',
+        'the auto-update setting exists and is OFF by default (writing into a project is the user\'s call)');
+    t.ok(/bundled\.autoUpdate/.test(panelSource) && /ensureBundledComponentsCurrent\(doc\)/.test(panelSource),
+        'auto', 'the panel reads that setting and refreshes without asking when it is on');
+    t.ok(/bundled\.autoUpdate makes this automatic/.test(panelSource), 'auto',
+        'and the asking message says where to make it automatic');
 };

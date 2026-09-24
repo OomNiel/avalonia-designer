@@ -856,6 +856,41 @@ export function writeChartSeries(model: XamlModel, el: Element, items: unknown[]
     if (keep.length > 0) for (const attr of CHART_LEGACY_SERIES_ATTRS) model.setProperty(el, attr, '');
 }
 
+// ---------------------------------------------------------------- the whole sheet at once
+/** The 3-D charts read one spreadsheet COLUMN per slice: the surface's sheet is one profile per column
+ *  along its length, and the waterfall's sweeps are one column each. Pointing such a chart at a workbook
+ *  therefore means "load the whole dataset", which is one series element per data column. */
+export function isSliceChartTag(tag: string): boolean {
+    return tag === 'GrumpySurfacePlot' || tag === 'GrumpyWaterfallPlot';
+}
+
+/**
+ * What pointing a 3-D chart at a whole SHEET is worth: the bare series elements to drop and how many
+ * fresh ones to append — or `null` when the form's own list must be left ALONE.
+ *
+ * A series is a slice, so how many are needed is the page's own width: the columns AFTER the shared X
+ * column (`C`, `D`, `E` … for the default X column `B`). The list the form already carries wins whenever
+ * it is the author's — the moment ONE entry carries a property or a child, nothing is touched, because
+ * that list is somebody's chart and not a stale machine-made one. A page with no data column after the X
+ * column has nothing to add either.
+ */
+export function sliceSeriesPlan(kids: Element[], xColumn: string, lastColumn: string): { drop: Element[]; add: number } | null {
+    const count = columnIndex(lastColumn) - columnIndex(xColumn);
+    if (count < 1) return null;
+    if (kids.some((kid) => kid.attributes.length > 0 || kid.childNodes.length > 0)) return null;
+    if (kids.length === count) return null;
+    return { drop: kids.slice(), add: count };
+}
+
+/** Applies a slice plan: the bare children in it go, `add` fresh bare ones are appended in their place.
+ *  Writing them here instead of through `writeChartSeries` leaves the chart's own styling rows and any
+ *  series the author DID set up completely untouched. */
+export function applySliceSeries(model: XamlModel, el: Element, plan: { drop: Element[]; add: number }): void {
+    const tag = seriesTagFor(localName(el.tagName));
+    for (const node of plan.drop) el.removeChild(node);
+    for (let i = 0; i < plan.add; i++) el.appendChild(model.createElement(`<charts:${tag}/>`));
+}
+
 /** Rewrites a chart's axes: the two COMMON axes as the chart's own property elements plus one
  *  optional X/Y axis per series (index-matched to the series elements, in order). Saving the common
  *  axes retires the chart-level scalars they replace, so there is exactly one source of truth. */

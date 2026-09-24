@@ -248,6 +248,26 @@ internal static class Program
                         var (sheetsFound, sheetsError) = WorkbookSheets(file);
                         return Json(id, new { type = "sheetsResult", file, sheets = sheetsFound, error = sheetsError });
                     }
+                case "sheetShape":
+                    {
+                        // The USED RANGE of one PAGE (its last row of any value and its last column as a
+                        // letter). A 3-D chart reads one spreadsheet COLUMN per slice, so pointing a
+                        // surface at a workbook loads the whole sheet and THIS says how many slices that
+                        // is. Read-only and best effort: an unreadable file or page is an answer, and the
+                        // designer simply writes no series for it.
+                        var file = root.TryGetProperty("file", out var fe) ? fe.GetString() ?? "" : "";
+                        var sheet = root.TryGetProperty("sheet", out var se) ? se.GetString() ?? "" : "";
+                        var (shapeRows, shapeColumns, shapeError) = WorkbookShape(file, sheet);
+                        return Json(id, new
+                        {
+                            type = "sheetShapeResult",
+                            file,
+                            sheet,
+                            rows = shapeRows,
+                            columns = shapeColumns,
+                            error = shapeError
+                        });
+                    }
                 case "fonts":
                     {
                         // Enumerate the system font families Avalonia can actually see (same engine the
@@ -385,8 +405,154 @@ internal static class Program
         }
     }
 
-    // ---------------- SQLite (design-time data preview / schema inspection) ----------------
+    // ---------------- workbook used range (the 3-D charts' one-column-per-slice rule) ----------------
 
+    /// <summary>
+    /// The USED RANGE of one page of an .xlsx workbook: the last row that holds a value and the last
+    /// column as a letter ("CX"). A surface reads one spreadsheet COLUMN per slice, so this is what says
+    /// how many slices a page holds when the designer points a chart at the whole sheet. Cells that carry
+    /// nothing (a format, a widening) are skipped, and a file or a page that cannot be read is an answer,
+    /// not a throw.
+    /// </summary>
+    private static (int Rows, string Columns, string? Error) WorkbookShape(string file, string sheet)
+    {
+        if (string.IsNullOrWhiteSpace(file)) return (0, "", null);
+        if (!File.Exists(file)) return (0, "", $"\"{Path.GetFileName(file)}\" was not found.");
+        try
+        {
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read,
+                                              FileShare.ReadWrite | FileShare.Delete);
+            using var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Read);
+            var part = WorkbookSheetPart(zip, sheet);
+            if (part is null) return (0, "", $"\"{Path.GetFileName(file)}\" has no page called \"{sheet}\".");
+            var rows = 0;
+            var columns = 0;
+            using (var xml = part.Open())
+            using (var reader = System.Xml.XmlReader.Create(xml))
+            {
+                string? cell = null;
+                var valued = false;
+                while (reader.Read())
+                {
+                    if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.LocalName == "c")
+                    {
+                        // A self-closing <c/> is an empty cell: it carries a style at most.
+                        cell = reader.IsEmptyElement ? null : reader.GetAttribute("r");
+                        valued = false;
+                    }
+                    else if (cell is not null && reader.NodeType == System.Xml.XmlNodeType.Element
+                             && (reader.LocalName == "v" || reader.LocalName == "is" || reader.LocalName == "f"))
+                    {
+                        valued = true;   // a value, an inline string, or a formula's own cell
+                    }
+                    else if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.LocalName == "c")
+                    {
+                        if (valued && cell is not null && CellReference(cell, out var column, out var row))
+                        {
+                            if (row > rows) rows = row;
+                            if (column > columns) columns = column;
+                        }
+                        cell = null;
+                    }
+                }
+            }
+            return (rows, ColumnName(columns), null);
+        }
+        catch (Exception ex)
+        {
+            return (0, "", $"Cannot read \"{Path.GetFileName(file)}\": {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The worksheet part behind one page: through the relationship the workbook's own &lt;sheet&gt; names,
+    /// and — when that cannot be resolved, which is the case for writers that keep their rels elsewhere —
+    /// by the page's POSITION, because nearly every writer names the parts <c>xl/worksheets/sheetN.xml</c>
+    /// in tab order.
+    /// </summary>
+    private static System.IO.Compression.ZipArchiveEntry? WorkbookSheetPart(
+        System.IO.Compression.ZipArchive zip, string sheet)
+    {
+        var book = zip.Entries.FirstOrDefault(e =>
+            e.FullName.Equals("xl/workbook.xml", StringComparison.OrdinalIgnoreCase));
+        if (book is null) return null;
+        var position = 0;
+        string? relId = null;
+        using (var stream = book.Open())
+        {
+            var document = System.Xml.Linq.XDocument.Load(stream);
+            var seen = 0;
+            foreach (var element in document.Descendants().Where(e => e.Name.LocalName == "sheet"))
+            {
+                seen++;
+                if (!string.Equals(element.Attribute("name")?.Value?.Trim(), sheet.Trim(),
+                                   StringComparison.OrdinalIgnoreCase)) continue;
+                position = seen;
+                relId = element.Attributes().FirstOrDefault(a => a.Name.LocalName == "id")?.Value;
+                break;
+            }
+        }
+        if (position == 0) return null;
+        if (relId is not null)
+        {
+            var rels = zip.Entries.FirstOrDefault(e =>
+                e.FullName.Equals("xl/_rels/workbook.xml.rels", StringComparison.OrdinalIgnoreCase));
+            if (rels is not null)
+            {
+                using var stream = rels.Open();
+                var document = System.Xml.Linq.XDocument.Load(stream);
+                var target = document.Descendants()
+                    .FirstOrDefault(e => e.Name.LocalName == "Relationship"
+                                         && string.Equals(e.Attribute("Id")?.Value, relId, StringComparison.Ordinal))
+                    ?.Attribute("Target")?.Value;
+                if (!string.IsNullOrWhiteSpace(target))
+                {
+                    var path = target!.StartsWith("/", StringComparison.Ordinal)
+                        ? target!.TrimStart('/')
+                        : "xl/" + target.TrimStart('.', '/');
+                    var entry = zip.Entries.FirstOrDefault(e =>
+                        e.FullName.Equals(path, StringComparison.OrdinalIgnoreCase));
+                    if (entry is not null) return entry;
+                }
+            }
+        }
+        var fallback = $"xl/worksheets/sheet{position}.xml";
+        return zip.Entries.FirstOrDefault(e => e.FullName.Equals(fallback, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>The row and column an A1-style reference names ("CX101" -> column 102, row 101).</summary>
+    private static bool CellReference(string reference, out int column, out int row)
+    {
+        column = 0;
+        row = 0;
+        var i = 0;
+        while (i < reference.Length && char.IsLetter(reference[i]))
+        {
+            column = column * 26 + (char.ToUpperInvariant(reference[i]) - 'A' + 1);
+            i++;
+        }
+        while (i < reference.Length && char.IsDigit(reference[i]))
+        {
+            row = row * 10 + (reference[i] - '0');
+            i++;
+        }
+        return column > 0 && row > 0;
+    }
+
+    /// <summary>A column number as its letter (102 -> "CX"), for a property that speaks letters.</summary>
+    private static string ColumnName(int column)
+    {
+        var name = "";
+        while (column > 0)
+        {
+            var digit = (column - 1) % 26;
+            name = (char)('A' + digit) + name;
+            column = (column - 1) / 26;
+        }
+        return name;
+    }
+
+    // ---------------- SQLite (design-time data preview / schema inspection) ----------------
     /// <summary>Lists the user tables in a SQLite file with their columns (name/type/notNull/isPk).</summary>
     private static object[] SqliteTables(string file)
     {

@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Grumpy's WYSIWYG Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox — with an optional local AI assist that writes handlers and repairs code from a sentence, on your own machine.",
-    "version": "0.11.15",
+    "version": "0.11.18",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",
@@ -361,6 +361,12 @@
         "configuration": {
             "title": "Grumpy's WYSIWYG Designer",
             "properties": {
+                "avaloniaDesigner.bundled.autoUpdate": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Refresh a project's bundled helper files (GrumpyCharts, PathPicker, …) silently when they are older than the extension's copy, instead of asking with an \"Update now\" button. Only files that are provably the extension's own boilerplate are ever touched.",
+                    "markdownDescription": "Refresh a project's bundled helper files (`GrumpyCharts`, `PathPicker`, …) **silently** when they are older than the extension's copy, instead of asking with an *Update now* button.\n\nThe running app compiles the project's own copy of these files, while the designer preview uses the extension's — so a stale copy makes the app behave differently from the preview. Only files that are provably the extension's own boilerplate are ever touched; a hand-written file is never overwritten."
+                },
                 "avaloniaDesigner.dotGrid.enabled": {
                     "type": "boolean",
                     "default": true,

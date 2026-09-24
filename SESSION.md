@@ -17,6 +17,47 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-09-24, eighth session — 0.11.18)
+
+**The height ramp was following the depth too, and the surface got its own controls.** Two field reports
+plus four requests, all in one afternoon, and the release that carries them.
+
+**What went in** (full detail in `CHANGELOG.md` `[0.11.18]` and `NOTES.md` §149):
+
+- **The temperature ramp mixed the height with the depth** — *"the color gradient (temperature) should only
+  apply to the y-axes … the z-slices also apply the gradient"*. A per-band gradient was laid along the
+  *projected* height axis, and a point of a band stands at its own depth, so the same value came out at a
+  different colour per band (a flat plate spanned 0.66…0.97 of the ramp at elevation 31). A band is now CUT
+  into `levels` horizontal slices and each level is filled with its own blend, so the colour is a function of
+  the value alone.
+- **A triangle at the ramp's MAXIMUM was never filled** — the *"tops of the corrugated sheet are open"*
+  report: `first` was clamped at the low end only, so the crest of a sheet reaching the scale's ceiling was a
+  line of background (measured 0 → 9,482 sheet pixels at value 25 of 0…25).
+- **The palette popup opened half off-screen** — anchored at the trigger's top-left with a clamp whose 8px
+  floor won, plus a stylesheet `min-width` outranking the injected `max-width`.
+- **`ZoomX` / `ZoomY`** (1…100 % of the fitted size, ranges untouched) **and two more legend sliders** for
+  them, the four packed 26px apart (they were 34px), each zoom carrying ONE handle.
+- **Pointing a 3D chart at a page loads the whole dataset**: a new host verb (`sheetShape`) reports the
+  page's used range, and the form gets one bare `<charts:XYSeries/>` per data column — for the waterfail too,
+  with an authored list never touched and a stale slice window cleared.
+- **Legend on/off in the chart's right-click menu** (the tick in the item's label, since menu ticks need
+  Avalonia 11.1).
+- **The stale-copy class closed for good**: *"the new sliders is rendering in the designer preview but not
+  during runtime"* — a *drawing* change adds no marker token, so it was invisible. Every bundled file now
+  carries `BUNDLED-COPY: <version>` and staleness is a **content comparison** with the copy the extension
+  ships; `avaloniaDesigner.bundled.autoUpdate` (off by default) makes the refresh silent.
+
+**Three things to know before continuing:**
+
+1. **Preview versus app is always about the FILE, not the feature.** The preview draws the host's copy of a
+   bundled file, the app compiles the project's. Compare the two files first (they now carry the release in
+   their header) before believing a bug in the chart code.
+2. **A change inside an existing bundled type still needs a reason to be noticed** — with the content rule,
+   "differs from the shipped copy" is that reason, so a project's copy is refreshed as soon as the extension
+   ships a different file; hand-written helpers are still never touched.
+3. **The zoom can only make the picture smaller** (100 % is the fitted size), because the plot box clips
+   whatever it is asked to draw — the same reason the uniform `Zoom` row behaves as it does.
+
 ## Where the last session left off (2026-09-24, seventh session — 0.11.15)
 
 **The width window is a cut, not a squeeze.** A reported follow-up to `0.11.14`, fixed the same day.

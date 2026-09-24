@@ -12,6 +12,116 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
+## [0.11.18] - 2026-09-24 · *the height ramp follows the height, and the surface gets its own controls*
+
+Two field reports from one afternoon on the 3D surface, and the batch of requests that came with them.
+
+### Fixed — the temperature ramp mixed the height with the DEPTH (reported 2026-09-24)
+
+- *"the color gradient (temperature) should only apply to the y-axes. Currently it seems that the z-slices
+  also apply the gradient starting at slice 1 to x-max"*. A flat sheet proved it: the per-band gradient was
+  laid along the PROJECTED height axis, and a point of a band stands at its own depth, so the same value
+  came out at a different colour depending on how far back its band was — a flat plate spanned **0.66…0.97**
+  of the ramp at elevation 31 and **0.04…1.00** at elevation 60.
+- A band is now **CUT into `levels` horizontal slices** (`CutToLevels`) and every level is filled with its
+  own blend, so the colour is a function of the **value alone**: the same flat plate is one colour at every
+  angle (**0.40…0.40** at both elevations and all three azimuths tested), and a plate whose values are 5,
+  25 and 45 of a 0…50 scale lands on **0.11 / 0.50 / 0.89**. `Heat Min`/`Heat Max` still pin that scale (a
+  40…50 pin puts 45 at 0.54); a `Min Y`/`Max Y` window no longer touches the colours at all.
+- **A triangle exactly at the ramp's maximum was never filled**, which is what the second report was about:
+  *"There is something wrong with the spreadsheet data (the tops of the corrugated sheet are open)."* The
+  first level of the cut was clamped at the low end only, so a triangle at the top of the scale asked for
+  band `levels` while the loop stopped at `levels - 1`: the crest of a sheet whose values reach the scale's
+  ceiling was a line of background through the picture. Measured on a flat sheet at 25 of a 0…25 scale:
+  **0** sheet pixels before, **9,482** after. `var top = levels - 1e-9` (VB: `levels - 0.000000001`) pins it.
+- The level cut is also **cheaper** than the gradient it replaces: 94–108 ms against 167 ms for a 100 × 100
+  sheet, and 47–52 ms against 105 ms for four 2,000-point slices.
+
+### Fixed — the colour palette opened half off the screen (reported 2026-09-24)
+
+- *"When opening a color pallette (not the drop down colour picker) to pick a color, half the the palete
+  renders off-screen to the right."* Two causes: the popup was anchored at its trigger's top-left corner
+  (which, for a click, is the mouse) with a clamp whose 8px floor won whenever the window was narrower than
+  the list, and the stylesheet's `min-width` outranked the injected `max-width`. The palette now caps its own
+  width to the window and flips to its trigger's **right** edge when it would still overflow.
+- Measured: a 150px window → 8…142, 200px → 8…168, and at 320, 578 and 1200px the palette's right edge sits
+  exactly on the trigger's, with nothing off-screen.
+
+### Added — the two axes can be sized without touching their ranges (asked for 2026-09-24)
+
+- *"please introduce a Zoom function for the X and Y axes. Zoom does not mean a range change, but an actual
+  zooming of the X/Y axes size keeping the range settings unchanged."* **`ZoomX` / `ZoomY`** (Properties:
+  *X Axis Zoom %* / *Y Axis Zoom %*) set how big an axis is **drawn**, in percent of the fitted size. It is
+  a zoom, not a window: `Min X`/`Max X`/`Min Y`/`Max Y` and every tick label are untouched — the picture is
+  magnified about the **middle** of the frame instead. 100 % is the fitted size and therefore the top of the
+  scale: above it the plot box can only clip what it is asked to draw. Measured, `ZoomX="50" ZoomY="50"`
+  halves both the width and the height of the sheet, and `ZoomX="150"` renders identical to the fitted chart.
+- **Two more sliders in the surface's legend**, next to the X and Z window sliders: one for each axis' zoom,
+  each in a colour no slice of the palette uses (`#00E5FF`, `#FF00AA` — so a series can never be mistaken
+  for a slider), each carrying **one** handle (a window has two ends to drag, a size has one) and each
+  naming its percent: *X zoom 100 %*.
+- **The four sliders stand closer together**, as asked for as soon as the first four were on screen: a
+  docked column is sized by the handle it has to clear rather than by a whole row — **26px instead of 34px**
+  — and the row pitch went 20 → 16px. Measured handle centres 18.4 / 44.5 / 70.5 / 96.5 → gaps of ~26px, and
+  the bar 136 → 112px of the frame.
+
+### Added — pointing a 3D chart at a spreadsheet loads the WHOLE dataset (reported 2026-09-24)
+
+- *"It seems that the Series editor has lost its feature to load all Z-series automatically when pointing
+  the chart at a spreadsheet file. When selecting a spreadsheet file for the surface 3d plot the full
+  dataset should be loaded."* A surface reads one spreadsheet **column per slice**, and a slice is one
+  `<charts:XYSeries/>` child — so the children ARE the dataset. The reporting form carried 55 of the
+  spreadsheet's 100 columns and drew **Z 0…300** where the page holds **Z 0…500** (rendering the two side by
+  side, 16,665 of 109,200 pixels differ).
+- Choosing a page in the **Data Selector** now reads that page's used range (a new host verb, `sheetShape`:
+  the last row that holds a value, and the last column as a letter) and writes one bare series per data
+  column after the chart's own X column. The **waterfall** gets the same treatment, because its sweeps are
+  one column each as well.
+- A series list the form already carries is only replaced while **every** entry is bare — the moment one
+  carries a property, the list is the author's and the workbook is not even read for it.
+- Loading the whole sheet also clears a stale **slice window** (`Min Z`/`Max Z`): a form left carrying
+  `MaxZ="9"` drew two slices of a hundred, which looks exactly like a chart that never got the data. The
+  **width** window (`MinX`/`MaxX`) is deliberately left alone — that is a range a reader can see in the
+  picture, not a count of slices.
+
+### Added — Legend on/off in the chart's own right-click menu (asked for 2026-09-24)
+
+- *"Add Legend ON/OFF to the right-click menu."* The chart menu — the one that already carries *Choose
+  spreadsheet…* and *Fill the container* — has a **Legend** entry with the tick in its own label (menu item
+  ticks need Avalonia 11.1; the bundled control still builds on 11.0). Clicking it flips `ShowLegend` on the
+  **running** chart and redraws; like every other toggle in that menu it never writes back to the form, and
+  it is added before the no-cursors early return, so the bar and the pie have it too.
+
+### Added — a stale project copy can no longer hide (reported 2026-09-24)
+
+- *"the new sliders is rendering in the designer preview but not during runtime"* and *"the right click
+  legend on/off not available in the right click menu in runtime"* — both from a running app whose own
+  `GrumpyCharts.cs` was the copy from **before** this release. The designer preview draws the **host's** copy
+  (always current) while the app compiles the **project's**, so the two can disagree; what made this one
+  invisible is that the staleness check looked for a **marker token**, and this release's changes — two more
+  sliders, a packed layout, an extra menu entry — are changes *inside* an existing type that add no new name
+  to look for. The copy carried the previous marker happily.
+- **Every bundled file now carries the release it came from** in its header
+  (`// BUNDLED-COPY: 0.11.18`, `' BUNDLED-COPY: …` in the VB twins), and "older" is decided by
+  **comparing the file's contents with the copy the extension ships**. That catches a drawing-only change,
+  which no marker ever could, and the version stamp makes it obvious which release a project is on. A
+  release that forgets to re-stamp a resource fails the suite.
+- **`avaloniaDesigner.bundled.autoUpdate`** (off by default) makes the refresh automatic instead of asking
+  with the *Update now* button; the message that asks now says where to find it. Only files that are
+  provably the extension's own boilerplate are ever touched — a hand-written helper is never overwritten.
+
+### Notes
+
+- Suite **8,092 passed / 0 failed**; the host, a generated C# project and the VB matrix all build
+  0 warnings / 0 errors. New tests pin the ramp's independence from the view, the missing crest, the
+  whole-sheet rule (including the waterfall and the cleared slice window), the legend's four sliders —
+  their colours, their handle counts and the distance between them — both ends of the zoom scale, the
+  stamp every resource carries, and the content rule that replaces "look for a token".
+- The **sample workbook** used for the manual checks was scaled to a 0…20 height at one point and restored
+  to its original 0…50 afterwards; the file in the repository is the 0…50 one the charts are read from.
+- **`0.11.16` and `0.11.17` were development numbers** — packaged, never released. `0.11.18` is the version
+  the tag, the release title and the listing carry.
+
 ## [0.11.15] - 2026-09-24 · *the width window is a cut, not a squeeze*
 
 A follow-up to `0.11.14`, from a report made while dragging the chart in a **running app**: *"the 3D surface

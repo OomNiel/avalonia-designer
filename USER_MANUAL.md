@@ -2040,6 +2040,17 @@ cursor's colour under a hairline. That is the "how wide is this peak" arithmetic
 > helpers (`ChromeWindow`, `AnchorHelper`, `PathPicker`) are refreshed the same way as soon as you use
 > the feature that needs them — e.g. a Title Bar property or a File Selector.
 
+> **"The designer shows it, but my app does not."** Same cause as above, for a change that adds no new
+> name to compile against — a chart drawn differently, a new slider, an extra menu entry. The preview is
+> drawn with the **extension's** copy of a bundled file while your app compiles the **project's**, so an
+> older copy looks *nearly* right in the app: the 3D surface's legend showed two sliders in a running app
+> while the canvas already showed four (2026-09-24). Open or save the form and accept **Update now** (or
+> switch on `avaloniaDesigner.bundled.autoUpdate` to have it handled silently); the prompt appears once per
+> form per window, so reload the window if you dismissed it. Every bundled file carries a
+> `BUNDLED-COPY: <version>` line in its header, which is the quickest way to see which release a project is
+> on; **Update now** is offered whenever that file differs from the one the extension ships — including for
+> a drawing-only change, which no property list could ever reveal.
+
 > **Nothing drawn, or "No numbers found in column …".** Check the **Spreadsheet** path (it is absolute),
 > the **X/Y Column** letters and **First Data Row**, and that the sheet really has numbers in those
 > cells. A chart with no data at all offers the **"…"** picker instead of guessing.
@@ -2116,6 +2127,12 @@ list. It is the one place where a chart's data source is chosen:
   the chart (`DataFile`) and shown in the editor, with a line saying it is not read yet — the charts keep
   drawing whatever the spreadsheet gives them until that reader lands. Nothing is lost by trying it: the
   choice is remembered in the form.
+
+**A 3D chart takes its whole page, not just its first columns** (since 0.11.18). Choosing a page for a
+**Surface Chart 3D** or a **Waterfall** writes **one series per data column** of that page, so the form
+holds the dataset the page holds. The page's own width is what decides it, which is why the designer reads
+the workbook's used range when you pick it; see §19.13 for what that means for the slice list and the
+slice window.
 
 **What it writes:** `SourceKind="DataFiles"`, `SourceFile="/…/Book.xlsx"`, `SourceSheet="Bar Chart"` and
 `DataFile="/…/data.csv"` — and only the ones that differ from the defaults, so a chart you never touched
@@ -2207,7 +2224,7 @@ its own to draw, and there is no flat frame to hang a crosshair on.
 
 | Control | What it draws | Its own properties |
 |---------|---------------|--------------------|
-| **Surface Chart 3D** (`charts:GrumpySurfacePlot`) | A corrugated sheet: one **slice** per spreadsheet column, joined to its neighbours so the picture is the surface itself | **Style** (`GridMesh` / `GridMeshSolid` / `Solid`), **Colour By** (`Sampleset` / `Temperature`), **Low Colour / High Colour**, **Heat Min / Heat Max**, **Solid Opacity**, **Mesh Colour / Thickness**, **Show Base**, **Base Colour**, **Elevation**, **Azimuth**, **Z Spacing**, **Zoom**, **Z Row**, **Z Start**, **Z Step**, **Z Axis Title**, **MinX / MaxX**, **MinY / MaxY**, **MinZ / MaxZ** |
+| **Surface Chart 3D** (`charts:GrumpySurfacePlot`) | A corrugated sheet: one **slice** per spreadsheet column, joined to its neighbours so the picture is the surface itself | **Style** (`GridMesh` / `GridMeshSolid` / `Solid`), **Colour By** (`Sampleset` / `Temperature`), **Low Colour / High Colour**, **Heat Min / Heat Max**, **Solid Opacity**, **Mesh Colour / Thickness**, **Show Base**, **Base Colour**, **Elevation**, **Azimuth**, **Z Spacing**, **Zoom**, **X Axis Zoom %**, **Y Axis Zoom %**, **Z Row**, **Z Start**, **Z Step**, **Z Axis Title**, **MinX / MaxX**, **MinY / MaxY**, **MinZ / MaxZ** |
 
 **One column per slice.** Open **Series — Edit series…** and each row is **one slice along the sheet's
 length**: every slice reads the **same shared X column** (the positions across the width, column B by
@@ -2244,10 +2261,27 @@ three-quarter view), **Z Spacing** is how deep the slices stand apart and **Zoom
 the frame — and in the running app you can simply **drag the chart** to turn it. Dragging never changes
 the saved form; it only moves your viewpoint.
 
-**The legend of a surface is its RANGE WINDOW.** Instead of ticking traces on and off, the bar carries
-**two sliders**: the first picks the part of the **width** to draw (`X 70 … 110`), the second picks
-**which slices are drawn** — and it *counts* them, "Z 3…4 of 6", because the number of profiles on show
-is the thing being chosen. Two behaviours are worth knowing:
+**The legend of a surface is its RANGE WINDOW — and its two SIZE controls.** Instead of ticking traces on
+and off, the bar carries **four sliders**, each in its own colour: the first picks the part of the
+**width** to draw (`X 70 … 110`), the second picks **which slices are drawn** — and it *counts* them,
+"Z 3…4 of 6", because the number of profiles on show is the thing being chosen — and the last two size an
+axis without touching its range.
+
+**X zoom** and **Y zoom** (`X Axis Zoom %` / `Y Axis Zoom %`, 1…100 %) set how **big** an axis is drawn:
+100 % is the size the viewer fits the sheet to, 50 % draws it half that size, and the range the axis
+covers — its ticks, its numbers and its `Min`/`Max` rows — is not touched at all. The picture shrinks
+about the **middle** of the frame, which is why the two legend sliders read as *sizes* rather than as
+windows; there is nothing above 100 %, because a bigger picture would only be clipped by the plot box.
+Handy uses: leaving room for the axes and the legend on a small chart, or flattening the width to look at
+one ridge without losing the depth of the sheet. Dragging the slider changes only the running chart (the
+saved `ZoomX`/`ZoomY` come from the Properties panel); the same four sliders are drawn in the app, so a
+reader can do it while looking at the picture.
+
+Three behaviours are worth knowing:
+
+- **A zoom slider carries ONE handle.** A window has two ends to drag (and the end nearer the pointer is the
+  one that follows it); a size is a single number, so its slider has a single handle and names it — *"X zoom
+  100 %"*. The four sliders stand one handle apart in the bar, so they read as one control group.
 
 - **A window end snaps to the nearest slice.** "0 … 18" of a sheet sliced every 10 draws the same slices
   as "0 … 20", so a window can never leave a slice half-shown, and "0 … 4" still names one slice — which
@@ -2263,8 +2297,14 @@ is the thing being chosen. Two behaviours are worth knowing:
   it small in the middle of the frame. Reading a few slices and then widening the window is the normal
   way to work: zoom in on the structure, zoom out for the overview.
 
-Both sliders span the **data's own range** (the control reports it), so a handle can never name a value
-the sheet has not got.
+Both **window** sliders span the **data's own range** (the control reports it), so a handle can never name a
+value the sheet has not got; the two **size** sliders span 1…100 % of the fitted size instead, since a size
+is not a value of the data at all.
+
+**Right-click the chart, then *Legend*.** The running app's own menu (the one carrying *Choose
+spreadsheet…* and *Fill the container*) has a **Legend** entry with a tick in its label: it turns the bar
+on and off while you look at the chart, and — like the other toggles there — it changes only the running
+chart, never the saved form. The saved setting is the **Show Legend** row in the Properties panel.
 
 **A block under the sheet, when you want one.** **Show Base** fills the space beneath the sheet down to
 the floor — the sheet as a solid block — in **Base Colour**. It is **off by default**, because it changes
@@ -2272,7 +2312,17 @@ the picture: with it on, a nearer slice hides what is behind it; with it off, th
 the profiles stay visible.
 
 **Sample data.** Any page with an **X column of positions** and **one column per slice** works, together
-with a row of **Z values** for the depth (name it with **Z Row**). The workbook page the *Sample data*
+with a row of **Z values** for the depth (name it with **Z Row**).
+
+**Pointing the chart at a page loads the WHOLE sheet.** Choose the workbook and the page in the **Data
+Selector** and the form is given **one series per data column** of that page (the columns after the chart's
+shared X column), so the sheet you see is the dataset the page holds — not the first few columns of it. A
+slice list the form already carries is only replaced while **every** entry is empty: as soon as one has a
+property of its own, that list is yours and nothing is touched. The stale **Min Z / Max Z** window is
+cleared at the same time (a form left carrying `MaxZ="9"` would show two slices of a hundred, which looks
+exactly like a chart that never got the data); the **width** window is left alone, because that is a range
+a reader can see in the picture rather than a count of slices. The **waterfall** reads one column per sweep
+and is loaded the same way. The workbook page the *Sample data*
 note describes — 12 positions across the width, one profile per column — is exactly the layout it
 reads by default.
 

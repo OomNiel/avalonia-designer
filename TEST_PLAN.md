@@ -470,6 +470,38 @@ and the README's single *"Formerly …"* line). The recogniser is then proved to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
 
+### 0.11.18 (2026-09-24) — the height ramp, the surface's own controls, and a stale copy that cannot hide
+
+- `tests/t1-preview/surfaceRender.test.js` — the temperature ramp is now measured as a function of the
+  HEIGHT alone: the same flat plate must be one colour at every elevation and azimuth (it spanned 0.66…0.97
+  of the ramp at elevation 31 before the fix), a plate of 5/25/45 on a 0…50 scale must land on 0.11/0.50/0.89,
+  and a triangle at the ramp's **maximum** must be filled at all (the "open crests" report: 0 sheet pixels
+  at value 25 of 0…25 before, 9,482 after). The axis zoom is measured as a **shape**: `ZoomX/ZoomY="50"`
+  halves both dimensions of a sheet rendered flat in depth, one axis at a time changes the ASPECT, `150`
+  clamps to the fitted size, and `100` is byte-identical to the default. The legend is measured through its
+  own handle colours — four sliders present, the two zooms carrying ONE handle each, the centres 26px apart
+  and the four spanning under 100px — so "closer together" cannot quietly come back.
+- `tests/t2-logic/surface.test.js` — the source contract in both twins for the level-cut ramp, the missing
+  crest clamp, the four legend sliders (their colours, `RangeAxisCount`, `IsZoomAxis`, the single handle, the
+  packed `RangeColumn`), the 1…100 zoom clamp and the per-axis drag.
+- `tests/t2-logic/chartSeries.test.js` — the whole-sheet rule as pure behaviour: a chart with no slices gets
+  one per data column after its X column (100 for a `B`…`CX` page), a **bare** 55-entry leftover is replaced
+  by the page's own width, an **authored** list is not touched (and is not even read for), a list that
+  already matches is left alone, and one data column is one slice.
+- `tests/t2-logic/chartFill.test.js` — the chart menu's new **Legend** entry: the tick in its label, the flip
+  plus redraw, added BEFORE the no-cursors gate (so the bar and the pie have it), toggle-only, in both
+  languages.
+- `tests/t2-logic/dataSelector.test.js` — the host's `sheetShape` verb, the client method (including the "old
+  host — rebuild it" answer), the waterfall sharing the rule, and the stale slice window being cleared while
+  the width window is not.
+- `tests/t2-logic/bundledComponents.test.js` — the class of bug behind *"the new sliders is rendering in the
+  designer preview but not during runtime"*: staleness is now decided by **comparing contents with the copy
+  the extension ships**, with a `BUNDLED-COPY: <version>` stamp in every resource whose version is asserted
+  against `package.json` (a release that forgets to re-stamp fails here), line endings normalised, local
+  edits still refreshable, and a file that is not our boilerplate never touched. Plus the new
+  `avaloniaDesigner.bundled.autoUpdate` setting (off by default) and the panel honouring it.
+- Suite **8,092 passed / 0 failed**.
+
 ### 0.11.15 (2026-09-24) — the width window is a cut, not a squeeze
 
 - `tests/t1-preview/surfaceRender.test.js` (**76**) — the report that grew this release was *"two 'panels' at

@@ -1,3 +1,4 @@
+// BUNDLED-COPY: 0.11.18
 // GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs.
 //
@@ -3558,6 +3559,22 @@ public abstract class ChartBase : Control
         };
         items.Add(fillItem);
 
+        // The LEGEND is the other thing on a chart that is not about cursors, and the one a reader reaches
+        // for while looking at a crowded form: with the names gone the picture gets their room back. Every
+        // chart type has a legend, so this goes in BEFORE the no-cursors return below — the bar and the pie
+        // need it as much as the line plot does. Like every other toggle here it changes only the RUNNING
+        // chart: the form's own ShowLegend is what the Properties panel sets, and a restart goes back to it.
+        var legendItem = new MenuItem
+        {
+            Header = (ShowLegend ? "✓ " : "    ") + "Legend"
+        };
+        legendItem.Click += (_, _) =>
+        {
+            ShowLegend = !ShowLegend;
+            InvalidateVisual();
+        };
+        items.Add(legendItem);
+
         // A chart that has no cursors (the pie and the bar) gets no cursor entries at all: the toggles,
         // the readout position, add / remove / reset and "copy readout" are every one of them about
         // cursors. Those charts report what is under the pointer in the readout panel instead (see
@@ -5747,6 +5764,19 @@ public class GrumpySurfacePlot : ChartBase
     public static readonly StyledProperty<double> ZoomProperty =
         AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(Zoom), 1d);
 
+    /// <summary>How big the X axis is DRAWN, in percent of the fitted size (100 = as fitted). This is a
+    /// zoom, not a window: Min X / Max X are untouched, so the sheet magnifies about the middle of the frame
+    /// (and the parts that no longer fit are clipped by the plot box) instead of showing a different range.
+    /// The X axis's own direction on screen is what stretches, so the depth the slices stand apart keeps its
+    /// perspective — <see cref="ZSpacing"/> is the knob for that.</summary>
+    public static readonly StyledProperty<double> ZoomXProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(ZoomX), 100d);
+
+    /// <summary>How tall the Y (height) axis is DRAWN, in percent of the fitted size — the vertical
+    /// exaggeration a corrugated sheet is usually read with. Zoom, not range: Min Y / Max Y are untouched.</summary>
+    public static readonly StyledProperty<double> ZoomYProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(ZoomY), 100d);
+
     /// <summary>The name along the depth axis — what the numbers there measure ("Length", "mm along the
     /// sheet").</summary>
     public static readonly StyledProperty<string?> ZAxisTitleProperty =
@@ -5757,7 +5787,8 @@ public class GrumpySurfacePlot : ChartBase
         AffectsRender<GrumpySurfacePlot>(ValuesProperty, SampleSetsProperty, StyleProperty, ColorByProperty, LowColorProperty,
             HighColorProperty, HeatMinProperty, HeatMaxProperty, MeshColorProperty, MeshThicknessProperty,
             SolidOpacityProperty, ZStartProperty, ZStepProperty, ZRowProperty, MaxPointsProperty,
-            ElevationProperty, AzimuthProperty, ZSpacingProperty, ZoomProperty, ZAxisTitleProperty,
+            ElevationProperty, AzimuthProperty, ZSpacingProperty, ZoomProperty, ZoomXProperty, ZoomYProperty,
+            ZAxisTitleProperty,
             MinZProperty, MaxZProperty, ShowBaseProperty, BaseColorProperty);
         ValuesProperty.Changed.AddClassHandler<GrumpySurfacePlot>((plot, _) => plot.Reload());
     }
@@ -5833,6 +5864,12 @@ public class GrumpySurfacePlot : ChartBase
     /// <summary>Scales the fitted picture.</summary>
     public double Zoom { get => GetValue(ZoomProperty); set => SetValue(ZoomProperty, value); }
 
+    /// <summary>How big the X axis is drawn, in percent (100 = fitted). A zoom: the range stays.</summary>
+    public double ZoomX { get => GetValue(ZoomXProperty); set => SetValue(ZoomXProperty, value); }
+
+    /// <summary>How tall the Y axis is drawn, in percent (100 = fitted). A zoom: the range stays.</summary>
+    public double ZoomY { get => GetValue(ZoomYProperty); set => SetValue(ZoomYProperty, value); }
+
     /// <summary>The name along the depth axis.</summary>
     public string? ZAxisTitle { get => GetValue(ZAxisTitleProperty); set => SetValue(ZAxisTitleProperty, value); }
 
@@ -5875,11 +5912,32 @@ public class GrumpySurfacePlot : ChartBase
     private protected override bool IsRangeLegend => true;
 
     /// <summary>How tall one slider row is, how big its handles are drawn, and the room a slider's numbers
-    /// take beside its track (they are rotated alongside it when the bar docks at a side).</summary>
-    private const double RangeRow = 20;
+    /// take beside its track (they are rotated alongside it when the bar docks at a side).
+    ///
+    /// The spacing is deliberately tight — four sliders have to share the bar, and air between them is bar
+    /// that the picture does not get. A row is one text height plus a little, and a docked column is the
+    /// numbers' own room plus the handle it has to clear (a track is a 1px line, so the handle's width is
+    /// what decides how close two of them may stand).</summary>
+    private const double RangeRow = 16;
     private const double RangeHandle = 5;
     private const double RangeLabelWidth = 92;
     private const double RangeLabelRoom = 14;
+
+    /// <summary>The sliders the bar carries, in order: the WIDTH window (X), the SLICE window (Z), and then
+    /// the two axis ZOOM levels — how big the X and Y axes are DRAWN, in percent of the fitted size, which
+    /// is a size and not a window, so each of those two has one handle instead of two.</summary>
+    private const int RangeAxisCount = 4;
+
+    /// <summary>The first axis that is a ZOOM rather than a window (2 = X zoom, 3 = Y zoom).</summary>
+    private const int ZoomAxisFirst = 2;
+
+    /// <summary>A zoom slider's two ends, in percent of the fitted size: 100 is exactly as the picture is
+    /// fitted (so it is the default and the top of the scale), 1 draws the axis a hundredth of that size.</summary>
+    private const double MinZoomPercent = 1;
+    private const double MaxZoomPercent = 100;
+
+    /// <summary>True when a slider sizes an axis instead of cutting a window out of the data.</summary>
+    private static bool IsZoomAxis(int axis) => axis >= ZoomAxisFirst;
 
     /// <summary>True when the bar docks at a side, so the sliders run DOWN the frame and their numbers are
     /// turned on their side — the legend follows the side the form asks for.</summary>
@@ -5888,12 +5946,12 @@ public class GrumpySurfacePlot : ChartBase
     /// <inheritdoc/>
     private protected override Size MeasureRangeLegend(Size frameSize)
     {
-        // Two sliders — the WIDTH (X) one first, then the SLICES (Z) one — each with its track and the room
-        // its numbers need. Across the frame they stack as two rows; down a side they sit side by side as two
-        // columns, so the bar still honours the side the form asked for.
+        // FOUR sliders — the WIDTH (X) window, the SLICES (Z) window, then the X and Y zoom levels — each
+        // with its track and the room its numbers need. Across the frame they stack as four rows; down a
+        // side they sit side by side as four columns, so the bar still honours the side the form asked for.
         return RangeVertical
-            ? new Size(Math.Min(RangeColumn * 2 + 8, Math.Max(60, frameSize.Width * 0.5)), frameSize.Height)
-            : new Size(frameSize.Width, Math.Min(RangeRow * 2 + 16, Math.Max(40, frameSize.Height * 0.5)));
+            ? new Size(Math.Min(RangeColumn * RangeAxisCount + 8, Math.Max(60, frameSize.Width * 0.5)), frameSize.Height)
+            : new Size(frameSize.Width, Math.Min(RangeRow * RangeAxisCount + 16, Math.Max(40, frameSize.Height * 0.5)));
     }
 
     /// <inheritdoc/>
@@ -5901,14 +5959,17 @@ public class GrumpySurfacePlot : ChartBase
     {
         var font = Math.Max(6, Math.Min(11, LegendFontSize - 1));
         var trackPen = MakePen(MeshColor, 3, ChartLineStyle.Solid);
-        for (var axis = 0; axis < 2; axis++)
+        for (var axis = 0; axis < RangeAxisCount; axis++)
         {
-            var colour = axis == 0 ? Color.Parse("#4C9FDC") : Color.Parse("#D9A519");
+            var colour = RangeColour(axis);
             var track = RangeTrack(axis);
             context.DrawLine(trackPen, RangeStart(track), RangeEnd(track));
             var handlePen = MakePen(colour, 1, ChartLineStyle.Solid);
             var fill = new SolidColorBrush(colour);
-            foreach (var value in new[] { RangeLow(axis), RangeHigh(axis) })
+            // A window has TWO ends to drag; a zoom level is a single number, so it carries one handle.
+            foreach (var value in IsZoomAxis(axis)
+                         ? new[] { RangeLow(axis) }
+                         : new[] { RangeLow(axis), RangeHigh(axis) })
             {
                 var point = RangePoint(axis, value);
                 context.DrawRectangle(fill, handlePen, new RoundedRect(
@@ -5936,12 +5997,30 @@ public class GrumpySurfacePlot : ChartBase
         }
     }
 
+    /// <summary>What each slider is painted in, so four of them can be told apart at a glance. The two zooms
+    /// are deliberately drawn in colours NO slice of the palette uses, because the legend identifies its
+    /// sliders by colour and a series walking past in the same green would read as a fifth slider.</summary>
+    private static Color RangeColour(int axis) => axis switch
+    {
+        0 => Color.Parse("#4C9FDC"),   // the width window
+        1 => Color.Parse("#D9A519"),   // the slice window
+        2 => Color.Parse("#00E5FF"),   // how big the X axis is drawn
+        _ => Color.Parse("#FF00AA")    // and the Y (height) axis
+    };
+
     /// <summary>The letters the sliders carry: X is the WIDTH of the sheet, Z is how far along it a slice
-    /// stands (the height between them is the data, and is not a choice).</summary>
-    private static string RangeName(int axis) => axis == 0 ? "X" : "Z";
+    /// stands (the height between them is the data, and is not a choice). The last two SIZE an axis rather
+    /// than pick a part of the data, so they say so.</summary>
+    private static string RangeName(int axis) => axis switch
+    {
+        0 => "X",
+        1 => "Z",
+        2 => "X zoom",
+        _ => "Y zoom"
+    };
 
     /// <inheritdoc/>
-    private protected override IReadOnlyList<double> RangeSteps(int axis) => axis == 0 ? Array.Empty<double>() : _sliceSteps;
+    private protected override IReadOnlyList<double> RangeSteps(int axis) => axis == 1 ? _sliceSteps : Array.Empty<double>();
 
     /// <summary>The nearest slice position to a window end, so a window always cuts BETWEEN slices — a typed
     /// "9" on a sheet sliced every 5 takes the slice at 10 rather than leaving a slice the slider cannot
@@ -5962,9 +6041,20 @@ public class GrumpySurfacePlot : ChartBase
     /// <summary>The range one slider spans: the DATA's own, so a selection can never leave the sheet.</summary>
     private AxisRange RangeAxis(int axis) => axis == 0 ? _dataX : _dataZ;
 
-    /// <summary>The window's low end (unset = the whole data range).</summary>
+    /// <summary>A slider's lowest value: the data's own floor for a window, 1 % for a zoom.</summary>
+    private double RangeMin(int axis) => IsZoomAxis(axis) ? MinZoomPercent : RangeAxis(axis).Min;
+
+    /// <summary>And its highest: the data's own ceiling, or the fitted size (100 %) for a zoom.</summary>
+    private double RangeMax(int axis) => IsZoomAxis(axis) ? MaxZoomPercent : RangeAxis(axis).Max;
+
+    /// <summary>How big an axis is DRAWN, in percent — the number its zoom slider sits on.</summary>
+    private double ZoomPercentOf(int axis) => axis == 2 ? ZoomX : ZoomY;
+
+    /// <summary>The window's low end (unset = the whole data range); a zoom slider's only value is its
+    /// percent.</summary>
     private double RangeLow(int axis)
     {
+        if (IsZoomAxis(axis)) return ZoomPercentOf(axis);
         var pinned = axis == 0 ? MinX : MinZ;
         return double.IsNaN(pinned) ? RangeAxis(axis).Min : pinned;
     }
@@ -5972,13 +6062,15 @@ public class GrumpySurfacePlot : ChartBase
     /// <summary>The window's high end (unset = the whole data range).</summary>
     private double RangeHigh(int axis)
     {
+        if (IsZoomAxis(axis)) return ZoomPercentOf(axis);
         var pinned = axis == 0 ? MaxX : MaxZ;
         return double.IsNaN(pinned) ? RangeAxis(axis).Max : pinned;
     }
 
     /// <summary>How wide one slider's COLUMN is when the bar is docked at a side: its rotated numbers take
-    /// the room at the column's left edge, the track runs down what is left.</summary>
-    private const double RangeColumn = RangeLabelRoom + RangeRow;
+    /// the room at the column's left edge, the track runs down what is left — and only the handle has to fit
+    /// beside it, so the four columns stand as close as their handles allow.</summary>
+    private const double RangeColumn = RangeLabelRoom + RangeHandle * 2 + 2;
 
     /// <summary>The line a slider sweeps, with the data range mapped onto it.</summary>
     private Rect RangeTrack(int axis)
@@ -6008,6 +6100,7 @@ public class GrumpySurfacePlot : ChartBase
     /// slices out of fifty-five and read as a mystery.</summary>
     private string RangeLabelText(int axis)
     {
+        if (IsZoomAxis(axis)) return $"{RangeName(axis)} {FormatNumber(ZoomPercentOf(axis), 0)} %";
         var steps = RangeSteps(axis);
         if (steps.Count < 2) return $"{RangeName(axis)} {FormatNumber(RangeLow(axis), 1)} … {FormatNumber(RangeHigh(axis), 1)}";
         var from = NearestStep(double.IsNaN(RangeLow(axis)) ? steps[0] : RangeLow(axis)) + 1;
@@ -6030,9 +6123,8 @@ public class GrumpySurfacePlot : ChartBase
         }
         else
         {
-            var range = RangeAxis(axis);
-            var span = range.Max - range.Min;
-            f = span > 0 ? Math.Clamp((value - range.Min) / span, 0, 1) : 0;
+            var span = RangeMax(axis) - RangeMin(axis);
+            f = span > 0 ? Math.Clamp((value - RangeMin(axis)) / span, 0, 1) : 0;
         }
         var from = RangeStart(track);
         var to = RangeEnd(track);
@@ -6050,8 +6142,7 @@ public class GrumpySurfacePlot : ChartBase
         var f = Math.Clamp(RangeVertical ? (position.Y - from.Y) / span : (position.X - from.X) / span, 0, 1);
         var steps = RangeSteps(axis);
         if (steps.Count > 1) return steps[(int)Math.Round(f * (steps.Count - 1))];
-        var range = RangeAxis(axis);
-        return range.Min + f * (range.Max - range.Min);
+        return RangeMin(axis) + f * (RangeMax(axis) - RangeMin(axis));
     }
 
     /// <summary>The band a pointer grabs to take hold of a slider: its own row across the frame, its own
@@ -6071,7 +6162,7 @@ public class GrumpySurfacePlot : ChartBase
     private int RangeHitAxis(Point position)
     {
         if (_legendRect.Width <= 0 || !_legendRect.Contains(position)) return -1;
-        for (var axis = 0; axis < 2; axis++)
+        for (var axis = 0; axis < RangeAxisCount; axis++)
         {
             if (RangeBand(axis).Contains(position)) return axis;
         }
@@ -6079,13 +6170,20 @@ public class GrumpySurfacePlot : ChartBase
     }
 
     /// <summary>Moves the end of a window the pointer is dragging: the end nearer the pointer takes the
-    /// value, the other one stays put (so dragging past it pins them together instead of swapping).</summary>
+    /// value, the other one stays put (so dragging past it pins them together instead of swapping). On a
+    /// ZOOM slider there is no window to move: the one number it carries is the size the axis is drawn at.</summary>
     private void DragRangeTo(Point position)
     {
         var axis = _rangeDragAxis;
         if (axis < 0) return;
         var value = RangeValue(axis, position);
-        if (axis == 0)
+        if (IsZoomAxis(axis))
+        {
+            var percent = Math.Clamp(value, MinZoomPercent, MaxZoomPercent);
+            if (axis == 2) ZoomX = percent;
+            else ZoomY = percent;
+        }
+        else if (axis == 0)
         {
             if (_rangeDragHigh) MaxX = Math.Max(value, RangeLow(0));
             else MinX = Math.Min(value, RangeHigh(0));
@@ -6298,6 +6396,12 @@ public class GrumpySurfacePlot : ChartBase
         {
             View = MakeView(plot),
             Depth = Math.Clamp(ZSpacing, 0.1, 4),
+            // The X and Y axes' own SIZE, as a factor: 100 % is the fitted size, and the range a form sets is
+            // not touched by it (see ZoomX/ZoomY) — the sheet just gets smaller or bigger about the middle of
+            // the frame. Above 100 % the plot box would clip the picture, so 100 is the top of the scale and
+            // the legend's two zoom sliders run 1…100 % of it (they are what asks for the number).
+            ZoomXFactor = Math.Clamp(ZoomX, MinZoomPercent, MaxZoomPercent) / 100d,
+            ZoomYFactor = Math.Clamp(ZoomY, MinZoomPercent, MaxZoomPercent) / 100d,
             Xs = visible.Count > 0 ? visible[0].XRange : AxisRange.Over(new[] { 0d, 1d }, MinX, MaxX, 6, 1),
             Ys = visible.Count > 0 ? visible[0].YRange : AxisRange.Over(new[] { 0d, 1d }, MinY, MaxY, 5, 5),
             Zs = AxisRange.Over(everyZ, lowZ, highZ, 5, 5)
@@ -6336,6 +6440,7 @@ public class GrumpySurfacePlot : ChartBase
         if (rampHigh <= rampLow) rampHigh = rampLow + 1;
         var opacity = Math.Clamp(SolidOpacity, 0, 100) / 100d;
         var meshPen = MakePen(MeshColor, MeshThickness, ChartLineStyle.Solid);
+        var rampLevels = RampSteps(world, slices.Count - 1, rampLow, rampHigh);
 
         // Farthest band first: the projection itself says which end of the sheet is the far one.
         var order = Enumerable.Range(0, slices.Count)
@@ -6367,13 +6472,18 @@ public class GrumpySurfacePlot : ChartBase
                 }
                 if (Style is not SurfaceStyle.GridMesh)
                 {
-                    var brush = ColorBy is SurfaceColorMode.Temperature
-                        ? TemperatureBrush(world, (slices[far].Depth + slices[near].Depth) / 2, rampLow, rampHigh, opacity)
-                        : new SolidColorBrush(slices[far].Color, opacity);
-                    // The band is filled AND outlined in its own brush: two neighbouring bands are separate
-                    // draw calls, so their shared edge would otherwise show a hairline of the background
-                    // through the sheet.
-                    context.DrawGeometry(brush, new Pen(brush, 1), BandGeometry(world, slices, far, near, kept, false));
+                    if (ColorBy is SurfaceColorMode.Temperature)
+                    {
+                        DrawTemperatureFill(context, world, slices, far, near, kept, rampLow, rampHigh, rampLevels, opacity);
+                    }
+                    else
+                    {
+                        var brush = new SolidColorBrush(slices[far].Color, opacity);
+                        // The band is filled AND outlined in its own brush: two neighbouring bands are separate
+                        // draw calls, so their shared edge would otherwise show a hairline of the background
+                        // through the sheet.
+                        context.DrawGeometry(brush, new Pen(brush, 1), BandGeometry(world, slices, far, near, kept, false));
+                    }
                 }
                 if (Style is not SurfaceStyle.Solid)
                     context.DrawGeometry(null, meshPen, BandGeometry(world, slices, far, near, kept, true));
@@ -6382,31 +6492,189 @@ public class GrumpySurfacePlot : ChartBase
     }
 
     /// <summary>
-    /// The temperature ramp for one band: LowColor at the ramp's low value and HighColor at its high one,
-    /// laid along the projected HEIGHT axis — with a brush per band, built at that band's own depth, so a
-    /// ridge's colour depends on its height and not on how far back it stands (a simply vertical screen
-    /// gradient would tint by screen position instead, and the same ridge would change colour along the
-    /// length of the sheet).
+    /// How many levels the height ramp is drawn in. About one per two pixels of the sheet's own height, so the
+    /// level lines themselves are never what you see — with a floor of 8 and a ceiling that keeps a sheet of
+    /// many slices to a sane number of fills (one per level per band).
     /// </summary>
-    private IBrush TemperatureBrush(SurfaceWorld world, double depth, double low, double high, double opacity)
+    private static int RampSteps(SurfaceWorld world, int bands, double low, double high)
     {
-        var from = world.View.Project(0, world.UnitY(low), depth);
-        var to = world.View.Project(0, world.UnitY(high), depth);
-        var spanX = to.X - from.X;
-        var spanY = to.Y - from.Y;
-        if (spanX * spanX + spanY * spanY < 1)
-            return new SolidColorBrush(Blend(LowColor, HighColor, 0.5), opacity);   // edge on: one colour
-        return new LinearGradientBrush
+        var span = world.UnitY(high) - world.UnitY(low);
+        var pixels = Math.Abs(world.View.CosElevation * world.View.Scale * span);
+        var levels = (int)Math.Round(pixels / 2);
+        return Math.Clamp(levels, 8, Math.Max(8, 4000 / Math.Max(1, bands)));
+    }
+
+    /// <summary>
+    /// One band's temperature fill: the sheet coloured BY HEIGHT — every part of it takes the colour of the
+    /// height it stands at, so a ridge is HighColor's end and a valley LowColor's however the cube is turned.
+    ///
+    /// A brush can only know where a PIXEL is on the screen, and on a tipped cube the screen position mixes a
+    /// point's height with how far back it stands (moving along the eye ray changes the height without moving
+    /// the pixel at all). One gradient per band — what this used to be, and what the manual promised as
+    /// "level with the data" — therefore coloured one height DIFFERENTLY from slice to slice, by tan(Elevation)
+    /// of the ramp; a narrow Z window made it unmistakable (reported from the running app 2026-09-24: three
+    /// slices, and the plateau one shade at the front and another at the back).
+    ///
+    /// So the ramp is not a brush here at all: each drawn triangle is cut on the ramp's own levels and every
+    /// piece is filled with its level's colour (<see cref="CutToLevels"/>). A triangle's height is linear across
+    /// it, so the cut is exact — the picture is a true contour map of the height, which is what "colour by
+    /// height" means, and no view can change it.
+    /// </summary>
+    private void DrawTemperatureFill(DrawingContext context, SurfaceWorld world, List<SurfaceSlice> slices,
+                                     int far, int near, List<int> kept, double low, double high, int levels,
+                                     double opacity)
+    {
+        if (kept.Count < 2 || levels < 1) return;
+        var span = high - low;
+        if (span <= 0) span = 1;
+
+        // One geometry per level, all of them NonZero: a fold makes a band's own pieces overlap, and NonZero
+        // adds those overlaps up (see AddPolygon) instead of cancelling them into a see-through hole.
+        var geometries = new StreamGeometry[levels];
+        var contexts = new StreamGeometryContext[levels];
+        var winding = new double[levels];
+        var used = new bool[levels];
+        for (var level = 0; level < levels; level++)
         {
-            StartPoint = new RelativePoint(from, RelativeUnit.Absolute),
-            EndPoint = new RelativePoint(to, RelativeUnit.Absolute),
-            GradientStops = new GradientStops
+            geometries[level] = new StreamGeometry();
+            contexts[level] = geometries[level].Open();
+            contexts[level].SetFillRule(FillRule.NonZero);
+        }
+
+        var points = new List<Point>(4);
+        var field = new List<double>(4);
+        try
+        {
+            for (var k = 0; k + 1 < kept.Count; k++)
             {
-                new GradientStop(LowColor, 0),
-                new GradientStop(HighColor, 1)
-            },
-            Opacity = opacity
-        };
+                // A quad needs all four of its corners: a sample either slice is missing ends the fill there
+                // rather than smearing it across the gap.
+                if (!TryPoint(world, slices[far], kept[k], out var a)) continue;
+                if (!TryPoint(world, slices[far], kept[k + 1], out var b)) continue;
+                if (!TryPoint(world, slices[near], kept[k + 1], out var c)) continue;
+                if (!TryPoint(world, slices[near], kept[k], out var d)) continue;
+                var ay = slices[far].Ys[kept[k]];
+                var by = slices[far].Ys[kept[k + 1]];
+                var cy = slices[near].Ys[kept[k + 1]];
+                var dy = slices[near].Ys[kept[k]];
+
+                // The quad is split by the b–d diagonal into two triangles. A triangle cannot cross itself,
+                // which is what keeps a fold's overlapping pieces adding up rather than cancelling.
+                CutToLevels(contexts, used, winding, points, field, a, b, d, ay, by, dy, low, span, levels);
+                CutToLevels(contexts, used, winding, points, field, b, c, d, by, cy, dy, low, span, levels);
+            }
+        }
+        finally
+        {
+            foreach (var open in contexts) open.Dispose();
+        }
+
+        for (var level = 0; level < levels; level++)
+        {
+            if (!used[level]) continue;
+            // The level's own colour is the ramp's middle there, and the fill is outlined in that same colour:
+            // two neighbouring levels are separate draw calls, so their shared edge would otherwise show a
+            // hairline of the background through the sheet.
+            var brush = new SolidColorBrush(Blend(LowColor, HighColor, (level + 0.5) / levels), opacity);
+            context.DrawGeometry(brush, new Pen(brush, 1), geometries[level]);
+        }
+    }
+
+    /// <summary>
+    /// Cuts one triangle into the ramp's levels: for every level it spans, the part of the triangle whose
+    /// height sits inside that level is clipped out and added to that level's geometry. The height is linear
+    /// across a triangle, so the cut sits exactly on the level line — which is why the sheet reads as a
+    /// contour map of its own height instead of as a tint that follows the screen.
+    /// </summary>
+    private static void CutToLevels(StreamGeometryContext[] contexts, bool[] used, double[] winding,
+                                    List<Point> points, List<double> field,
+                                    Point p0, Point p1, Point p2, double y0, double y1, double y2,
+                                    double low, double span, int levels)
+    {
+        // A level index is only valid up to the LAST one, and a height at (or above) the ramp's own top is the
+        // top level — not one past it. Without that clamp a triangle sitting exactly at the maximum produced
+        // first = levels against last = levels - 1, so its loop body never ran and the triangle was never
+        // filled at all: a sheet whose crest plateau lies at its own maximum came out with its TOPS OPEN
+        // (reported 2026-09-24, right after the ramp became a function of the height — before that the crest
+        // was painted by a screen gradient, which has no such boundary).
+        var top = levels - 1e-9;
+        var s0 = Math.Clamp((y0 - low) / span * levels, 0d, top);
+        var s1 = Math.Clamp((y1 - low) / span * levels, 0d, top);
+        var s2 = Math.Clamp((y2 - low) / span * levels, 0d, top);
+        var first = Math.Max(0, (int)Math.Floor(Math.Min(s0, Math.Min(s1, s2))));
+        var last = Math.Min(levels - 1, (int)Math.Floor(Math.Max(s0, Math.Max(s1, s2))));
+        for (var level = first; level <= last; level++)
+        {
+            points.Clear();
+            points.Add(p0);
+            points.Add(p1);
+            points.Add(p2);
+            field.Clear();
+            field.Add(s0);
+            field.Add(s1);
+            field.Add(s2);
+            ClipHalf(points, field, level, true);
+            ClipHalf(points, field, level + 1, false);
+            if (points.Count < 3) continue;
+            used[level] = true;
+            winding[level] = AddPolygon(contexts[level], points, winding[level]);
+        }
+    }
+
+    /// <summary>Keeps the part of a polygon where the (linear) height field is at or above
+    /// <paramref name="bound"/> — or at or below it, when <paramref name="above"/> is false — interpolating
+    /// the crossing points, which is what puts the cut exactly on the level line.</summary>
+    private static void ClipHalf(List<Point> points, List<double> field, double bound, bool above)
+    {
+        var count = points.Count;
+        if (count == 0) return;
+        var keptPoints = new List<Point>(count + 1);
+        var keptField = new List<double>(count + 1);
+        for (var i = 0; i < count; i++)
+        {
+            var j = (i + 1) % count;
+            var si = field[i];
+            var sj = field[j];
+            var insideI = above ? si >= bound : si <= bound;
+            var insideJ = above ? sj >= bound : sj <= bound;
+            if (insideI)
+            {
+                keptPoints.Add(points[i]);
+                keptField.Add(si);
+            }
+            if (insideI == insideJ) continue;
+            var t = (bound - si) / (sj - si);
+            keptPoints.Add(new Point(points[i].X + (points[j].X - points[i].X) * t,
+                                     points[i].Y + (points[j].Y - points[i].Y) * t));
+            keptField.Add(bound);
+        }
+        points.Clear();
+        points.AddRange(keptPoints);
+        field.Clear();
+        field.AddRange(keptField);
+    }
+
+    /// <summary>
+    /// Adds one cut piece to its level's geometry, wound the way that level's first piece was.
+    /// <paramref name="want"/> is that sign and comes back so the whole level keeps it — the same rule as a
+    /// band's triangles, and for the same reason: NON-ZERO only adds a fold's overlapping pieces up when they
+    /// are wound alike, and a level's pieces come from many triangles whose winds differ.
+    /// </summary>
+    private static double AddPolygon(StreamGeometryContext g, List<Point> polygon, double want)
+    {
+        var area = 0d;
+        for (var i = 0; i < polygon.Count; i++)
+        {
+            var j = (i + 1) % polygon.Count;
+            area += polygon[i].X * polygon[j].Y - polygon[j].X * polygon[i].Y;
+        }
+        if (Math.Abs(area) < 1e-9) return want;
+        if (want == 0) want = area;
+        var reverse = area * want < 0;
+        g.BeginFigure(polygon[reverse ? polygon.Count - 1 : 0], true);
+        for (var i = 1; i < polygon.Count; i++) g.LineTo(polygon[reverse ? polygon.Count - 1 - i : i]);
+        g.EndFigure(true);
+        return want;
     }
 
     /// <summary>Halfway between two colours — what an edge-on ramp collapses to.</summary>
@@ -6488,11 +6756,7 @@ public class GrumpySurfacePlot : ChartBase
     /// One filled triangle of a band, wound the way the band's first one was — <paramref name="want"/> is that
     /// sign, and it comes back so every triangle of the band keeps it. This is what stops a fold's overlapping
     /// triangles from cancelling: a triangle is the only polygon that cannot cross itself, so there is no loop
-    /// whose winding could be subtracted from another's. The name is also the bundled-file staleness marker
-    /// (<c>src/bundledComponents.ts</c>): a project still holding a copy of this chart from before
-    /// 2026-09-24 has the old one-figure band fill and no such member, and drawing is exactly the kind of
-    /// change such a copy cannot show — which is why such a form kept drawing see-through bands in the app
-    /// while the designer (built from this file) looked right.
+    /// whose winding could be subtracted from another's.
     /// </summary>
     private static double BandTriangle(StreamGeometryContext g, Point p, Point q, Point r, double want)
     {
@@ -6950,14 +7214,24 @@ public class GrumpySurfacePlot : ChartBase
         internal AxisRange Zs = new();
         internal double Depth = 1d;
 
+        /// <summary>How much bigger the X axis is drawn than its fitted size (1 = as fitted).</summary>
+        internal double ZoomXFactor = 1d;
+
+        /// <summary>And the Y (height) axis.</summary>
+        internal double ZoomYFactor = 1d;
+
         /// <summary>The width positions, across the sheet from 0 to 1. The clamp is only a safety net for the
         /// boundary sample and for a hand-set axis range: the samples themselves are CUT to the window before
         /// they get here (<see cref="CutToWindow"/>), because clamping them is what used to pile every
         /// off-window sample onto the edge and draw a false panel along it.</summary>
-        internal double UnitX(double x) => Clamp01((x - Xs.Min) / Math.Max(1e-9, Xs.Max - Xs.Min));
+        internal double UnitX(double x) => About(Clamp01((x - Xs.Min) / Math.Max(1e-9, Xs.Max - Xs.Min)), ZoomXFactor);
 
-        /// <summary>The heights, up the sheet from 0 to 1.</summary>
-        internal double UnitY(double y) => Clamp01((y - Ys.Min) / Math.Max(1e-9, Ys.Max - Ys.Min));
+        /// <summary>The heights, up the sheet from 0 to 1, stretched by <see cref="ZoomYFactor"/>.</summary>
+        internal double UnitY(double y) => About(Clamp01((y - Ys.Min) / Math.Max(1e-9, Ys.Max - Ys.Min)), ZoomYFactor);
+
+        /// <summary>One axis's unit position, magnified about the MIDDLE of the fitted box — so a zoom grows
+        /// the sheet evenly in every direction and the picture stays centred on what it was looking at.</summary>
+        private static double About(double unit, double factor) => 0.5 + (unit - 0.5) * factor;
 
         /// <summary>How far back a slice stands, from its Z VALUE — so slices the spreadsheet places
         /// unevenly apart stand unevenly far apart.</summary>

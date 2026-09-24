@@ -5,7 +5,8 @@ import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './x
 import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
     chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush, chartSlicesOf, writeChartSlices,
-    chartDataSourceOf, writeChartDataSource, supportsCursors, hasRangeLegend, chartDataRangeOf
+    chartDataSourceOf, writeChartDataSource, supportsCursors, hasRangeLegend, chartDataRangeOf,
+    chartSeriesChildren, sliceSeriesPlan, applySliceSeries, isSliceChartTag
 } from './chartSeries';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
@@ -3357,10 +3358,15 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     writeChartDataSource(doc.model, el, (msg.values ?? {}) as Record<string, unknown>);
                     // SourceSheet/SourceKind/DataFile need the project's bundled chart file to be current
                     // (an older copy has no such properties, so the form would not compile).
+                    // Pointing a 3-D chart at a PAGE loads the WHOLE dataset: a surface reads one
+                    // spreadsheet column per slice and a slice is one series element, so the page's own
+                    // width decides how many the form needs (see sliceSeriesPlan / loadSliceSeries).
+                    const sliceNote = await this.loadSliceSeries(doc, el);
                     this.ensureGrumpyChartsHelper(doc);
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
                     await this.sendProperties(doc, panel, msg.name);
+                    if (sliceNote) void vscode.window.showWarningMessage(sliceNote);
                     return;
                 }
                 case 'requestSheets': {
@@ -4667,7 +4673,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 // selector kinds look identical) is refreshed. A copy the user has customised is
                 // left alone — isStaleBundledCopy only refreshes provable bundled boilerplate.
                 try {
-                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'PathPicker')) {
+                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'PathPicker',
+                                          fs.readFileSync(src, 'utf8'))) {
                         fs.copyFileSync(src, p);
                         void vscode.window.showInformationMessage(
                             `Updated ${file} to the current bundled version (the pickers now show a file/folder icon).`
@@ -4699,7 +4706,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             for (const p of this.bundledFileCandidates(doc, proj, spec.file)) {
                 if (!fs.existsSync(p)) continue;
                 try {
-                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, spec.kind)) stale.push(spec.file);
+                    // The CURRENT copy is the extension's own file, so "older" is a content question —
+                    // a drawing change (a slider, a colour, a menu entry) adds no property to look for.
+                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, spec.kind, fs.readFileSync(
+                        path.join(this.context.extensionUri.fsPath, 'resources', spec.file), 'utf8'))) {
+                        stale.push(spec.file);
+                    }
                 } catch { /* unreadable — say nothing about it */ }
                 break; // only the first place that has the file
             }
@@ -4733,10 +4745,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         this.staleHelperOffered.add(key);
         const stale = this.staleBundledFiles(doc);
         if (stale.length === 0) return;
+        // Nobody has to click when the project asks for it to be handled: the setting is off by default,
+        // because writing into a project's files is something a user may want to see first.
+        if (vscode.workspace.getConfiguration('avaloniaDesigner').get<boolean>('bundled.autoUpdate') === true) {
+            this.ensureBundledComponentsCurrent(doc);
+            return;
+        }
         const what = stale.join(' + ');
         void vscode.window.showInformationMessage(
             `This project's ${what} ${stale.length === 1 ? 'is' : 'are'} older than the extension's copy. `
-            + 'The running app compiles that file, so it can behave differently from the designer until it is updated.',
+            + 'The running app compiles that file, so it can behave differently from the designer until it is updated.'
+            + ' (avaloniaDesigner.bundled.autoUpdate makes this automatic.)',
             'Update now'
         ).then((pick) => {
             if (pick !== 'Update now') return;
@@ -4761,7 +4780,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 // A copy older than the current bundled version is refreshed; a customised copy is left
                 // alone, since isStaleBundledCopy only refreshes provable bundled boilerplate.
                 try {
-                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'GrumpyCharts')) {
+                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'GrumpyCharts',
+                                          fs.readFileSync(src, 'utf8'))) {
                         fs.copyFileSync(src, p);
                         void vscode.window.showInformationMessage(
                             `Updated ${file} to the current bundled version (the charts gained multiple `
@@ -5159,6 +5179,49 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             msg.dataSource = chartDataSourceOf(el);
         }
         await panel.webview.postMessage(msg);
+    }
+
+    /**
+     * "When selecting a spreadsheet file for the surface 3d plot the full dataset should be loaded"
+     * (reported 2026-09-24). A surface reads one spreadsheet COLUMN per slice and each slice is one
+     * <charts:XYSeries/> child, so a chart with no slices of its own is given one bare child per data
+     * column of the page — C, D, E … after the shared X column. A list the form already carries is only
+     * replaced while EVERY entry is bare; the moment one carries a property, that list is the author's
+     * and nothing here touches it.
+     *
+     * Returns a note to show when the whole sheet was expected but the page could not be read AND the
+     * chart has no slices at all (so it would draw a single profile, which looks like a broken chart
+     * rather than an unread workbook), else null.
+     */
+    private async loadSliceSeries(doc: DesignerDocument, el: Element): Promise<string | null> {
+        if (!isSliceChartTag(localName(el.tagName))) return null;
+        const source = chartDataSourceOf(el);
+        if (source.kind !== 'Spreadsheet' || !source.file || !source.sheet) return null;
+        const kids = chartSeriesChildren(el);
+        // An authored list is not merely left alone — the workbook is not even read for it.
+        if (kids.some((kid) => kid.attributes.length > 0 || kid.childNodes.length > 0)) return null;
+        try {
+            const host = await this.host.getClient();
+            const shape = await host.sheetShape(source.file, source.sheet);
+            if (shape.error) return kids.length === 0 ? `Could not load the slices of this page: ${shape.error}` : null;
+            const plan = sliceSeriesPlan(kids, el.getAttribute('XColumn') || 'B', shape.columns);
+            if (plan) {
+                applySliceSeries(doc.model, el, plan);
+                // "The full dataset should be loaded" means SEEN, not merely present: a slice window left
+                // over from an older, narrower page hides most of what was just loaded (a form carrying
+                // MaxZ="9" drew two slices of a hundred, which looks exactly like a chart that never got
+                // the data). The WIDTH window (MinX/MaxX) is deliberately left alone — it is a range the
+                // author can see in the picture, not a count of slices.
+                if (hasRangeLegend(localName(el.tagName))) {
+                    doc.model.setProperty(el, 'MinZ', '');
+                    doc.model.setProperty(el, 'MaxZ', '');
+                }
+            }
+            return null;
+        } catch (e) {
+            const why = String((e as Error).message ?? e);
+            return kids.length === 0 ? `Could not load the slices of this page: ${why}` : null;
+        }
     }
 
     /** Fetches the system font list from the host once and pushes it to a webview panel, so its

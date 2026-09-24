@@ -1,3 +1,4 @@
+' BUNDLED-COPY: 0.11.18
 ' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb.
 '
@@ -3873,6 +3874,19 @@ Namespace Global.AvaloniaCharts
                                       End Sub
             items.Add(fillItem)
 
+            ' The LEGEND is the other thing on a chart that is not about cursors, and the one a reader
+            ' reaches for while looking at a crowded form: with the names gone the picture gets their room
+            ' back. Every chart type has a legend, so this goes in BEFORE the no-cursors return below — the
+            ' bar and the pie need it as much as the line plot does. Like every other toggle here it changes
+            ' only the RUNNING chart: the form has its own ShowLegend, set in the Properties panel, and a
+            ' restart goes back to it.
+            Dim legendItem As New MenuItem With {.Header = If(ShowLegend, "✓ ", "    ") & "Legend"}
+            AddHandler legendItem.Click, Sub(sender As Object, e As RoutedEventArgs)
+                                             ShowLegend = Not ShowLegend
+                                             InvalidateVisual()
+                                         End Sub
+            items.Add(legendItem)
+
             ' A chart that has no cursors (the pie and the bar) gets no cursor entries at all: the toggles,
             ' the readout position, add / remove / reset and "copy readout" are every one of them about
             ' cursors. Those charts report what is under the pointer in the readout panel instead (see
@@ -6378,6 +6392,20 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly ZoomProperty As StyledProperty(Of Double) =
             AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(Zoom), 1.0R)
 
+        ''' <summary>How big the X axis is DRAWN, in percent of the fitted size (100 = as fitted). This is a
+        ''' zoom, not a window: Min X / Max X are untouched, so the sheet magnifies about the middle of the
+        ''' frame (and the parts that no longer fit are clipped by the plot box) instead of showing a
+        ''' different range. The X axis's own direction on screen is what stretches, so the depth the slices
+        ''' stand apart keeps its perspective — ZSpacing is the knob for that.</summary>
+        Public Shared ReadOnly ZoomXProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(ZoomX), 100.0R)
+
+        ''' <summary>How tall the Y (height) axis is DRAWN, in percent of the fitted size — the vertical
+        ''' exaggeration a corrugated sheet is usually read with. Zoom, not range: Min Y / Max Y are
+        ''' untouched.</summary>
+        Public Shared ReadOnly ZoomYProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(ZoomY), 100.0R)
+
         ''' <summary>The name along the depth axis.</summary>
         Public Shared ReadOnly ZAxisTitleProperty As StyledProperty(Of String) =
             AvaloniaProperty.Register(Of GrumpySurfacePlot, String)(NameOf(ZAxisTitle))
@@ -6392,7 +6420,7 @@ Namespace Global.AvaloniaCharts
                 LowColorProperty, HighColorProperty, HeatMinProperty, HeatMaxProperty, MeshColorProperty,
                 MeshThicknessProperty, SolidOpacityProperty, ZStartProperty, ZStepProperty, ZRowProperty,
                 MinZProperty, MaxZProperty, MaxPointsProperty, ElevationProperty, AzimuthProperty,
-                ZSpacingProperty, ZoomProperty, ZAxisTitleProperty, ShowBaseProperty, BaseColorProperty)
+                ZSpacingProperty, ZoomProperty, ZoomXProperty, ZoomYProperty, ZAxisTitleProperty, ShowBaseProperty, BaseColorProperty)
         End Sub
 
         ''' <summary>One corrugation profile, typed in: the X is the sample number.</summary>
@@ -6627,6 +6655,26 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
+        ''' <summary>How big the X axis is drawn, in percent (100 = fitted). A zoom: the range stays.</summary>
+        Public Property ZoomX As Double
+            Get
+                Return GetValue(ZoomXProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ZoomXProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How tall the Y axis is drawn, in percent (100 = fitted). A zoom: the range stays.</summary>
+        Public Property ZoomY As Double
+            Get
+                Return GetValue(ZoomYProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ZoomYProperty, value)
+            End Set
+        End Property
+
         ''' <summary>The name along the depth axis.</summary>
         Public Property ZAxisTitle As String
             Get
@@ -6720,11 +6768,34 @@ Namespace Global.AvaloniaCharts
         End Property
 
         ''' <summary>How tall one slider row is, how big its handles are drawn, and the room a slider's numbers
-        ''' take beside its track (they are rotated alongside it when the bar docks at a side).</summary>
-        Private Const RangeRow As Double = 20
+        ''' take beside its track (they are rotated alongside it when the bar docks at a side).
+        '''
+        ''' The spacing is deliberately tight — four sliders have to share the bar, and air between them is
+        ''' bar that the picture does not get. A row is one text height plus a little, and a docked column is
+        ''' the numbers' own room plus the handle it has to clear (a track is a 1px line, so the handle's
+        ''' width is what decides how close two of them may stand).</summary>
+        Private Const RangeRow As Double = 16
         Private Const RangeHandle As Double = 5
         Private Const RangeLabelWidth As Double = 92
         Private Const RangeLabelRoom As Double = 14
+
+        ''' <summary>The sliders the bar carries, in order: the WIDTH window (X), the SLICE window (Z), and then
+        ''' the two axis ZOOM levels — how big the X and Y axes are DRAWN, in percent of the fitted size, which
+        ''' is a size and not a window, so each of those two has one handle instead of two.</summary>
+        Private Const RangeAxisCount As Integer = 4
+
+        ''' <summary>The first axis that is a ZOOM rather than a window (2 = X zoom, 3 = Y zoom).</summary>
+        Private Const ZoomAxisFirst As Integer = 2
+
+        ''' <summary>A zoom slider's two ends, in percent of the fitted size: 100 is exactly as the picture is
+        ''' fitted (so it is the default and the top of the scale), 1 draws the axis a hundredth of that size.</summary>
+        Private Const MinZoomPercent As Double = 1
+        Private Const MaxZoomPercent As Double = 100
+
+        ''' <summary>True when a slider sizes an axis instead of cutting a window out of the data.</summary>
+        Private Shared Function IsZoomAxis(axis As Integer) As Boolean
+            Return axis >= ZoomAxisFirst
+        End Function
 
         ''' <summary>True when the bar docks at a side, so the sliders run DOWN the frame and their numbers are
         ''' turned on their side — the legend follows the side the form asks for.</summary>
@@ -6739,26 +6810,32 @@ Namespace Global.AvaloniaCharts
         Private _rangeDragHigh As Boolean
 
         Friend Overrides Function MeasureRangeLegend(frameSize As Size) As Size
-            ' Two sliders — the WIDTH (X) one first, then the SLICES (Z) one — each with its track and the
-            ' room its numbers need. Across the frame they stack as two rows; down a side they sit side by side
-            ' as two columns, so the bar still honours the side the form asked for.
+            ' FOUR sliders — the WIDTH (X) window, the SLICES (Z) window, then the X and Y zoom levels — each
+            ' with its track and the room its numbers need. Across the frame they stack as four rows; down a
+            ' side they sit side by side as four columns, so the bar still honours the side the form asked for.
             If RangeVertical Then
-                Return New Size(Math.Min(RangeColumn * 2 + 8, Math.Max(60, frameSize.Width * 0.5)),
+                Return New Size(Math.Min(RangeColumn * RangeAxisCount + 8, Math.Max(60, frameSize.Width * 0.5)),
                                 frameSize.Height)
             End If
-            Return New Size(frameSize.Width, Math.Min(RangeRow * 2 + 16, Math.Max(40, frameSize.Height * 0.5)))
+            Return New Size(frameSize.Width,
+                            Math.Min(RangeRow * RangeAxisCount + 16, Math.Max(40, frameSize.Height * 0.5)))
         End Function
 
         Friend Overrides Sub DrawRangeLegend(context As DrawingContext)
             Dim font = Math.Max(6, Math.Min(11, LegendFontSize - 1))
             Dim trackPen = MakePen(MeshColor, 3, ChartLineStyle.Solid)
-            For axis = 0 To 1
-                Dim colour = If(axis = 0, Color.Parse("#4C9FDC"), Color.Parse("#D9A519"))
+            For axis = 0 To RangeAxisCount - 1
+                Dim colour = RangeColour(axis)
                 Dim track = RangeTrack(axis)
                 context.DrawLine(trackPen, RangeStart(track), RangeEnd(track))
                 Dim handlePen = MakePen(colour, 1, ChartLineStyle.Solid)
                 Dim fill As New SolidColorBrush(colour)
-                For Each value In {RangeLow(axis), RangeHigh(axis)}
+                ' A window has TWO ends to drag; a zoom level is a single number, so it carries one handle.
+                ' ("handles" would be a VB keyword, hence "ends".)
+                Dim ends = If(IsZoomAxis(axis),
+                              New Double() {RangeLow(axis)},
+                              New Double() {RangeLow(axis), RangeHigh(axis)})
+                For Each value In ends
                     Dim point = RangePoint(axis, value)
                     context.DrawRectangle(fill, handlePen, New RoundedRect(
                         New Rect(point.X - RangeHandle, point.Y - RangeHandle, RangeHandle * 2, RangeHandle * 2), 2))
@@ -6781,15 +6858,41 @@ Namespace Global.AvaloniaCharts
             Next
         End Sub
 
+        ''' <summary>What each slider is painted in, so four of them can be told apart at a glance. The two
+        ''' zooms are deliberately drawn in colours NO slice of the palette uses, because the legend identifies
+        ''' its sliders by colour and a series walking past in the same green would read as a fifth slider.</summary>
+        Private Shared Function RangeColour(axis As Integer) As Color
+            Select Case axis
+                Case 0
+                    Return Color.Parse("#4C9FDC")   ' the width window
+                Case 1
+                    Return Color.Parse("#D9A519")   ' the slice window
+                Case 2
+                    Return Color.Parse("#00E5FF")   ' how big the X axis is drawn
+                Case Else
+                    Return Color.Parse("#FF00AA")   ' and the Y (height) axis
+            End Select
+        End Function
+
         ''' <summary>The letters the sliders carry: X is the WIDTH of the sheet, Z is how far along it a slice
-        ''' stands (the height between them is the data, and is not a choice).</summary>
+        ''' stands (the height between them is the data, and is not a choice). The last two SIZE an axis
+        ''' rather than pick a part of the data, so they say so.</summary>
         Private Shared Function RangeName(axis As Integer) As String
-            Return If(axis = 0, "X", "Z")
+            Select Case axis
+                Case 0
+                    Return "X"
+                Case 1
+                    Return "Z"
+                Case 2
+                    Return "X zoom"
+                Case Else
+                    Return "Y zoom"
+            End Select
         End Function
 
         ''' <inheritdoc/>
         Friend Overrides Function RangeSteps(axis As Integer) As IReadOnlyList(Of Double)
-            Return If(axis = 0, Array.Empty(Of Double)(), _sliceSteps)
+            Return If(axis = 1, _sliceSteps, Array.Empty(Of Double)())
         End Function
 
         ''' <summary>The nearest slice position to a window end, so a window always cuts BETWEEN slices — a
@@ -6812,8 +6915,10 @@ Namespace Global.AvaloniaCharts
         ''' <summary>What one slider says. The continuous one (the width) names the values it cut — "X 70 … 110"
         ''' — and the one that walks slices counts them instead, "Z 3…9 of 55", because the number of series
         ''' on show is the thing being chosen there: on a sheet sliced every 5 the values "0 … 9" would be two
-        ''' slices out of fifty-five and read as a mystery.</summary>
+        ''' slices out of fifty-five and read as a mystery. A zoom slider names its percent instead, because
+        ''' that is all it is.</summary>
         Private Function RangeLabelText(axis As Integer) As String
+            If IsZoomAxis(axis) Then Return $"{RangeName(axis)} {FormatNumber(ZoomPercentOf(axis), 0)} %"
             Dim steps = RangeSteps(axis)
             If steps.Count < 2 Then
                 Return $"{RangeName(axis)} {FormatNumber(RangeLow(axis), 1)} … {FormatNumber(RangeHigh(axis), 1)}"
@@ -6835,21 +6940,42 @@ Namespace Global.AvaloniaCharts
             Return If(axis = 0, _dataX, _dataZ)
         End Function
 
-        ''' <summary>The window's low end (unset = the whole data range).</summary>
+        ''' <summary>A slider's lowest value: the data's own floor for a window, 1 % for a zoom.</summary>
+        Private Function RangeMin(axis As Integer) As Double
+            If IsZoomAxis(axis) Then Return MinZoomPercent
+            Return RangeAxis(axis).Min
+        End Function
+
+        ''' <summary>And its highest: the data's own ceiling, or the fitted size (100 %) for a zoom.</summary>
+        Private Function RangeMax(axis As Integer) As Double
+            If IsZoomAxis(axis) Then Return MaxZoomPercent
+            Return RangeAxis(axis).Max
+        End Function
+
+        ''' <summary>How big an axis is DRAWN, in percent — the number its zoom slider sits on.</summary>
+        Private Function ZoomPercentOf(axis As Integer) As Double
+            Return If(axis = 2, ZoomX, ZoomY)
+        End Function
+
+        ''' <summary>The window's low end (unset = the whole data range); a zoom slider's only value is its
+        ''' percent.</summary>
         Private Function RangeLow(axis As Integer) As Double
+            If IsZoomAxis(axis) Then Return ZoomPercentOf(axis)
             Dim chosen = If(axis = 0, MinX, MinZ)   ' not 'set': that is a VB keyword (BC30183)
             Return If(Double.IsNaN(chosen), RangeAxis(axis).Min, chosen)
         End Function
 
         ''' <summary>The window's high end (unset = the whole data range).</summary>
         Private Function RangeHigh(axis As Integer) As Double
+            If IsZoomAxis(axis) Then Return ZoomPercentOf(axis)
             Dim chosen = If(axis = 0, MaxX, MaxZ)
             Return If(Double.IsNaN(chosen), RangeAxis(axis).Max, chosen)
         End Function
 
         ''' <summary>How wide one slider's COLUMN is when the bar is docked at a side: its rotated numbers
-        ''' take the room at the column's left edge, the track runs down what is left.</summary>
-        Private Const RangeColumn As Double = RangeLabelRoom + RangeRow
+        ''' take the room at the column's left edge, the track runs down what is left — and only the handle
+        ''' has to fit beside it, so the four columns stand as close as their handles allow.</summary>
+        Private Const RangeColumn As Double = RangeLabelRoom + RangeHandle * 2 + 2
 
         ''' <summary>The line a slider sweeps, with the data range mapped onto it.</summary>
         Private Function RangeTrack(axis As Integer) As Rect
@@ -6883,9 +7009,8 @@ Namespace Global.AvaloniaCharts
             If steps.Count > 1 Then
                 f = NearestStep(If(Double.IsNaN(value), steps(0), value)) / (steps.Count - 1)
             Else
-                Dim range = RangeAxis(axis)
-                Dim span = range.Max - range.Min
-                f = If(span > 0, Math.Clamp((value - range.Min) / span, 0, 1), 0)
+                Dim span = RangeMax(axis) - RangeMin(axis)
+                f = If(span > 0, Math.Clamp((value - RangeMin(axis)) / span, 0, 1), 0)
             End If
             Dim from = RangeStart(track)
             Dim finish = RangeEnd(track)
@@ -6902,8 +7027,7 @@ Namespace Global.AvaloniaCharts
             Dim f = Math.Clamp(If(RangeVertical, (position.Y - from.Y) / span, (position.X - from.X) / span), 0, 1)
             Dim steps = RangeSteps(axis)
             If steps.Count > 1 Then Return steps(CInt(Math.Round(f * (steps.Count - 1))))
-            Dim range = RangeAxis(axis)
-            Return range.Min + f * (range.Max - range.Min)
+            Return RangeMin(axis) + f * (RangeMax(axis) - RangeMin(axis))
         End Function
 
         ''' <summary>The band a pointer grabs to take hold of a slider: its own row across the frame, its own
@@ -6922,19 +7046,27 @@ Namespace Global.AvaloniaCharts
         ''' <summary>-1, or the slider a pointer position falls on.</summary>
         Private Function RangeHitAxis(position As Point) As Integer
             If _legendRect.Width <= 0 OrElse Not _legendRect.Contains(position) Then Return -1
-            For axis = 0 To 1
+            For axis = 0 To RangeAxisCount - 1
                 If RangeBand(axis).Contains(position) Then Return axis
             Next
             Return -1
         End Function
 
         ''' <summary>Moves the end of a window the pointer is dragging: the end nearer the pointer takes the
-        ''' value, the other one stays put (so dragging past it pins them together instead of swapping).</summary>
+        ''' value, the other one stays put (so dragging past it pins them together instead of swapping). On a
+        ''' ZOOM slider there is no window to move: the one number it carries is the size the axis is drawn at.</summary>
         Private Sub DragRangeTo(position As Point)
             Dim axis = _rangeDragAxis
             If axis < 0 Then Return
             Dim value = RangeValue(axis, position)
-            If axis = 0 Then
+            If IsZoomAxis(axis) Then
+                Dim percent = Math.Clamp(value, MinZoomPercent, MaxZoomPercent)
+                If axis = 2 Then
+                    ZoomX = percent
+                Else
+                    ZoomY = percent
+                End If
+            ElseIf axis = 0 Then
                 If _rangeDragHigh Then
                     MaxX = Math.Max(value, RangeLow(0))
                 Else
@@ -7150,9 +7282,16 @@ Namespace Global.AvaloniaCharts
                                           If Not _sliceZ.TryGetValue(p, z) Then Return False
                                           Return z >= lowZ - 1e-9 AndAlso z <= highZ + 1e-9
                                       End Function).ToList()
+            ' The SIZE of the X and Y axes, as a factor: 100 % is the fitted size, and the range a form sets is
+            ' not touched by it (see ZoomX/ZoomY) — the sheet just gets smaller or bigger about the middle.
+            ' Above 100 % the plot box would clip the picture, so 100 is the top of the scale and the legend's
+            ' two zoom sliders run 1…100 % of it. (VB allows no comment lines inside an object initializer:
+            ' they end the implicit line continuation.)
             Dim world As New SurfaceWorld With {
                 .View = MakeView(plot),
                 .Depth = Math.Clamp(ZSpacing, 0.1, 4),
+                .ZoomXFactor = Math.Clamp(ZoomX, MinZoomPercent, MaxZoomPercent) / 100.0,
+                .ZoomYFactor = Math.Clamp(ZoomY, MinZoomPercent, MaxZoomPercent) / 100.0,
                 .Xs = If(visible.Count > 0, visible(0).XRange, AxisRange.Over({0.0, 1.0}, MinX, MaxX, 6, 1)),
                 .Ys = If(visible.Count > 0, visible(0).YRange, AxisRange.Over({0.0, 1.0}, MinY, MaxY, 5, 5)),
                 .Zs = AxisRange.Over(everyZ, lowZ, highZ, 5, 5)
@@ -7197,6 +7336,7 @@ Namespace Global.AvaloniaCharts
             If rampHigh <= rampLow Then rampHigh = rampLow + 1
             Dim opacity = Math.Clamp(SolidOpacity, 0, 100) / 100.0
             Dim meshPen = MakePen(MeshColor, MeshThickness, ChartLineStyle.Solid)
+            Dim rampLevels = RampSteps(world, slices.Count - 1, rampLow, rampHigh)
             Dim baseBrush As IBrush = New SolidColorBrush(BaseColor)
             Dim basePen = MakePen(BaseColor, 1, ChartLineStyle.Solid)
 
@@ -7222,13 +7362,15 @@ Namespace Global.AvaloniaCharts
                         End If
                     End If
                     If Style <> SurfaceStyle.GridMesh Then
-                        Dim brush As IBrush = If(ColorBy = SurfaceColorMode.Temperature,
-                            TemperatureBrush(world, (slices(far).Depth + slices(near).Depth) / 2, rampLow, rampHigh, opacity),
-                            New SolidColorBrush(slices(far).Color, opacity))
-                        ' The band is filled AND outlined in its own brush: neighbouring bands are separate draw
-                        ' calls, so their shared edge would otherwise show a hairline of the background through
-                        ' the sheet (the same seam the per-quad fill used to leave inside a band).
-                        context.DrawGeometry(brush, New Pen(brush, 1), BandGeometry(world, slices, far, near, kept, False))
+                        If ColorBy = SurfaceColorMode.Temperature Then
+                            DrawTemperatureFill(context, world, slices, far, near, kept, rampLow, rampHigh, rampLevels, opacity)
+                        Else
+                            Dim brush As IBrush = New SolidColorBrush(slices(far).Color, opacity)
+                            ' The band is filled AND outlined in its own brush: neighbouring bands are separate draw
+                            ' calls, so their shared edge would otherwise show a hairline of the background through
+                            ' the sheet (the same seam the per-quad fill used to leave inside a band).
+                            context.DrawGeometry(brush, New Pen(brush, 1), BandGeometry(world, slices, far, near, kept, False))
+                        End If
                     End If
                     If Style <> SurfaceStyle.Solid Then
                         context.DrawGeometry(Nothing, meshPen, BandGeometry(world, slices, far, near, kept, True))
@@ -7238,29 +7380,181 @@ Namespace Global.AvaloniaCharts
         End Sub
 
         ''' <summary>
-        ''' The temperature ramp for one band: LowColor at the ramp's low value and HighColor at its high one,
-        ''' laid along the projected HEIGHT axis — with a brush per band, built at that band's own depth, so a
-        ''' ridge's colour depends on its height and not on how far back it stands.
+        ''' How many levels the height ramp is drawn in. About one per two pixels of the sheet's own height, so
+        ''' the level lines themselves are never what you see — with a floor of 8 and a ceiling that keeps a
+        ''' sheet of many slices to a sane number of fills (one per level per band).
         ''' </summary>
-        Private Function TemperatureBrush(world As SurfaceWorld, depth As Double, low As Double, high As Double,
-                                          opacity As Double) As IBrush
-            Dim from = world.View.Project(0, world.UnitY(low), depth)
-            Dim [to] = world.View.Project(0, world.UnitY(high), depth)
-            Dim spanX = [to].X - from.X
-            Dim spanY = [to].Y - from.Y
-            If spanX * spanX + spanY * spanY < 1 Then
-                ' Edge on: the ramp collapses to one colour.
-                Return New SolidColorBrush(Blend(LowColor, HighColor, 0.5), opacity)
-            End If
-            Return New LinearGradientBrush With {
-                .StartPoint = New RelativePoint(from, RelativeUnit.Absolute),
-                .EndPoint = New RelativePoint([to], RelativeUnit.Absolute),
-                .GradientStops = New GradientStops From {
-                    New GradientStop(LowColor, 0),
-                    New GradientStop(HighColor, 1)
-                },
-                .Opacity = opacity
-            }
+        Private Shared Function RampSteps(world As SurfaceWorld, bands As Integer, low As Double, high As Double) As Integer
+            Dim span = world.UnitY(high) - world.UnitY(low)
+            Dim pixels = Math.Abs(world.View.CosElevation * world.View.Scale * span)
+            Dim levels = CInt(Math.Round(pixels / 2))
+            Return Math.Clamp(levels, 8, Math.Max(8, 4000 \ Math.Max(1, bands)))
+        End Function
+
+        ''' <summary>
+        ''' One band's temperature fill: the sheet coloured BY HEIGHT — every part of it takes the colour of the
+        ''' height it stands at, so a ridge is HighColor's end and a valley LowColor's however the cube is turned.
+        '''
+        ''' A brush can only know where a PIXEL is on the screen, and on a tipped cube the screen position mixes a
+        ''' point's height with how far back it stands (moving along the eye ray changes the height without moving
+        ''' the pixel at all). One gradient per band — what this used to be, and what the manual promised as
+        ''' "level with the data" — therefore coloured one height DIFFERENTLY from slice to slice, by
+        ''' tan(Elevation) of the ramp; a narrow Z window made it unmistakable (reported from the running app
+        ''' 2026-09-24: three slices, and the plateau one shade at the front and another at the back).
+        '''
+        ''' So the ramp is not a brush here at all: each drawn triangle is cut on the ramp's own levels and every
+        ''' piece is filled with its level's colour (see CutToLevels). A triangle's height is linear across it, so
+        ''' the cut is exact — the picture is a true contour map of the height, which is what "colour by height"
+        ''' means, and no view can change it.
+        ''' </summary>
+        Private Sub DrawTemperatureFill(context As DrawingContext, world As SurfaceWorld, slices As List(Of SurfaceSlice),
+                                        far As Integer, near As Integer, kept As List(Of Integer),
+                                        low As Double, high As Double, levels As Integer, opacity As Double)
+            If kept.Count < 2 OrElse levels < 1 Then Return
+            Dim span = high - low
+            If span <= 0 Then span = 1
+
+            ' One geometry per level, all of them NonZero: a fold makes a band's own pieces overlap, and NonZero
+            ' adds those overlaps up (see AddPolygon) instead of cancelling them into a see-through hole.
+            Dim geometries(levels - 1) As StreamGeometry
+            Dim contexts(levels - 1) As StreamGeometryContext
+            Dim winding(levels - 1) As Double
+            Dim used(levels - 1) As Boolean
+            For level = 0 To levels - 1
+                geometries(level) = New StreamGeometry()
+                contexts(level) = geometries(level).Open()
+                contexts(level).SetFillRule(FillRule.NonZero)
+            Next
+
+            Dim points As New List(Of Point)(4)
+            Dim field As New List(Of Double)(4)
+            Try
+                For k = 0 To kept.Count - 2
+                    ' A quad needs all four of its corners: a sample either slice is missing ends the fill there
+                    ' rather than smearing it across the gap.
+                    Dim a As Point
+                    Dim b As Point
+                    Dim c As Point
+                    Dim d As Point
+                    If Not TryPoint(world, slices(far), kept(k), a) Then Continue For
+                    If Not TryPoint(world, slices(far), kept(k + 1), b) Then Continue For
+                    If Not TryPoint(world, slices(near), kept(k + 1), c) Then Continue For
+                    If Not TryPoint(world, slices(near), kept(k), d) Then Continue For
+                    Dim ay = slices(far).Ys(kept(k))
+                    Dim by = slices(far).Ys(kept(k + 1))
+                    Dim cy = slices(near).Ys(kept(k + 1))
+                    Dim dy = slices(near).Ys(kept(k))
+
+                    ' The quad is split by the b–d diagonal into two triangles. A triangle cannot cross itself,
+                    ' which is what keeps a fold's overlapping pieces adding up rather than cancelling.
+                    CutToLevels(contexts, used, winding, points, field, a, b, d, ay, by, dy, low, span, levels)
+                    CutToLevels(contexts, used, winding, points, field, b, c, d, by, cy, dy, low, span, levels)
+                Next
+            Finally
+                For Each open In contexts
+                    open.Dispose()
+                Next
+            End Try
+
+            For level = 0 To levels - 1
+                If Not used(level) Then Continue For
+                ' The level's own colour is the ramp's middle there, and the fill is outlined in that same
+                ' colour: two neighbouring levels are separate draw calls, so their shared edge would otherwise
+                ' show a hairline of the background through the sheet.
+                Dim brush As IBrush = New SolidColorBrush(Blend(LowColor, HighColor, (level + 0.5) / levels), opacity)
+                context.DrawGeometry(brush, New Pen(brush, 1), geometries(level))
+            Next
+        End Sub
+
+        ''' <summary>
+        ''' Cuts one triangle into the ramp's levels: for every level it spans, the part of the triangle whose
+        ''' height sits inside that level is clipped out and added to that level's geometry. The height is
+        ''' linear across a triangle, so the cut sits exactly on the level line — which is why the sheet reads
+        ''' as a contour map of its own height instead of as a tint that follows the screen.
+        ''' </summary>
+        Private Shared Sub CutToLevels(contexts As StreamGeometryContext(), used As Boolean(), winding As Double(),
+                                       points As List(Of Point), field As List(Of Double),
+                                       p0 As Point, p1 As Point, p2 As Point, y0 As Double, y1 As Double, y2 As Double,
+                                       low As Double, span As Double, levels As Integer)
+            ' A level index is only valid up to the LAST one, and a height at (or above) the ramp's own top is
+            ' the top level — not one past it. Without that clamp a triangle sitting exactly at the maximum
+            ' produced first = levels against last = levels - 1, so its loop body never ran and the triangle
+            ' was never filled at all: a sheet whose crest plateau lies at its own maximum came out with its
+            ' TOPS OPEN (reported 2026-09-24, right after the ramp became a function of the height).
+            Dim top = levels - 0.000000001
+            Dim s0 = Math.Clamp((y0 - low) / span * levels, 0.0, top)
+            Dim s1 = Math.Clamp((y1 - low) / span * levels, 0.0, top)
+            Dim s2 = Math.Clamp((y2 - low) / span * levels, 0.0, top)
+            Dim first = Math.Max(0, CInt(Math.Floor(Math.Min(s0, Math.Min(s1, s2)))))
+            Dim last = Math.Min(levels - 1, CInt(Math.Floor(Math.Max(s0, Math.Max(s1, s2)))))
+            For level = first To last
+                points.Clear()
+                points.Add(p0)
+                points.Add(p1)
+                points.Add(p2)
+                field.Clear()
+                field.Add(s0)
+                field.Add(s1)
+                field.Add(s2)
+                ClipHalf(points, field, level, True)
+                ClipHalf(points, field, level + 1, False)
+                If points.Count < 3 Then Continue For
+                used(level) = True
+                winding(level) = AddPolygon(contexts(level), points, winding(level))
+            Next
+        End Sub
+
+        ''' <summary>Keeps the part of a polygon where the (linear) height field is at or above
+        ''' <paramref name="bound"/> — or at or below it, when <paramref name="above"/> is false — interpolating
+        ''' the crossing points, which is what puts the cut exactly on the level line.</summary>
+        Private Shared Sub ClipHalf(points As List(Of Point), field As List(Of Double), bound As Double, above As Boolean)
+            Dim count = points.Count
+            If count = 0 Then Return
+            Dim keptPoints As New List(Of Point)(count + 1)
+            Dim keptField As New List(Of Double)(count + 1)
+            For i = 0 To count - 1
+                Dim j = (i + 1) Mod count
+                Dim si = field(i)
+                Dim sj = field(j)
+                Dim insideI = If(above, si >= bound, si <= bound)
+                Dim insideJ = If(above, sj >= bound, sj <= bound)
+                If insideI Then
+                    keptPoints.Add(points(i))
+                    keptField.Add(si)
+                End If
+                If insideI = insideJ Then Continue For
+                Dim t = (bound - si) / (sj - si)
+                keptPoints.Add(New Point(points(i).X + (points(j).X - points(i).X) * t,
+                                         points(i).Y + (points(j).Y - points(i).Y) * t))
+                keptField.Add(bound)
+            Next
+            points.Clear()
+            points.AddRange(keptPoints)
+            field.Clear()
+            field.AddRange(keptField)
+        End Sub
+
+        ''' <summary>
+        ''' Adds one cut piece to its level's geometry, wound the way that level's first piece was.
+        ''' <paramref name="want"/> is that sign and comes back so the whole level keeps it — the same rule as a
+        ''' band's triangles, and for the same reason: NON-ZERO only adds a fold's overlapping pieces up when
+        ''' they are wound alike, and a level's pieces come from many triangles whose winds differ.
+        ''' </summary>
+        Private Shared Function AddPolygon(g As StreamGeometryContext, polygon As List(Of Point), want As Double) As Double
+            Dim area = 0.0
+            For i = 0 To polygon.Count - 1
+                Dim j = (i + 1) Mod polygon.Count
+                area += polygon(i).X * polygon(j).Y - polygon(j).X * polygon(i).Y
+            Next
+            If Math.Abs(area) < 0.000000001 Then Return want
+            If want = 0 Then want = area
+            Dim reverse = area * want < 0
+            g.BeginFigure(polygon(If(reverse, polygon.Count - 1, 0)), True)
+            For i = 1 To polygon.Count - 1
+                g.LineTo(polygon(If(reverse, polygon.Count - 1 - i, i)))
+            Next
+            g.EndFigure(True)
+            Return want
         End Function
 
         ''' <summary>Halfway between two colours — what an edge-on ramp collapses to.</summary>
@@ -7788,17 +8082,30 @@ Namespace Global.AvaloniaCharts
             Friend Zs As AxisRange = New AxisRange()
             Friend Depth As Double = 1.0
 
+            ''' <summary>How much bigger the X axis is drawn than its fitted size (1 = as fitted).</summary>
+            Friend ZoomXFactor As Double = 1.0
+
+            ''' <summary>And the Y (height) axis.</summary>
+            Friend ZoomYFactor As Double = 1.0
+
             ''' <summary>The width positions, across the sheet from 0 to 1.  The clamp is only a safety net for the
             ''' boundary sample and for a hand-set axis range: the samples themselves are CUT to the window
             ''' before they get here (CutToWindow), because clamping them is what used to pile every off-window
             ''' sample onto the edge and draw a false panel along it.</summary>
             Friend Function UnitX(x As Double) As Double
-                Return Clamp01((x - Xs.Min) / Math.Max(0.000000001, Xs.Max - Xs.Min))
+                Return About(Clamp01((x - Xs.Min) / Math.Max(0.000000001, Xs.Max - Xs.Min)), ZoomXFactor)
             End Function
 
-            ''' <summary>The heights, up the sheet from 0 to 1.</summary>
+            ''' <summary>The heights, up the sheet from 0 to 1, stretched by ZoomYFactor.</summary>
             Friend Function UnitY(y As Double) As Double
-                Return Clamp01((y - Ys.Min) / Math.Max(0.000000001, Ys.Max - Ys.Min))
+                Return About(Clamp01((y - Ys.Min) / Math.Max(0.000000001, Ys.Max - Ys.Min)), ZoomYFactor)
+            End Function
+
+            ''' <summary>One axis's unit position, magnified about the MIDDLE of the fitted box — so a zoom
+            ''' grows the sheet evenly in every direction and the picture stays centred on what it was
+            ''' looking at.</summary>
+            Private Shared Function About(unit As Double, factor As Double) As Double
+                Return 0.5 + (unit - 0.5) * factor
             End Function
 
             ''' <summary>How far back a slice stands, from its Z VALUE — so slices the spreadsheet places

@@ -25,7 +25,7 @@ const { propertyDefsFor } = require('../../out/propertyCatalog.js');
 const { XamlModel } = require('../../out/xamlModel.js');
 const {
     CHART_SERIES_FIELDS, CHART_LEGACY_SERIES_ATTRS, chartSeriesOf, writeChartSeries,
-    defaultSeriesColumns, columnAfter
+    defaultSeriesColumns, columnAfter, columnIndex, sliceSeriesPlan, applySliceSeries, isSliceChartTag, chartSeriesChildren
 } = require('../../out/chartSeries.js');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -284,4 +284,72 @@ module.exports = async (t) => {
         'the fourth series reads H/I');
     t.equal(defaultSeriesColumns(9).x + defaultSeriesColumns(9).y, 'TU', 'pairing',
         'the tenth series reads T/U (the pairing keeps counting past Z)');
+
+    // --- 7. pointing a 3-D chart at a whole PAGE loads the whole dataset ---
+    // Reported 2026-09-24: "It seems that the Series editor has lost its feature to load all Z-series
+    // automatically when pointing the chart at a spreadsheet file. When selecting a spreadsheet file for
+    // the surface 3d plot the full dataset should be loaded." A surface reads one spreadsheet COLUMN per
+    // slice, so the page's LAST COLUMN — which the host reports (sheetShape: the workbook's used range) —
+    // says how many slice elements the form needs: C, D, E … after the shared X column.
+    t.ok(isSliceChartTag('GrumpySurfacePlot'), 'whole-sheet',
+        'the surface is a slice chart the whole-sheet rule serves');
+    t.ok(isSliceChartTag('GrumpyWaterfallPlot'), 'whole-sheet',
+        'and so is the waterfall — its sweeps ARE spreadsheet columns, one per set');
+    t.ok(!isSliceChartTag('GrumpyLinePlot') && !isSliceChartTag('GrumpyXYPlot'), 'whole-sheet',
+        'no other chart starts adding series by itself: a line plot reads pairs, not slices');
+
+    // The workbook the user points at: X in B, slices in C…CX = 100 of them (the host measured
+    // rows=101, columns=CX on their own page).
+    const page = { rows: 101, columns: 'CX' };
+    t.equal(columnIndex(page.columns) - columnIndex('B'), 100, 'whole-sheet',
+        'the page holds exactly as many slices as it has columns after the X column');
+
+    // A chart that carries NO slices gets one per data column, and nothing else about it is touched.
+    const fresh = chartModel('GrumpySurfacePlot', 'LowColor="#050E8A" Elevation="31"', '');
+    const freshPlan = sliceSeriesPlan(chartSeriesChildren(fresh.el), 'B', page.columns);
+    t.equal(freshPlan?.add ?? 0, 100, 'whole-sheet',
+        'a chart with no slices is given one per data column', `add=${freshPlan?.add}`);
+    applySliceSeries(fresh.model, fresh.el, freshPlan);
+    const freshXml = fresh.model.serialize(true);
+    t.equal(seriesTags(fresh.model).length, 100, 'whole-sheet',
+        'the whole dataset lands in the form as 100 <charts:XYSeries/> children');
+    t.ok(!/<charts:XYSeries[^/]*\w=/.test(freshXml), 'whole-sheet',
+        'every one of them is BARE — the chart reads its own columns for a list it was not given');
+    t.ok(freshXml.includes('LowColor="#050E8A"'), 'whole-sheet',
+        'and writing them leaves the chart\'s own rows exactly as they were (unlike the Series editor\'s save)');
+
+    // A 55-entry list left over from an older page is machine-made: it is REPLACED, because 55 slices
+    // cannot show a 100-column sheet.
+    const stale = chartModel('GrumpySurfacePlot', '', '<charts:XYSeries/>'.repeat(55));
+    const stalePlan = sliceSeriesPlan(chartSeriesChildren(stale.el), 'B', page.columns);
+    t.equal(`${stalePlan?.drop.length}/${stalePlan?.add}`, '55/100', 'whole-sheet',
+        'a list of bare leftovers is dropped and replaced with the page\'s own width');
+    applySliceSeries(stale.model, stale.el, stalePlan);
+    t.equal(seriesTags(stale.model).length, 100, 'whole-sheet', 'so the form holds the full dataset');
+
+    // An AUTHORED list is never touched — not even read past, and not resized.
+    const authored = chartModel('GrumpySurfacePlot', '',
+        '<charts:XYSeries Title="Crash" YColumn="C" LineColor="#FF0000"/>');
+    t.equal(sliceSeriesPlan(chartSeriesChildren(authored.el), 'B', page.columns), null, 'whole-sheet',
+        'one property on ONE entry is enough to keep the form\'s own list exactly as the author wrote it');
+    const mixed = chartModel('GrumpySurfacePlot', '', '<charts:XYSeries/><charts:XYSeries Title="Mine"/>');
+    t.equal(sliceSeriesPlan(chartSeriesChildren(mixed.el), 'B', page.columns), null, 'whole-sheet',
+        'and a half-bare list counts as authored too (the bare neighbours go with it)');
+
+    // Nothing to do when nothing would change, and nothing to do on a page too narrow to be a sheet.
+    const right = chartModel('GrumpySurfacePlot', '', '<charts:XYSeries/>'.repeat(100));
+    t.equal(sliceSeriesPlan(chartSeriesChildren(right.el), 'B', page.columns), null, 'whole-sheet',
+        'a list that already matches the page is not rewritten (no pointless undo step)');
+    t.equal(sliceSeriesPlan([], 'B', 'C')?.add ?? 0, 1, 'whole-sheet',
+        'a page with a single data column is one slice — the chart then draws the profile it is');
+    t.equal(sliceSeriesPlan([], 'B', 'B'), null, 'whole-sheet',
+        'and a page whose last column IS the X column has no data column to make a slice of');
+    t.equal(sliceSeriesPlan([], 'B', ''), null, 'whole-sheet',
+        'and a page the host could not measure (no columns) adds nothing');
+
+    // The X column is the chart's own, so a form that moved it starts its slices one column later.
+    const moved = chartModel('GrumpySurfacePlot', 'XColumn="A"', '');
+    const movedPlan = sliceSeriesPlan(chartSeriesChildren(moved.el), 'A', page.columns);
+    t.equal(movedPlan?.add ?? 0, 101, 'whole-sheet',
+        'with X in A the slices are B…CX, one more of them', `add=${movedPlan?.add}`);
 };

@@ -3887,3 +3887,74 @@ this reached a released app (`0.11.14`) before it reached the designer. One day,
 **Suite:** 7,941 passed / 0 failed (surface layer 76, source contracts 185). Host, generated C# project and the
 VB matrix: 0 warnings / 0 errors.
 
+### §149 — the ramp that followed the depth, and the copy that would not notice (2026-09-24, 0.11.18)
+
+Four reports in one afternoon, and the release that carries all of them.
+
+**The ramp was a function of the view.** *"the color gradient (temperature) should only apply to the
+y-axes. Currently it seems that the z-slices also apply the gradient starting at slice 1 to x-max."* The
+temperature colouring drew one `LinearGradientBrush` per band along the axis the HEIGHT maps onto on
+screen — but on a tipped cube that axis also moves with depth, so the same value came out at a different
+colour depending on how far back its band stood: a flat plate spanned **0.66…0.97** of the ramp at
+elevation 31 and **0.04…1.00** at elevation 60. A band is now CUT into `levels` horizontal slices
+(`CutToLevels`) and each level is filled with its own blend, so the colour is a function of the value and
+nothing else; the same plate is one colour at every angle, 5/25/45 of a 0…50 scale lands on
+0.11/0.50/0.89, and the cut is *cheaper* than the gradient it replaced (94–108 ms against 167 ms per
+render on a 100 × 100 sheet).
+
+**A triangle at the ramp's ceiling was never filled.** `first = (int)Math.Floor(min) ` was clamped only at
+the low end, so a triangle exactly at the maximum asked for level `levels` while the loop stopped at
+`levels - 1`: the crest of a corrugated sheet whose values reach the scale's top was a line of background
+through the picture — the user's *"the tops of the corrugated sheet are open"*. `var top = levels - 1e-9`
+(`Dim top = levels - 0.000000001` in VB) pins it: **0 → 9,482** sheet pixels at value 25 of a 0…25 scale.
+
+**The axis zoom is a size, not a window.** `ZoomX`/`ZoomY` map an axis value to its 0…1 unit position FIRST
+and magnify only after that (`About(u, f) = 0.5 + (u - 0.5) * f`), which is what keeps `MinX`/`MaxX` and
+every tick label untouched; magnifying about the MIDDLE is what keeps the picture centred. The legend then
+grew from two sliders to four — the X and Z windows plus a size per axis — each in a colour **no slice of
+the palette uses** (`#00E5FF`, `#FF00AA`; an earlier pair collided with `#3D9970`/`#B07CC6` and the
+"no slice colours in the legend" test caught it), each zoom carrying ONE handle, and the four **packed**:
+`RangeColumn = RangeLabelRoom + RangeHandle * 2 + 2` = 26px instead of 34px (sizing a docked column off the
+row height was the air between them), measured centres 18.4 / 44.5 / 70.5 / 96.5.
+
+**Pointing a 3D chart at a page now loads the whole dataset.** A surface reads one spreadsheet COLUMN per
+slice and a slice is one `<charts:XYSeries/>` child, so the children ARE the data: the reporting form
+carried 55 of its page's 100 columns and drew **Z 0…300** where the page holds **Z 0…500** (16,665 of
+109,200 pixels differ between the two renders). A new host verb, `sheetShape`, reads the page's used range
+(last row with a value, last column as a letter) and the Data Selector writes one bare child per data
+column after the chart's X column — for the **waterfall** as well, since its sweeps are one column each. A
+list the form already carries is replaced only while every entry is bare, and a stale slice window
+(`MaxZ="9"` drew two slices of a hundred) is cleared, while the width window is left to the author.
+
+**The stale-copy class, third time — and this time closed.** *"the new sliders is rendering in the designer
+preview but not during runtime"* and *"the right click legend on/off not available in the runtime menu"*.
+The preview draws the **host's** copy of a bundled file; the app compiles the **project's**. The old
+staleness test looked for a **marker token**, and this change added none — two more sliders and a menu entry
+are changes *inside* an existing type — so the project's copy (which carried the previous marker happily)
+was never flagged. Every bundled resource now carries `BUNDLED-COPY: <version>` in its header and "older" is
+**the content differing from the copy the extension ships**; the version assertion in the suite fails a
+release that forgets to re-stamp. `avaloniaDesigner.bundled.autoUpdate` (off by default) makes the refresh
+silent instead of asking.
+
+**Lessons.**
+
+1. **A colour that depends on the VIEW is a bug in the projection, not in the brush.** Before reaching for a
+   gradient, ask what the screen axis it is anchored to *means* on a turned cube: it mixed height with
+   depth by `tan(Elevation)`. A flat plate is the cheapest possible test — one value, one colour, any
+   elevation.
+2. **Clamp both ends of a level computation.** The low clamp hid a whole class of missing geometry at the
+   *maximum*: the triangle at the top of the scale was skipped by one. The crest of a corrugated sheet sits
+   exactly there, which is why it looked like a *data* problem to the reporter.
+3. **A marker is a guess about what changed; content is the truth.** Three releases in a row were bitten by
+   the same guess (`BandTriangle`, `CutToWindow`, `legendItem`). Comparing the project's file with the one
+   we ship catches every kind of change — including the drawing-only ones no token can describe — and the
+   version stamp makes "which release is this project on?" a question with an answer.
+4. **VB keyword traps in this file**: `Set` (use `chosen`), and a loop variable named `handles` is
+   BC30183 — use `ends`. A plain `'` comment must not contain an apostrophe, and no comment lines inside an
+   object initializer (`With { … }`): they end the implicit line continuation.
+5. **"Closer together" is a measurement, not a taste.** The legend's own handle colours are enough to
+   compute the distance between sliders, so the packing is asserted as numbers (gaps ~26px, span under
+   100px) instead of being eyeballed once and forgotten.
+
+**Suite:** 8,092 passed / 0 failed. Host, generated C# project and the VB matrix: 0 warnings / 0 errors.
+
