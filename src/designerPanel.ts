@@ -5,7 +5,7 @@ import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './x
 import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
     chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush, chartSlicesOf, writeChartSlices,
-    chartDataSourceOf, writeChartDataSource, supportsCursors
+    chartDataSourceOf, writeChartDataSource, supportsCursors, hasRangeLegend, chartDataRangeOf
 } from './chartSeries';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
@@ -5146,6 +5146,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             msg.chartSeries = chartSeriesOf(el);
             msg.chartAxes = chartAxesOf(el);
             msg.legendInfo = chartLegendOf(el);
+            // A chart whose legend is also a ZOOM control (the surface chart) sends the range its DATA
+            // covers, measured by the host on the last render, so the legend's sliders span real numbers.
+            if (hasRangeLegend(localName(el.tagName))) {
+                msg.legendRange = chartDataRangeOf(this.boundsOf(doc, ctrlName)?.values);
+            }
             if (supportsCursors(localName(el.tagName))) msg.cursorInfo = chartCursorsOf(el);
             msg.brushInfo = chartBrushOf(el);
             msg.sliceInfo = chartSlicesOf(el);

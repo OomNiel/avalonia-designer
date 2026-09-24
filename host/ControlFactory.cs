@@ -186,7 +186,11 @@ public class ControlFactory
             // The waterfall (2026-09-22) ships three samplesets inline (SampleSets: one set per ";"), so a
             // freshly dropped chart shows the mesh and the depth immediately — a real capture names one
             // spreadsheet column per sampleset instead (one series each).
-            ["GrumpyWaterfallPlot"] = n => $"<charts:GrumpyWaterfallPlot x:Name=\"{n}\" Width=\"360\" Height=\"240\" SampleSets=\"6,11,8,14,9,15,10,13; 9,7,14,11,16,12,9,15; 4,12,9,8,13,10,15,8\" Title=\"Waterfall\" ShowTitle=\"True\" ShowLegend=\"False\"/>"
+            ["GrumpyWaterfallPlot"] = n => $"<charts:GrumpyWaterfallPlot x:Name=\"{n}\" Width=\"360\" Height=\"240\" SampleSets=\"6,11,8,14,9,15,10,13; 9,7,14,11,16,12,9,15; 4,12,9,8,13,10,15,8\" Title=\"Waterfall\" ShowTitle=\"True\" ShowLegend=\"False\"/>",
+            // The surface (2026-09-23) ships four slices inline, so a dropped chart is a corrugation you
+            // can turn straight away — a real sheet names one spreadsheet column per slice (one series
+            // each) and carries its Z values in the sheet's own row.
+            ["GrumpySurfacePlot"] = n => $"<charts:GrumpySurfacePlot x:Name=\"{n}\" Width=\"320\" Height=\"220\" SampleSets=\"0,20,40,50,40,20,0,20,40,50,40,20,0; 0,18,36,45,36,18,0,18,36,45,36,18,0; 0,16,32,40,32,16,0,16,32,40,32,16,0; 0,14,28,35,28,14,0,14,28,35,28,14,0\" Title=\"Surface\" ShowTitle=\"True\" ShowLegend=\"False\"/>"
         };
     }
 
@@ -271,7 +275,8 @@ public class ControlFactory
         ["GrumpyBarPlot"] = typeof(AvaloniaCharts.GrumpyBarPlot),
         ["GrumpyAreaPlot"] = typeof(AvaloniaCharts.GrumpyAreaPlot),
         ["GrumpyPiePlot"] = typeof(AvaloniaCharts.GrumpyPiePlot),
-        ["GrumpyWaterfallPlot"] = typeof(AvaloniaCharts.GrumpyWaterfallPlot)
+        ["GrumpyWaterfallPlot"] = typeof(AvaloniaCharts.GrumpyWaterfallPlot),
+        ["GrumpySurfacePlot"] = typeof(AvaloniaCharts.GrumpySurfacePlot)
     };
 
     public static Type? GetTypeForName(string name)

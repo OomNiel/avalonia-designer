@@ -128,10 +128,16 @@ internal static class PickerFolderMemory { internal static string? LastFolder { 
     // the new menu nor a refresh prompt. A behaviour change in an existing type moves the marker too.
     // 2026-09-22, later still: the chart grew the FILLED SURFACE between the sets (`SurfaceFill`,
     // `SurfaceColor`, `SurfaceOpacity`), the band under each one (`SurfaceToFloor`), the solid block and
-    // the tiled roof — but all of that was since REMOVED, so the marker is back to `IsFilled` (fill/restore),
-    // the newest token the current file ships.
+    // the tiled roof — but all of that was since REMOVED, so the marker went back to `IsFilled`
+    // (fill/restore), and then to `GrumpySurfacePlot`, the surface chart 3D.
+    // 2026-09-24: the surface's BAND FILL was rewritten (`BandTriangle`) — one figure per band could not
+    // fill a fold (its outline crosses itself, the two loops wind opposite ways, `NonZero` sums them to
+    // zero and drops the fill), so a form whose plot backcolour was red showed that red THROUGH the sheet
+    // in the running app while the designer — built from this file — looked right. The project's own copy
+    // already carried `GrumpySurfacePlot`, so it was never reported stale: a DRAWING change in an existing
+    // type is a marker move like any other, and the new member is what an old copy lacks.
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'IsFilled', 'spec',
+    t.equal(chartSpec.marker, 'BandTriangle', 'spec',
         'the GrumpyCharts marker is the newest token in the current bundled file');
     const oldCsCharts = `// GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb).
 public sealed class ChartSeries { public double[] Xs = Array.Empty<double>(); }
@@ -219,8 +225,21 @@ public abstract class ChartBase
     public bool IsFilled => false;
     public bool FillContainer() => false;
 }`;
-    t.equal(isStaleBundledCopy(fillEraCsCharts, false, 'GrumpyCharts'), false, 'detect',
-        'the current chart file is current (fill/restore is the newest feature)');
+    t.equal(isStaleBundledCopy(fillEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with fill/restore but before the surface chart 3D (the toolbox writes that now)');
+    // The surface type was the newest thing the designer could write, so this is the copy every refreshed
+    // project held — and 2026-09-24 changed how that EXISTING type draws (the band fill became triangle
+    // pairs). It has the type and no such member, which is exactly the state ChartTestCS was in when its
+    // bands kept showing the plot's backcolour through the sheet.
+    const surfaceEraCsCharts = `${fillEraCsCharts}
+public class GrumpySurfacePlot : ChartBase { }`;
+    t.equal(isStaleBundledCopy(surfaceEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with the surface chart 3D but before its triangle band fill (the app still drew holes)');
+    // The current copy: the surface type AND the triangle fill that made the sheet solid.
+    const curCsCharts = `${surfaceEraCsCharts}
+public static class BandFill { internal static double BandTriangle() => 0; }`;
+    t.equal(isStaleBundledCopy(curCsCharts, false, 'GrumpyCharts'), false, 'detect',
+        'the current chart file is current (the triangle band fill is the newest thing it ships)');
     t.equal(isStaleBundledCopy(`${oldCsCharts}\n// hand-tweaked below`, false, 'GrumpyCharts'), true, 'detect',
         'an old chart file with extra edits still refreshes (the bundled header is intact)');
     const oldVbCharts = `' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs).
@@ -250,10 +269,17 @@ Public Shared ReadOnly SourceSheetProperty As StyledProperty(Of String) = Nothin
 Public Shared ReadOnly HoverExplodeProperty As StyledProperty(Of Double) = Nothing
 Public Class GrumpyWaterfallPlot
 End Class
+Public Class GrumpySurfacePlot
+End Class
 Public ReadOnly Property IsFilled As Boolean`;
     t.equal(isStaleBundledCopy(oldVbCharts, true, 'GrumpyCharts'), true, 'detect',
         'a VB chart file from before the series classes is stale');
-    t.equal(isStaleBundledCopy(curVbCharts, true, 'GrumpyCharts'), false, 'detect',
+    // The VB twin of the surface-era copy: the type is there, the triangle band fill is not.
+    t.equal(isStaleBundledCopy(curVbCharts, true, 'GrumpyCharts'), true, 'detect',
+        'the same copy in VB (surface type, no triangle band fill) is stale too — a drawing fix is a marker move');
+    t.equal(isStaleBundledCopy(`${curVbCharts}
+Friend Function BandTriangle() As Double
+End Function`, true, 'GrumpyCharts'), false, 'detect',
         'the current VB chart file is current');
 
     // The SHIPPED resource files must never look stale: a marker that drifts out of the resources is

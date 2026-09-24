@@ -12,6 +12,96 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
+## [0.11.14] - 2026-09-24 · *the surface chart 3D, and the fill that showed the plot's backcolour through it*
+
+The chart set gains a **seventh control** — a projected **3D surface**, a corrugated sheet read from a
+family of profiles — and this release carries the fix for the defect the user hit the moment a form used it
+in a **running app**: *"the visible surfaces of the plot renders correctly in the Designer at design time,
+however when running the app overlapping surfaces are render fully transparent showing the chart backcolour
+instead of a solid surface."* The designer was right and the app was wrong, and the reason was not the draw
+order they suspected: the app was compiling an **older copy of the bundled chart file**, and that copy filled
+a band as one closed figure, which cannot fill a fold.
+
+### Added — the surface chart 3D (`charts:GrumpySurfacePlot`, 2026-09-23/24)
+
+- **One spreadsheet column per SLICE.** Every series is one slice along the sheet's length: it reads the
+  **same shared X column** (the positions across the width) and its own Y column (that slice's height at each
+  of them), and neighbouring slices are joined, so the picture *is* the surface rather than a family of
+  traces. The **Series** editor lists the slices, each named by its Title and coloured by its own colour.
+- **Where a slice stands comes from the spreadsheet**: `Z Row` names the row holding one Z value per slice
+  (one row of numbers like 0, 5, 10 … along the length); where that cell is not a number the slices are
+  numbered from **Z Start** in steps of **Z Step** instead. `SampleSets="1,2,3; 3,2,1"` writes a chart by
+  hand, without a workbook at all — the same escape hatch the waterfall has.
+- **Style** picks how the sheet is drawn: **Grid mesh** (the quads' edges only, so you see through it),
+  **Grid mesh + solid** (the mesh over a filled surface — the default) or **Solid**.
+- **Colour By** picks what the colour means: **Sampleset** (one colour per slice) or **Temperature**, a ramp
+  by **height** from **Low Colour** at the valleys to **High Colour** on the ridges — with **Heat Min** /
+  **Heat Max** pinning that range when several charts are read against one scale. **Solid Opacity** makes the
+  filled sheet see-through; **Mesh Colour** / **Mesh Thickness** shape the mesh lines themselves.
+- **The view is real**: **Elevation** (how far above the floor you look, default 30), **Azimuth**,
+  **Z Spacing** (how far apart the slices stand), **Zoom**, and drag-to-turn with the mouse.
+- **The range window is the surface's legend.** The bar carries two sliders — **X** (the width the sheet
+  spans) and **Z** (which slices are drawn, counted in slices: *"Z 3…4 of 6"*) — and the view is **always
+  re-fitted to the window**, so a selection *zooms* into the sheet instead of shrinking it. The sliders span
+  the **data's own** range, reported by the control (`DataMinX/MaxX/Y/Z`), so a handle can never run off what
+  the sheet actually holds; a window end that falls between slices snaps to the nearer slice, so a drag only
+  ever adds or drops whole slices.
+- **A block under the sheet, when it is asked for**: **Show Base** (off by default — it changes the picture)
+  fills the space beneath the sheet down to the floor with **Base Colour**, drawn whatever the sheet's own
+  style is (the mesh style has no fill of its own to stand it on).
+- **No cursors and no Axis editor**: there is no cartesian frame to hang them on — the projected cube has
+  three axes of its own, and the mesh is what a reader measures against.
+- Toolbox entry (*Charts* group), Properties rows, plain-language help panel, the designer preview, the
+  `.xlsx` reader with its page chooser and `LiveUpdate` reload, and **both twins** — the C# and the VB
+  control compile with `Option Strict On`, exactly like the other six.
+
+### Fixed — a folded band filled itself as a hole, showing the plot's backcolour (reported 2026-09-24)
+
+- A band was filled as **one closed figure** per unbroken run of samples (the far profile forward, the near
+  profile back). Where the projection **folds** that outline crosses itself, and the two loops of a
+  self-crossing figure wind in **opposite** directions: under the non-zero winding rule they **sum to zero**,
+  so the fill is dropped and the hole is what the chart's own backcolour shows through. At a low `Elevation` a
+  corrugated sheet folds in *every* band — each slice's profile collapses into a single screen column — which
+  is why the user's form (Elevation 6, Azimuth 28, a red plot backcolour) looked like a set of separate fins
+  with red between them while the designer, drawing the same geometry, looked solid.
+- The fill is now **one TRIANGLE PAIR per sample pair** (`BandTriangle`, split by the b–d diagonal), and every
+  triangle is wound the way the band's first one was. A triangle cannot cross itself, so no fold can cancel
+  it, and the triangles a fold makes overlap accumulate winding ±2 instead of subtracting. The 1px pen in the
+  band's own brush still covers the seams between them.
+- Measured, on the user's own form: the plot's backcolour stopped showing through 4,291px of the sheet. On a
+  controlled single band at the same angles, a 24×24 box inside the fold went from **576 of 576 pixels being
+  backcolour** to **0 of 576** — and the same box is still backcolour in `GridMesh`, which has no fill, so the
+  measurement can fail. Both are asserted in the suite now.
+- **The drawing fix alone was not enough, and that is the second half of the bug**: the app compiles the
+  project's **own copy** of `GrumpyCharts`, and the staleness check is *"the bundled header is there and the
+  newest marker token is not"*. The marker was still `GrumpySurfacePlot` — a token that copy already had —
+  so an in-place *drawing* change in an existing type was invisible and no refresh was ever offered. The
+  marker moved to **`BandTriangle`**, so opening or saving the form in a project whose chart predates this
+  release now offers **Update now**.
+
+### Fixed — one render of a large surface took a second (found while measuring the above, 2026-09-24)
+
+- The band geometry computed a full **O(n²) 2D crossing scan** of the far and near profiles on every band and
+  **never used the result** (the fill had moved on to per-figure emission). On the 6 × 2048-point sheet the
+  workbook actually holds it cost **~935 ms per render** — measured 27 ms → 966 ms, per render, and the
+  designer re-renders on every drag frame. The scan is gone; the same render is **42 ms**.
+
+### Notes
+
+- **`0.11.13` was the development number** of the surface chart and is not released; `0.11.14` is the version
+  the tag, the release title and the listing carry.
+- **A slice (Z) window really does cut slices** — the test that said otherwise measured *sheet pixels*, and
+  the view re-fits to the window, so a two-slice selection **zooms** and draws about as many pixels as six.
+  It is now measured as **which slices are drawn** (each band carries its far slice's colour under
+  `ColorBy="Sampleset"`), with the legend hidden while the census runs — the legend's own slider tracks are
+  amber and light blue, i.e. within tolerance of two slice colours.
+- **Housekeeping**: the unused `xlsx` npm dependency (nothing imports it — the chart's workbook reader is
+  C# and dependency-free) is gone, which takes the VSIX from 5.29 MB back to ~1.2 MB, and the manifest's
+  `repository` URL is a plain `https://` link again (npm had rewritten it to `git+https://…`, which the
+  packaging check rejects).
+- Suite **7,931 passed / 0 failed**; the host, a generated C# project and the VB matrix all build
+  0 warnings / 0 errors.
+
 ## [0.11.12] - 2026-09-23 · *a waterfall you can turn: one spreadsheet column per sweep*
 
 The chart set gains a sixth control — a projected **3D waterfall**. It reads one spreadsheet **column per

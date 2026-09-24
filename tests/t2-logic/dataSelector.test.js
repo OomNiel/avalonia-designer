@@ -154,10 +154,12 @@ module.exports = async (t) => {
     t.ok(/SourceSheet/.test(cs) && /SourceSheet/.test(vb), 'reader', 'both twins know the page attribute');
 
     // ---------------------------------------------------------------- the staleness marker moved again
-    // (it is on `IsFilled` now: the fill/restore menu entry is a BEHAVIOUR change in an existing type,
-    // which a project's old copy silently lacks — see bundledComponents.ts)
+    // (it is on `BandTriangle` now: the surface's band fill became triangle pairs on 2026-09-24, because a
+    // folded single figure could not fill itself and showed the plot's backcolour through the sheet — a
+    // DRAWING change in an existing type, which a project's old copy silently lacks — see
+    // bundledComponents.ts)
     const spec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(spec.marker, 'IsFilled', 'marker',
+    t.equal(spec.marker, 'BandTriangle', 'marker',
         'the marker is the newest thing an existing project needs a refresh for');
     t.equal(bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts').marker, spec.marker, 'marker',
         'the same in both languages');

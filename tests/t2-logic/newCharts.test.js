@@ -187,7 +187,7 @@ module.exports = async (t) => {
     }
 
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'IsFilled', 'marker',
+    t.equal(chartSpec.marker, 'BandTriangle', 'marker',
         'the staleness marker is the newest thing an existing project needs (types, attributes, behaviour)');
     const vbSpec = bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts');
     t.equal(vbSpec.marker, chartSpec.marker, 'marker', 'both languages use the same marker');
@@ -202,12 +202,12 @@ module.exports = async (t) => {
         }
     }
     // The drawing methods exist in both, and each one draws its own shape: the base line layer, the bar,
-    // the area, the pie — and (2026-09-22) the waterfall.
+    // the area, the pie, the waterfall (2026-09-22) and the surface (2026-09-23).
     for (const [name, text, draw] of [
         ['C#', cs, /private protected override void DrawSeriesLayer/],
         ['VB', vb, /Friend Overrides Sub DrawSeriesLayer/]]) {
         const count = (text.match(new RegExp(draw.source, 'g')) || []).length;
-        t.equal(count, 4, 'twins', `${name} has the base layer plus the four chart-type layers (${count})`);
+        t.equal(count, 5, 'twins', `${name} has the base layer plus the five chart-type layers (${count})`);
     }
     // The label+value reader a pie needs, and the X-column text it keeps as a point's name.
     for (const [name, text] of [['C#', cs], ['VB', vb]]) {

@@ -271,6 +271,28 @@ public enum WaterfallColorMode
     Split
 }
 
+/// <summary>How a <see cref="GrumpySurfacePlot"/> presents its surface.</summary>
+public enum SurfaceStyle
+{
+    /// <summary>The grid mesh only: the quads' edges, with nothing filled — you see through the sheet.</summary>
+    GridMesh,
+    /// <summary>The grid mesh drawn over a filled surface (the default): the classic 3D surface look.</summary>
+    GridMeshSolid,
+    /// <summary>The filled surface only, no mesh lines.</summary>
+    Solid
+}
+
+/// <summary>What decides the colour of a <see cref="GrumpySurfacePlot"/>'s surface.</summary>
+public enum SurfaceColorMode
+{
+    /// <summary>One colour per series (one per Z slice) — the series' own colour, the way the ribbon of a
+    /// waterfall takes its set's colour.</summary>
+    Sampleset,
+    /// <summary>A temperature ramp by height: the value picks the colour between LowColor and HighColor,
+    /// so a ridge is the top colour and a valley the bottom one (the default).</summary>
+    Temperature
+}
+
 /// <summary>Reads <c>Values="4,9,6,12"</c> from XAML into a <see cref="double"/> array.</summary>
 public sealed class DoubleArrayConverter : TypeConverter
 {
@@ -710,6 +732,42 @@ internal static class SpreadsheetReader
             data.Error = ReadFailure(path, ex);
         }
         return data;
+    }
+
+    /// <summary>
+    /// One row's NUMERIC cells, keyed by column letter ("C" → 12.5) — how a surface chart reads the Z
+    /// value a spreadsheet gives each of its slices: the series' own column, one row. A cell that is empty
+    /// or holds text is simply absent from the result, so the caller falls back to its own numbering.
+    /// </summary>
+    internal static Dictionary<string, double> RowNumbers(string path, int row, string? sheet = null)
+    {
+        var values = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (row <= 0) return values;
+            using var zip = OpenWorkbook(path);
+            var shared = ReadSharedStrings(zip);
+            var sheetPart = FindSheet(zip, sheet);
+            if (sheetPart is null) return values;
+            using var stream = sheetPart.Open();
+            foreach (var rowElement in XDocument.Load(stream).Descendants().Where(e => e.Name.LocalName == "row"))
+            {
+                var number = int.TryParse(rowElement.Attribute("r")?.Value, NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out var rn) ? rn : -1;
+                if (number != row) continue;
+                foreach (var cell in rowElement.Elements().Where(e => e.Name.LocalName == "c"))
+                {
+                    var reference = cell.Attribute("r")?.Value ?? string.Empty;
+                    if (TryNumber(CellText(cell, shared), out var value)) values[ColumnOf(reference)] = value;
+                }
+                break;
+            }
+        }
+        catch (Exception)
+        {
+            // A Z row that cannot be read is not an error: the chart numbers the slices itself.
+        }
+        return values;
     }
 
     /// <summary>
@@ -2086,6 +2144,9 @@ public abstract class ChartBase : Control
         // on and off. The rects are the ones the last Render laid out.
         foreach (var entry in _legend)
         {
+            // A slice typed in through SampleSets has no series element, so its entry is a name to read,
+            // not a switch: clicking it does nothing.
+            if (entry.Series is null) continue;
             if (!entry.Hit.Contains(position)) continue;
             entry.Series.Visible = !entry.Series.Visible;
             InvalidateVisual();
@@ -2347,14 +2408,15 @@ public abstract class ChartBase : Control
         var legendSize = MeasureLegend(content.Size, plots);
         if (legendSize.Width > 0 && legendSize.Height > 0)
         {
-            _legendRect = LegendPosition switch
+            var side = LegendPosition;
+            _legendRect = side switch
             {
                 LegendPosition.Top => new Rect(content.X, content.Y, content.Width, legendSize.Height),
                 LegendPosition.Left => new Rect(content.X, content.Y, legendSize.Width, content.Height),
                 LegendPosition.Right => new Rect(content.Right - legendSize.Width, content.Y, legendSize.Width, content.Height),
                 _ => new Rect(content.X, content.Bottom - legendSize.Height, content.Width, legendSize.Height)
             };
-            plot = LegendPosition switch
+            plot = side switch
             {
                 LegendPosition.Top => Chop(plot, 0, legendSize.Height + 4, 0, 0),
                 LegendPosition.Left => Chop(plot, legendSize.Width + 4, 0, 0, 0),
@@ -2572,7 +2634,9 @@ public abstract class ChartBase : Control
     /// <summary>One entry of the legend bar: the series it switches, and where it sits.</summary>
     private sealed class LegendEntry
     {
-        internal ChartSeries Series = null!;
+        /// <summary>The series element behind the entry, or null for a slice that was typed in through
+        /// SampleSets — a name to read, with no series and therefore nothing to switch off.</summary>
+        internal ChartSeries? Series;
         internal FormattedText Text = null!;
         internal Color Color;
         /// <summary>The whole clickable item (tick box + name), in control coordinates.</summary>
@@ -2582,7 +2646,10 @@ public abstract class ChartBase : Control
     }
 
     private readonly List<LegendEntry> _legend = new();
-    private Rect _legendRect;
+    /// <summary>The bar's rectangle, in CONTROL coordinates. A range legend (the surface chart's) lays
+    /// its sliders out straight into it; the entry list above is measured in local coordinates instead and
+    /// is translated by it in <see cref="DrawLegend"/>.</summary>
+    private protected Rect _legendRect;
 
     /// <summary>The name a series shows in the legend: its own Title, else the spreadsheet's Y-column
     /// header, else "Series n".</summary>
@@ -2590,8 +2657,38 @@ public abstract class ChartBase : Control
     {
         if (plot.Definition is { Title: { } title } && !string.IsNullOrWhiteSpace(title)) return title;
         if (!string.IsNullOrWhiteSpace(plot.Data.YTitle)) return plot.Data.YTitle;
-        return $"Series {index + 1}";
+        var typed = plot.Definition is null ? InlineLegendName(index) : string.Empty;
+        return typed.Length > 0 ? typed : $"Series {index + 1}";
     }
+
+    /// <summary>
+    /// What a slice typed in through <c>SampleSets</c> is called in the legend — an EMPTY string for every
+    /// chart that draws typed-in values as one unnamed line (the line, bar, area and pie family: there is
+    /// nothing to name and nothing to switch off, so they list nothing). A chart whose slices ARE the sets
+    /// names them, so a surface or a waterfall sketched from typed-in numbers still gets its legend.
+    /// </summary>
+    private protected virtual string InlineLegendName(int index) => string.Empty;
+
+    /// <summary>True when this chart's legend is not a list of series at all but a RANGE SELECTOR: the
+    /// surface chart, whose legend picks the part of the sheet to draw. Such a bar lists no names — it is
+    /// two sliders and nothing else (2026-09-23; requested as "a special Legend … select a range of Y and X
+    /// values in the legend").</summary>
+    private protected virtual bool IsRangeLegend => false;
+
+    /// <summary>The size a range legend asks for: it is a couple of slider rows, not a wrapped list, so it
+    /// does not grow with the number of slices.</summary>
+    private protected virtual Size MeasureRangeLegend(Size frameSize) => default;
+
+    /// <summary>Draws the range legend, laid out straight into <see cref="_legendRect"/>.</summary>
+    private protected virtual void DrawRangeLegend(DrawingContext context) { }
+
+    /// <summary>
+    /// The positions a range slider may land on when its axis is made of DISCRETE samples rather than a
+    /// continuous span, in order — empty for an axis that is continuous. The surface answers with its slice
+    /// positions, so its own slider walks SLICE BY SLICE and says how many of them are shown, instead of
+    /// leaving a range like "0 … 9" of a 0 … 270 sheet to mean whatever fraction that happens to be.
+    /// </summary>
+    private protected virtual IReadOnlyList<double> RangeSteps(int axis) => Array.Empty<double>();
 
     /// <summary>
     /// Lays the legend out and returns the size it needs, so the plot can give up that much room. A
@@ -2605,6 +2702,9 @@ public abstract class ChartBase : Control
     {
         _legend.Clear();
         if (!ShowLegend || plots.Count == 0) return default;
+        // A range legend is a fixed pair of sliders: it has no entries to flow, and its size does not
+        // depend on how many slices there are.
+        if (IsRangeLegend) return MeasureRangeLegend(frameSize);
 
         const double boxSize = 13, boxGap = 6, itemGap = 16, lineGap = 4;
         // The bar's own padding, plus whatever the user asked for: LegendMargin is the space between
@@ -2617,11 +2717,14 @@ public abstract class ChartBase : Control
         // the bar (the plot is never squeezed out of existence).
         var limit = Math.Max(24, available * 0.6 - pad * 2);
 
-        var items = new List<(ChartSeries Series, FormattedText Text, Color Color, double W, double H)>();
+        var items = new List<(ChartSeries? Series, FormattedText Text, Color Color, double W, double H)>();
         for (var i = 0; i < plots.Count; i++)
         {
             var plot = plots[i];
-            if (plot.Definition is null) continue;
+            // A plot with no series element is a slice typed in through SampleSets. It is listed only when
+            // this chart NAMES such slices (InlineLegendName) and there is data to draw — otherwise the
+            // legend would offer entries that name nothing and toggle nothing.
+            if (plot.Definition is null && (InlineLegendName(i).Length == 0 || !plot.Data.HasData)) continue;
             var text = MakeText(LegendName(plot, i), font, plot.LineColor);
             items.Add((plot.Definition, text, plot.LineColor,
                 boxSize + boxGap + text.Width, Math.Max(boxSize, text.Height)));
@@ -2685,7 +2788,9 @@ public abstract class ChartBase : Control
     /// its name, in the series' own colour.</summary>
     private void DrawLegend(DrawingContext context)
     {
-        if (_legend.Count == 0) return;
+        // A range legend has no ENTRIES at all — its sliders are the whole bar — so it must not be
+        // skipped by the empty-list guard the entry legend uses.
+        if (_legend.Count == 0 && !IsRangeLegend) return;
         // The entries were measured in local coordinates; the bar is anchored to the frame's bottom.
         for (var i = 0; i < _legend.Count; i++)
         {
@@ -2708,22 +2813,33 @@ public abstract class ChartBase : Control
                     : null;
                 context.DrawRectangle(fill, outline, new RoundedRect(_legendRect, LegendCornerRadius));
             }
+            // A range legend draws its sliders and stops: the bar it lives in is the whole legend.
+            if (IsRangeLegend)
+            {
+                DrawRangeLegend(context);
+                return;
+            }
             var framePen = MakePen(Color.Parse("#9AA0A6"), 1, ChartLineStyle.Solid);
             foreach (var entry in _legend)
             {
-                context.DrawRectangle(null, framePen, new RoundedRect(entry.Box, new CornerRadius(2)));
-                if (entry.Series.Visible)
+                var series = entry.Series;
+                if (series is not null)
                 {
-                    // A tick in the series' own colour, so a ticked box matches its line exactly.
-                    var tick = MakePen(entry.Color, 2, ChartLineStyle.Solid);
-                    var b = entry.Box;
-                    context.DrawLine(tick,
-                        new Point(b.X + b.Width * 0.20, b.Y + b.Height * 0.55),
-                        new Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78));
-                    context.DrawLine(tick,
-                        new Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78),
-                        new Point(b.X + b.Width * 0.80, b.Y + b.Height * 0.22));
+                    context.DrawRectangle(null, framePen, new RoundedRect(entry.Box, new CornerRadius(2)));
+                    if (series.Visible)
+                    {
+                        // A tick in the series' own colour, so a ticked box matches its line exactly.
+                        var tick = MakePen(entry.Color, 2, ChartLineStyle.Solid);
+                        var b = entry.Box;
+                        context.DrawLine(tick,
+                            new Point(b.X + b.Width * 0.20, b.Y + b.Height * 0.55),
+                            new Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78));
+                        context.DrawLine(tick,
+                            new Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78),
+                            new Point(b.X + b.Width * 0.80, b.Y + b.Height * 0.22));
+                    }
                 }
+                // A typed-in slice has no box: the name (in its own colour) is the whole entry.
                 context.DrawText(entry.Text, new Point(entry.Box.Right + 6, entry.Hit.Y + (entry.Hit.Height - entry.Text.Height) / 2));
             }
         }
@@ -4661,6 +4777,10 @@ public class GrumpyWaterfallPlot : ChartBase
     /// the numbers it reads are the whole point of a waterfall.</summary>
     private protected override bool SupportsHoverReadout => true;
 
+    /// <summary>A sampleset typed in through SampleSets is still a set of its own, so it is listed in the
+    /// legend as "Set n" — a waterfall sketched without a workbook keeps its legend.</summary>
+    private protected override string InlineLegendName(int index) => $"Set {index + 1}";
+
     /// <inheritdoc/>
     protected override ChartData InlineData()
     {
@@ -5490,6 +5610,1289 @@ public class GrumpyWaterfallPlot : ChartBase
             (byte)Math.Round(a.R + (b.R - a.R) * f),
             (byte)Math.Round(a.G + (b.G - a.G) * f),
             (byte)Math.Round(a.B + (b.B - a.B) * f));
+    }
+}
+
+/// <summary>
+/// The 3D SURFACE chart — a sheet of corrugated iron. Every series is one slice across the sheet's LENGTH,
+/// its values are the HEIGHT of the corrugation at each X position across the sheet's WIDTH, and
+/// neighbouring slices are joined with quads: the picture is the surface itself, which is what separates it
+/// from <see cref="GrumpyWaterfallPlot"/> (a row of separate traces joined by a mesh).
+///
+/// Where the pieces come from:
+///   - <b>X</b> is ONE shared column for the whole chart (the width positions), so the slices line up into
+///     a grid and the quads are real sheet quads;
+///   - <b>Y</b> is one column per series (that slice's corrugation profile);
+///   - <b>Z</b> is where the slice stands along the length. It is read from the SPREADSHEET — the series'
+///     own column, in <see cref="ZRow"/> (the header row by default) — because the sample data says where
+///     each slice belongs; when that cell does not hold a number the chart numbers the slices itself from
+///     <see cref="ZStart"/> in steps of <see cref="ZStep"/>. The depth of a slice follows its Z VALUE, so
+///     unevenly spaced slices stand unevenly far apart, and the Z axis is labelled with those numbers.
+///
+/// The range window (Grumpy, 2026-09-23 — "a special legend … select a range of Y and X values … the plot
+/// must always auto-zoom to fit"): <see cref="ChartBase.MinX"/>/<see cref="ChartBase.MaxX"/> and
+/// <see cref="ChartBase.MinY"/>/<see cref="ChartBase.MaxY"/> clip the picture to a window of the sheet's
+/// width (X) and height (Y); the view is ALWAYS re-fitted to that window, so narrowing the range zooms into
+/// it instead of leaving the surface small inside a large frame, and the drawing is clipped to the plot box
+/// so a window is a real cut rather than an overflow.
+/// </summary>
+public class GrumpySurfacePlot : ChartBase
+{
+    /// <summary>The slice of a chart that has no series elements: one corrugation profile, typed in.</summary>
+    public static readonly StyledProperty<double[]?> ValuesProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double[]?>(nameof(Values));
+
+    /// <summary>Several slices written inline, one per semicolon-separated group: "1,2,3; 3,2,1" is two
+    /// slices of three samples, with the sample number as X. Handy for sketching a surface without a
+    /// workbook — a real capture names one spreadsheet column per slice (one series each).</summary>
+    public static readonly StyledProperty<double[][]?> SampleSetsProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double[][]?>(nameof(SampleSets));
+
+    /// <summary>Grid mesh, grid mesh over a solid surface (the default), or the solid alone.</summary>
+    public static readonly StyledProperty<SurfaceStyle> StyleProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, SurfaceStyle>(nameof(Style), SurfaceStyle.GridMeshSolid);
+
+    /// <summary>One colour per slice, or a temperature ramp by height (the default).</summary>
+    public static readonly StyledProperty<SurfaceColorMode> ColorByProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, SurfaceColorMode>(nameof(ColorBy), SurfaceColorMode.Temperature);
+
+    /// <summary>The ramp's colour at the LOWEST value (the valleys).</summary>
+    public static readonly StyledProperty<Color> LowColorProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, Color>(nameof(LowColor), Color.Parse("#1B2A6B"));
+
+    /// <summary>The ramp's colour at the HIGHEST value (the ridges).</summary>
+    public static readonly StyledProperty<Color> HighColorProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, Color>(nameof(HighColor), Color.Parse("#E53935"));
+
+    /// <summary>The value the ramp's low end sits at (NaN = the data's own least value).</summary>
+    public static readonly StyledProperty<double> HeatMinProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(HeatMin), double.NaN);
+
+    /// <summary>The value the ramp's high end sits at (NaN = the data's own greatest value).</summary>
+    public static readonly StyledProperty<double> HeatMaxProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(HeatMax), double.NaN);
+
+    /// <summary>The colour of the surface's MESH lines (the same grey the waterfall's connectors use).
+    /// The floor's own gridlines keep the chart-level GridColor, as on every other chart.</summary>
+    public static readonly StyledProperty<Color> MeshColorProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, Color>(nameof(MeshColor), Color.Parse("#6B7A8F"));
+
+    /// <summary>How thick the surface's mesh lines are (0 draws none).</summary>
+    public static readonly StyledProperty<double> MeshThicknessProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(MeshThickness), 1d);
+
+    /// <summary>How solid the filled surface is, in percent (100 = opaque metal).</summary>
+    public static readonly StyledProperty<double> SolidOpacityProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(SolidOpacity), 100d);
+
+    /// <summary>Fill the space under the sheet, from its own profiles down to the floor, so the sheet draws
+    /// as a solid BLOCK instead of a skin — an area chart lifted into 3D. It is a block, so it HIDES what
+    /// stands behind it: slices behind a nearer face are occluded instead of showing through the empty space
+    /// beneath the sheet, which is what a narrow slice window looked like before. Off by default, because it
+    /// changes the picture rather than decorating it.</summary>
+    public static readonly StyledProperty<bool> ShowBaseProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, bool>(nameof(ShowBase), false);
+
+    /// <summary>The colour of the base block's sides and ends. Flat and OPAQUE on purpose: the temperature
+    /// ramp belongs to the sheet, and the block is the solid it stands on.</summary>
+    public static readonly StyledProperty<Color> BaseColorProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, Color>(nameof(BaseColor), Color.Parse("#3C3C3C"));
+
+    /// <summary>The Z of the FIRST slice when the spreadsheet does not say — 0 by default.</summary>
+    public static readonly StyledProperty<double> ZStartProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(ZStart), 0d);
+
+    /// <summary>What one slice adds to the Z of the one behind it when the spreadsheet does not say — 1 by
+    /// default, which numbers the slices 0, 1, 2 …</summary>
+    public static readonly StyledProperty<double> ZStepProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(ZStep), 1d);
+
+    /// <summary>Which spreadsheet ROW holds each slice's Z value (0 = the header row). Read along the
+    /// series' own columns, so one row of numbers names the position of every slice.</summary>
+    public static readonly StyledProperty<int> ZRowProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, int>(nameof(ZRow));
+
+    /// <summary>The Z of the FIRST slice that is drawn (NaN = the sheet's own least Z). This is the legend's
+    /// second slider: the slices outside the window are left out of the picture altogether, so a long capture
+    /// can be looked at a few slices at a time.</summary>
+    public static readonly StyledProperty<double> MinZProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(MinZ), double.NaN);
+
+    /// <summary>The Z of the LAST slice that is drawn (NaN = the sheet's own greatest Z).</summary>
+    public static readonly StyledProperty<double> MaxZProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(MaxZ), double.NaN);
+
+    /// <summary>How many samples of a slice are drawn at most (512 by default, 0 = every one). One stride is
+    /// used for every slice, so the quads join like to like.</summary>
+    public static readonly StyledProperty<int> MaxPointsProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, int>(nameof(MaxPoints), 512);
+
+    /// <summary>How far above the floor the sheet is seen from (default 30): 0 is edge on and 89 looks
+    /// almost straight down. In the app the chart can also be DRAGGED to turn it.</summary>
+    public static readonly StyledProperty<double> ElevationProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(Elevation), 30d);
+
+    /// <summary>Where the sheet is turned to (default 45 — the usual three-quarter view). Changed live by
+    /// dragging the chart sideways.</summary>
+    public static readonly StyledProperty<double> AzimuthProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(Azimuth), 45d);
+
+    /// <summary>How deep the whole sheet stands, as a fraction of the fitted depth: 1 uses all of it,
+    /// 0.5 packs the slices into half.</summary>
+    public static readonly StyledProperty<double> ZSpacingProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(ZSpacing), 1d);
+
+    /// <summary>Scales the fitted picture: 1 fits the sheet into the frame, 1.2 makes it larger than the
+    /// frame, 0.8 leaves a margin.</summary>
+    public static readonly StyledProperty<double> ZoomProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, double>(nameof(Zoom), 1d);
+
+    /// <summary>The name along the depth axis — what the numbers there measure ("Length", "mm along the
+    /// sheet").</summary>
+    public static readonly StyledProperty<string?> ZAxisTitleProperty =
+        AvaloniaProperty.Register<GrumpySurfacePlot, string?>(nameof(ZAxisTitle));
+
+    static GrumpySurfacePlot()
+    {
+        AffectsRender<GrumpySurfacePlot>(ValuesProperty, SampleSetsProperty, StyleProperty, ColorByProperty, LowColorProperty,
+            HighColorProperty, HeatMinProperty, HeatMaxProperty, MeshColorProperty, MeshThicknessProperty,
+            SolidOpacityProperty, ZStartProperty, ZStepProperty, ZRowProperty, MaxPointsProperty,
+            ElevationProperty, AzimuthProperty, ZSpacingProperty, ZoomProperty, ZAxisTitleProperty,
+            MinZProperty, MaxZProperty, ShowBaseProperty, BaseColorProperty);
+        ValuesProperty.Changed.AddClassHandler<GrumpySurfacePlot>((plot, _) => plot.Reload());
+    }
+
+    /// <summary>One corrugation profile, typed in: the X is the sample number.</summary>
+    [TypeConverter(typeof(DoubleArrayConverter))]
+    public double[]? Values { get => GetValue(ValuesProperty); set => SetValue(ValuesProperty, value); }
+
+    /// <summary>Several slices written inline, one per semicolon-separated group.</summary>
+    [TypeConverter(typeof(DoubleSetConverter))]
+    public double[][]? SampleSets { get => GetValue(SampleSetsProperty); set => SetValue(SampleSetsProperty, value); }
+
+    /// <summary>Grid mesh, grid mesh over the solid, or the solid alone.</summary>
+    public SurfaceStyle Style { get => GetValue(StyleProperty); set => SetValue(StyleProperty, value); }
+
+    /// <summary>What colours the surface.</summary>
+    public SurfaceColorMode ColorBy { get => GetValue(ColorByProperty); set => SetValue(ColorByProperty, value); }
+
+    /// <summary>The ramp's colour at the sheet's lowest height.</summary>
+    public Color LowColor { get => GetValue(LowColorProperty); set => SetValue(LowColorProperty, value); }
+
+    /// <summary>The ramp's colour at the sheet's greatest height.</summary>
+    public Color HighColor { get => GetValue(HighColorProperty); set => SetValue(HighColorProperty, value); }
+
+    /// <summary>The value the ramp's low end sits at (empty = the data's own least).</summary>
+    public double HeatMin { get => GetValue(HeatMinProperty); set => SetValue(HeatMinProperty, value); }
+
+    /// <summary>The value the ramp's high end sits at (empty = the data's own greatest).</summary>
+    public double HeatMax { get => GetValue(HeatMaxProperty); set => SetValue(HeatMaxProperty, value); }
+
+    /// <summary>The colour of the surface's mesh lines.</summary>
+    public Color MeshColor { get => GetValue(MeshColorProperty); set => SetValue(MeshColorProperty, value); }
+
+    /// <summary>How thick the surface's mesh lines are.</summary>
+    public double MeshThickness { get => GetValue(MeshThicknessProperty); set => SetValue(MeshThicknessProperty, value); }
+
+    /// <summary>How solid the filled surface is, in percent.</summary>
+    public double SolidOpacity { get => GetValue(SolidOpacityProperty); set => SetValue(SolidOpacityProperty, value); }
+
+    /// <summary>Draw the solid block under the sheet, reaching to the floor.</summary>
+    public bool ShowBase { get => GetValue(ShowBaseProperty); set => SetValue(ShowBaseProperty, value); }
+
+    /// <summary>The colour of that block.</summary>
+    public Color BaseColor { get => GetValue(BaseColorProperty); set => SetValue(BaseColorProperty, value); }
+
+    /// <summary>The Z of the first slice when the spreadsheet does not say.</summary>
+    public double ZStart { get => GetValue(ZStartProperty); set => SetValue(ZStartProperty, value); }
+
+    /// <summary>What one slice adds to the previous slice's Z when the spreadsheet does not say.</summary>
+    public double ZStep { get => GetValue(ZStepProperty); set => SetValue(ZStepProperty, value); }
+
+    /// <summary>Which spreadsheet row holds each slice's Z value (0 = the header row).</summary>
+    public int ZRow { get => GetValue(ZRowProperty); set => SetValue(ZRowProperty, value); }
+
+    /// <summary>The Z of the first slice that is drawn (empty = the sheet's own least Z).</summary>
+    public double MinZ { get => GetValue(MinZProperty); set => SetValue(MinZProperty, value); }
+
+    /// <summary>The Z of the last slice that is drawn (empty = the sheet's own greatest Z).</summary>
+    public double MaxZ { get => GetValue(MaxZProperty); set => SetValue(MaxZProperty, value); }
+
+    /// <summary>How many samples of a slice are drawn at most (0 = every one).</summary>
+    public int MaxPoints { get => GetValue(MaxPointsProperty); set => SetValue(MaxPointsProperty, value); }
+
+    /// <summary>How far above the floor the sheet is seen from.</summary>
+    public double Elevation { get => GetValue(ElevationProperty); set => SetValue(ElevationProperty, value); }
+
+    /// <summary>Where the sheet is turned to.</summary>
+    public double Azimuth { get => GetValue(AzimuthProperty); set => SetValue(AzimuthProperty, value); }
+
+    /// <summary>How deep the whole sheet stands.</summary>
+    public double ZSpacing { get => GetValue(ZSpacingProperty); set => SetValue(ZSpacingProperty, value); }
+
+    /// <summary>Scales the fitted picture.</summary>
+    public double Zoom { get => GetValue(ZoomProperty); set => SetValue(ZoomProperty, value); }
+
+    /// <summary>The name along the depth axis.</summary>
+    public string? ZAxisTitle { get => GetValue(ZAxisTitleProperty); set => SetValue(ZAxisTitleProperty, value); }
+
+    /// <summary>A surface has no cartesian frame: its axes are the projected cube's edges.</summary>
+    protected override bool HasCartesianAxes => false;
+
+    /// <summary>The X values are read from the sheet — a width position is a number, not a sample count.</summary>
+    protected override bool ImplicitXFromIndex => false;
+
+    /// <summary>The floor sits at zero, so the height scale always includes it.</summary>
+    protected override bool ZeroBaseline => true;
+
+    /// <summary>There is no flat frame to hang cursors on.</summary>
+    protected override bool SupportsCursors => false;
+
+    /// <summary>The width range the data covers, ignoring the window. READ-ONLY, and for the designer's
+    /// eyes only: the legend's range sliders span exactly what the sheet has, so a range that would draw
+    /// an empty picture cannot be picked.</summary>
+    public double DataMinX => _dataX.Min;
+
+    /// <inheritdoc cref="DataMinX"/>
+    public double DataMaxX => _dataX.Max;
+
+    /// <summary>The height range the data covers, ignoring the window (zero included, as the scale does).</summary>
+    public double DataMinY => _dataY.Min;
+
+    /// <inheritdoc cref="DataMinY"/>
+    public double DataMaxY => _dataY.Max;
+
+    /// <summary>The Z (length) range the data covers, ignoring the window: the span the legend's slice
+    /// slider runs along.</summary>
+    public double DataMinZ => _dataZ.Min;
+
+    /// <inheritdoc cref="DataMinZ"/>
+    public double DataMaxZ => _dataZ.Max;
+
+    /// <summary>The legend of a surface is a RANGE SELECTOR, not a list of names: two sliders that pick the
+    /// part of the sheet to draw, with the chart re-fitting the picture to whatever they select. That is why
+    /// it has no use for <see cref="InlineLegendName"/> — it lists nothing but its sliders.</summary>
+    private protected override bool IsRangeLegend => true;
+
+    /// <summary>How tall one slider row is, how big its handles are drawn, and the room a slider's numbers
+    /// take beside its track (they are rotated alongside it when the bar docks at a side).</summary>
+    private const double RangeRow = 20;
+    private const double RangeHandle = 5;
+    private const double RangeLabelWidth = 92;
+    private const double RangeLabelRoom = 14;
+
+    /// <summary>True when the bar docks at a side, so the sliders run DOWN the frame and their numbers are
+    /// turned on their side — the legend follows the side the form asks for.</summary>
+    private bool RangeVertical => LegendPosition is LegendPosition.Left or LegendPosition.Right;
+
+    /// <inheritdoc/>
+    private protected override Size MeasureRangeLegend(Size frameSize)
+    {
+        // Two sliders — the WIDTH (X) one first, then the SLICES (Z) one — each with its track and the room
+        // its numbers need. Across the frame they stack as two rows; down a side they sit side by side as two
+        // columns, so the bar still honours the side the form asked for.
+        return RangeVertical
+            ? new Size(Math.Min(RangeColumn * 2 + 8, Math.Max(60, frameSize.Width * 0.5)), frameSize.Height)
+            : new Size(frameSize.Width, Math.Min(RangeRow * 2 + 16, Math.Max(40, frameSize.Height * 0.5)));
+    }
+
+    /// <inheritdoc/>
+    private protected override void DrawRangeLegend(DrawingContext context)
+    {
+        var font = Math.Max(6, Math.Min(11, LegendFontSize - 1));
+        var trackPen = MakePen(MeshColor, 3, ChartLineStyle.Solid);
+        for (var axis = 0; axis < 2; axis++)
+        {
+            var colour = axis == 0 ? Color.Parse("#4C9FDC") : Color.Parse("#D9A519");
+            var track = RangeTrack(axis);
+            context.DrawLine(trackPen, RangeStart(track), RangeEnd(track));
+            var handlePen = MakePen(colour, 1, ChartLineStyle.Solid);
+            var fill = new SolidColorBrush(colour);
+            foreach (var value in new[] { RangeLow(axis), RangeHigh(axis) })
+            {
+                var point = RangePoint(axis, value);
+                context.DrawRectangle(fill, handlePen, new RoundedRect(
+                    new Rect(point.X - RangeHandle, point.Y - RangeHandle, RangeHandle * 2, RangeHandle * 2), 2));
+            }
+            // What is selected, in the axis' own colour: "X 70 … 110", or the same turned on its side when
+            // the bar is docked at a side.
+            var text = MakeText(RangeLabelText(axis), font, colour);
+            if (RangeVertical)
+            {
+                // Rotate then translate (the same order the axis names use): the text reads upward, so its
+                // anchor sits half a text-width below the middle of the column it labels.
+                var anchorY = track.Y + track.Height / 2 + text.Width / 2;
+                using (context.PushTransform(Matrix.CreateRotation(-Math.PI / 2)
+                                             * Matrix.CreateTranslation(_legendRect.X + 4 + Math.Max(0, LegendMargin) + axis * RangeColumn, anchorY)))
+                {
+                    context.DrawText(text, new Point(0, 0));
+                }
+            }
+            else
+            {
+                context.DrawText(text, new Point(_legendRect.X + 4 + Math.Max(0, LegendMargin),
+                    track.Y - text.Height / 2));
+            }
+        }
+    }
+
+    /// <summary>The letters the sliders carry: X is the WIDTH of the sheet, Z is how far along it a slice
+    /// stands (the height between them is the data, and is not a choice).</summary>
+    private static string RangeName(int axis) => axis == 0 ? "X" : "Z";
+
+    /// <inheritdoc/>
+    private protected override IReadOnlyList<double> RangeSteps(int axis) => axis == 0 ? Array.Empty<double>() : _sliceSteps;
+
+    /// <summary>The nearest slice position to a window end, so a window always cuts BETWEEN slices — a typed
+    /// "9" on a sheet sliced every 5 takes the slice at 10 rather than leaving a slice the slider cannot
+    /// name half shown.</summary>
+    private double SnapToSlice(double value) => _sliceSteps.Count == 0 ? value : _sliceSteps[NearestStep(value)];
+
+    /// <summary>The index of the slice position nearest a Z value (0 when the sheet has no slices yet).</summary>
+    private int NearestStep(double value)
+    {
+        var best = 0;
+        for (var i = 1; i < _sliceSteps.Count; i++)
+        {
+            if (Math.Abs(_sliceSteps[i] - value) < Math.Abs(_sliceSteps[best] - value)) best = i;
+        }
+        return best;
+    }
+
+    /// <summary>The range one slider spans: the DATA's own, so a selection can never leave the sheet.</summary>
+    private AxisRange RangeAxis(int axis) => axis == 0 ? _dataX : _dataZ;
+
+    /// <summary>The window's low end (unset = the whole data range).</summary>
+    private double RangeLow(int axis)
+    {
+        var pinned = axis == 0 ? MinX : MinZ;
+        return double.IsNaN(pinned) ? RangeAxis(axis).Min : pinned;
+    }
+
+    /// <summary>The window's high end (unset = the whole data range).</summary>
+    private double RangeHigh(int axis)
+    {
+        var pinned = axis == 0 ? MaxX : MaxZ;
+        return double.IsNaN(pinned) ? RangeAxis(axis).Max : pinned;
+    }
+
+    /// <summary>How wide one slider's COLUMN is when the bar is docked at a side: its rotated numbers take
+    /// the room at the column's left edge, the track runs down what is left.</summary>
+    private const double RangeColumn = RangeLabelRoom + RangeRow;
+
+    /// <summary>The line a slider sweeps, with the data range mapped onto it.</summary>
+    private Rect RangeTrack(int axis)
+    {
+        var pad = 4 + Math.Max(0, LegendMargin);
+        if (RangeVertical)
+        {
+            return new Rect(_legendRect.X + pad + axis * RangeColumn + RangeLabelRoom, _legendRect.Y + pad,
+                            1, Math.Max(10, _legendRect.Height - pad * 2));
+        }
+        var left = _legendRect.X + pad + RangeLabelWidth;
+        return new Rect(left, _legendRect.Y + pad + 10 + axis * RangeRow,
+                        Math.Max(10, _legendRect.Right - pad - left), 1);
+    }
+
+    private Point RangeStart(Rect track) => RangeVertical
+        ? new Point(track.X + track.Width / 2, track.Y)
+        : new Point(track.X, track.Y + track.Height / 2);
+
+    private Point RangeEnd(Rect track) => RangeVertical
+        ? new Point(track.X + track.Width / 2, track.Bottom)
+        : new Point(track.Right, track.Y + track.Height / 2);
+
+    /// <summary>What one slider says. The continuous one (the width) names the values it cut — "X 70 … 110" —
+    /// and the one that walks slices counts them instead, "Z 3…9 of 55", because the number of series on
+    /// show is the thing being chosen there: on a sheet sliced every 5 the values "0 … 9" would be two
+    /// slices out of fifty-five and read as a mystery.</summary>
+    private string RangeLabelText(int axis)
+    {
+        var steps = RangeSteps(axis);
+        if (steps.Count < 2) return $"{RangeName(axis)} {FormatNumber(RangeLow(axis), 1)} … {FormatNumber(RangeHigh(axis), 1)}";
+        var from = NearestStep(double.IsNaN(RangeLow(axis)) ? steps[0] : RangeLow(axis)) + 1;
+        var to = NearestStep(double.IsNaN(RangeHigh(axis)) ? steps[steps.Count - 1] : RangeHigh(axis)) + 1;
+        if (to < from) (from, to) = (to, from);
+        return $"{RangeName(axis)} {from}…{to} of {steps.Count}";
+    }
+
+    /// <summary>Where a value sits on its slider. A slider whose axis is made of slices puts its handles on
+    /// the SLICES, so a drag steps from one slice to the next; a continuous one maps the value straight
+    /// onto its track.</summary>
+    private Point RangePoint(int axis, double value)
+    {
+        var track = RangeTrack(axis);
+        var steps = RangeSteps(axis);
+        double f;
+        if (steps.Count > 1)
+        {
+            f = NearestStep(double.IsNaN(value) ? steps[0] : value) / (double)(steps.Count - 1);
+        }
+        else
+        {
+            var range = RangeAxis(axis);
+            var span = range.Max - range.Min;
+            f = span > 0 ? Math.Clamp((value - range.Min) / span, 0, 1) : 0;
+        }
+        var from = RangeStart(track);
+        var to = RangeEnd(track);
+        return new Point(from.X + (to.X - from.X) * f, from.Y + (to.Y - from.Y) * f);
+    }
+
+    /// <summary>The value a point on a slider names, clamped to the data range — and, on a slider made of
+    /// slices, snapped to the nearest of them, so a drag can only ever add or drop whole slices.</summary>
+    private double RangeValue(int axis, Point position)
+    {
+        var track = RangeTrack(axis);
+        var from = RangeStart(track);
+        var to = RangeEnd(track);
+        var span = RangeVertical ? Math.Max(1e-6, to.Y - from.Y) : Math.Max(1e-6, to.X - from.X);
+        var f = Math.Clamp(RangeVertical ? (position.Y - from.Y) / span : (position.X - from.X) / span, 0, 1);
+        var steps = RangeSteps(axis);
+        if (steps.Count > 1) return steps[(int)Math.Round(f * (steps.Count - 1))];
+        var range = RangeAxis(axis);
+        return range.Min + f * (range.Max - range.Min);
+    }
+
+    /// <summary>The band a pointer grabs to take hold of a slider: its own row across the frame, its own
+    /// COLUMN down a side — so a press picks the slider it landed on instead of always the first one.</summary>
+    private Rect RangeBand(int axis)
+    {
+        var pad = 4 + Math.Max(0, LegendMargin);
+        if (RangeVertical)
+            return new Rect(_legendRect.X + pad + axis * RangeColumn, _legendRect.Y + 1,
+                            RangeColumn, Math.Max(10, _legendRect.Height - 2));
+        var track = RangeTrack(axis);
+        return new Rect(_legendRect.X + 1, track.Y - RangeRow / 2,
+                        Math.Max(10, _legendRect.Width - 2), RangeRow);
+    }
+
+    /// <summary>-1, or the slider a pointer position falls on.</summary>
+    private int RangeHitAxis(Point position)
+    {
+        if (_legendRect.Width <= 0 || !_legendRect.Contains(position)) return -1;
+        for (var axis = 0; axis < 2; axis++)
+        {
+            if (RangeBand(axis).Contains(position)) return axis;
+        }
+        return -1;
+    }
+
+    /// <summary>Moves the end of a window the pointer is dragging: the end nearer the pointer takes the
+    /// value, the other one stays put (so dragging past it pins them together instead of swapping).</summary>
+    private void DragRangeTo(Point position)
+    {
+        var axis = _rangeDragAxis;
+        if (axis < 0) return;
+        var value = RangeValue(axis, position);
+        if (axis == 0)
+        {
+            if (_rangeDragHigh) MaxX = Math.Max(value, RangeLow(0));
+            else MinX = Math.Min(value, RangeHigh(0));
+        }
+        else
+        {
+            if (_rangeDragHigh) MaxZ = Math.Max(value, RangeLow(1));
+            else MinZ = Math.Min(value, RangeHigh(1));
+        }
+        InvalidateVisual();
+    }
+
+    /// <summary>The colours inline slices take, one after the other, so they can be told apart.</summary>
+    private static readonly Color[] SlicePalette =
+    {
+        Color.Parse("#2D7DD2"), Color.Parse("#E4572E"), Color.Parse("#3FA34D"), Color.Parse("#B07CC6"),
+        Color.Parse("#D9A519"), Color.Parse("#4C9FDC"), Color.Parse("#EE6C4D"), Color.Parse("#3D9970")
+    };
+
+    /// <summary>The Z of every slice of the last read, keyed by the plot the series produced.</summary>
+    private readonly Dictionary<Plot, double> _sliceZ = new();
+
+    /// <summary>Those same Z values, in order and without repeats: the positions the sheet is actually cut
+    /// at, which is what the legend's second slider walks and what a window is snapped to — a window that
+    /// ends between two slices would otherwise show a slice the slider's numbers do not mention.</summary>
+    private readonly List<double> _sliceSteps = new();
+
+    /// <summary>The width and height ranges the DATA covers, window or not, as of the last read. The
+    /// legend's range sliders span these, so a selection can never name a range the sheet has not got.</summary>
+    private AxisRange _dataX = AxisRange.Over(Array.Empty<double>(), double.NaN, double.NaN, 6, 1);
+    private AxisRange _dataY = AxisRange.Over(Array.Empty<double>(), double.NaN, double.NaN, 5, 5);
+    private AxisRange _dataZ = AxisRange.Over(Array.Empty<double>(), double.NaN, double.NaN, 5, 5);
+
+    /// <summary>Which range slider the pointer is dragging (-1 = none) and whether it holds the HIGH end.
+    /// A press inside the legend bar grabs a slider instead of turning the sheet.</summary>
+    private int _rangeDragAxis = -1;
+    private bool _rangeDragHigh;
+
+    private bool _rotateDrag;
+    private Point _rotateFrom;
+    private double _rotateElevation;
+    private double _rotateAzimuth;
+
+    /// <summary>One corrugation profile, typed in — the chart's only inline data.</summary>
+    protected override ChartData InlineData()
+    {
+        var values = Values;
+        if (values is { Length: > 0 })
+            return new ChartData
+            {
+                Xs = Enumerable.Range(1, values.Length).Select(n => (double)n).ToArray(),
+                Ys = values
+            };
+        return Series.Count > 0 ? ReadSlice(Series[0], 0) : new ChartData();
+    }
+
+    /// <inheritdoc/>
+    protected override void SetInlineData(double[] xs, double[] ys) => Values = ys;
+
+    /// <summary>One slice per series — and one shared X column for the whole chart, which is what makes the
+    /// slices line up into a grid.</summary>
+    private protected override List<Plot> BuildPlots()
+    {
+        var plots = new List<Plot>();
+        if (Series.Count == 0)
+        {
+            var sets = SampleSets;
+            if (sets is { Length: > 0 })
+            {
+                // A surface sketched inline: one slice per semicolon-separated group, each in its own
+                // colour of the palette so successive slices can be told apart.
+                for (var i = 0; i < sets.Length; i++)
+                {
+                    plots.Add(new Plot
+                    {
+                        Data = new ChartData
+                        {
+                            Xs = Enumerable.Range(1, sets[i].Length).Select(n => (double)n).ToArray(),
+                            Ys = sets[i]
+                        },
+                        LineColor = SlicePalette[i % SlicePalette.Length],
+                        LineThickness = LineThickness,
+                        LineStyle = LineStyle
+                    });
+                }
+            }
+            else
+            {
+                var values = Values;
+                var data = values is { Length: > 0 }
+                    ? new ChartData
+                    {
+                        Xs = Enumerable.Range(1, values.Length).Select(n => (double)n).ToArray(),
+                        Ys = values
+                    }
+                    : ReadSlice(null, 0);
+                plots.Add(new Plot
+                {
+                    Data = data,
+                    LineColor = LineColor,
+                    LineThickness = LineThickness,
+                    LineStyle = LineStyle
+                });
+            }
+        }
+        else
+        {
+            for (var i = 0; i < Series.Count; i++)
+            {
+                var series = Series[i];
+                plots.Add(new Plot
+                {
+                    Data = ReadSlice(series, i),
+                    Definition = series,
+                    LineColor = series.LineColor,
+                    LineThickness = series.LineThickness,
+                    LineStyle = series.LineStyle,
+                    Visible = series.Visible
+                });
+            }
+        }
+
+        // ONE width scale for the whole picture (every slice is read against the same X column, so a scale
+        // per slice would draw two ridges at two widths and claim they are equal), and one height scale
+        // that always includes the floor at zero.
+        var xs = plots.SelectMany(p => p.Data.Xs).ToList();
+        var ys = plots.SelectMany(p => p.Data.Ys).ToList();
+        ys.Add(0d);
+        if (xs.Count == 0) { xs.Add(0d); xs.Add(1d); }
+        if (ys.Count == 0) { ys.Add(0d); ys.Add(1d); }
+        var xr = AxisRange.Over(xs, MinX, MaxX, 6, 1);
+        var yr = AxisRange.Over(ys, MinY, MaxY, 5, 5);
+        // … and what the DATA alone covers, which is what the legend's range sliders span. Zero is part of
+        // the height range because the floor is (ZeroBaseline), so a slider cannot cut the floor away.
+        _dataX = AxisRange.Over(xs, double.NaN, double.NaN, 6, 1);
+        _dataY = AxisRange.Over(ys, double.NaN, double.NaN, 5, 5);
+        ReadSlicePositions(plots);
+        // The Z of every slice is known only after ReadSlicePositions, and the legend's second slider spans
+        // exactly these numbers: what the sheet's own length is, not whatever window is set. They are kept in
+        // order and without repeats as well, because the slider walks them one slice at a time.
+        var zs = _sliceZ.Values.ToList();
+        _dataZ = AxisRange.Over(zs, double.NaN, double.NaN, 5, 5);
+        _sliceSteps.Clear();
+        _sliceSteps.AddRange(zs.Distinct().OrderBy(z => z));
+        foreach (var plot in plots)
+        {
+            plot.XRange = xr;
+            plot.YRange = yr;
+        }
+
+        return plots;
+    }
+
+    /// <summary>One slice's profile: the series' own Y column, else the chart's YColumn and then the next
+    /// column along (C, D, E …) — one column per slice is how a capture is laid out.</summary>
+    private ChartData ReadSlice(ChartSeries? series, int index)
+    {
+        var column = series is not null && !string.IsNullOrWhiteSpace(series.YColumn)
+            ? series.YColumn!
+            : SpreadsheetReader.ColumnAfter(YColumn ?? "C", index);
+        return DataFor(series, XColumn ?? "B", column, false);
+    }
+
+    /// <summary>
+    /// The Z of every slice: the sheet's OWN numbers when it has them (one row of them, one per series
+    /// column), and a numbered sequence from <see cref="ZStart"/> when it does not — so a workbook that
+    /// names its columns still draws, and a workbook that positions them draws them where it says.
+    /// </summary>
+    private void ReadSlicePositions(List<Plot> plots)
+    {
+        _sliceZ.Clear();
+        var fromSheet = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        var file = SourceFile;
+        if (!string.IsNullOrWhiteSpace(file) && plots.Count > 0)
+            fromSheet = SpreadsheetReader.RowNumbers(file!, ZRow > 0 ? ZRow : Math.Max(1, HeaderRow), SourceSheet);
+
+        for (var i = 0; i < plots.Count; i++)
+        {
+            var column = Series.Count > i && !string.IsNullOrWhiteSpace(Series[i].YColumn)
+                ? Series[i].YColumn!
+                : SpreadsheetReader.ColumnAfter(YColumn ?? "C", i);
+            _sliceZ[plots[i]] = fromSheet.TryGetValue(column, out var z) ? z : ZStart + i * ZStep;
+        }
+    }
+
+    /// <summary>
+    /// Draws the sheet: the floor and the three projected axes, then the quads — one BAND per pair of
+    /// neighbouring slices, painted from the farthest back to the nearest, because a solid surface hides
+    /// what is behind it. Each band is a single geometry (the solid) and a single geometry (its mesh lines),
+    /// so a 100 × 100 sheet is two hundred shapes rather than ten thousand.
+    /// </summary>
+    private protected override void DrawSeriesLayer(DrawingContext context, List<Plot> plots, Rect plot)
+    {
+        // The Z window picks which SLICES are drawn at all (the legend's second slider): a long capture can
+        // be looked at a few slices at a time, and the depth scale re-fits to what is left. The ends are
+        // snapped to the slices themselves first, so the picture, the depth scale and the slider's own
+        // numbers always agree: "Z 1…3 of 55" draws exactly the slices 1, 2 and 3 and nothing between them.
+        var everyZ = _sliceZ.Values.ToList();
+        var lowZ = SnapToSlice(double.IsNaN(MinZ) ? (everyZ.Count > 0 ? everyZ.Min() : 0d) : MinZ);
+        var highZ = SnapToSlice(double.IsNaN(MaxZ) ? (everyZ.Count > 0 ? everyZ.Max() : 1d) : MaxZ);
+        if (highZ < lowZ) (lowZ, highZ) = (highZ, lowZ);
+        var inside = new HashSet<Plot>();
+        foreach (var candidate in plots)
+        {
+            if (_sliceZ.TryGetValue(candidate, out var z) && z >= lowZ - 1e-9 && z <= highZ + 1e-9)
+                inside.Add(candidate);
+        }
+        var visible = plots.Where(p => p.Visible && p.Data.HasData && inside.Contains(p)).ToList();
+        var world = new SurfaceWorld
+        {
+            View = MakeView(plot),
+            Depth = Math.Clamp(ZSpacing, 0.1, 4),
+            Xs = visible.Count > 0 ? visible[0].XRange : AxisRange.Over(new[] { 0d, 1d }, MinX, MaxX, 6, 1),
+            Ys = visible.Count > 0 ? visible[0].YRange : AxisRange.Over(new[] { 0d, 1d }, MinY, MaxY, 5, 5),
+            Zs = AxisRange.Over(everyZ, lowZ, highZ, 5, 5)
+        };
+        DrawFloor(context, world);
+
+        if (visible.Count < 2) return;   // one slice is a profile, not a surface
+
+        // The slices of this render: their own samples, and the depth their Z VALUE puts them at.
+        var slices = visible.Select(p => new SurfaceSlice
+        {
+            Xs = p.Data.Xs,
+            Ys = p.Data.Ys,
+            Color = p.LineColor,
+            Z = _sliceZ.TryGetValue(p, out var z) ? z : 0d
+        }).ToList();
+        foreach (var slice in slices) slice.Depth = world.UnitZOf(slice.Z);
+
+        // ONE stride for every slice and the last sample always kept, so the quads join like to like.
+        var count = slices.Max(s => s.Xs.Length);
+        var stride = MaxPoints > 0 && count > MaxPoints ? (int)Math.Ceiling(count / (double)MaxPoints) : 1;
+        var kept = new List<int>();
+        for (var i = 0; i < count; i += stride) kept.Add(i);
+        if (count > 0 && kept[kept.Count - 1] != count - 1) kept.Add(count - 1);
+
+        // The temperature ramp's ends default to the DATA's own least and greatest value, so the sheet uses
+        // the whole ramp; HeatMin/HeatMax pin it when several charts are read against one scale.
+        var values = slices.SelectMany(s => s.Ys).ToList();
+        var rampLow = double.IsNaN(HeatMin) ? (values.Count > 0 ? values.Min() : 0d) : HeatMin;
+        var rampHigh = double.IsNaN(HeatMax) ? (values.Count > 0 ? values.Max() : 1d) : HeatMax;
+        if (rampHigh <= rampLow) rampHigh = rampLow + 1;
+        var opacity = Math.Clamp(SolidOpacity, 0, 100) / 100d;
+        var meshPen = MakePen(MeshColor, MeshThickness, ChartLineStyle.Solid);
+
+        // Farthest band first: the projection itself says which end of the sheet is the far one.
+        var order = Enumerable.Range(0, slices.Count)
+            .OrderBy(i => world.View.Depth(0.5, 0.5, slices[i].Depth))
+            .ToList();
+
+        using (context.PushClip(plot))
+        {
+            // The block the sheet stands on, when it is asked for: the SIDES of every band and the two ENDS
+            // of the sheet, each dropped from its own profile to the floor. Drawn with the bands and in the
+            // same back-to-front order, and BEFORE each band's own fill, for two reasons: a nearer face then
+            // hides the sheet behind it (a block occludes what it stands in front of, which is the whole
+            // point of it), and the band's opaque fill covers the hairline where the two meet.
+            var baseBrush = new SolidColorBrush(BaseColor);
+            var basePen = MakePen(BaseColor, 1, ChartLineStyle.Solid);
+            for (var rank = 0; rank + 1 < order.Count; rank++)
+            {
+                var far = order[rank];
+                var near = order[rank + 1];
+                if (ShowBase)
+                {
+                    if (rank == 0) context.DrawGeometry(baseBrush, basePen, BaseEndGeometry(world, slices[far], kept));
+                    if (rank + 2 == order.Count) context.DrawGeometry(baseBrush, basePen, BaseEndGeometry(world, slices[near], kept));
+                    if (kept.Count > 0)
+                    {
+                        context.DrawGeometry(baseBrush, basePen, BaseSideGeometry(world, slices[far], slices[near], kept[0]));
+                        context.DrawGeometry(baseBrush, basePen, BaseSideGeometry(world, slices[far], slices[near], kept[kept.Count - 1]));
+                    }
+                }
+                if (Style is not SurfaceStyle.GridMesh)
+                {
+                    var brush = ColorBy is SurfaceColorMode.Temperature
+                        ? TemperatureBrush(world, (slices[far].Depth + slices[near].Depth) / 2, rampLow, rampHigh, opacity)
+                        : new SolidColorBrush(slices[far].Color, opacity);
+                    // The band is filled AND outlined in its own brush: two neighbouring bands are separate
+                    // draw calls, so their shared edge would otherwise show a hairline of the background
+                    // through the sheet.
+                    context.DrawGeometry(brush, new Pen(brush, 1), BandGeometry(world, slices, far, near, kept, false));
+                }
+                if (Style is not SurfaceStyle.Solid)
+                    context.DrawGeometry(null, meshPen, BandGeometry(world, slices, far, near, kept, true));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The temperature ramp for one band: LowColor at the ramp's low value and HighColor at its high one,
+    /// laid along the projected HEIGHT axis — with a brush per band, built at that band's own depth, so a
+    /// ridge's colour depends on its height and not on how far back it stands (a simply vertical screen
+    /// gradient would tint by screen position instead, and the same ridge would change colour along the
+    /// length of the sheet).
+    /// </summary>
+    private IBrush TemperatureBrush(SurfaceWorld world, double depth, double low, double high, double opacity)
+    {
+        var from = world.View.Project(0, world.UnitY(low), depth);
+        var to = world.View.Project(0, world.UnitY(high), depth);
+        var spanX = to.X - from.X;
+        var spanY = to.Y - from.Y;
+        if (spanX * spanX + spanY * spanY < 1)
+            return new SolidColorBrush(Blend(LowColor, HighColor, 0.5), opacity);   // edge on: one colour
+        return new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(from, RelativeUnit.Absolute),
+            EndPoint = new RelativePoint(to, RelativeUnit.Absolute),
+            GradientStops = new GradientStops
+            {
+                new GradientStop(LowColor, 0),
+                new GradientStop(HighColor, 1)
+            },
+            Opacity = opacity
+        };
+    }
+
+    /// <summary>Halfway between two colours — what an edge-on ramp collapses to.</summary>
+    private static Color Blend(Color a, Color b, double t) => Color.FromArgb(255,
+        (byte)Math.Round(a.R + (b.R - a.R) * t),
+        (byte)Math.Round(a.G + (b.G - a.G) * t),
+        (byte)Math.Round(a.B + (b.B - a.B) * t));
+
+    /// <summary>
+    /// One band's geometry: the triangles between two neighbouring slices (for the solid), or the mesh lines
+    /// of that band (for the grid) — the two profile lines and a rung at every sample, which is exactly the
+    /// mesh a corrugated sheet suggests. A sample either slice is missing ends the band there rather than
+    /// smearing it across the gap.
+    /// </summary>
+    private static StreamGeometry BandGeometry(SurfaceWorld world, List<SurfaceSlice> slices, int far, int near,
+                                               List<int> kept, bool wire)
+    {
+        var geometry = new StreamGeometry();
+        using (var g = geometry.Open())
+        {
+            // NON-ZERO filling is not a detail here: a fold makes a band's own triangles overlap, and the
+            // default even-odd rule would CANCEL every one of those overlaps into a see-through hole. Non-zero
+            // adds them up — which is why every triangle is wound the same way (see BandTriangle).
+            g.SetFillRule(FillRule.NonZero);
+            if (wire)
+            {
+                AddProfile(g, world, slices[far], kept);
+                AddProfile(g, world, slices[near], kept);
+                for (var i = 0; i < kept.Count; i++)
+                    AddRung(g, world, slices[far], slices[near], kept[i]);
+                return geometry;
+            }
+            // ONE TRIANGLE PAIR per adjacent sample pair, wound the same way for the whole band.
+            // Neither a quad nor a ribbon is safe here: where the projection folds — and at a low
+            // Elevation a corrugated sheet folds in EVERY band, because each slice's profile collapses
+            // into a single screen column — a figure whose outline crosses itself has two loops wound
+            // OPPOSITE ways, so NonZero SUMS them to zero and the fill is dropped. That hole is the
+            // chart's own backcolour showing through a surface that should be solid (reported from the
+            // running app on a form whose PlotBackColor is red, 2026-09-24). A triangle cannot cross
+            // itself, and normalising every triangle to the band's first winding makes the ones a fold
+            // overlaps add up (±2) instead of cancelling. The 1px pen in the band's own brush covers
+            // the seams between neighbouring triangles; a missing sample ends the run.
+            var farRun = new List<Point>();
+            var nearRun = new List<Point>();
+            var want = 0.0;      // the winding sign this band's triangles take (0 = not set yet)
+            void Flush()
+            {
+                if (farRun.Count >= 2)
+                {
+                    for (var k = 0; k < farRun.Count - 1; k++)
+                    {
+                        var a = farRun[k]; var b = farRun[k + 1];
+                        var c = nearRun[k + 1]; var d = nearRun[k];
+                        // The pair is split by the b–d diagonal into two corners, and a corner cannot
+                        // cross itself — which is the whole reason the quad is not filled as one figure.
+                        want = BandTriangle(g, a, b, d, want);
+                        want = BandTriangle(g, b, c, d, want);
+                    }
+                }
+                farRun.Clear();
+                nearRun.Clear();
+            }
+            foreach (var index in kept)
+            {
+                if (!TryPoint(world, slices[far], index, out var a) || !TryPoint(world, slices[near], index, out var b))
+                {
+                    Flush();
+                    continue;
+                }
+                farRun.Add(a);
+                nearRun.Add(b);
+            }
+            Flush();
+        }
+        return geometry;
+    }
+
+    /// <summary>
+    /// One filled triangle of a band, wound the way the band's first one was — <paramref name="want"/> is that
+    /// sign, and it comes back so every triangle of the band keeps it. This is what stops a fold's overlapping
+    /// triangles from cancelling: a triangle is the only polygon that cannot cross itself, so there is no loop
+    /// whose winding could be subtracted from another's. The name is also the bundled-file staleness marker
+    /// (<c>src/bundledComponents.ts</c>): a project still holding a copy of this chart from before
+    /// 2026-09-24 has the old one-figure band fill and no such member, and drawing is exactly the kind of
+    /// change such a copy cannot show — which is why such a form kept drawing see-through bands in the app
+    /// while the designer (built from this file) looked right.
+    /// </summary>
+    private static double BandTriangle(StreamGeometryContext g, Point p, Point q, Point r, double want)
+    {
+        var area = (q.X - p.X) * (r.Y - p.Y) - (q.Y - p.Y) * (r.X - p.X);
+        if (Math.Abs(area) < 1e-9) return want;      // no area: nothing to fill, nothing to set
+        if (want == 0) want = area;                  // the band's first real triangle sets the sign
+        if (area * want < 0) (q, r) = (r, q);        // the other way round, so the windings add up
+        g.BeginFigure(p, true);
+        g.LineTo(q);
+        g.LineTo(r);
+        g.EndFigure(true);
+        return want;
+    }
+
+    /// <summary>One slice's own profile line, as one figure (broken where a sample is missing).</summary>
+    private static void AddProfile(StreamGeometryContext g, SurfaceWorld world, SurfaceSlice slice, List<int> kept)
+    {
+        var started = false;
+        for (var i = 0; i < kept.Count; i++)
+        {
+            if (!TryPoint(world, slice, kept[i], out var point))
+            {
+                if (started) g.EndFigure(false);
+                started = false;
+                continue;
+            }
+            if (!started)
+            {
+                g.BeginFigure(point, false);
+                started = true;
+            }
+            else
+            {
+                g.LineTo(point);
+            }
+        }
+        if (started) g.EndFigure(false);
+    }
+
+    /// <summary>One rung: the same sample on two neighbouring slices, joined — the sheet's own rib.</summary>
+    private static void AddRung(StreamGeometryContext g, SurfaceWorld world, SurfaceSlice a, SurfaceSlice b, int sample)
+    {
+        if (!TryPoint(world, a, sample, out var from)) return;
+        if (!TryPoint(world, b, sample, out var to)) return;
+        g.BeginFigure(from, false);
+        g.LineTo(to);
+        g.EndFigure(false);
+    }
+
+    /// <summary>One sample of one slice, in the picture.</summary>
+    private static bool TryPoint(SurfaceWorld world, SurfaceSlice slice, int sample, out Point point)
+    {
+        if (sample < 0 || sample >= slice.Xs.Length || sample >= slice.Ys.Length)
+        {
+            point = default;
+            return false;
+        }
+        point = world.At(slice.Xs[sample], slice.Ys[sample], slice.Depth);
+        return true;
+    }
+
+    /// <summary>
+    /// One END of the base block: a slice's profile with the floor directly under it, closed into a face —
+    /// the sheet's cross-section, which is what a block shows at the near or the far end of the sheet.
+    /// </summary>
+    private static StreamGeometry BaseEndGeometry(SurfaceWorld world, SurfaceSlice slice, List<int> kept)
+    {
+        var geometry = new StreamGeometry();
+        using (var g = geometry.Open())
+        {
+            // One SIMPLE QUAD per pair of samples, not a ribbon: the profile folds in the projection wherever
+            // the sheet drops steeply, and a folded ribbon's own outline crosses itself, which the winding
+            // rules cancel into a hole straight through the block. A four-point quad has no loop to cancel.
+            Point? top = null;
+            Point? bottom = null;
+            foreach (var index in kept)
+            {
+                if (!TryPoint(world, slice, index, out var here))
+                {
+                    top = null;
+                    bottom = null;
+                    continue;
+                }
+                var foot = world.Base(slice.Xs[index], slice.Depth);
+                if (top is { } wasTop && bottom is { } wasBottom)
+                {
+                    g.BeginFigure(wasTop, true);
+                    g.LineTo(here);
+                    g.LineTo(foot);
+                    g.LineTo(wasBottom);
+                    g.EndFigure(true);
+                }
+                top = here;
+                bottom = foot;
+            }
+        }
+        return geometry;
+    }
+
+    /// <summary>
+    /// One SIDE of the base block for one band: the quad between two neighbouring slices at one sample, from
+    /// their profiles down to their feet. Every band draws its own, so the sides come out in the same
+    /// back-to-front order as the sheet itself.
+    /// </summary>
+    private static StreamGeometry BaseSideGeometry(SurfaceWorld world, SurfaceSlice far, SurfaceSlice near, int sample)
+    {
+        var geometry = new StreamGeometry();
+        if (!TryPoint(world, far, sample, out var farTop)) return geometry;
+        if (!TryPoint(world, near, sample, out var nearTop)) return geometry;
+        using (var g = geometry.Open())
+        {
+            g.BeginFigure(farTop, true);
+            g.LineTo(nearTop);
+            g.LineTo(world.Base(near.Xs[sample], near.Depth));
+            g.LineTo(world.Base(far.Xs[sample], far.Depth));
+            g.EndFigure(true);
+        }
+        return geometry;
+    }
+
+    /// <summary>
+    /// The floor the sheet stands on, with its gridlines and its three axes: the samples across the width,
+    /// the slice positions back along the length, the height up the left. Reading a 3D picture needs the
+    /// floor more than anything else — it says how long the sheet is and where zero height is.
+    /// </summary>
+    private void DrawFloor(DrawingContext context, SurfaceWorld world)
+    {
+        var xMin = world.Xs.Min;
+        var xMax = world.Xs.Max;
+        var axisPen = MakePen(AxisColor, 1, ChartLineStyle.Solid);
+
+        if (ShowGrid)
+        {
+            var gridPen = MakePen(GridColor, GridThickness, GridStyle);
+            foreach (var tick in world.Xs.Ticks())
+                context.DrawLine(gridPen, world.Base(tick, 0), world.Base(tick, world.Depth));
+            foreach (var tick in world.Zs.Ticks())
+            {
+                var depth = world.UnitZOf(tick);
+                if (depth < 0 || depth > world.Depth) continue;
+                context.DrawLine(gridPen, world.Base(xMin, depth), world.Base(xMax, depth));
+            }
+        }
+
+        context.DrawLine(axisPen, world.Base(xMax, 0), world.Base(xMax, world.Depth));
+        context.DrawLine(axisPen, world.Base(xMax, world.Depth), world.Base(xMin, world.Depth));
+        if (!ShowAxes) return;
+
+        // The three axes: X along the front floor edge, Y up the left, Z back along the depth.
+        var front = world.Base(xMin, 0);
+        var xEnd = world.Base(xMax, 0);
+        var yEnd = world.View.Project(world.UnitX(xMin), 1, 0);
+        var zEnd = world.Base(xMin, world.Depth);
+        context.DrawLine(axisPen, front, xEnd);
+        context.DrawLine(axisPen, front, yEnd);
+        context.DrawLine(axisPen, front, zEnd);
+
+        var down = world.View.Direction(0, -1, 0);
+        var left = world.View.Direction(-1, 0, 0);
+        var tickLength = Math.Max(0, MajorTickLength);
+        var font = TickLabelFontSize;
+
+        foreach (var value in world.Xs.Ticks())
+        {
+            var at = world.Base(value, 0);
+            if (ShowMajorTicks)
+                context.DrawLine(axisPen, at, new Point(at.X + down.X * tickLength, at.Y + down.Y * tickLength));
+            if (!ShowTickLabels) continue;
+            var text = MakeText(FormatNumber(value, world.Xs.TickStep), font, AxisColor);
+            context.DrawText(text, new Point(at.X - text.Width / 2 + down.X * (tickLength + 2),
+                at.Y + down.Y * (tickLength + 2)));
+        }
+
+        foreach (var value in world.Ys.Ticks())
+        {
+            var at = world.View.Project(world.UnitX(xMin), world.UnitY(value), 0);
+            if (ShowMajorTicks)
+                context.DrawLine(axisPen, at, new Point(at.X + left.X * tickLength, at.Y + left.Y * tickLength));
+            if (!ShowTickLabels) continue;
+            var text = MakeText(FormatNumber(value, world.Ys.TickStep), font, AxisColor);
+            context.DrawText(text, new Point(at.X + left.X * (tickLength + 2) - text.Width, at.Y - text.Height / 2));
+        }
+
+        // The depth ticks are the Z VALUES the sheet is drawn at — a length along the sheet, not a slice
+        // count — so they are thinned out the way the other axes are.
+        foreach (var value in world.Zs.Ticks())
+        {
+            var depth = world.UnitZOf(value);
+            if (depth < 0 || depth > world.Depth) continue;
+            var at = world.Base(xMin, depth);
+            if (ShowMajorTicks)
+                context.DrawLine(axisPen, at, new Point(at.X + left.X * tickLength, at.Y + left.Y * tickLength));
+            if (!ShowTickLabels) continue;
+            var text = MakeText(FormatNumber(value, world.Zs.TickStep), font, AxisColor);
+            context.DrawText(text, new Point(at.X + left.X * (tickLength + 2) - text.Width, at.Y - text.Height / 2));
+        }
+
+        if (!ShowAxisTitles) return;
+        DrawAxisTitle(context, XAxisTitle, xEnd, down, tickLength + 4, font);
+        DrawAxisTitle(context, YAxisTitle, yEnd, new Point(0, -1), tickLength + 4, font);
+        DrawAxisTitle(context, ZAxisTitle, zEnd, left, tickLength + 4, font);
+    }
+
+    /// <summary>One axis name, offset from the end of its axis along <paramref name="side"/> so it reads
+    /// beside the axis rather than on top of it.</summary>
+    private void DrawAxisTitle(DrawingContext context, string? title, Point end, Point side, double gap, double font)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return;
+        var text = MakeText(title!, font, AxisColor);
+        context.DrawText(text, new Point(end.X + side.X * gap - text.Width / 2, end.Y + side.Y * gap - text.Height));
+    }
+
+    /// <summary>
+    /// The view for one render: the angles clamped to what can be drawn, then FITTED — the cube's own
+    /// corners decide the scale, so the picture can never leave the frame by accident, whatever the angles
+    /// are. Because the fit uses the CORNERS of the axis cube and not the data, narrowing the range window
+    /// simply zooms: the window becomes the cube.
+    /// </summary>
+    private SurfaceView MakeView(Rect plot)
+    {
+        var elevation = Math.Clamp(Elevation, 0, 89) * Math.PI / 180d;
+        var azimuth = Azimuth * Math.PI / 180d;
+        var view = new SurfaceView
+        {
+            CosElevation = Math.Cos(elevation),
+            SinElevation = Math.Sin(elevation),
+            CosAzimuth = Math.Cos(azimuth),
+            SinAzimuth = Math.Sin(azimuth),
+            Scale = 1,
+            Origin = default
+        };
+        var minX = double.MaxValue;
+        var maxX = double.MinValue;
+        var minY = double.MaxValue;
+        var maxY = double.MinValue;
+        foreach (var x in new[] { 0d, 1d })
+        {
+            foreach (var y in new[] { 0d, 1d })
+            {
+                foreach (var z in new[] { 0d, Math.Clamp(ZSpacing, 0.1, 4) })
+                {
+                    var corner = view.Project(x, y, z);
+                    minX = Math.Min(minX, corner.X);
+                    maxX = Math.Max(maxX, corner.X);
+                    minY = Math.Min(minY, corner.Y);
+                    maxY = Math.Max(maxY, corner.Y);
+                }
+            }
+        }
+        var wide = Math.Max(1e-6, maxX - minX);
+        var tall = Math.Max(1e-6, maxY - minY);
+        view.Scale = Math.Min(plot.Width / wide, plot.Height / tall) * Math.Clamp(Zoom, 0.2, 5);
+        view.Origin = new Point(
+            plot.X + (plot.Width - wide * view.Scale) / 2 - minX * view.Scale,
+            plot.Y + (plot.Height - tall * view.Scale) / 2 - minY * view.Scale);
+        return view;
+    }
+
+    /// <summary>
+    /// Dragging turns the sheet: sideways turns the azimuth, up and down change the elevation it is seen
+    /// from (drag down to look from higher). A press inside the LEGEND BAR is different — the bar is the
+    /// surface's range selector, so the press takes hold of a slider and moves the end of the window the
+    /// pointer is nearest to, which is what "select a range of Y and X values in the legend" asks for.
+    /// Neither drag touches the saved form: the angles and the window a form opens with are its own
+    /// Elevation, Azimuth, MinX/MaxX and MinY/MaxY properties.
+    /// </summary>
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        var position = e.GetPosition(this);
+        var axis = RangeHitAxis(position);
+        if (axis >= 0)
+        {
+            _rangeDragAxis = axis;
+            // The end nearer the pointer is the one that follows it; a click in the middle takes the
+            // nearer of the two.
+            var low = RangeLow(axis);
+            var high = RangeHigh(axis);
+            var value = RangeValue(axis, position);
+            _rangeDragHigh = value >= low + (high - low) / 2;
+            DragRangeTo(position);
+            Focus();
+            e.Pointer.Capture(this);
+            e.Handled = true;
+            return;
+        }
+        _rotateDrag = true;
+        _rotateFrom = position;
+        _rotateElevation = Elevation;
+        _rotateAzimuth = Azimuth;
+        Focus();
+        e.Pointer.Capture(this);
+        e.Handled = true;
+    }
+
+    /// <inheritdoc/>
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+        if (_rangeDragAxis >= 0)
+        {
+            DragRangeTo(e.GetPosition(this));
+            return;
+        }
+        if (!_rotateDrag) return;
+        var position = e.GetPosition(this);
+        Elevation = Math.Clamp(_rotateElevation + (position.Y - _rotateFrom.Y) * 0.5, 2, 89);
+        Azimuth = _rotateAzimuth + (position.X - _rotateFrom.X) * 0.5;
+        InvalidateVisual();
+    }
+
+    /// <inheritdoc/>
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+        if (_rangeDragAxis >= 0)
+        {
+            _rangeDragAxis = -1;
+            e.Pointer.Capture(null);
+            e.Handled = true;
+            return;
+        }
+        if (!_rotateDrag) return;
+        _rotateDrag = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
+    /// <summary>One slice of one render: its samples, its colour, its Z value and the depth that Z puts it
+    /// at.</summary>
+    private sealed class SurfaceSlice
+    {
+        internal double[] Xs = Array.Empty<double>();
+        internal double[] Ys = Array.Empty<double>();
+        internal Color Color;
+        internal double Z;
+        internal double Depth;
+    }
+
+    /// <summary>To the screen: turn the cube by the azimuth, tip it by the elevation, drop the depth.</summary>
+    private sealed class SurfaceView
+    {
+        internal double CosAzimuth, SinAzimuth, CosElevation, SinElevation;
+        internal double Scale;
+        internal Point Origin;
+
+        internal Point Project(double x, double y, double z)
+        {
+            var turned = x * CosAzimuth + z * SinAzimuth;
+            var depth = -x * SinAzimuth + z * CosAzimuth;
+            var up = y * CosElevation + depth * SinElevation;
+            return new Point(Origin.X + turned * Scale, Origin.Y - up * Scale);
+        }
+
+        /// <summary>How near the eye a point is: the larger, the nearer. This is what puts the bands in
+        /// paint order (farthest first), so a nearer fold hides the sheet behind it. The sign matters and is
+        /// easy to get backwards — with the directions this projection produces, the <c>z = 0</c> edge is
+        /// the FRONT one, and drawing that first would let the far end of the sheet paint over the near
+        /// end.</summary>
+        internal double Depth(double x, double y, double z)
+        {
+            var depth = -x * SinAzimuth + z * CosAzimuth;
+            return y * SinElevation - depth * CosElevation;
+        }
+
+        /// <summary>The screen direction of a step along one of the world axes, as a unit vector in pixels.
+        /// The tick marks and the labels of the projected axes are laid out with it.</summary>
+        internal Point Direction(double dx, double dy, double dz)
+        {
+            var turned = dx * CosAzimuth + dz * SinAzimuth;
+            var depth = -dx * SinAzimuth + dz * CosAzimuth;
+            var up = dy * CosElevation + depth * SinElevation;
+            var length = Math.Sqrt(turned * turned + up * up);
+            return length <= 0 ? new Point(0, -1) : new Point(turned / length, -up / length);
+        }
+    }
+
+    /// <summary>The sheet's own coordinates: the axis scales (which the range window supplies) and the
+    /// projection.</summary>
+    private sealed class SurfaceWorld
+    {
+        internal SurfaceView View = null!;
+        internal AxisRange Xs = new();
+        internal AxisRange Ys = new();
+        internal AxisRange Zs = new();
+        internal double Depth = 1d;
+
+        /// <summary>The width positions, across the sheet from 0 to 1.</summary>
+        internal double UnitX(double x) => Clamp01((x - Xs.Min) / Math.Max(1e-9, Xs.Max - Xs.Min));
+
+        /// <summary>The heights, up the sheet from 0 to 1.</summary>
+        internal double UnitY(double y) => Clamp01((y - Ys.Min) / Math.Max(1e-9, Ys.Max - Ys.Min));
+
+        /// <summary>How far back a slice stands, from its Z VALUE — so slices the spreadsheet places
+        /// unevenly apart stand unevenly far apart.</summary>
+        internal double UnitZOf(double z) => Depth * Clamp01((z - Zs.Min) / Math.Max(1e-9, Zs.Max - Zs.Min));
+
+        /// <summary>A point of the picture.</summary>
+        internal Point At(double x, double y, double depth) => View.Project(UnitX(x), UnitY(y), depth);
+
+        /// <summary>A point on the floor, where the profiles end and the gridlines run.</summary>
+        internal Point Base(double x, double depth) => View.Project(UnitX(x), UnitY(0), depth);
+
+        private static double Clamp01(double value) => value < 0 ? 0 : value > 1 ? 1 : value;
     }
 }
 

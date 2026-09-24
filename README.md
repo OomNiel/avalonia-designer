@@ -43,7 +43,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.11.12`**, so the command above installs it (add `-force` to reinstall, or to
+The current version is **`0.11.14`**, so the command above installs it (add `-force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -52,11 +52,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.11.12.vsix --force
+code --install-extension avalonia-designer-0.11.14.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.11.12` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.11.14` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -166,13 +166,18 @@ a cross-platform **dark titlebar** (`ChromeWindow`), `GrumpyPanel`, `AnchorHelpe
 and `ExifImageLoader`. Each is copied into your project the first time it is needed — and re-copied by
 **Code Fix…** for projects that predate it.
 
-Six **self-drawing charts** join them in the same bundled file style (`GrumpyCharts.cs` / `.vb`, no
+Seven **self-drawing charts** join them in the same bundled file style (`GrumpyCharts.cs` / `.vb`, no
 package, no chart engine, no image — the control draws itself, so it scales and prints): **Line Plot**,
 where the X axis is the sample number; **X, Y Plot** for `(x, y)` pairs, as a line, as markers or both;
-**Bar**, **Area** and **Pie** for categories and shares; and the **Waterfall** — a projected 3D surface
+**Bar**, **Area** and **Pie** for categories and shares; the **Waterfall** — a projected 3D surface
 that stands one spreadsheet **column per sampleset** (a sweep, a run, a pass) behind the next and joins
 them with a mesh, coloured per set, by value (a heat map) or either side of a limit, and turnable with
-the mouse. Numbers come from a **spreadsheet** you point at (an absolute path — the workbook is not copied
+the mouse; and the **Surface Chart 3D** — a corrugated sheet where one spreadsheet **column per slice**
+is a profile along the sheet's length, drawn as a grid mesh, a mesh over a solid sheet or a solid,
+coloured per slice or by a **temperature ramp** from the valleys to the ridges, with its own drag-to-turn
+view (*Elevation*, *Azimuth*, *Z Spacing*, *Zoom*) and a two-slider **range window** that picks the width
+and the SLICES on show (the view re-fits, so a selection zooms into the sheet).
+Numbers come from a **spreadsheet** you point at (an absolute path — the workbook is not copied
 into your project and stays yours to edit) or from typed-in values; **Live Update** re-reads a sheet on
 save, including while Excel or LibreOffice has it open. Four editors in the Properties panel build the
 rest: **Series** (one line per series, its own columns and its own axis), **Axis** (sides, ticks, labels and

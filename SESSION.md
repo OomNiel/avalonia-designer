@@ -17,7 +17,49 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-23, fifth session — 0.11.12)
+## Where the last session left off (2026-09-24, sixth session — 0.11.14)
+
+**The surface chart 3D ships, and the reason its bands showed the plot's backcolour is fixed — in both
+halves.**
+
+**What went in** (full detail in `CHANGELOG.md` `[0.11.14]` and `NOTES.md` §147):
+
+- **The seventh chart type**, `charts:GrumpySurfacePlot` (built 2026-09-23/24): one spreadsheet **column per
+  slice** along the sheet's length over a **shared X column**, the Z of a slice from **Z Row** or **Z Start**
+  / **Z Step**, styles **GridMesh / GridMeshSolid / Solid**, colouring **Sampleset** or a **Temperature**
+  ramp with **Heat Min/Max**, **Solid Opacity**, the mesh rows, the view (**Elevation / Azimuth / Z Spacing /
+  Zoom**, drag to turn), **Show Base** / **Base Colour**, and a **range-window legend** whose second slider
+  picks the **slices** on show (the view re-fits, so a selection zooms). Both twins, toolbox, Properties,
+  help text, preview.
+- **The fold fix**: a band was filled as **one closed figure**, and a figure that crosses itself has two loops
+  wound opposite ways — `NonZero` sums them to zero, drops the fill, and the plot's own backcolour shows
+  through. It is now **one triangle pair per sample pair**, every triangle wound the way the band started.
+- **The half that made it reach users**: the app compiles the *project's* copy, and the staleness check only
+  looks for the marker token — which was still `GrumpySurfacePlot` on a copy that had a *different* drawing.
+  The marker moved to **`BandTriangle`**, so **Update now** is offered again.
+- **An unused O(n²) crossing scan** (computed and never used) went out with it: **966 ms → 42 ms** per render
+  on a 6 × 2048-point sheet.
+- **Docs**: `CHANGELOG` `[0.11.14]`, `USER_MANUAL` §19 intro table + **§19.13**, `CONTROLS.md`,
+  `README.md` §7 (seven charts) + version refs, `TEST_PLAN.md` §10, `NOTES.md` §147, `SESSION`, `PUBLISHING`.
+- **Housekeeping**: the unused `xlsx` npm dependency is gone (VSIX 5.29 MB → ~1.2 MB) and `repository.url` is
+  a plain `https://` link again.
+
+**Three things to know before continuing:**
+
+1. **A form never carries a fill attribute for the surface** — the fill is the *drawing*, not a property: the
+   styles are `Style` alone. A project whose bundled chart predates this release compiles fine and simply
+   draws the old (hole-riddled) picture until the copy is refreshed, which is why the marker moved.
+2. **The Z window's second slider counts slices, not values** (`"Z 3…4 of 6"`), and the view **always
+   re-fits** to the window — so "a narrower window draws fewer pixels" is false by design. If a test or a
+   measurement ever says otherwise, it is measuring the wrong thing (see §147 for the two ways it did).
+3. **The staleness marker is the newest token the shipped file has**, and for a drawing-only change that can
+   be a private helper's name. Moving it is the only mechanism that reaches projects already carrying the
+   previous marker.
+
+**State at hand-off:** suite **7,931 passed / 0 failed**; host, generated C# project and the VB matrix 0
+warnings / 0 errors; PROBLEMS clean; `package.json` = `0.11.14`; VSIX packaged, audited and installed locally.
+
+## Where the fifth session left off (2026-09-23, fifth session — 0.11.12)
 
 **One new chart, and one feature deliberately not shipped.**
 

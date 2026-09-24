@@ -70,6 +70,10 @@ const AREA_MODES = ['Plain', 'Stacked', 'Stacked100'];
 // The waterfall's own enums (the C# WaterfallStyle / WaterfallColorMode), in the same order.
 const WATERFALL_STYLES = ['Ribbon', 'Translucent', 'Lines'];
 const WATERFALL_COLOR_MODES = ['Sampleset', 'Value', 'Split'];
+
+// The surface chart 3D's own enums (the C# SurfaceStyle / SurfaceColorMode), in the same order.
+const SURFACE_STYLES = ['GridMesh', 'GridMeshSolid', 'Solid'];
+const SURFACE_COLOR_BYS = ['Sampleset', 'Temperature'];
 const DOCK_OPTIONS = ['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom'];
 // PathPicker.PathType — which platform dialog the Browse button opens. SaveFile need not exist yet
 // (it is the “choose where to save” variant).
@@ -937,6 +941,82 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'ShowLegend', label: 'Legend', kind: 'dropdown', options: BOOL },
         { key: 'LegendFontSize', label: 'Legend Size', kind: 'number' }
     ],
+    // The SURFACE chart 3D (2026-09-23): a sheet whose profile rows are the spreadsheet's width positions
+    // and whose columns are its slices along the length. Its own rows are the inline slices, how the surface
+    // is drawn (mesh, mesh over solid, solid), the colours (a temperature ramp or one colour per slice) with
+    // that ramp's two ends, the mesh's own colour and thickness, where each slice's Z comes from and how the
+    // sheet is turned — plus the RANGE WINDOW (Width/Height From-To), which re-fits the picture to what it
+    // selects: the special legend of a surface. Its three projected axes use the chart-level axis rows
+    // further down, and there is no Value Axis Name of its own (the three names are Width/Height/Depth).
+    GrumpySurfacePlot: [
+        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS },
+        { key: 'SampleSets', label: 'Sample Sets', kind: 'text' },
+        { key: 'Values', label: 'Values (one slice)', kind: 'text' },
+        { key: 'Gradient', label: 'Background Gradient', kind: 'button' },
+        { key: 'XColumn', label: 'X Column (width)', kind: 'text' },
+        { key: 'YColumn', label: 'First Slice Column', kind: 'text' },
+        { key: 'HeaderRow', label: 'Names Row', kind: 'number' },
+        { key: 'FirstDataRow', label: 'First Data Row', kind: 'number' },
+        { key: 'ZRow', label: 'Z Row', kind: 'number' },
+        { key: 'ZStart', label: 'Z Start', kind: 'number' },
+        { key: 'ZStep', label: 'Z Step', kind: 'number' },
+        { key: 'LiveUpdate', label: 'Live Update', kind: 'dropdown', options: BOOL },
+        { key: 'Style', label: 'Style', kind: 'dropdown', options: SURFACE_STYLES },
+        { key: 'ColorBy', label: 'Colour By', kind: 'dropdown', options: SURFACE_COLOR_BYS },
+        { key: 'LowColor', label: 'Low Colour', kind: 'color', options: COLORS },
+        { key: 'HighColor', label: 'High Colour', kind: 'color', options: COLORS },
+        { key: 'HeatMin', label: 'Colour Low', kind: 'number' },
+        { key: 'HeatMax', label: 'Colour High', kind: 'number' },
+        { key: 'SolidOpacity', label: 'Solid Opacity', kind: 'number' },
+        // The solid block the sheet stands on: the space under the sheet filled down to the floor, so the
+        // picture reads as a volume (an area chart lifted into 3D) instead of a skin with the plot's own back
+        // panel showing through the space beneath it.
+        { key: 'ShowBase', label: 'Solid Base', kind: 'dropdown', options: BOOL },
+        { key: 'BaseColor', label: 'Base Colour', kind: 'color', options: COLORS },
+        { key: 'MeshColor', label: 'Mesh Colour', kind: 'color', options: COLORS },
+        { key: 'MeshThickness', label: 'Mesh Thickness', kind: 'number' },
+        { key: 'MaxPoints', label: 'Max Points', kind: 'number' },
+        { key: 'MinX', label: 'Width From', kind: 'number' },
+        { key: 'MaxX', label: 'Width To', kind: 'number' },
+        { key: 'MinY', label: 'Height From', kind: 'number' },
+        { key: 'MaxY', label: 'Height To', kind: 'number' },
+        // WHICH SLICES are drawn (the legend's second slider). The height between them is the data itself,
+        // so it is only ever a scale — this is the one the user picks.
+        { key: 'MinZ', label: 'Slice From', kind: 'number' },
+        { key: 'MaxZ', label: 'Slice To', kind: 'number' },
+        { key: 'Elevation', label: 'Elevation (deg)', kind: 'number' },
+        { key: 'Azimuth', label: 'Azimuth (deg)', kind: 'number' },
+        { key: 'ZSpacing', label: 'Sheet Depth', kind: 'number' },
+        { key: 'Zoom', label: 'Zoom', kind: 'number' },
+        { key: 'XAxisTitle', label: 'Width Axis Name', kind: 'text' },
+        { key: 'YAxisTitle', label: 'Height Axis Name', kind: 'text' },
+        { key: 'ZAxisTitle', label: 'Depth Axis Name', kind: 'text' },
+        { key: 'Title', label: 'Title', kind: 'text' },
+        { key: 'ShowTitle', label: 'Show Title', kind: 'dropdown', options: BOOL },
+        { key: 'TitlePosition', label: 'Title Position', kind: 'dropdown', options: CHART_TITLE_POSITIONS },
+        { key: 'TitleColor', label: 'Title Colour', kind: 'color', options: COLORS },
+        { key: 'TitleFontSize', label: 'Title Size', kind: 'number' },
+        { key: 'PlotBackColor', label: 'Plot Backcolour', kind: 'color', options: COLORS },
+        { key: 'PlotBackOpacity', label: 'Plot Opacity', kind: 'number' },
+        { key: 'ShowBorder', label: 'Border', kind: 'dropdown', options: BOOL },
+        { key: 'BorderBrush', label: 'Border Colour', kind: 'color', options: COLORS },
+        { key: 'BorderThickness', label: 'Border Thickness', kind: 'number' },
+        { key: 'Padding', label: 'Padding', kind: 'text' },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'ShowGrid', label: 'Floor Gridlines', kind: 'dropdown', options: BOOL },
+        { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS },
+        { key: 'GridThickness', label: 'Grid Thickness', kind: 'number' },
+        { key: 'GridStyle', label: 'Grid Style', kind: 'dropdown', options: CHART_LINE_STYLES },
+        { key: 'ShowAxes', label: 'Axes', kind: 'dropdown', options: BOOL },
+        { key: 'AxisColor', label: 'Axis Colour', kind: 'color', options: COLORS },
+        { key: 'ShowMajorTicks', label: 'Major Ticks', kind: 'dropdown', options: BOOL },
+        { key: 'MajorTickLength', label: 'Tick Length', kind: 'number' },
+        { key: 'ShowTickLabels', label: 'Tick Labels', kind: 'dropdown', options: BOOL },
+        { key: 'TickLabelFontSize', label: 'Tick Label Size', kind: 'number' },
+        { key: 'ShowAxisTitles', label: 'Axis Names', kind: 'dropdown', options: BOOL },
+        { key: 'ShowLegend', label: 'Legend', kind: 'dropdown', options: BOOL },
+        { key: 'LegendFontSize', label: 'Legend Size', kind: 'number' }
+    ],
     Line: [
         { key: 'Stroke', label: 'Line Colour', kind: 'color', options: COLORS },
         { key: 'StrokeThickness', label: 'Line Thickness', kind: 'number' },
@@ -1169,6 +1249,59 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
         desc: 'Scales the fitted picture: 1 (the default) fits the whole cube into the frame, 1.2 makes '
             + 'it larger than the frame (the edges then leave it), 0.8 leaves a margin.'
     },
+    Style: {
+        desc: 'How the surface is drawn: **Grid mesh** (the quads\' edges only, so you see through the '
+            + 'sheet), **Grid mesh + solid** (the mesh over a filled surface — the classic 3D surface look, '
+            + 'the default) or **Solid** (the filled sheet with no mesh lines).'
+    },
+    ColorBy: {
+        desc: 'What decides the colour: **Sampleset** (one colour per slice, from its series colour) or '
+            + '**Temperature** (a ramp by HEIGHT — a ridge takes High Colour and a valley takes Low Colour, '
+            + 'the default). In Temperature mode the ramp runs along the sheet\'s height axis, so the same '
+            + 'ridge keeps its colour wherever it stands along the length.'
+    },
+    LowColor: { kind: 'color', options: COLORS, desc: 'The temperature ramp\'s colour at the sheet\'s LOWEST height.' },
+    HighColor: { kind: 'color', options: COLORS, desc: 'The temperature ramp\'s colour at the sheet\'s greatest height.' },
+    SolidOpacity: {
+        kind: 'number', unit: '%',
+        desc: 'How solid the filled surface is (100 by default = opaque metal). Lower values let what is '
+            + 'behind the sheet glow through, which is how a fold is seen through the one in front of it.'
+    },
+    MeshColor: {
+        kind: 'color', options: COLORS,
+        desc: 'The colour of the surface\'s MESH lines — the profile lines along the width and the rungs '
+            + 'along the length. (The floor\'s own gridlines keep Grid Colour.)'
+    },
+    ShowBase: {
+        kind: 'dropdown', options: BOOL,
+        desc: 'Draw the solid BLOCK the sheet stands on: the space under the sheet filled down to the floor, '
+            + 'so the picture reads as a volume (an area chart lifted into 3D) instead of a skin. Because it '
+            + 'is a block it HIDES what is behind it — slices behind a nearer face stop showing through the '
+            + 'empty space beneath the sheet.'
+    },
+    BaseColor: {
+        kind: 'color', options: COLORS,
+        desc: 'The colour of that block\'s sides and ends. Flat and opaque: the temperature ramp belongs to '
+            + 'the sheet itself.'
+    },
+    MeshThickness: { kind: 'number', unit: 'px', desc: 'How thick the surface\'s mesh lines are (0 draws none).' },
+    ZRow: {
+        kind: 'number',
+        desc: 'Which spreadsheet ROW holds each slice\'s Z value — read along the series\' own columns, so one '
+            + 'row of numbers puts every slice where it belongs (leave it empty and the Names Row is used). A '
+            + 'cell that is not a number falls back to Z Start + Z Step.'
+    },
+    ZStart: {
+        kind: 'number',
+        desc: 'The Z of the first slice when the spreadsheet does not say (0 by default — the near edge of the '
+            + 'sheet). The depth a slice is drawn at follows its Z VALUE, so slices the sheet spaces unevenly '
+            + 'apart stand unevenly far apart.'
+    },
+    ZStep: {
+        kind: 'number',
+        desc: 'What one slice adds to the Z of the one behind it when the spreadsheet does not say (1 numbers '
+            + 'them 0, 1, 2 …; 5 would make the sheet 5 units per slice long).'
+    },
     ZAxisTitle: {
         desc: 'The name along the depth axis — what one step of it means ("Sweep", "Run"). Each set\'s '
             + 'own name in the legend comes from its series Title.'
@@ -1365,7 +1498,7 @@ const ADVANCED_KEYS = new Set([
     'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow',
     'TitleFontSize', 'TickLabelFontSize', 'MajorTickLength', 'MinorTickLength', 'GridThickness',
     'LegendFontSize',
-    'MarkerSize', 'MinX', 'MaxX', 'MinY', 'MaxY'
+    'MarkerSize', 'MinX', 'MaxX', 'MinY', 'MaxY', 'MinZ', 'MaxZ'
 ]);
 
 /**
@@ -1623,6 +1756,20 @@ export const DEFAULTS: Record<string, string> = {
     ConnectorThickness: '1',
     ConnectorStep: '0',
     MaxPoints: '512',
+    // --- GrumpyCharts: the surface chart 3D (2026-09-23) ---
+    Style: 'GridMeshSolid',
+    ColorBy: 'Temperature',
+    LowColor: '#1B2A6B',
+    HighColor: '#E53935',
+    SolidOpacity: '100',
+    MeshColor: '#6B7A8F',
+    ShowBase: 'False',
+    BaseColor: '#3C3C3C',
+    MeshThickness: '1',
+    ZStart: '0',
+    ZStep: '1',
+    // Empty = "number the slices from ZStart/ZStep", which is what 0 means to the chart.
+    ZRow: '',
     Elevation: '30',
     Azimuth: '45',
     ZSpacing: '1',
@@ -1822,6 +1969,13 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'RibbonStyle', 'RibbonOpacity', 'ColorMode', 'HeatMin', 'HeatMax', 'SplitValue',
             'BelowColor', 'AboveColor', 'ShowConnectors', 'ConnectorColor', 'ConnectorThickness',
             'ConnectorStep', 'MaxPoints', 'Elevation', 'Azimuth', 'ZSpacing', 'Zoom',
+            // The surface chart 3D (2026-09-23): how the sheet is drawn and coloured, its mesh, the solid
+            // base block under it, and the range window (Width From-To and Slice From-To) that re-fits the
+            // picture to what it selects. The legend's two sliders are exactly that window: the width and
+            // WHICH SLICES are drawn.
+            'Style', 'ColorBy', 'LowColor', 'HighColor', 'SolidOpacity', 'MeshColor', 'MeshThickness',
+            'ShowBase', 'BaseColor',
+            'MinX', 'MaxX', 'MinY', 'MaxY', 'MinZ', 'MaxZ',
             // The surface fill between the sets was removed from the chart (the open corridors between
             // the sets are the default, unroofed picture), so the SurfaceFill / SurfaceColor /
             // SurfaceOpacity / SurfaceToFloor rows are gone with it.
@@ -1865,8 +2019,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // under Appearance, where the point-defined shapes already keep it.
             'Values', 'Labels', 'SourceFile', 'XColumn', 'YColumn', 'HeaderRow', 'FirstDataRow',
             'MinX', 'MaxX', 'MinY', 'MaxY',
-            // The waterfall's inline samplesets (see the row of the same name).
-            'SampleSets'
+            // The waterfall's inline samplesets (see the row of the same name), and the surface chart's
+            // own slice numbering (Z Row / Z Start / Z Step) beside it.
+            'SampleSets', 'ZRow', 'ZStart', 'ZStep'
         ]
     },
     {

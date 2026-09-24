@@ -1267,6 +1267,14 @@ public class XamlRenderer
         AddViaReflection("BorderThickness");
         AddViaReflection("CornerRadius");
         AddViaReflection("BorderBrush");
+        // A chart type that reports the range of its own DATA (the surface chart does) lets its editors
+        // span real numbers instead of guessing. Formatted invariantly, because the webview parses these.
+        AddViaReflection("DataMinX", InvariantNumber);
+        AddViaReflection("DataMaxX", InvariantNumber);
+        AddViaReflection("DataMinY", InvariantNumber);
+        AddViaReflection("DataMaxY", InvariantNumber);
+        AddViaReflection("DataMinZ", InvariantNumber);
+        AddViaReflection("DataMaxZ", InvariantNumber);
 
         return d.Count > 0 ? d : null;
 
@@ -1288,6 +1296,12 @@ public class XamlRenderer
     private static string? BrushToHex(object? brush)
     {
         return brush is ISolidColorBrush s ? s.Color.ToString() : null;
+    }
+
+    /// <summary>A number a webview can parse whatever the machine's locale is (“.”, never “,”).</summary>
+    private static string? InvariantNumber(object? value)
+    {
+        return value is double d ? d.ToString("0.####", CultureInfo.InvariantCulture) : null;
     }
 
     /// <summary>Renders a friendly error card instead of crashing (e.g. unresolved custom types).</summary>

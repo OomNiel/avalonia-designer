@@ -209,6 +209,41 @@ const INFO: Record<string, ControlInfo> = {
         desc: 'A pie or doughnut chart: one wedge per labelled value, each with its own colour from the palette.',
         use: 'Type the wedge names into Labels (North,South,East,West) and the numbers into Values (32,24,18,26), or point Spreadsheet at an .xlsx workbook whose X column holds the SLICE NAMES (text, dates or numbers — a pie is the one chart whose categories are almost always words) and whose Y column holds the values. Doughnut Percent makes it a doughnut: 0 is a solid pie, 45 leaves a hole a bit under half the radius. Start Angle says where the first slice starts (0 = 12 o\'clock, slices run clockwise) and Slice Gap spaces the wedges apart. Slice Border Colour and Thickness draw the line between two slices (thickness 0 makes the colours touch). The Slices editor names the wedges that should differ from the palette (each with its own colour and Explode to push it out of the pie) and the Legend editor lists the slices with a tick box that switches one off. A pie has no gridlines, no axes and no cursors: hover a slice instead and it pops out of the ring by Hover Explode pixels (10 by default) with its name, value and share of the total in the black readout panel. **Data Selector** picks the workbook and which PAGE of it holds the slice names and values.'
     },
+    GrumpySurfacePlot: {
+        label: 'Surface Chart 3D',
+        desc: 'A 3D surface: a sheet of corrugated iron, or any surface a family of profiles describes. One '
+            + 'SERIES is one slice along the sheet\'s length, its values are that slice\'s height at every X '
+            + 'position across the width, and neighbouring slices are joined so the picture is the surface '
+            + 'itself. No package, no assets.',
+        use: 'Every series is one SLICE along the sheet\'s LENGTH: it reads the SAME shared X column (the '
+            + 'width positions) and its own Y column, so the columns C, D, E … are slices 1, 2, 3 … and the '
+            + 'Series editor lists them, each named by its Title and coloured by its own colour. Each slice '
+            + 'stands where the SPREADSHEET says: Z Row names the row that holds one Z value per slice (empty '
+            + '= the Names Row), which is one row of numbers like 0, 5, 10 … along the length — and where that '
+            + 'cell is not a number the slices are numbered from Z Start in steps of Z Step instead. Style '
+            + 'picks how the sheet is drawn — Grid mesh (the quads\' edges only, so you see through it), Grid '
+            + 'mesh + solid (the mesh over a filled surface, the default) or Solid — and Colour By picks the '
+            + 'colour: Sampleset (one colour per slice) or Temperature, a ramp by HEIGHT from Low Colour at '
+            + 'the valleys to High Colour on the ridges, with Colour Low/High pinning that range when several '
+            + 'charts are read against one scale. Solid Opacity makes the filled sheet see-through, and Mesh '
+            + 'Colour/Thickness shape the mesh lines themselves (the floor gridlines keep Grid Colour). For a '
+            + 'quick sketch without a workbook, Sample Sets takes whole slices inline — "1,2,3; 3,2,1" is two '
+            + 'slices of three samples. The VIEW is Elevation (how far above the floor you look, default 30), '
+            + 'Azimuth (where the sheet is turned to, default 45), Sheet Depth (how deep it stands) and Zoom; '
+            + 'in the app the chart can also be DRAGGED to turn it, which never changes the saved angles. '
+            + '**The range window is this chart\'s legend**: Width From/To cuts the picture to part of the '
+            + 'sheet\'s width and Slice From/To picks WHICH slices are drawn (the sheet\'s length, so a long '
+            + 'capture can be looked at a few corrugations at a time), and the view is ALWAYS re-fitted to make '
+            + 'that window fill the frame — selecting a range zooms into it instead of leaving a small sheet in '
+            + 'a large frame. The height is the data itself and has no slider. That legend is not a list of '
+            + 'names: the surface is the one chart whose legend is a RANGE SELECTOR, drawn as an X slider and a '
+            + 'Z slider (with the selected numbers beside them). It takes the side the form asks for — along the '
+            + 'top or bottom edge, or DOWN a Left/Right edge with the sliders and their numbers turned on their '
+            + 'side. Drag a handle in the running app and the picture follows live; set the numbers in the '
+            + 'Legend editor (Width range and Slice range) to save them into the form. **Data Selector** picks '
+            + 'the workbook and which PAGE of it holds the surface.'
+    },
+
     GrumpyWaterfallPlot: {
         label: 'Waterfall',
         desc: 'A 3D waterfall (spectral) chart: successive samplesets drawn one behind the other — samples across, values up, and each set receding into the depth with the mesh that joins them. No package, no assets.',

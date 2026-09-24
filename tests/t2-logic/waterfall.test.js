@@ -243,12 +243,14 @@ module.exports = async (t) => {
         'vb: the nested projection class exists (its methods are Friend, so the chart can call them)');
 
     // ---------------------------------------------------------------- the staleness marker
-    // The surface fill was removed from the chart, so the marker is back to `IsFilled` — the fill /
-    // restore behaviour every chart gained (the newest token the current file ships), not any of
-    // the surface-fill attributes or drawing methods that are now gone.
+    // The surface fill was removed from the chart, so the marker went back to `IsFilled` — the fill /
+    // restore behaviour every chart gained — then to the surface chart 3D (`GrumpySurfacePlot`), and on
+    // 2026-09-24 to `BandTriangle`, the surface's triangle band fill: a DRAWING change in an existing type
+    // is invisible to an old copy (it kept showing the plot's backcolour through the sheet), so it moves
+    // the marker like a new type or attribute does.
     const spec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
     const vbSpec = bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(spec.marker, 'IsFilled', 'marker',
+    t.equal(spec.marker, 'BandTriangle', 'marker',
         'the marker is the newest thing an existing project needs a refresh for');
     t.equal(vbSpec.marker, spec.marker, 'marker', 'both languages use the same marker');
 };

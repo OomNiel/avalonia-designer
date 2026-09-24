@@ -209,6 +209,27 @@ Namespace Global.AvaloniaCharts
         Split
     End Enum
 
+    ''' <summary>How a GrumpySurfacePlot presents its surface.</summary>
+    Public Enum SurfaceStyle
+        ''' <summary>The grid mesh only: the quads' edges, with nothing filled — you see through the sheet.</summary>
+        GridMesh
+        ''' <summary>The grid mesh drawn over a filled surface (the default): the classic 3D surface look.</summary>
+        GridMeshSolid
+        ''' <summary>The filled surface only, no mesh lines.</summary>
+        Solid
+    End Enum
+
+    ''' <summary>What decides the colour of a GrumpySurfacePlot's surface.</summary>
+    Public Enum SurfaceColorMode
+        ''' <summary>One colour per series (one per Z slice) — the series' own colour, the way the ribbon of a
+        ''' waterfall takes its set's colour.</summary>
+        Sampleset
+        ''' <summary>A temperature ramp by height: the value picks the colour between LowColor and HighColor,
+        ''' so a ridge is the top colour and a valley the bottom one (the default).</summary>
+        Temperature
+    End Enum
+
+
     ''' <summary>Reads SampleSets="1,2,3; 4,5,6" from XAML: one sampleset per semicolon-separated group,
     ''' the sample points comma-separated inside it. This is what a waterfall sketches with when there is no
     ''' workbook at hand — a real capture names one column per sampleset instead.</summary>
@@ -687,6 +708,40 @@ Namespace Global.AvaloniaCharts
                 data.Error = ReadFailure(path, ex)
             End Try
             Return data
+        End Function
+
+        ''' <summary>
+        ''' One row's NUMERIC cells, keyed by column letter ("C" gives 12.5) — how a surface chart reads the Z
+        ''' value a spreadsheet gives each of its slices: the series' own column, one row. A cell that is empty
+        ''' or holds text is simply absent from the result, so the caller falls back to its own numbering.
+        ''' </summary>
+        Friend Shared Function RowNumbers(path As String, row As Integer, Optional sheet As String = Nothing) As Dictionary(Of String, Double)
+            Dim values As New Dictionary(Of String, Double)(StringComparer.OrdinalIgnoreCase)
+            If row <= 0 Then Return values
+            Try
+                Using zip = OpenWorkbook(path)
+                    Dim sharedStrings = ReadSharedStrings(zip)
+                    Dim sheetPart = FindSheet(zip, sheet)
+                    If sheetPart Is Nothing Then Return values
+                    Using stream = sheetPart.Open()
+                        For Each rowElement In XDocument.Load(stream).Descendants().Where(Function(e) e.Name.LocalName = "row")
+                            Dim number = -1
+                            If Integer.TryParse(rowElement.Attribute("r")?.Value, NumberStyles.Integer,
+                                                CultureInfo.InvariantCulture, number) Then number = number Else number = -1
+                            If number <> row Then Continue For
+                            For Each cell In rowElement.Elements().Where(Function(e) e.Name.LocalName = "c")
+                                Dim reference = If(cell.Attribute("r")?.Value, String.Empty)
+                                Dim value As Double = Nothing
+                                If TryNumber(CellText(cell, sharedStrings), value) Then values(ColumnOf(reference)) = value
+                            Next
+                            Exit For
+                        Next
+                    End Using
+                End Using
+            Catch ex As Exception
+                ' A Z row that cannot be read is not an error: the chart numbers the slices itself.
+            End Try
+            Return values
         End Function
 
         ''' <summary>
@@ -2447,6 +2502,9 @@ Namespace Global.AvaloniaCharts
             ' The legend is interactive: clicking an entry (its tick box OR its name) switches that
             ' trace on and off. The rects are the ones the last Render laid out.
             For Each entry In _legend
+                ' A slice typed in through SampleSets has no series element, so its entry is a name to read,
+                ' not a switch: clicking it does nothing.
+                If entry.Series Is Nothing Then Continue For
                 If Not entry.Hit.Contains(position) Then Continue For
                 entry.Series.Visible = Not entry.Series.Visible
                 InvalidateVisual()
@@ -2641,7 +2699,10 @@ Namespace Global.AvaloniaCharts
         ''' shows, without re-reading the workbook).</summary>
         Private _plots As New List(Of Plot)()
         Private ReadOnly _legend As New List(Of LegendEntry)()
-        Private _legendRect As Rect
+        ''' <summary>The bar's rectangle, in CONTROL coordinates. A range legend (the surface chart's) lays
+        ''' its sliders out straight into it; the entry list above is measured in local coordinates instead and
+        ''' is translated by it in DrawLegend.</summary>
+        Friend _legendRect As Rect
 
         ''' <summary>One entry of the legend bar: the series it switches, and where it sits.</summary>
         Private NotInheritable Class LegendEntry
@@ -2661,6 +2722,34 @@ Namespace Global.AvaloniaCharts
             Friend Text As FormattedText
         End Class
 
+        ''' <summary>True when this chart's legend is not a list of series at all but a RANGE SELECTOR: the
+        ''' surface chart, whose legend picks the part of the sheet to draw. Such a bar lists no names — it is
+        ''' two sliders and nothing else (2026-09-23).</summary>
+        Friend Overridable ReadOnly Property IsRangeLegend As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        ''' <summary>The size a range legend asks for: a couple of slider rows, not a wrapped list.</summary>
+        Friend Overridable Function MeasureRangeLegend(frameSize As Size) As Size
+            Return New Size(0, 0)
+        End Function
+
+        ''' <summary>Draws the range legend, laid out straight into <see cref="_legendRect"/>.</summary>
+        Friend Overridable Sub DrawRangeLegend(context As DrawingContext)
+        End Sub
+
+        ''' <summary>
+        ''' The positions a range slider may land on when its axis is made of DISCRETE samples rather than a
+        ''' continuous span, in order — empty for an axis that is continuous. The surface answers with its
+        ''' slice positions, so its own slider walks SLICE BY SLICE and says how many of them are shown,
+        ''' instead of leaving a range like "0 … 9" of a 0 … 270 sheet to mean whatever fraction that is.
+        ''' </summary>
+        Friend Overridable Function RangeSteps(axis As Integer) As IReadOnlyList(Of Double)
+            Return Array.Empty(Of Double)()
+        End Function
+
         ''' <summary>The name a series shows in the legend: its own Title, else the spreadsheet's
         ''' Y-column header, else "Series n".</summary>
         Friend Function LegendName(one As Plot, index As Integer) As String
@@ -2668,7 +2757,18 @@ Namespace Global.AvaloniaCharts
                 Return one.Definition.Title
             End If
             If Not String.IsNullOrWhiteSpace(one.Data.YTitle) Then Return one.Data.YTitle
-            Return $"Series {index + 1}"
+            Dim typed = If(one.Definition Is Nothing, InlineLegendName(index), String.Empty)
+            Return If(typed.Length > 0, typed, $"Series {index + 1}")
+        End Function
+
+        ''' <summary>
+        ''' What a slice typed in through SampleSets is called in the legend — an EMPTY string for every
+        ''' chart that draws typed-in values as one unnamed line (the line, bar, area and pie family: there
+        ''' is nothing to name and nothing to switch off, so they list nothing). A chart whose slices ARE the
+        ''' sets names them, so a surface or a waterfall sketched from typed-in numbers still gets its legend.
+        ''' </summary>
+        Friend Overridable Function InlineLegendName(index As Integer) As String
+            Return String.Empty
         End Function
 
         ''' <summary>
@@ -2684,6 +2784,9 @@ Namespace Global.AvaloniaCharts
             ' The plots are what the legend lists, not the form's series elements: a pie has no series
             ' but its slices still need a legend.
             If Not ShowLegend OrElse plots.Count = 0 Then Return New Size(0, 0)
+            ' A range legend is a fixed pair of sliders: it has no entries to flow, and its size does not
+            ' depend on how many slices there are.
+            If IsRangeLegend Then Return MeasureRangeLegend(frameSize)
 
             Const boxSize As Double = 13, boxGap As Double = 6, itemGap As Double = 16, lineGap As Double = 4
             ' The bar's own padding, plus whatever the user asked for: LegendMargin is the space between
@@ -2699,7 +2802,10 @@ Namespace Global.AvaloniaCharts
             Dim items As New List(Of LegendCell)()
             For i = 0 To plots.Count - 1
                 Dim one = plots(i)
-                If one.Definition Is Nothing Then Continue For
+                ' A plot with no series element is a slice typed in through SampleSets. It is listed only
+                ' when this chart NAMES such slices (InlineLegendName) and there is data to draw — otherwise
+                ' the legend would offer entries that name nothing and toggle nothing.
+                If one.Definition Is Nothing AndAlso (InlineLegendName(i).Length = 0 OrElse Not one.Data.HasData) Then Continue For
                 items.Add(New LegendCell With {
                     .Plot = one,
                     .Text = MakeText(LegendName(one, i), font, one.LineColor)
@@ -2758,7 +2864,9 @@ Namespace Global.AvaloniaCharts
         ''' <summary>Draws the legend bar: the tick box for each series (ticked when its trace is on)
         ''' and its name, in the series' own colour.</summary>
         Private Sub DrawLegend(context As DrawingContext)
-            If _legend.Count = 0 Then Return
+            ' A range legend has no ENTRIES at all — its sliders are the whole bar — so it must not be
+            ' skipped by the empty-list guard the entry legend uses.
+            If _legend.Count = 0 AndAlso Not IsRangeLegend Then Return
             ' The entries were measured in local coordinates; the bar is anchored to the frame's bottom.
             For i = 0 To _legend.Count - 1
                 Dim entry = _legend(i)
@@ -2777,20 +2885,28 @@ Namespace Global.AvaloniaCharts
                     If LegendBorderThickness > 0 Then outline = MakePen(LegendBorderBrush, LegendBorderThickness, ChartLineStyle.Solid)
                     context.DrawRectangle(fill, outline, New RoundedRect(_legendRect, LegendCornerRadius))
                 End If
+                ' A range legend draws its sliders and stops: the bar it lives in is the whole legend.
+                If IsRangeLegend Then
+                    DrawRangeLegend(context)
+                    Return
+                End If
                 Dim framePen = MakePen(Color.Parse("#9AA0A6"), 1, ChartLineStyle.Solid)
                 For Each entry In _legend
-                    context.DrawRectangle(Nothing, framePen, New RoundedRect(entry.Box, New Avalonia.CornerRadius(2)))
-                    If entry.Series.Visible Then
-                        ' A tick in the series' own colour, so a ticked box matches its line exactly.
-                        Dim tick = MakePen(entry.LineColor, 2, ChartLineStyle.Solid)
-                        Dim b = entry.Box
-                        context.DrawLine(tick,
-                            New Point(b.X + b.Width * 0.2, b.Y + b.Height * 0.55),
-                            New Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78))
-                        context.DrawLine(tick,
-                            New Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78),
-                            New Point(b.X + b.Width * 0.8, b.Y + b.Height * 0.22))
+                    If entry.Series IsNot Nothing Then
+                        context.DrawRectangle(Nothing, framePen, New RoundedRect(entry.Box, New Avalonia.CornerRadius(2)))
+                        If entry.Series.Visible Then
+                            ' A tick in the series' own colour, so a ticked box matches its line exactly.
+                            Dim tick = MakePen(entry.LineColor, 2, ChartLineStyle.Solid)
+                            Dim b = entry.Box
+                            context.DrawLine(tick,
+                                New Point(b.X + b.Width * 0.2, b.Y + b.Height * 0.55),
+                                New Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78))
+                            context.DrawLine(tick,
+                                New Point(b.X + b.Width * 0.42, b.Y + b.Height * 0.78),
+                                New Point(b.X + b.Width * 0.8, b.Y + b.Height * 0.22))
+                        End If
                     End If
+                    ' A typed-in slice has no box: the name (in its own colour) is the whole entry.
                     context.DrawText(entry.Text, New Point(entry.Box.Right + 6, entry.Hit.Y + (entry.Hit.Height - entry.Text.Height) / 2))
                 Next
             End Using
@@ -5281,6 +5397,12 @@ Namespace Global.AvaloniaCharts
             End Get
         End Property
 
+        ''' <summary>A sampleset typed in through SampleSets is still a set of its own, so it is listed in the
+        ''' legend as "Set n" — a waterfall sketched without a workbook keeps its legend.</summary>
+        Friend Overrides Function InlineLegendName(index As Integer) As String
+            Return $"Set {index + 1}"
+        End Function
+
         Protected Overrides Function InlineData() As ChartData
             Dim samples = If(Values, Array.Empty(Of Double)())
             Return New ChartData With {
@@ -6128,6 +6250,1503 @@ Namespace Global.AvaloniaCharts
                 CByte(Math.Round(first.G + (second.G - first.G) * f)),
                 CByte(Math.Round(first.B + (second.B - first.B) * f)))
         End Function
+    End Class
+
+    ''' <summary>
+    ''' The 3D SURFACE chart — a sheet of corrugated iron. Every series is one slice across the sheet's LENGTH,
+    ''' its values are the HEIGHT of the corrugation at each X position across the sheet's WIDTH, and
+    ''' neighbouring slices are joined with quads: the picture is the surface itself, which is what separates it
+    ''' from GrumpyWaterfallPlot (a row of separate traces joined by a mesh).
+    '''
+    ''' Where the pieces come from:
+    '''   - X is ONE shared column for the whole chart (the width positions), so the slices line up into a grid
+    '''     and the quads are real sheet quads;
+    '''   - Y is one column per series (that slice's corrugation profile);
+    '''   - Z is where the slice stands along the length. It is read from the SPREADSHEET — the series' own
+    '''     column, in ZRow (the header row by default) — because the sample data says where each slice belongs;
+    '''     when that cell does not hold a number the chart numbers the slices itself from ZStart in steps of
+    '''     ZStep. The depth of a slice follows its Z VALUE, so unevenly spaced slices stand unevenly far apart,
+    '''     and the Z axis is labelled with those numbers.
+    '''
+    ''' The range window (2026-09-23): MinX/MaxX and MinY/MaxY clip the picture to a window of the sheet's width
+    ''' (X) and height (Y); the view is ALWAYS re-fitted to that window, so narrowing the range zooms into it
+    ''' instead of leaving the surface small inside a large frame, and the drawing is clipped to the plot box so
+    ''' a window is a real cut rather than an overflow.
+    ''' </summary>
+    Public Class GrumpySurfacePlot
+        Inherits ChartBase
+
+        ''' <summary>The slice of a chart that has no series elements: one corrugation profile, typed in.</summary>
+        Public Shared ReadOnly ValuesProperty As StyledProperty(Of Double()) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double())(NameOf(Values))
+
+        ''' <summary>Several slices written inline, one per semicolon-separated group: "1,2,3; 3,2,1" is two
+        ''' slices of three samples, with the sample number as X. Handy for sketching a surface without a
+        ''' workbook — a real capture names one spreadsheet column per slice (one series each).</summary>
+        Public Shared ReadOnly SampleSetsProperty As StyledProperty(Of Double()()) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double()())(NameOf(SampleSets))
+
+        ''' <summary>Grid mesh, grid mesh over a solid surface (the default), or the solid alone.</summary>
+        Public Shared ReadOnly StyleProperty As StyledProperty(Of SurfaceStyle) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, SurfaceStyle)(NameOf(Style), SurfaceStyle.GridMeshSolid)
+
+        ''' <summary>One colour per slice, or a temperature ramp by height (the default).</summary>
+        Public Shared ReadOnly ColorByProperty As StyledProperty(Of SurfaceColorMode) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, SurfaceColorMode)(NameOf(ColorBy), SurfaceColorMode.Temperature)
+
+        ''' <summary>The ramp's colour at the LOWEST value (the valleys).</summary>
+        Public Shared ReadOnly LowColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Color)(NameOf(LowColor), Color.Parse("#1B2A6B"))
+
+        ''' <summary>The ramp's colour at the HIGHEST value (the ridges).</summary>
+        Public Shared ReadOnly HighColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Color)(NameOf(HighColor), Color.Parse("#E53935"))
+
+        ''' <summary>The value the ramp's low end sits at (NaN = the data's own least value).</summary>
+        Public Shared ReadOnly HeatMinProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(HeatMin), Double.NaN)
+
+        ''' <summary>The value the ramp's high end sits at (NaN = the data's own greatest value).</summary>
+        Public Shared ReadOnly HeatMaxProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(HeatMax), Double.NaN)
+
+        ''' <summary>The colour of the surface's MESH lines. The floor's own gridlines keep the chart-level
+        ''' GridColor, as on every other chart.</summary>
+        Public Shared ReadOnly MeshColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Color)(NameOf(MeshColor), Color.Parse("#6B7A8F"))
+
+        ''' <summary>How thick the surface's mesh lines are (0 draws none).</summary>
+        Public Shared ReadOnly MeshThicknessProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(MeshThickness), 1.0R)
+
+        ''' <summary>How solid the filled surface is, in percent (100 = opaque metal).</summary>
+        Public Shared ReadOnly SolidOpacityProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(SolidOpacity), 100.0R)
+
+        ''' <summary>Fill the space under the sheet, from its own profiles down to the floor, so the sheet draws
+        ''' as a solid BLOCK instead of a skin — an area chart lifted into 3D. It is a block, so it HIDES what
+        ''' stands behind it: slices behind a nearer face are occluded instead of showing through the empty space
+        ''' beneath the sheet, which is what a narrow slice window looked like before. Off by default, because it
+        ''' changes the picture rather than decorating it.</summary>
+        Public Shared ReadOnly ShowBaseProperty As StyledProperty(Of Boolean) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Boolean)(NameOf(ShowBase), False)
+
+        ''' <summary>The colour of the base block's sides and ends. Flat and OPAQUE on purpose: the temperature
+        ''' ramp belongs to the sheet, and the block is the solid it stands on.</summary>
+        Public Shared ReadOnly BaseColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Color)(NameOf(BaseColor), Color.Parse("#3C3C3C"))
+
+        ''' <summary>The Z of the FIRST slice when the spreadsheet does not say — 0 by default.</summary>
+        Public Shared ReadOnly ZStartProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(ZStart))
+
+        ''' <summary>What one slice adds to the Z of the one behind it when the spreadsheet does not say.</summary>
+        Public Shared ReadOnly ZStepProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(ZStep), 1.0R)
+
+        ''' <summary>Which spreadsheet ROW holds each slice's Z value (0 = the header row).</summary>
+        Public Shared ReadOnly ZRowProperty As StyledProperty(Of Integer) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Integer)(NameOf(ZRow))
+
+        ''' <summary>The Z of the FIRST slice that is drawn (NaN = the sheet's own least Z). This is the legend's
+        ''' second slider: the slices outside the window are left out of the picture altogether, so a long
+        ''' capture can be looked at a few slices at a time.</summary>
+        Public Shared ReadOnly MinZProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(MinZ), Double.NaN)
+
+        ''' <summary>The Z of the LAST slice that is drawn (NaN = the sheet's own greatest Z).</summary>
+        Public Shared ReadOnly MaxZProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(MaxZ), Double.NaN)
+
+        ''' <summary>How many samples of a slice are drawn at most (512 by default, 0 = every one).</summary>
+        Public Shared ReadOnly MaxPointsProperty As StyledProperty(Of Integer) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Integer)(NameOf(MaxPoints), 512)
+
+        ''' <summary>How far above the floor the sheet is seen from (default 30).</summary>
+        Public Shared ReadOnly ElevationProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(Elevation), 30.0R)
+
+        ''' <summary>Where the sheet is turned to (default 45).</summary>
+        Public Shared ReadOnly AzimuthProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(Azimuth), 45.0R)
+
+        ''' <summary>How deep the whole sheet stands, as a fraction of the fitted depth.</summary>
+        Public Shared ReadOnly ZSpacingProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(ZSpacing), 1.0R)
+
+        ''' <summary>Scales the fitted picture.</summary>
+        Public Shared ReadOnly ZoomProperty As StyledProperty(Of Double) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, Double)(NameOf(Zoom), 1.0R)
+
+        ''' <summary>The name along the depth axis.</summary>
+        Public Shared ReadOnly ZAxisTitleProperty As StyledProperty(Of String) =
+            AvaloniaProperty.Register(Of GrumpySurfacePlot, String)(NameOf(ZAxisTitle))
+
+        ''' <summary>
+        ''' This chart's OWN properties repaint it. The base registers its own (ShowBorder, the legend's
+        ''' colours…) for ChartBase, but a property declared here needs its own registration — without it a Z
+        ''' slider drag, a Style change or a colour change updates the model and the picture stays as it was.
+        ''' </summary>
+        Shared Sub New()
+            AffectsRender(Of GrumpySurfacePlot)(ValuesProperty, SampleSetsProperty, StyleProperty, ColorByProperty,
+                LowColorProperty, HighColorProperty, HeatMinProperty, HeatMaxProperty, MeshColorProperty,
+                MeshThicknessProperty, SolidOpacityProperty, ZStartProperty, ZStepProperty, ZRowProperty,
+                MinZProperty, MaxZProperty, MaxPointsProperty, ElevationProperty, AzimuthProperty,
+                ZSpacingProperty, ZoomProperty, ZAxisTitleProperty, ShowBaseProperty, BaseColorProperty)
+        End Sub
+
+        ''' <summary>One corrugation profile, typed in: the X is the sample number.</summary>
+        <TypeConverter(GetType(DoubleArrayConverter))>
+        Public Property Values As Double()
+            Get
+                Return GetValue(ValuesProperty)
+            End Get
+            Set(value As Double())
+                SetValue(ValuesProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Several slices written inline, one per semicolon-separated group.</summary>
+        <TypeConverter(GetType(DoubleSetConverter))>
+        Public Property SampleSets As Double()()
+            Get
+                Return GetValue(SampleSetsProperty)
+            End Get
+            Set(value As Double()())
+                SetValue(SampleSetsProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Grid mesh, grid mesh over the solid, or the solid alone.</summary>
+        Public Property Style As SurfaceStyle
+            Get
+                Return GetValue(StyleProperty)
+            End Get
+            Set(value As SurfaceStyle)
+                SetValue(StyleProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>What colours the surface.</summary>
+        Public Property ColorBy As SurfaceColorMode
+            Get
+                Return GetValue(ColorByProperty)
+            End Get
+            Set(value As SurfaceColorMode)
+                SetValue(ColorByProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The ramp's colour at the sheet's lowest height.</summary>
+        Public Property LowColor As Color
+            Get
+                Return GetValue(LowColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(LowColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The ramp's colour at the sheet's greatest height.</summary>
+        Public Property HighColor As Color
+            Get
+                Return GetValue(HighColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(HighColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The value the ramp's low end sits at (NaN = the data's own least).</summary>
+        Public Property HeatMin As Double
+            Get
+                Return GetValue(HeatMinProperty)
+            End Get
+            Set(value As Double)
+                SetValue(HeatMinProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The value the ramp's high end sits at (NaN = the data's own greatest).</summary>
+        Public Property HeatMax As Double
+            Get
+                Return GetValue(HeatMaxProperty)
+            End Get
+            Set(value As Double)
+                SetValue(HeatMaxProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The colour of the surface's mesh lines.</summary>
+        Public Property MeshColor As Color
+            Get
+                Return GetValue(MeshColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(MeshColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How thick the surface's mesh lines are.</summary>
+        Public Property MeshThickness As Double
+            Get
+                Return GetValue(MeshThicknessProperty)
+            End Get
+            Set(value As Double)
+                SetValue(MeshThicknessProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How solid the filled surface is, in percent.</summary>
+        Public Property SolidOpacity As Double
+            Get
+                Return GetValue(SolidOpacityProperty)
+            End Get
+            Set(value As Double)
+                SetValue(SolidOpacityProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Draw the solid block under the sheet, reaching to the floor.</summary>
+        Public Property ShowBase As Boolean
+            Get
+                Return GetValue(ShowBaseProperty)
+            End Get
+            Set(value As Boolean)
+                SetValue(ShowBaseProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The colour of that block.</summary>
+        Public Property BaseColor As Color
+            Get
+                Return GetValue(BaseColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(BaseColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The Z of the first slice when the spreadsheet does not say.</summary>
+        Public Property ZStart As Double
+            Get
+                Return GetValue(ZStartProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ZStartProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>What one slice adds to the previous slice's Z when the spreadsheet does not say.</summary>
+        Public Property ZStep As Double
+            Get
+                Return GetValue(ZStepProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ZStepProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Which spreadsheet row holds each slice's Z value (0 = the header row).</summary>
+        Public Property ZRow As Integer
+            Get
+                Return GetValue(ZRowProperty)
+            End Get
+            Set(value As Integer)
+                SetValue(ZRowProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The Z of the first slice that is drawn (empty = the sheet's own least Z).</summary>
+        Public Property MinZ As Double
+            Get
+                Return GetValue(MinZProperty)
+            End Get
+            Set(value As Double)
+                SetValue(MinZProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The Z of the last slice that is drawn (empty = the sheet's own greatest Z).</summary>
+        Public Property MaxZ As Double
+            Get
+                Return GetValue(MaxZProperty)
+            End Get
+            Set(value As Double)
+                SetValue(MaxZProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How many samples of a slice are drawn at most (0 = every one).</summary>
+        Public Property MaxPoints As Integer
+            Get
+                Return GetValue(MaxPointsProperty)
+            End Get
+            Set(value As Integer)
+                SetValue(MaxPointsProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How far above the floor the sheet is seen from.</summary>
+        Public Property Elevation As Double
+            Get
+                Return GetValue(ElevationProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ElevationProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Where the sheet is turned to.</summary>
+        Public Property Azimuth As Double
+            Get
+                Return GetValue(AzimuthProperty)
+            End Get
+            Set(value As Double)
+                SetValue(AzimuthProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>How deep the whole sheet stands.</summary>
+        Public Property ZSpacing As Double
+            Get
+                Return GetValue(ZSpacingProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ZSpacingProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Scales the fitted picture.</summary>
+        Public Property Zoom As Double
+            Get
+                Return GetValue(ZoomProperty)
+            End Get
+            Set(value As Double)
+                SetValue(ZoomProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The name along the depth axis.</summary>
+        Public Property ZAxisTitle As String
+            Get
+                Return GetValue(ZAxisTitleProperty)
+            End Get
+            Set(value As String)
+                SetValue(ZAxisTitleProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>A surface has no cartesian frame: its axes are the projected cube's edges.</summary>
+        Protected Overrides ReadOnly Property HasCartesianAxes As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        ''' <summary>The X values are read from the sheet — a width position is a number, not a sample count.</summary>
+        Protected Overrides ReadOnly Property ImplicitXFromIndex As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        ''' <summary>The floor sits at zero, so the height scale always includes it.</summary>
+        Protected Overrides ReadOnly Property ZeroBaseline As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        ''' <summary>There is no flat frame to hang cursors on.</summary>
+        Protected Overrides ReadOnly Property SupportsCursors As Boolean
+            Get
+                Return False
+            End Get
+        End Property
+
+        ''' <summary>The width range the data covers, ignoring the window. READ-ONLY, and for the designer's
+        ''' eyes only: the legend's range sliders span exactly what the sheet has, so a range that would draw
+        ''' an empty picture cannot be picked.</summary>
+        Public ReadOnly Property DataMinX As Double
+            Get
+                Return _dataX.Min
+            End Get
+        End Property
+
+        ''' <inheritdoc cref="DataMinX"/>
+        Public ReadOnly Property DataMaxX As Double
+            Get
+                Return _dataX.Max
+            End Get
+        End Property
+
+        ''' <summary>The height range the data covers, ignoring the window (zero included, as the scale does).</summary>
+        Public ReadOnly Property DataMinY As Double
+            Get
+                Return _dataY.Min
+            End Get
+        End Property
+
+        ''' <inheritdoc cref="DataMinY"/>
+        Public ReadOnly Property DataMaxY As Double
+            Get
+                Return _dataY.Max
+            End Get
+        End Property
+
+        ''' <summary>The Z (length) range the data covers, ignoring the window: the span the legend's slice
+        ''' slider runs along.</summary>
+        Public ReadOnly Property DataMinZ As Double
+            Get
+                Return _dataZ.Min
+            End Get
+        End Property
+
+        ''' <inheritdoc cref="DataMinZ"/>
+        Public ReadOnly Property DataMaxZ As Double
+            Get
+                Return _dataZ.Max
+            End Get
+        End Property
+
+        ''' <summary>The legend of a surface is a RANGE SELECTOR, not a list of names: two sliders that pick the
+        ''' part of the sheet to draw, with the chart re-fitting the picture to whatever they select. That is why
+        ''' it has no use for InlineLegendName — it lists nothing but its sliders.</summary>
+        Friend Overrides ReadOnly Property IsRangeLegend As Boolean
+            Get
+                Return True
+            End Get
+        End Property
+
+        ''' <summary>How tall one slider row is, how big its handles are drawn, and the room a slider's numbers
+        ''' take beside its track (they are rotated alongside it when the bar docks at a side).</summary>
+        Private Const RangeRow As Double = 20
+        Private Const RangeHandle As Double = 5
+        Private Const RangeLabelWidth As Double = 92
+        Private Const RangeLabelRoom As Double = 14
+
+        ''' <summary>True when the bar docks at a side, so the sliders run DOWN the frame and their numbers are
+        ''' turned on their side — the legend follows the side the form asks for.</summary>
+        Private ReadOnly Property RangeVertical As Boolean
+            Get
+                Return LegendPosition = LegendPosition.Left OrElse LegendPosition = LegendPosition.Right
+            End Get
+        End Property
+
+        ''' <summary>Which range slider the pointer is dragging (-1 = none) and whether it holds the HIGH end.</summary>
+        Private _rangeDragAxis As Integer = -1
+        Private _rangeDragHigh As Boolean
+
+        Friend Overrides Function MeasureRangeLegend(frameSize As Size) As Size
+            ' Two sliders — the WIDTH (X) one first, then the SLICES (Z) one — each with its track and the
+            ' room its numbers need. Across the frame they stack as two rows; down a side they sit side by side
+            ' as two columns, so the bar still honours the side the form asked for.
+            If RangeVertical Then
+                Return New Size(Math.Min(RangeColumn * 2 + 8, Math.Max(60, frameSize.Width * 0.5)),
+                                frameSize.Height)
+            End If
+            Return New Size(frameSize.Width, Math.Min(RangeRow * 2 + 16, Math.Max(40, frameSize.Height * 0.5)))
+        End Function
+
+        Friend Overrides Sub DrawRangeLegend(context As DrawingContext)
+            Dim font = Math.Max(6, Math.Min(11, LegendFontSize - 1))
+            Dim trackPen = MakePen(MeshColor, 3, ChartLineStyle.Solid)
+            For axis = 0 To 1
+                Dim colour = If(axis = 0, Color.Parse("#4C9FDC"), Color.Parse("#D9A519"))
+                Dim track = RangeTrack(axis)
+                context.DrawLine(trackPen, RangeStart(track), RangeEnd(track))
+                Dim handlePen = MakePen(colour, 1, ChartLineStyle.Solid)
+                Dim fill As New SolidColorBrush(colour)
+                For Each value In {RangeLow(axis), RangeHigh(axis)}
+                    Dim point = RangePoint(axis, value)
+                    context.DrawRectangle(fill, handlePen, New RoundedRect(
+                        New Rect(point.X - RangeHandle, point.Y - RangeHandle, RangeHandle * 2, RangeHandle * 2), 2))
+                Next
+                ' What is selected, in the slider's own colour: "X 70 … 110", or the same turned on its side
+                ' when the bar is docked at a side. The slices' slider counts its slices instead.
+                Dim text = MakeText(RangeLabelText(axis), font, colour)
+                If RangeVertical Then
+                    ' Rotate then translate (the same order the axis names use): the text reads upward, so its
+                    ' anchor sits half a text-width below the middle of the column it labels.
+                    Dim anchorY = track.Y + track.Height / 2 + text.Width / 2
+                    Using context.PushTransform(Matrix.CreateRotation(-Math.PI / 2) *
+                                                Matrix.CreateTranslation(_legendRect.X + 4 + Math.Max(0, LegendMargin) + axis * RangeColumn, anchorY))
+                        context.DrawText(text, New Point(0, 0))
+                    End Using
+                Else
+                    context.DrawText(text, New Point(_legendRect.X + 4 + Math.Max(0, LegendMargin),
+                        track.Y - text.Height / 2))
+                End If
+            Next
+        End Sub
+
+        ''' <summary>The letters the sliders carry: X is the WIDTH of the sheet, Z is how far along it a slice
+        ''' stands (the height between them is the data, and is not a choice).</summary>
+        Private Shared Function RangeName(axis As Integer) As String
+            Return If(axis = 0, "X", "Z")
+        End Function
+
+        ''' <inheritdoc/>
+        Friend Overrides Function RangeSteps(axis As Integer) As IReadOnlyList(Of Double)
+            Return If(axis = 0, Array.Empty(Of Double)(), _sliceSteps)
+        End Function
+
+        ''' <summary>The nearest slice position to a window end, so a window always cuts BETWEEN slices — a
+        ''' typed "9" on a sheet sliced every 5 takes the slice at 10 rather than leaving the slice between
+        ''' them half shown.</summary>
+        Private Function SnapToSlice(value As Double) As Double
+            If _sliceSteps.Count = 0 Then Return value
+            Return _sliceSteps(NearestStep(value))
+        End Function
+
+        ''' <summary>The index of the slice position nearest a Z value (0 when the sheet has no slices yet).</summary>
+        Private Function NearestStep(value As Double) As Integer
+            Dim best = 0
+            For i = 1 To _sliceSteps.Count - 1
+                If Math.Abs(_sliceSteps(i) - value) < Math.Abs(_sliceSteps(best) - value) Then best = i
+            Next
+            Return best
+        End Function
+
+        ''' <summary>What one slider says. The continuous one (the width) names the values it cut — "X 70 … 110"
+        ''' — and the one that walks slices counts them instead, "Z 3…9 of 55", because the number of series
+        ''' on show is the thing being chosen there: on a sheet sliced every 5 the values "0 … 9" would be two
+        ''' slices out of fifty-five and read as a mystery.</summary>
+        Private Function RangeLabelText(axis As Integer) As String
+            Dim steps = RangeSteps(axis)
+            If steps.Count < 2 Then
+                Return $"{RangeName(axis)} {FormatNumber(RangeLow(axis), 1)} … {FormatNumber(RangeHigh(axis), 1)}"
+            End If
+            Dim low = RangeLow(axis)
+            Dim high = RangeHigh(axis)
+            Dim from = NearestStep(If(Double.IsNaN(low), steps(0), low)) + 1
+            Dim [to] = NearestStep(If(Double.IsNaN(high), steps(steps.Count - 1), high)) + 1
+            If [to] < from Then
+                Dim swap = from
+                from = [to]
+                [to] = swap
+            End If
+            Return $"{RangeName(axis)} {from}…{[to]} of {steps.Count}"
+        End Function
+
+        ''' <summary>The range one slider spans: the DATA's own, so a selection can never leave the sheet.</summary>
+        Private Function RangeAxis(axis As Integer) As AxisRange
+            Return If(axis = 0, _dataX, _dataZ)
+        End Function
+
+        ''' <summary>The window's low end (unset = the whole data range).</summary>
+        Private Function RangeLow(axis As Integer) As Double
+            Dim chosen = If(axis = 0, MinX, MinZ)   ' not 'set': that is a VB keyword (BC30183)
+            Return If(Double.IsNaN(chosen), RangeAxis(axis).Min, chosen)
+        End Function
+
+        ''' <summary>The window's high end (unset = the whole data range).</summary>
+        Private Function RangeHigh(axis As Integer) As Double
+            Dim chosen = If(axis = 0, MaxX, MaxZ)
+            Return If(Double.IsNaN(chosen), RangeAxis(axis).Max, chosen)
+        End Function
+
+        ''' <summary>How wide one slider's COLUMN is when the bar is docked at a side: its rotated numbers
+        ''' take the room at the column's left edge, the track runs down what is left.</summary>
+        Private Const RangeColumn As Double = RangeLabelRoom + RangeRow
+
+        ''' <summary>The line a slider sweeps, with the data range mapped onto it.</summary>
+        Private Function RangeTrack(axis As Integer) As Rect
+            Dim pad = 4 + Math.Max(0, LegendMargin)
+            If RangeVertical Then
+                Return New Rect(_legendRect.X + pad + axis * RangeColumn + RangeLabelRoom, _legendRect.Y + pad,
+                                1, Math.Max(10, _legendRect.Height - pad * 2))
+            End If
+            Dim left = _legendRect.X + pad + RangeLabelWidth
+            Return New Rect(left, _legendRect.Y + pad + 10 + axis * RangeRow,
+                            Math.Max(10, _legendRect.Right - pad - left), 1)
+        End Function
+
+        Private Function RangeStart(track As Rect) As Point
+            If RangeVertical Then Return New Point(track.X + track.Width / 2, track.Y)
+            Return New Point(track.X, track.Y + track.Height / 2)
+        End Function
+
+        Private Function RangeEnd(track As Rect) As Point
+            If RangeVertical Then Return New Point(track.X + track.Width / 2, track.Bottom)
+            Return New Point(track.Right, track.Y + track.Height / 2)
+        End Function
+
+        ''' <summary>Where a value sits on its slider. A slider whose axis is made of slices puts its handles on
+        ''' the SLICES, so a drag steps from one slice to the next; a continuous one maps the value straight
+        ''' onto its track.</summary>
+        Private Function RangePoint(axis As Integer, value As Double) As Point
+            Dim track = RangeTrack(axis)
+            Dim steps = RangeSteps(axis)
+            Dim f As Double
+            If steps.Count > 1 Then
+                f = NearestStep(If(Double.IsNaN(value), steps(0), value)) / (steps.Count - 1)
+            Else
+                Dim range = RangeAxis(axis)
+                Dim span = range.Max - range.Min
+                f = If(span > 0, Math.Clamp((value - range.Min) / span, 0, 1), 0)
+            End If
+            Dim from = RangeStart(track)
+            Dim finish = RangeEnd(track)
+            Return New Point(from.X + (finish.X - from.X) * f, from.Y + (finish.Y - from.Y) * f)
+        End Function
+
+        ''' <summary>The value a point on a slider names, clamped to the data range — and, on a slider made of
+        ''' slices, snapped to the nearest of them, so a drag can only ever add or drop whole slices.</summary>
+        Private Function RangeValue(axis As Integer, position As Point) As Double
+            Dim track = RangeTrack(axis)
+            Dim from = RangeStart(track)
+            Dim finish = RangeEnd(track)
+            Dim span = If(RangeVertical, Math.Max(1e-6, finish.Y - from.Y), Math.Max(1e-6, finish.X - from.X))
+            Dim f = Math.Clamp(If(RangeVertical, (position.Y - from.Y) / span, (position.X - from.X) / span), 0, 1)
+            Dim steps = RangeSteps(axis)
+            If steps.Count > 1 Then Return steps(CInt(Math.Round(f * (steps.Count - 1))))
+            Dim range = RangeAxis(axis)
+            Return range.Min + f * (range.Max - range.Min)
+        End Function
+
+        ''' <summary>The band a pointer grabs to take hold of a slider: its own row across the frame, its own
+        ''' COLUMN down a side — so a press picks the slider it landed on instead of always the first one.</summary>
+        Private Function RangeBand(axis As Integer) As Rect
+            Dim pad = 4 + Math.Max(0, LegendMargin)
+            If RangeVertical Then
+                Return New Rect(_legendRect.X + pad + axis * RangeColumn, _legendRect.Y + 1,
+                                RangeColumn, Math.Max(10, _legendRect.Height - 2))
+            End If
+            Dim track = RangeTrack(axis)
+            Return New Rect(_legendRect.X + 1, track.Y - RangeRow / 2,
+                            Math.Max(10, _legendRect.Width - 2), RangeRow)
+        End Function
+
+        ''' <summary>-1, or the slider a pointer position falls on.</summary>
+        Private Function RangeHitAxis(position As Point) As Integer
+            If _legendRect.Width <= 0 OrElse Not _legendRect.Contains(position) Then Return -1
+            For axis = 0 To 1
+                If RangeBand(axis).Contains(position) Then Return axis
+            Next
+            Return -1
+        End Function
+
+        ''' <summary>Moves the end of a window the pointer is dragging: the end nearer the pointer takes the
+        ''' value, the other one stays put (so dragging past it pins them together instead of swapping).</summary>
+        Private Sub DragRangeTo(position As Point)
+            Dim axis = _rangeDragAxis
+            If axis < 0 Then Return
+            Dim value = RangeValue(axis, position)
+            If axis = 0 Then
+                If _rangeDragHigh Then
+                    MaxX = Math.Max(value, RangeLow(0))
+                Else
+                    MinX = Math.Min(value, RangeHigh(0))
+                End If
+            Else
+                If _rangeDragHigh Then
+                    MaxZ = Math.Max(value, RangeLow(1))
+                Else
+                    MinZ = Math.Min(value, RangeHigh(1))
+                End If
+            End If
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>The colours inline slices take, one after the other, so they can be told apart.</summary>
+        Private Shared ReadOnly SlicePalette As Color() = {
+            Color.Parse("#2D7DD2"), Color.Parse("#E4572E"), Color.Parse("#3FA34D"), Color.Parse("#B07CC6"),
+            Color.Parse("#D9A519"), Color.Parse("#4C9FDC"), Color.Parse("#EE6C4D"), Color.Parse("#3D9970")
+        }
+
+        ''' <summary>The Z of every slice of the last read, keyed by the plot the series produced.</summary>
+        Private ReadOnly _sliceZ As New Dictionary(Of Plot, Double)()
+
+        ''' <summary>Those same Z values, in order and without repeats: the positions the sheet is actually cut
+        ''' at, which is what the legend's second slider walks and what a window is snapped to — a window that
+        ''' ends between two slices would otherwise show a slice the slider's numbers do not mention.</summary>
+        Private ReadOnly _sliceSteps As New List(Of Double)()
+
+        ''' <summary>The width and height ranges the DATA covers, window or not, as of the last read. The
+        ''' legend's range sliders span these, so a selection can never name a range the sheet has not got.</summary>
+        Private _dataX As AxisRange = AxisRange.Over(New Double() {}, Double.NaN, Double.NaN, 6, 1)
+        Private _dataY As AxisRange = AxisRange.Over(New Double() {}, Double.NaN, Double.NaN, 5, 5)
+        Private _dataZ As AxisRange = AxisRange.Over(New Double() {}, Double.NaN, Double.NaN, 5, 5)
+
+        Private _rotateDrag As Boolean
+        Private _rotateFrom As Point
+        Private _rotateElevation As Double
+        Private _rotateAzimuth As Double
+
+        Protected Overrides Sub OnPropertyChanged(change As AvaloniaPropertyChangedEventArgs)
+            MyBase.OnPropertyChanged(change)
+            If change.Property Is ValuesProperty OrElse change.Property Is SampleSetsProperty Then
+                ' The data itself changed: the read is cached, so it has to be dropped as well.
+                Reload()
+            End If
+        End Sub
+
+        ''' <summary>One corrugation profile, typed in — the chart's only inline data.</summary>
+        Protected Overrides Function InlineData() As ChartData
+            Dim samples = If(Values, Array.Empty(Of Double)())
+            If samples.Length > 0 Then
+                Return New ChartData With {
+                    .Xs = Enumerable.Range(1, samples.Length).Select(Function(i) CDbl(i)).ToArray(),
+                    .Ys = samples
+                }
+            End If
+            Return If(Series.Count > 0, ReadSlice(Series(0), 0), New ChartData())
+        End Function
+
+        Protected Overrides Sub SetInlineData(xs As Double(), ys As Double())
+            Values = ys
+        End Sub
+
+        ''' <summary>One slice per series — and one shared X column for the whole chart, which is what makes the
+        ''' slices line up into a grid.</summary>
+        Friend Overrides Function BuildPlots() As List(Of Plot)
+            Dim plots As New List(Of Plot)()
+            If Series.Count = 0 Then
+                Dim sets = SampleSets
+                If sets IsNot Nothing AndAlso sets.Length > 0 Then
+                    ' A surface sketched inline: one slice per semicolon-separated group, each in its own
+                    ' colour of the palette so successive slices can be told apart.
+                    For i = 0 To sets.Length - 1
+                        plots.Add(New Plot With {
+                            .Data = New ChartData With {
+                                .Xs = Enumerable.Range(1, sets(i).Length).Select(Function(k) CDbl(k)).ToArray(),
+                                .Ys = sets(i)
+                            },
+                            .LineColor = SlicePalette(i Mod SlicePalette.Length),
+                            .LineThickness = LineThickness,
+                            .LineStyle = LineStyle
+                        })
+                    Next
+                Else
+                    Dim typed = Values
+                    Dim data As ChartData
+                    If typed IsNot Nothing AndAlso typed.Length > 0 Then
+                        data = New ChartData With {
+                            .Xs = Enumerable.Range(1, typed.Length).Select(Function(k) CDbl(k)).ToArray(),
+                            .Ys = typed
+                        }
+                    Else
+                        data = ReadSlice(Nothing, 0)
+                    End If
+                    plots.Add(New Plot With {
+                        .Data = data,
+                        .LineColor = LineColor,
+                        .LineThickness = LineThickness,
+                        .LineStyle = LineStyle
+                    })
+                End If
+            Else
+                For i = 0 To Series.Count - 1
+                    Dim trace = Series(i)
+                    plots.Add(New Plot With {
+                        .Data = ReadSlice(trace, i),
+                        .Definition = trace,
+                        .LineColor = trace.LineColor,
+                        .LineThickness = trace.LineThickness,
+                        .LineStyle = trace.LineStyle,
+                        .Visible = trace.Visible
+                    })
+                Next
+            End If
+
+            ' ONE width scale for the whole picture (every slice is read against the same X column, so a scale
+            ' per slice would draw two ridges at two widths and claim they are equal), and one height scale
+            ' that always includes the floor at zero.
+            Dim xs = plots.SelectMany(Function(p) p.Data.Xs).ToList()
+            Dim ys = plots.SelectMany(Function(p) p.Data.Ys).ToList()
+            ys.Add(0.0)
+            If xs.Count = 0 Then
+                xs.Add(0.0)
+                xs.Add(1.0)
+            End If
+            If ys.Count = 0 Then
+                ys.Add(0.0)
+                ys.Add(1.0)
+            End If
+            Dim xr = AxisRange.Over(xs, MinX, MaxX, 6, 1)
+            Dim yr = AxisRange.Over(ys, MinY, MaxY, 5, 5)
+            ' … and what the DATA alone covers, which is what the legend's range sliders span. Zero is part of
+            ' the height range because the floor is (ZeroBaseline), so a slider cannot cut the floor away.
+            _dataX = AxisRange.Over(xs, Double.NaN, Double.NaN, 6, 1)
+            _dataY = AxisRange.Over(ys, Double.NaN, Double.NaN, 5, 5)
+            ReadSlicePositions(plots)
+            ' The Z of every slice is known only after ReadSlicePositions, and the legend's slice slider spans
+            ' exactly these numbers: the sheet's own length, not whatever window is set.
+            _dataZ = AxisRange.Over(_sliceZ.Values.ToList(), Double.NaN, Double.NaN, 5, 5)
+            ' The slider walks the slices one at a time, so their positions are kept in order without repeats.
+            _sliceSteps.Clear()
+            _sliceSteps.AddRange(_sliceZ.Values.Distinct().OrderBy(Function(z) z))
+            For Each plot In plots
+                plot.XRange = xr
+                plot.YRange = yr
+            Next
+
+            Return plots
+        End Function
+
+        ''' <summary>One slice's profile: the series' own Y column, else the chart's YColumn and then the next
+        ''' column along (C, D, E …) — one column per slice is how a capture is laid out.</summary>
+        Private Function ReadSlice(slice As ChartSeries, index As Integer) As ChartData
+            Dim column As String
+            If slice IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(slice.YColumn) Then
+                column = slice.YColumn
+            Else
+                column = SpreadsheetReader.ColumnAfter(If(YColumn, "C"), index)
+            End If
+            Return DataFor(If(XColumn, "B"), column, False)
+        End Function
+
+        ''' <summary>The Z of every slice: the sheet's OWN numbers when it has them (one row of them, one per
+        ''' series column), and a numbered sequence from ZStart when it does not — so a workbook that names its
+        ''' columns still draws, and a workbook that positions them draws them where it says.</summary>
+        Private Sub ReadSlicePositions(plots As List(Of Plot))
+            _sliceZ.Clear()
+            Dim fromSheet As New Dictionary(Of String, Double)(StringComparer.OrdinalIgnoreCase)
+            Dim file = SourceFile
+            If Not String.IsNullOrWhiteSpace(file) AndAlso plots.Count > 0 Then
+                fromSheet = SpreadsheetReader.RowNumbers(file, If(ZRow > 0, ZRow, Math.Max(1, HeaderRow)), SourceSheet)
+            End If
+
+            For i = 0 To plots.Count - 1
+                Dim column As String
+                If Series.Count > i AndAlso Not String.IsNullOrWhiteSpace(Series(i).YColumn) Then
+                    column = Series(i).YColumn
+                Else
+                    column = SpreadsheetReader.ColumnAfter(If(YColumn, "C"), i)
+                End If
+                Dim found As Double = 0
+                If fromSheet.TryGetValue(column, found) Then
+                    _sliceZ(plots(i)) = found
+                Else
+                    _sliceZ(plots(i)) = ZStart + i * ZStep
+                End If
+            Next
+        End Sub
+
+        ''' <summary>
+        ''' Draws the sheet: the floor and the three projected axes, then the quads — one BAND per pair of
+        ''' neighbouring slices, painted from the farthest back to the nearest, because a solid surface hides
+        ''' what is behind it. Each band is a single geometry (the solid) and a single geometry (its mesh
+        ''' lines), so a 100 x 100 sheet is two hundred shapes rather than ten thousand.
+        ''' </summary>
+        Friend Overrides Sub DrawSeriesLayer(context As DrawingContext, plots As List(Of Plot), plot As Rect)
+            ' The Z window picks which SLICES are drawn at all (the legend's second slider): a long capture can
+            ' be looked at a few slices at a time, and the depth scale re-fits to what is left.
+            Dim everyZ = _sliceZ.Values.ToList()
+            ' The ends are snapped to the slices themselves, so the picture, the depth scale and the slider's
+            ' own numbers agree: "Z 1…3 of 55" draws exactly the slices 1, 2 and 3.
+            Dim lowZ = SnapToSlice(If(Double.IsNaN(MinZ), If(everyZ.Count > 0, everyZ.Min(), 0.0), MinZ))
+            Dim highZ = SnapToSlice(If(Double.IsNaN(MaxZ), If(everyZ.Count > 0, everyZ.Max(), 1.0), MaxZ))
+            If highZ < lowZ Then
+                Dim swap = lowZ
+                lowZ = highZ
+                highZ = swap
+            End If
+            Dim visible = plots.Where(Function(p)
+                                          If Not (p.Visible AndAlso p.Data.HasData) Then Return False
+                                          Dim z As Double = 0
+                                          If Not _sliceZ.TryGetValue(p, z) Then Return False
+                                          Return z >= lowZ - 1e-9 AndAlso z <= highZ + 1e-9
+                                      End Function).ToList()
+            Dim world As New SurfaceWorld With {
+                .View = MakeView(plot),
+                .Depth = Math.Clamp(ZSpacing, 0.1, 4),
+                .Xs = If(visible.Count > 0, visible(0).XRange, AxisRange.Over({0.0, 1.0}, MinX, MaxX, 6, 1)),
+                .Ys = If(visible.Count > 0, visible(0).YRange, AxisRange.Over({0.0, 1.0}, MinY, MaxY, 5, 5)),
+                .Zs = AxisRange.Over(everyZ, lowZ, highZ, 5, 5)
+            }
+            DrawFloor(context, world)
+
+            If visible.Count < 2 Then Return   ' one slice is a profile, not a surface
+
+            ' The slices of this render: their own samples, their colour, and the depth their Z VALUE puts
+            ' them at.
+            Dim slices As New List(Of SurfaceSlice)()
+            For Each p In visible
+                Dim z As Double = 0
+                If _sliceZ.TryGetValue(p, z) Then z = z Else z = 0
+                Dim item As New SurfaceSlice With {
+                    .Xs = p.Data.Xs,
+                    .Ys = p.Data.Ys,
+                    .Color = p.LineColor,
+                    .Z = z
+                }
+                slices.Add(item)
+            Next
+            For Each slice In slices
+                slice.Depth = world.UnitZOf(slice.Z)
+            Next
+
+            ' ONE stride for every slice and the last sample always kept, so the quads join like to like.
+            Dim count = slices.Max(Function(s) s.Xs.Length)
+            Dim jump = If(MaxPoints > 0 AndAlso count > MaxPoints, CInt(Math.Ceiling(count / CDbl(MaxPoints))), 1)
+            Dim kept As New List(Of Integer)()
+            For i = 0 To count - 1 Step Math.Max(1, jump)
+                kept.Add(i)
+            Next
+            If count > 0 AndAlso kept(kept.Count - 1) <> count - 1 Then kept.Add(count - 1)
+
+            ' The temperature ramp's ends default to the DATA's own least and greatest value, so the sheet uses
+            ' the whole ramp; ColorMin/ColorMax pin it when several charts are read against one scale.
+            Dim values = slices.SelectMany(Function(s) s.Ys).ToList()
+            Dim rampLow = If(Double.IsNaN(HeatMin), If(values.Count > 0, values.Min(), 0.0), HeatMin)
+            Dim rampHigh = If(Double.IsNaN(HeatMax), If(values.Count > 0, values.Max(), 1.0), HeatMax)
+            If rampHigh <= rampLow Then rampHigh = rampLow + 1
+            Dim opacity = Math.Clamp(SolidOpacity, 0, 100) / 100.0
+            Dim meshPen = MakePen(MeshColor, MeshThickness, ChartLineStyle.Solid)
+            Dim baseBrush As IBrush = New SolidColorBrush(BaseColor)
+            Dim basePen = MakePen(BaseColor, 1, ChartLineStyle.Solid)
+
+            ' Farthest band first: the projection itself says which end of the sheet is the far one.
+            Dim order = Enumerable.Range(0, slices.Count).
+                OrderBy(Function(i) world.View.Depth(0.5, 0.5, slices(i).Depth)).ToList()
+
+            Using clip = context.PushClip(plot)
+                For rank = 0 To order.Count - 2
+                    Dim far = order(rank)
+                    Dim near = order(rank + 1)
+                    ' The block the sheet stands on, when it is asked for: the SIDES of every band and the two
+                    ' ENDS of the sheet, each dropped from its own profile to the floor. Drawn with the bands
+                    ' and in the same back-to-front order, and BEFORE each band's own fill, so a nearer face
+                    ' hides the sheet behind it (a block occludes what it stands in front of), and the band's
+                    ' opaque fill covers the hairline where the two meet.
+                    If ShowBase Then
+                        If rank = 0 Then context.DrawGeometry(baseBrush, basePen, BaseEndGeometry(world, slices(far), kept))
+                        If rank + 2 = order.Count Then context.DrawGeometry(baseBrush, basePen, BaseEndGeometry(world, slices(near), kept))
+                        If kept.Count > 0 Then
+                            context.DrawGeometry(baseBrush, basePen, BaseSideGeometry(world, slices(far), slices(near), kept(0)))
+                            context.DrawGeometry(baseBrush, basePen, BaseSideGeometry(world, slices(far), slices(near), kept(kept.Count - 1)))
+                        End If
+                    End If
+                    If Style <> SurfaceStyle.GridMesh Then
+                        Dim brush As IBrush = If(ColorBy = SurfaceColorMode.Temperature,
+                            TemperatureBrush(world, (slices(far).Depth + slices(near).Depth) / 2, rampLow, rampHigh, opacity),
+                            New SolidColorBrush(slices(far).Color, opacity))
+                        ' The band is filled AND outlined in its own brush: neighbouring bands are separate draw
+                        ' calls, so their shared edge would otherwise show a hairline of the background through
+                        ' the sheet (the same seam the per-quad fill used to leave inside a band).
+                        context.DrawGeometry(brush, New Pen(brush, 1), BandGeometry(world, slices, far, near, kept, False))
+                    End If
+                    If Style <> SurfaceStyle.Solid Then
+                        context.DrawGeometry(Nothing, meshPen, BandGeometry(world, slices, far, near, kept, True))
+                    End If
+                Next
+            End Using
+        End Sub
+
+        ''' <summary>
+        ''' The temperature ramp for one band: LowColor at the ramp's low value and HighColor at its high one,
+        ''' laid along the projected HEIGHT axis — with a brush per band, built at that band's own depth, so a
+        ''' ridge's colour depends on its height and not on how far back it stands.
+        ''' </summary>
+        Private Function TemperatureBrush(world As SurfaceWorld, depth As Double, low As Double, high As Double,
+                                          opacity As Double) As IBrush
+            Dim from = world.View.Project(0, world.UnitY(low), depth)
+            Dim [to] = world.View.Project(0, world.UnitY(high), depth)
+            Dim spanX = [to].X - from.X
+            Dim spanY = [to].Y - from.Y
+            If spanX * spanX + spanY * spanY < 1 Then
+                ' Edge on: the ramp collapses to one colour.
+                Return New SolidColorBrush(Blend(LowColor, HighColor, 0.5), opacity)
+            End If
+            Return New LinearGradientBrush With {
+                .StartPoint = New RelativePoint(from, RelativeUnit.Absolute),
+                .EndPoint = New RelativePoint([to], RelativeUnit.Absolute),
+                .GradientStops = New GradientStops From {
+                    New GradientStop(LowColor, 0),
+                    New GradientStop(HighColor, 1)
+                },
+                .Opacity = opacity
+            }
+        End Function
+
+        ''' <summary>Halfway between two colours — what an edge-on ramp collapses to.</summary>
+        Private Shared Function Blend(a As Color, b As Color, t As Double) As Color
+            Return Color.FromArgb(255,
+                CByte(Math.Round(a.R + (b.R - a.R) * t)),
+                CByte(Math.Round(a.G + (b.G - a.G) * t)),
+                CByte(Math.Round(a.B + (b.B - a.B) * t)))
+        End Function
+
+        ''' <summary>
+        ''' One band's geometry: the triangles between two neighbouring slices (for the solid), or the mesh lines
+        ''' of that band (for the grid) — the two profile lines and a rung at every sample, which is exactly the
+        ''' mesh a corrugated sheet suggests. A sample either slice is missing ends the band there rather than
+        ''' smearing it across the gap.
+        ''' </summary>
+        Private Shared Function BandGeometry(world As SurfaceWorld, slices As List(Of SurfaceSlice),
+                                             far As Integer, near As Integer, kept As List(Of Integer),
+                                             wire As Boolean) As StreamGeometry
+            Dim geometry As New StreamGeometry()
+            Using g = geometry.Open()
+                ' NON-ZERO filling is not a detail here: a fold makes a band's own triangles overlap, and the
+                ' default even-odd rule would CANCEL every one of those overlaps into a see-through hole.
+                ' Non-zero adds them up — which is why every triangle is wound the same way (see BandTriangle).
+                g.SetFillRule(FillRule.NonZero)
+                If wire Then
+                    AddProfile(g, world, slices(far), kept)
+                    AddProfile(g, world, slices(near), kept)
+                    For i = 0 To kept.Count - 1
+                        AddRung(g, world, slices(far), slices(near), kept(i))
+                    Next
+                    Return geometry
+                End If
+                ' ONE TRIANGLE PAIR per adjacent sample pair, wound the same way for the whole band.
+                ' Neither a quad nor a ribbon is safe here: where the projection folds — and at a low
+                ' Elevation a corrugated sheet folds in EVERY band, because each slice's profile collapses
+                ' into a single screen column — a figure whose outline crosses itself has two loops wound
+                ' OPPOSITE ways, so NonZero SUMS them to zero and the fill is dropped.  That hole is the
+                ' chart's own backcolour showing through a surface that should be solid (reported from the
+                ' running app on a form whose PlotBackColor is red, 2026-09-24).  A triangle cannot cross
+                ' itself, and normalising every triangle to the band's first winding makes the ones a fold
+                ' overlaps add up (±2) instead of cancelling.  The 1px pen in the band's own brush covers
+                ' the seams between neighbouring triangles; a missing sample ends the run.
+                Dim farRun As New List(Of Point)()
+                Dim nearRun As New List(Of Point)()
+                Dim want As Double = 0              ' the winding sign this band's triangles take (0 = not set yet)
+                For Each index In kept
+                    Dim a As Point = Nothing
+                    Dim b As Point = Nothing
+                    If Not TryPoint(world, slices(far), index, a) OrElse Not TryPoint(world, slices(near), index, b) Then
+                        FlushRun(g, farRun, nearRun, want)
+                        Continue For
+                    End If
+                    farRun.Add(a)
+                    nearRun.Add(b)
+                Next
+                FlushRun(g, farRun, nearRun, want)
+            End Using
+            Return geometry
+        End Function
+
+        ''' <summary>Emits a band's fill from a run of samples: ONE TRIANGLE PAIR per adjacent sample pair, every
+        ''' one of them wound the way the band's first triangle was, so the triangles a fold overlaps accumulate
+        ''' winding instead of cancelling it.  See BandTriangle for why a quad or a ribbon is not safe.  A run
+        ''' shorter than two samples has nothing to fill.</summary>
+        Private Shared Sub FlushRun(g As StreamGeometryContext, farRun As List(Of Point), nearRun As List(Of Point),
+                                    ByRef want As Double)
+            If farRun.Count >= 2 Then
+                For k As Integer = 0 To farRun.Count - 2
+                    Dim a = farRun(k) : Dim b = farRun(k + 1)
+                    Dim c = nearRun(k + 1) : Dim d = nearRun(k)
+                    ' The pair is split by the b–d diagonal into two corners, and a corner cannot cross
+                    ' itself — which is the whole reason the quad is not filled as one figure.
+                    want = BandTriangle(g, a, b, d, want)
+                    want = BandTriangle(g, b, c, d, want)
+                Next
+            End If
+            farRun.Clear()
+            nearRun.Clear()
+        End Sub
+
+        ''' <summary>One filled triangle of a band, wound the way the band's first one was — want is that sign,
+        ''' and it comes back so every triangle of the band keeps it.  This is what stops a fold's overlapping
+        ''' triangles from cancelling: a triangle is the only polygon that cannot cross itself, so there is no
+        ''' loop whose winding could be subtracted from another's.  The name is also the bundled-file staleness
+        ''' marker (src/bundledComponents.ts): a project still holding a copy of this chart from before
+        ''' 2026-09-24 has the old one-figure band fill and no such member, and drawing is exactly the kind of
+        ''' change such a copy cannot show — which is why such a form kept drawing see-through bands in the app
+        ''' while the designer (built from this file) looked right.</summary>
+        Private Shared Function BandTriangle(g As StreamGeometryContext, p As Point, q As Point, r As Point,
+                                            want As Double) As Double
+            Dim area = (q.X - p.X) * (r.Y - p.Y) - (q.Y - p.Y) * (r.X - p.X)
+            If Math.Abs(area) < 0.000000001 Then Return want   ' no area: nothing to fill, nothing to set
+            If want = 0 Then want = area                       ' the band's first real triangle sets the sign
+            If area * want < 0 Then
+                Dim keep = q
+                q = r
+                r = keep                                       ' the other way round, so the windings add up
+            End If
+            g.BeginFigure(p, True)
+            g.LineTo(q)
+            g.LineTo(r)
+            g.EndFigure(True)
+            Return want
+        End Function
+
+        ''' <summary>One slice's own profile line, as one figure (broken where a sample is missing).</summary>
+        Private Shared Sub AddProfile(g As StreamGeometryContext, world As SurfaceWorld, slice As SurfaceSlice,
+                                      kept As List(Of Integer))
+            Dim started = False
+            For i = 0 To kept.Count - 1
+                Dim point As Point = Nothing
+                If Not TryPoint(world, slice, kept(i), point) Then
+                    If started Then g.EndFigure(False)
+                    started = False
+                    Continue For
+                End If
+                If Not started Then
+                    g.BeginFigure(point, False)
+                    started = True
+                Else
+                    g.LineTo(point)
+                End If
+            Next
+            If started Then g.EndFigure(False)
+        End Sub
+
+        ''' <summary>One rung: the same sample on two neighbouring slices, joined — the sheet's own rib.</summary>
+        Private Shared Sub AddRung(g As StreamGeometryContext, world As SurfaceWorld, a As SurfaceSlice,
+                                   b As SurfaceSlice, sample As Integer)
+            Dim from As Point = Nothing
+            Dim [to] As Point = Nothing
+            If Not TryPoint(world, a, sample, from) Then Return
+            If Not TryPoint(world, b, sample, [to]) Then Return
+            g.BeginFigure(from, False)
+            g.LineTo([to])
+            g.EndFigure(False)
+        End Sub
+
+        ''' <summary>One sample of one slice, in the picture.</summary>
+        Private Shared Function TryPoint(world As SurfaceWorld, slice As SurfaceSlice, sample As Integer,
+                                         ByRef point As Point) As Boolean
+            If sample < 0 OrElse sample >= slice.Xs.Length OrElse sample >= slice.Ys.Length Then
+                point = Nothing
+                Return False
+            End If
+            point = world.At(slice.Xs(sample), slice.Ys(sample), slice.Depth)
+            Return True
+        End Function
+
+        ''' <summary>
+        ''' One END of the base block: a slice's profile with the floor directly under it, closed into a face —
+        ''' the sheet's cross-section, which is what a block shows at the near or the far end of the sheet.
+        ''' </summary>
+        Private Shared Function BaseEndGeometry(world As SurfaceWorld, slice As SurfaceSlice,
+                                                kept As List(Of Integer)) As StreamGeometry
+            Dim geometry As New StreamGeometry()
+            Using g = geometry.Open()
+                ' One SIMPLE QUAD per pair of samples, not a ribbon: the profile folds in the projection wherever
+                ' the sheet drops steeply, and a folded ribbon's own outline crosses itself, which the winding
+                ' rules cancel into a hole straight through the block. A four-point quad has no loop to cancel.
+                Dim have As Boolean = False
+                Dim wasTop As Point = Nothing
+                Dim wasBottom As Point = Nothing
+                For Each index In kept
+                    Dim here As Point = Nothing
+                    If Not TryPoint(world, slice, index, here) Then
+                        have = False
+                        Continue For
+                    End If
+                    Dim foot = world.Base(slice.Xs(index), slice.Depth)
+                    If have Then
+                        g.BeginFigure(wasTop, True)
+                        g.LineTo(here)
+                        g.LineTo(foot)
+                        g.LineTo(wasBottom)
+                        g.EndFigure(True)
+                    End If
+                    wasTop = here
+                    wasBottom = foot
+                    have = True
+                Next
+            End Using
+            Return geometry
+        End Function
+
+        ''' <summary>
+        ''' One SIDE of the base block for one band: the quad between two neighbouring slices at one sample, from
+        ''' their profiles down to their feet. Every band draws its own, so the sides come out in the same
+        ''' back-to-front order as the sheet itself.
+        ''' </summary>
+        Private Shared Function BaseSideGeometry(world As SurfaceWorld, far As SurfaceSlice, near As SurfaceSlice,
+                                                 sample As Integer) As StreamGeometry
+            Dim geometry As New StreamGeometry()
+            Dim farTop As Point = Nothing
+            Dim nearTop As Point = Nothing
+            If Not TryPoint(world, far, sample, farTop) Then Return geometry
+            If Not TryPoint(world, near, sample, nearTop) Then Return geometry
+            Using g = geometry.Open()
+                g.BeginFigure(farTop, True)
+                g.LineTo(nearTop)
+                g.LineTo(world.Base(near.Xs(sample), near.Depth))
+                g.LineTo(world.Base(far.Xs(sample), far.Depth))
+                g.EndFigure(True)
+            End Using
+            Return geometry
+        End Function
+
+        ''' <summary>
+        ''' The floor the sheet stands on, with its gridlines and its three axes: the samples across the width,
+        ''' the slice positions back along the length, the height up the left.
+        ''' </summary>
+        Private Sub DrawFloor(context As DrawingContext, world As SurfaceWorld)
+            Dim xMin = world.Xs.Min
+            Dim xMax = world.Xs.Max
+            Dim axisPen = MakePen(AxisColor, 1, ChartLineStyle.Solid)
+
+            If ShowGrid Then
+                Dim gridPen = MakePen(GridColor, GridThickness, GridStyle)
+                For Each tick In world.Xs.Ticks()
+                    context.DrawLine(gridPen, world.Base(tick, 0), world.Base(tick, world.Depth))
+                Next
+                For Each tick In world.Zs.Ticks()
+                    Dim depth = world.UnitZOf(tick)
+                    If depth < 0 OrElse depth > world.Depth Then Continue For
+                    context.DrawLine(gridPen, world.Base(xMin, depth), world.Base(xMax, depth))
+                Next
+            End If
+
+            context.DrawLine(axisPen, world.Base(xMax, 0), world.Base(xMax, world.Depth))
+            context.DrawLine(axisPen, world.Base(xMax, world.Depth), world.Base(xMin, world.Depth))
+            If Not ShowAxes Then Return
+
+            ' The three axes: X along the front floor edge, Y up the left, Z back along the depth.
+            Dim front = world.Base(xMin, 0)
+            Dim xEnd = world.Base(xMax, 0)
+            Dim yEnd = world.View.Project(world.UnitX(xMin), 1, 0)
+            Dim zEnd = world.Base(xMin, world.Depth)
+            context.DrawLine(axisPen, front, xEnd)
+            context.DrawLine(axisPen, front, yEnd)
+            context.DrawLine(axisPen, front, zEnd)
+
+            Dim down = world.View.Direction(0, -1, 0)
+            Dim left = world.View.Direction(-1, 0, 0)
+            Dim tickLength = Math.Max(0, MajorTickLength)
+            Dim font = TickLabelFontSize
+
+            For Each value In world.Xs.Ticks()
+                Dim at = world.Base(value, 0)
+                If ShowMajorTicks Then
+                    context.DrawLine(axisPen, at, New Point(at.X + down.X * tickLength, at.Y + down.Y * tickLength))
+                End If
+                If Not ShowTickLabels Then Continue For
+                Dim text = MakeText(FormatNumber(value, world.Xs.TickStep), font, AxisColor)
+                context.DrawText(text, New Point(at.X - text.Width / 2 + down.X * (tickLength + 2),
+                                                 at.Y + down.Y * (tickLength + 2)))
+            Next
+
+            For Each value In world.Ys.Ticks()
+                Dim at = world.View.Project(world.UnitX(xMin), world.UnitY(value), 0)
+                If ShowMajorTicks Then
+                    context.DrawLine(axisPen, at, New Point(at.X + left.X * tickLength, at.Y + left.Y * tickLength))
+                End If
+                If Not ShowTickLabels Then Continue For
+                Dim text = MakeText(FormatNumber(value, world.Ys.TickStep), font, AxisColor)
+                context.DrawText(text, New Point(at.X + left.X * (tickLength + 2) - text.Width,
+                                                 at.Y - text.Height / 2))
+            Next
+
+            ' The depth ticks are the Z VALUES the sheet is drawn at — a length along the sheet, not a slice
+            ' count — so they are thinned out the way the other axes are.
+            For Each value In world.Zs.Ticks()
+                Dim depth = world.UnitZOf(value)
+                If depth < 0 OrElse depth > world.Depth Then Continue For
+                Dim at = world.Base(xMin, depth)
+                If ShowMajorTicks Then
+                    context.DrawLine(axisPen, at, New Point(at.X + left.X * tickLength, at.Y + left.Y * tickLength))
+                End If
+                If Not ShowTickLabels Then Continue For
+                Dim text = MakeText(FormatNumber(value, world.Zs.TickStep), font, AxisColor)
+                context.DrawText(text, New Point(at.X + left.X * (tickLength + 2) - text.Width,
+                                                 at.Y - text.Height / 2))
+            Next
+
+            If Not ShowAxisTitles Then Return
+            DrawAxisTitle(context, XAxisTitle, xEnd, down, tickLength + 4, font)
+            DrawAxisTitle(context, YAxisTitle, yEnd, New Point(0, -1), tickLength + 4, font)
+            DrawAxisTitle(context, ZAxisTitle, zEnd, left, tickLength + 4, font)
+        End Sub
+
+        ''' <summary>One axis name, offset from the end of its axis along the side vector so it reads beside the
+        ''' axis rather than on top of it.</summary>
+        Private Sub DrawAxisTitle(context As DrawingContext, title As String, [end] As Point, side As Point,
+                                  gap As Double, font As Double)
+            If String.IsNullOrWhiteSpace(title) Then Return
+            Dim text = MakeText(title, font, AxisColor)
+            context.DrawText(text, New Point([end].X + side.X * gap - text.Width / 2,
+                                             [end].Y + side.Y * gap - text.Height))
+        End Sub
+
+        ''' <summary>
+        ''' The view for one render: the angles clamped to what can be drawn, then FITTED — the cube's own
+        ''' corners decide the scale, so the picture can never leave the frame by accident, whatever the angles
+        ''' are. Because the fit uses the CORNERS of the axis cube and not the data, narrowing the range window
+        ''' simply zooms: the window becomes the cube.
+        ''' </summary>
+        Private Function MakeView(plot As Rect) As SurfaceView
+            Dim elevationRad = Math.Clamp(Elevation, 0, 89) * Math.PI / 180.0
+            Dim azimuthRad = Azimuth * Math.PI / 180.0
+            Dim view As New SurfaceView With {
+                .CosElevation = Math.Cos(elevationRad),
+                .SinElevation = Math.Sin(elevationRad),
+                .CosAzimuth = Math.Cos(azimuthRad),
+                .SinAzimuth = Math.Sin(azimuthRad),
+                .Scale = 1
+            }
+            Dim minX = Double.MaxValue
+            Dim maxX = Double.MinValue
+            Dim minY = Double.MaxValue
+            Dim maxY = Double.MinValue
+            For Each x In {0.0, 1.0}
+                For Each y In {0.0, 1.0}
+                    For Each z In {0.0, Math.Clamp(ZSpacing, 0.1, 4)}
+                        Dim corner = view.Project(x, y, z)
+                        minX = Math.Min(minX, corner.X)
+                        maxX = Math.Max(maxX, corner.X)
+                        minY = Math.Min(minY, corner.Y)
+                        maxY = Math.Max(maxY, corner.Y)
+                    Next
+                Next
+            Next
+            Dim wide = Math.Max(0.000001, maxX - minX)
+            Dim tall = Math.Max(0.000001, maxY - minY)
+            view.Scale = Math.Min(plot.Width / wide, plot.Height / tall) * Math.Clamp(Zoom, 0.2, 5)
+            view.Origin = New Point(
+                plot.X + (plot.Width - wide * view.Scale) / 2 - minX * view.Scale,
+                plot.Y + (plot.Height - tall * view.Scale) / 2 - minY * view.Scale)
+            Return view
+        End Function
+
+        ''' <summary>
+        ''' Dragging turns the sheet: sideways turns the azimuth, up and down change the elevation it is seen
+        ''' from. A press inside the LEGEND BAR is different — that bar is the surface's range selector, so the
+        ''' press takes hold of a slider and moves the end of the window the pointer is nearest to. Neither drag
+        ''' touches the saved form: the angles and the window a form opens with are its own Elevation, Azimuth,
+        ''' MinX/MaxX and MinY/MaxY properties.
+        ''' </summary>
+        Protected Overrides Sub OnPointerPressed(e As PointerPressedEventArgs)
+            MyBase.OnPointerPressed(e)
+            If Not e.GetCurrentPoint(Me).Properties.IsLeftButtonPressed Then Return
+            Dim position = e.GetPosition(Me)
+            Dim axis = RangeHitAxis(position)
+            If axis >= 0 Then
+                _rangeDragAxis = axis
+                ' The end nearer the pointer is the one that follows it; a click in the middle takes the
+                ' nearer of the two.
+                Dim low = RangeLow(axis)
+                Dim high = RangeHigh(axis)
+                Dim value = RangeValue(axis, position)
+                _rangeDragHigh = value >= low + (high - low) / 2
+                DragRangeTo(position)
+                Focus()
+                e.Pointer.Capture(Me)
+                e.Handled = True
+                Return
+            End If
+            _rotateDrag = True
+            _rotateFrom = position
+            _rotateElevation = Elevation
+            _rotateAzimuth = Azimuth
+            Focus()
+            e.Pointer.Capture(Me)
+            e.Handled = True
+        End Sub
+
+        Protected Overrides Sub OnPointerMoved(e As PointerEventArgs)
+            MyBase.OnPointerMoved(e)
+            If _rangeDragAxis >= 0 Then
+                DragRangeTo(e.GetPosition(Me))
+                Return
+            End If
+            If Not _rotateDrag Then Return
+            Dim position = e.GetPosition(Me)
+            Elevation = Math.Clamp(_rotateElevation + (position.Y - _rotateFrom.Y) * 0.5, 2, 89)
+            Azimuth = _rotateAzimuth + (position.X - _rotateFrom.X) * 0.5
+            InvalidateVisual()
+        End Sub
+
+        Protected Overrides Sub OnPointerReleased(e As PointerReleasedEventArgs)
+            MyBase.OnPointerReleased(e)
+            If _rangeDragAxis >= 0 Then
+                _rangeDragAxis = -1
+                e.Pointer.Capture(Nothing)
+                e.Handled = True
+                Return
+            End If
+            If Not _rotateDrag Then Return
+            _rotateDrag = False
+            e.Pointer.Capture(Nothing)
+            e.Handled = True
+        End Sub
+
+        ''' <summary>One slice of one render: its samples, its colour, its Z value and the depth that Z puts it
+        ''' at.</summary>
+        Private NotInheritable Class SurfaceSlice
+            Friend Xs As Double() = Array.Empty(Of Double)()
+            Friend Ys As Double() = Array.Empty(Of Double)()
+            Friend Color As Color
+            Friend Z As Double
+            Friend Depth As Double
+        End Class
+
+        ''' <summary>To the screen: turn the cube by the azimuth, tip it by the elevation, drop the depth.</summary>
+        Private NotInheritable Class SurfaceView
+            Friend CosAzimuth As Double
+            Friend SinAzimuth As Double
+            Friend CosElevation As Double
+            Friend SinElevation As Double
+            Friend Scale As Double
+            Friend Origin As Point
+
+            Friend Function Project(x As Double, y As Double, z As Double) As Point
+                Dim turned = x * CosAzimuth + z * SinAzimuth
+                Dim depthTerm = -x * SinAzimuth + z * CosAzimuth
+                Dim up = y * CosElevation + depthTerm * SinElevation
+                Return New Point(Origin.X + turned * Scale, Origin.Y - up * Scale)
+            End Function
+
+            ''' <summary>How near the eye a point is: the larger, the nearer. This is what puts the bands in
+            ''' paint order (farthest first), so a nearer fold hides the sheet behind it.</summary>
+            Friend Function Depth(x As Double, y As Double, z As Double) As Double
+                Dim depthTerm = -x * SinAzimuth + z * CosAzimuth
+                Return y * SinElevation - depthTerm * CosElevation
+            End Function
+
+            ''' <summary>The screen direction of a step along one of the world axes, as a unit vector.</summary>
+            Friend Function Direction(dx As Double, dy As Double, dz As Double) As Point
+                Dim turned = dx * CosAzimuth + dz * SinAzimuth
+                Dim depth = -dx * SinAzimuth + dz * CosAzimuth
+                Dim up = dy * CosElevation + depth * SinElevation
+                Dim length = Math.Sqrt(turned * turned + up * up)
+                If length <= 0 Then Return New Point(0, -1)
+                Return New Point(turned / length, -up / length)
+            End Function
+        End Class
+
+        ''' <summary>The sheet's own coordinates: the axis scales (which the range window supplies) and the
+        ''' projection.</summary>
+        Private NotInheritable Class SurfaceWorld
+            Friend View As SurfaceView
+            Friend Xs As AxisRange = New AxisRange()
+            Friend Ys As AxisRange = New AxisRange()
+            Friend Zs As AxisRange = New AxisRange()
+            Friend Depth As Double = 1.0
+
+            ''' <summary>The width positions, across the sheet from 0 to 1.</summary>
+            Friend Function UnitX(x As Double) As Double
+                Return Clamp01((x - Xs.Min) / Math.Max(0.000000001, Xs.Max - Xs.Min))
+            End Function
+
+            ''' <summary>The heights, up the sheet from 0 to 1.</summary>
+            Friend Function UnitY(y As Double) As Double
+                Return Clamp01((y - Ys.Min) / Math.Max(0.000000001, Ys.Max - Ys.Min))
+            End Function
+
+            ''' <summary>How far back a slice stands, from its Z VALUE — so slices the spreadsheet places
+            ''' unevenly apart stand unevenly far apart.</summary>
+            Friend Function UnitZOf(z As Double) As Double
+                Return Depth * Clamp01((z - Zs.Min) / Math.Max(0.000000001, Zs.Max - Zs.Min))
+            End Function
+
+            ''' <summary>A point of the picture.</summary>
+            Friend Function At(x As Double, y As Double, depth As Double) As Point
+                Return View.Project(UnitX(x), UnitY(y), depth)
+            End Function
+
+            ''' <summary>A point on the floor, where the profiles end and the gridlines run.</summary>
+            Friend Function Base(x As Double, depth As Double) As Point
+                Return View.Project(UnitX(x), UnitY(0), depth)
+            End Function
+
+            Private Shared Function Clamp01(value As Double) As Double
+                If value < 0 Then Return 0
+                If value > 1 Then Return 1
+                Return value
+            End Function
+        End Class
     End Class
 
     ''' <summary>

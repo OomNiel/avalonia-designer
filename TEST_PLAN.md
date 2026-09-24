@@ -470,6 +470,42 @@ and the README's single *"Formerly …"* line). The recogniser is then proved to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
 
+### 0.11.14 (2026-09-24) — the surface chart 3D, and the fold that showed the backcolour
+
+- `tests/t2-logic/surface.test.js` (new, **181**) — the source contract of the seventh chart type: its own
+  property registrations in **both twins**, the toolbox/catalog/help wiring, the host's type map and snippet
+  (`GrumpySurfacePlot`), the Series rows and the Z-row / Z-start / Z-step reading, the three styles and the
+  two colourings, the solid block, the range-legend hook (`RangeSteps` / `SnapToSlice` / the slice-counting
+  label), the **band fill** rules, and the staleness marker. Two of them are the fix itself: the fill is
+  emitted as **triangle pairs** (`BandTriangle`, twice per sample pair, both corners wound the way the band
+  started), and the unused O(n²) crossing scan is **gone** — an assertion that fails if it ever comes back.
+- `tests/t1-preview/surfaceRender.test.js` (new, **74**) — the picture, measured through the real host: the
+  three styles differ the way their names say (mesh = lines only, solid = no mesh line at all), the
+  temperature ramp really ramps (cold end, hot band, and Heat Min/Max re-pin it), `SolidOpacity` fades the
+  sheet, the **view** is real (edge-on shows the corrugated profile as a wall, looking straight down collapses
+  the height axis, azimuth and Z-spacing redraw the sheet), the block covers the floor where it stands, and
+  the Z window cuts **whole slices** (`ColorBy="Sampleset"` gives every band its far slice's colour, so the
+  census reads `011111` with no window and `000100` for `MinZ="20" MaxZ="30"`).
+- **The regression the user's report bought** — *"overlapping surfaces are render fully transparent showing
+  the chart backcolour"*: a corrugated sheet at the reported angles (Elevation 6, Azimuth 28) must fill a
+  **stated 24×24 box inside the fold**, and the **control that proves the measurement can fail** is the same
+  chart as `GridMesh` (no fill of its own), which leaves that box plate. Measured on the copy the app was
+  running: **576 of 576 box pixels were backcolour**; with the triangle fill, **0 of 576**.
+- `tests/fixtures/surface.xlsx` (new) — the workbook the surface tests read: 12 positions across the width
+  and six slices (Z = 0, 10 … 50), which is what makes "which slices are drawn" answerable.
+- `tests/t2-logic/bundledComponents.test.js` (**56**) — the marker is `BandTriangle` now, the era fixtures
+  gained the copy every refreshed project held (surface type, **no** triangle fill) and it is asserted
+  **stale** in both languages, while the shipped file still never looks stale. The marker pins in
+  `newCharts`, `pickerMemory`, `waterfall` and `dataSelector` moved with it. This is the half of the bug the
+  drawing fix could not reach: a project whose copy already carried `GrumpySurfacePlot` was never offered a
+  refresh, so the app kept the old drawing while the designer showed the new one.
+- **Two assertions the release corrected, neither of them a product defect.** The slice-window one measured
+  *sheet pixels*, and the view re-fits to the window, so a two-slice selection **zooms** and draws about as
+  many pixels as six (31,289 vs 29,506) — it now measures *which* slices are drawn. The packaging one wanted
+  a plain `https://` repository URL: `npm install` had rewritten it to `git+https://…`, i.e. the manifest was
+  fixed rather than the test. The same pass dropped the unused `xlsx` dependency (nothing imports it), which
+  takes the VSIX from 5.29 MB back to ~1.2 MB.
+
 ### 0.11.12 (2026-09-23) — the waterfall chart, and a feature that was removed again
 
 - `tests/t2-logic/waterfall.test.js` (new, **174**) — the source contract of the sixth chart type: its own

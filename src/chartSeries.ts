@@ -73,21 +73,23 @@ export const CHART_AXIS_LEGACY_ATTRS = [
  *  waterfall. */
 export function isChartTag(tag: string): boolean {
     return tag === 'GrumpyLinePlot' || tag === 'GrumpyXYPlot' || tag === 'GrumpyBarPlot'
-        || tag === 'GrumpyAreaPlot' || tag === 'GrumpyPiePlot' || tag === 'GrumpyWaterfallPlot';
+        || tag === 'GrumpyAreaPlot' || tag === 'GrumpyPiePlot' || tag === 'GrumpyWaterfallPlot'
+        || tag === 'GrumpySurfacePlot';
 }
 
 /** True for the charts whose data is drawn as cartesian series (a line, a bar or a filled area).
  *  The pie and the waterfall are the exceptions: the pie has no frame, and the waterfall's three axes
  *  are drawn in PROJECTION, so neither has the 2D axis furniture to edit. */
 export function isCartesianChartTag(tag: string): boolean {
-    return isChartTag(tag) && tag !== 'GrumpyPiePlot' && tag !== 'GrumpyWaterfallPlot';
+    return isChartTag(tag) && tag !== 'GrumpyPiePlot' && tag !== 'GrumpyWaterfallPlot'
+        && tag !== 'GrumpySurfacePlot';
 }
 
 /** True for the charts whose data comes from ordinary SERIES elements — a line, an X,Y plot, a bar, an
  *  area, and the waterfall, whose series ARE its samplesets (one column per set). The pie is the
  *  exception: its wedges live in its own `.Slices` property element. */
 export function isSeriesChartTag(tag: string): boolean {
-    return isCartesianChartTag(tag) || tag === 'GrumpyWaterfallPlot';
+    return isCartesianChartTag(tag) || tag === 'GrumpyWaterfallPlot' || tag === 'GrumpySurfacePlot';
 }
 
 /** The charts that carry draggable cursors, i.e. the ones whose right-click menu and Properties list
@@ -171,6 +173,40 @@ export const CHART_LEGEND_FIELDS: { key: string; attr: string; def: string }[] =
 
 /** The sides the legend bar can take, in the order the editor offers them. */
 export const LEGEND_POSITIONS = ['Bottom', 'Top', 'Left', 'Right'];
+
+/** The RANGE WINDOW of a chart whose legend is also a zoom control — the SURFACE chart, whose legend
+ *  picks which part of the sheet is drawn: X runs along the width, Y up the corrugation. The four
+ *  attributes live on the chart element like the rest of the legend, and an EMPTY one means "the whole
+ *  range the data covers", so a chart nobody has zoomed keeps a short element. */
+export const SURFACE_RANGE_FIELDS: { key: string; attr: string; def: string }[] = [
+    { key: 'rangeXFrom', attr: 'MinX', def: '' },
+    { key: 'rangeXTo', attr: 'MaxX', def: '' },
+    { key: 'rangeZFrom', attr: 'MinZ', def: '' },
+    { key: 'rangeZTo', attr: 'MaxZ', def: '' }
+];
+
+/** True when a chart's legend also selects a data range (today only the surface chart). */
+export function hasRangeLegend(tag: string): boolean {
+    return tag === 'GrumpySurfacePlot';
+}
+
+/** The range a chart's DATA covers, as the host reported it for the control (null until it has
+ *  rendered, or when the chart is not one that reports a range). The legend's sliders span this, so a
+ *  selection can never name a range the sheet has not got. */
+export function chartDataRangeOf(values: Record<string, string> | undefined): { minX: number; maxX: number; minZ: number; maxZ: number } | null {
+    const num = (key: string): number => {
+        const raw = values ? values[key] : undefined;
+        const n = raw == null || raw === '' ? Number.NaN : Number(raw);
+        return Number.isFinite(n) ? n : Number.NaN;
+    };
+    const minX = num('DataMinX');
+    const maxX = num('DataMaxX');
+    const minZ = num('DataMinZ');
+    const maxZ = num('DataMaxZ');
+    if (![minX, maxX, minZ, maxZ].every((n) => Number.isFinite(n))) return null;
+    if (maxX <= minX || maxZ <= minZ) return null;
+    return { minX, maxX, minZ, maxZ };
+}
 
 /** How many cursors a chart draws. Two, so two readings can be compared. */
 export const MAX_CURSORS = 2;
@@ -551,6 +587,9 @@ export function writeChartBrush(model: XamlModel, el: Element, info: Record<stri
 /** A chart's current legend settings (attribute, else the renderer's default). */export function chartLegendOf(el: Element): Record<string, string> {
     const out: Record<string, string> = {};
     for (const f of CHART_LEGEND_FIELDS) out[f.key] = readAttr(el, f.attr, f.def);
+    if (hasRangeLegend(localName(el.tagName))) {
+        for (const f of SURFACE_RANGE_FIELDS) out[f.key] = readAttr(el, f.attr, f.def);
+    }
     return out;
 }
 
@@ -559,6 +598,15 @@ export function writeChartBrush(model: XamlModel, el: Element, info: Record<stri
 export function writeChartLegend(model: XamlModel, el: Element, values: Record<string, unknown>): void {
     for (const f of CHART_LEGEND_FIELDS) {
         writeAttr(model, el, f.attr, String(values[f.key] ?? f.def), f.def);
+    }
+    if (hasRangeLegend(localName(el.tagName))) {
+        for (const f of SURFACE_RANGE_FIELDS) {
+            // A range is a NUMBER or nothing: anything else would be an attribute the chart cannot
+            // parse, so it is dropped rather than written (the sliders always send numbers, but a
+            // hand-edited message must not be able to write junk into a form).
+            const text = String(values[f.key] ?? '').trim();
+            writeAttr(model, el, f.attr, text !== '' && Number.isFinite(Number(text)) ? text : '', '');
+        }
     }
 }
 

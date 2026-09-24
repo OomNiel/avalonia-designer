@@ -3719,3 +3719,100 @@ behaviour change in a bundled file moves it.
 `t1-preview/waterfallRender` **25** measured pixels), and the removal took its own ~106 assertions back out
 (7,655 → 7,549). Host, C# probe and VB probe are all 0 warnings / 0 errors.
 
+### §147 — a folded band showed the backcolour, and the fix needed a marker move (2026-09-24, 0.11.13 → 0.11.14)
+
+**The report, and the lead that was wrong.** *"In the Surface Chart 3D graph type, the visible surfaces of
+the plot renders correctly in the Designer at design time, however when running the app overlapping surfaces
+are render fully transparent showing the chart backcolour instead of a solid surface. I suspect that the draw
+order should be reversed."* The suspicion is the natural one and it is **not** the cause: `order` is
+`OrderBy(View.Depth(...))` ascending, and `SurfaceView.Depth` is real nearness (`y·sinEl − depth·cosEl`, the
+negative dot product with the view direction), with `UnitZOf` putting the smallest Z at depth 0 — so the
+bands are already painted farthest-first. Reversed order paints a different slice on top; it cannot make the
+plate appear.
+
+**The real cause is a fill that cancels itself.** A band was filled as **one closed figure** per unbroken run
+(far profile forward, near profile back). Where the projection folds, that outline crosses itself, and the
+two loops of a self-crossing figure are wound **opposite** ways: under `FillRule.NonZero` their windings
+**sum to zero**, so the fill is dropped inside the fold and the plot's own backcolour is what shows through.
+At `Elevation="6"` a corrugated sheet folds in *every* band — each slice's profile collapses into a single
+screen column — which is exactly the form the user had (Elevation 6, Azimuth 28, `PlotBackColor="Red"`).
+Same lesson as §146's waterfall ("a folded outline cancels itself"), one chart later.
+
+**Two copies, not two renderers — and that is why the designer looked right.** The app compiles the
+*project's own* `GrumpyCharts.cs`; the designer's host links `resources/GrumpyCharts.cs` and was rebuilt when
+that file changed. `TestExtApps/ChartTestCS` held the **2026-09-23 18:44** copy while the repo held the
+**2026-09-24 13:23** one, one diff hunk apart (`.cs` and its `.vb` twin). Measured by rendering the user's
+own `MainWindow.axaml` through two scratch hosts that differed only in that file: backcolour visible
+**39,714 px** (app copy) → **35,423 px** (repo copy), and the picture's separate fins with red between them
+became the joined sheet the designer showed.
+
+**Why the app was never told to update.** The staleness test is
+`bundled.test(text) && !text.includes(spec.marker)`, and the marker was still `GrumpySurfacePlot` — a token
+that copy already had — so an in-place *drawing* change in an existing type was invisible and **no "Update
+now" was ever offered**. `bundledComponents.ts` already warned about exactly this ("A behaviour/menu change
+in an EXISTING type is therefore a marker move like any other"); the fix moves the marker to
+**`BandTriangle`**, the new member of the fixed file.
+
+**What the fill is now, and why triangles.** One **triangle pair** per sample pair (`BandTriangle`, split by
+the b–d diagonal), every triangle wound the way the band's first one was, so the triangles a fold overlaps
+accumulate winding ±2 instead of subtracting. Not a quad: a quad can fold into a **bow tie**, whose own two
+loops wind opposite ways, and the winding normalisation that the previous attempt used cannot fix a
+self-intersecting figure. A triangle cannot cross itself, so there is nothing left to cancel. The 1px pen in
+the band's own brush still covers the seams between neighbouring triangles; on the user's form the triangle
+build renders **pixel-identical** to the quad build (35,423 px of backcolour, same colour histogram), so
+nothing else about the picture moved.
+
+**The unused scan that cost a second per render.** The same working tree carried a full **O(n²)** 2D
+crossing scan of the far and near profiles, computed on every band and **never used** (the fill had already
+moved to per-figure emission). Removing only that block (a scratch `noloop` host) took a 6 × 2048-point
+sheet from **966 ms to 30 ms per render**; with the triangle pair in place the same render is **42 ms**
+against the ribbon version's 27 ms — the designer re-renders on every drag frame, so this mattered more than
+the fill did.
+
+**How the fix was proved without running the app.** Three scratch hosts in `/tmp/sprobe` (the app's copy, the
+quad copy, the triangle copy), driven with the repo's own `tests/helpers/host.js` + `png.js` patterns. The
+decisive measurement is a **stated 24×24 box inside the fold** of a two-slice corrugated sheet at the
+reported angles: the app's copy left **576 of 576** box pixels as backcolour, the fixed copy **0 of 576** —
+and the same box is still backcolour in `GridMesh`, which has no fill, so the measurement can fail. That pair
+is now a test (`t1-preview/surfaceRender.test.js`, "the REPORTED see-through fold"). The suite's existing
+`interiorSpecks` fold gates (elevations 8/20, azimuths 135/225/315) were passing all along — they never used
+the user's near-edge-on angle, which is what the new section adds.
+
+**Two assertions the release had to correct — neither a product defect.**
+
+1. `"a slice (Z) window really cuts slices out of the surface"` failed (18,530 → 17,534 px of sheet). The
+   window **was** working: measured per-slice (each band carries its far slice's colour under
+   `ColorBy="Sampleset"`), no window draws `011111` and `MinZ="20" MaxZ="30"` draws `000100`. The assertion
+   measured **sheet pixels**, and the view **re-fits to the window**, so a two-slice selection *zooms* and
+   draws about as many pixels as six (31,289 vs 29,506) — which the chart's own design documents ("a
+   selection zooms instead of shrinking the sheet"). The test now measures *which slices are drawn*.
+   **Trap found while fixing it:** the legend's slider tracks are **amber and light blue** — within tolerance
+   of two of the fixture's slice colours — so the census must run with `ShowLegend="False"`, or a window that
+   draws one band reads as `000111`.
+2. `"the repository is a public URL"` failed because `npm install` had rewritten
+   `repository.url` to `git+https://github.com/…git` when `xlsx` was added. The **manifest** was fixed, not
+   the test.
+
+**Housekeeping that came with it.** Nothing in the repo imports the `xlsx` npm package (the chart's workbook
+reader is C# and dependency-free — `System.IO.Compression`), yet it sat in `dependencies`, so `vsce` bundled
+it and the VSIX had grown from 1.16 MB to **5.29 MB**. Removing it takes the package back to ~1.2 MB.
+
+**Lessons.**
+
+1. **"Renders wrong in the app, right in the designer" is a staleness symptom before it is a renderer
+   symptom.** The project's own copy is compiled by the app; the designer's is in the extension. Diff the two
+   files first — timestamps, one hunk, done.
+2. **A drawing change in an existing type must move the staleness marker**, even when no XAML attribute
+   changed. The marker is a token *the new file has and the old one lacks*; a private helper's name is a fine
+   token when nothing public moved (`BandTriangle`).
+3. **A self-crossing outline cancels itself under `NonZero`.** That is the third time in this project
+   (§146 waterfall, the surface block's end faces, now the sheet), so: fill triangles, or normalise winding
+   *and* avoid bow ties.
+4. **Measure what the feature does, not what you think it should imply.** "Fewer slices" is not "fewer
+   pixels" when the view re-fits, and a legend's slider colours can impersonate a slice.
+5. **Price dead code.** An unused O(n²) loop left behind by an experiment cost 32× on the render path and
+   nothing pointed at it until a timing was taken.
+
+**Suite:** 7,931 passed / 0 failed (surface layer 74, source contracts 181, `bundledComponents` 56). Host,
+generated C# project and the VB matrix: 0 warnings / 0 errors.
+

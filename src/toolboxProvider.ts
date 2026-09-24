@@ -73,6 +73,9 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     // up Y, and each set receding along the depth — with the mesh that joins them. One series is one
     // sampleset, so a capture is one spreadsheet column per set.
     { label: 'Waterfall', tag: 'GrumpyWaterfallPlot', group: TOOLBOX_CATEGORY_CHARTS },
+    // The surface chart 3D (2026-09-23): one spreadsheet column per slice along the sheet's length, joined
+    // into a surface — mesh, mesh over solid, or solid, with a temperature ramp by height.
+    { label: 'Surface Chart 3D', tag: 'GrumpySurfacePlot', group: TOOLBOX_CATEGORY_CHARTS },
     { label: 'Panel', tag: 'Panel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'Grid', tag: 'Grid', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'StackPanel', tag: 'StackPanel', group: TOOLBOX_CATEGORY_LAYOUT },

@@ -118,9 +118,20 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // but all of that was since REMOVED from the chart (the open corridors between the sets are the
             // default, unroofed picture again: a ribbon and its mesh are enough to read each set against the
             // others). The new attributes are gone with it, so the XAML-trap that pushed the marker up no
-            // longer exists; the newest token the current file ships is back to `IsFilled` — the fill /
-            // restore behaviour added to every chart above.
-            marker: 'IsFilled'
+            // longer exists; the marker fell back to `IsFilled` — the fill / restore behaviour added to
+            // every chart above.
+            // 2026-09-23: the SURFACE CHART 3D arrived (`GrumpySurfacePlot`) — a seventh type the toolbox
+            // writes, so a copy without it cannot compile a form that carries one. The marker is the newest
+            // TYPE again.
+            // 2026-09-24: the surface's BAND FILL was rewritten — one quad (and before that, one ribbon) per
+            // band could not fill a fold, because a figure whose outline crosses itself has two loops wound
+            // opposite ways and `NonZero` sums them to zero: the hole showed the chart's own backcolour
+            // through the sheet. It is now one TRIANGLE PAIR per sample pair, wound the same way all band
+            // long (`BandTriangle`). That is a DRAWING change in an EXISTING type — exactly the case the
+            // paragraph above warns about — and the user met it: the designer (built from this file) looked
+            // right while the app kept drawing see-through bands, because the project's own copy already
+            // carried `GrumpySurfacePlot` and so was never reported stale. The marker is the new member.
+            marker: 'BandTriangle'
         }
     ];
 }

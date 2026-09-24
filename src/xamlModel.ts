@@ -70,7 +70,7 @@ export function isEventAttribute(name: string): boolean {
  *  a circular import. */
 export const CHARTS_TAGS = [
     'GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAreaPlot', 'GrumpyPiePlot',
-    'GrumpyWaterfallPlot'
+    'GrumpyWaterfallPlot', 'GrumpySurfacePlot'
 ];
 
 /**

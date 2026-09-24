@@ -2752,6 +2752,99 @@ module.exports = async (t) => {
         t.equal($('legendModal').hidden, true, 'legend', 'Cancel closes the editor');
     }
 
+    // --- 'Legend' editor on a SURFACE chart: the same bar, PLUS the range window that zooms the sheet.
+    //     The sliders span the range the DATA covers (the extension sends it, measured by the host), and
+    //     an end left at the outer edge posts EMPTY — "the whole range" — so the attribute is removed. ---
+    {
+        const LEGEND = {
+            showLegend: 'True', position: 'Bottom', fontSize: '12', showFrame: 'True',
+            backColor: 'Transparent', borderBrush: '#C8C8C8', borderThickness: '1', cornerRadius: '4',
+            margin: '0', rangeXFrom: '', rangeXTo: '', rangeZFrom: '', rangeZTo: ''
+        };
+        const openSurfaceLegend = (legendRange, info) => {
+            msg(frame([
+                { name: 'Root', type: 'DockPanel', x: 0, y: 0, w: 800, h: 450, parent: null },
+                { name: 'Body', type: 'Canvas', x: 0, y: 0, w: 800, h: 450, locked: true, parent: 'Root' },
+                { name: 'Surf1', type: 'GrumpySurfacePlot', x: 60, y: 60, w: 380, h: 260, parent: 'Body' }
+            ]));
+            msg({
+                type: 'properties', name: 'Surf1', properties: [
+                    { key: 'Legend', label: 'Legend', kind: 'button', value: 'Edit legend…' }
+                ],
+                legendInfo: Object.assign({}, LEGEND, info || {}),
+                legendRange: legendRange,
+                info: null
+            });
+            $('legendModal').hidden = true;
+            $('propsBody').querySelector('.prop-button')
+                .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        };
+        const lRow = (caption) => [...$('legendBody').querySelectorAll('.series-field')]
+            .find((f) => f.textContent.trim().startsWith(caption));
+        const lSliders = (caption) => {
+            const row = lRow(caption);
+            return row ? [...row.querySelectorAll("input[type='range']")] : [];
+        };
+
+        openSurfaceLegend({ minX: 0, maxX: 100, minZ: 0, maxZ: 500 });
+        t.equal($('legendModal').hidden, false, 'range', 'the surface legend opens like any other');
+        const xSliders = lSliders('Width range');
+        const zSliders = lSliders('Slice range');
+        t.equal(xSliders.length, 2, 'range', 'the width range is a FROM slider and a TO slider');
+        t.equal(zSliders.length, 2, 'range', 'and so is the slice range');
+        t.equal(`${xSliders[0].min}/${xSliders[0].max}`, '0/100', 'range',
+            'the width sliders span the width the DATA covers');
+        t.equal(`${zSliders[0].min}/${zSliders[0].max}`, '0/500', 'range',
+            'and the slice sliders the LENGTH it covers — the height has no slider at all');
+        t.equal(`${xSliders[0].value}/${xSliders[1].value}`, '0/100', 'range',
+            'with no window set they start at the whole sheet');
+        t.ok(!!lRow('Width range').querySelector('.range-readout').textContent.includes('100'), 'range',
+            'and the row spells the range out');
+        t.ok(!!lRow('Width range').querySelector('.range-reset'), 'range',
+            'there is a way back to the whole range');
+
+        // Pick 70 … 100 of the width (the TOP end stays at the edge, so it posts empty) and 200 … 300 of
+        // the length.
+        xSliders[0].value = '70';
+        xSliders[0].dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        zSliders[0].value = '200';
+        zSliders[0].dispatchEvent(new s.window.Event('input', { bubbles: true }));
+        posted.length = 0;
+        $('legendSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const zoomed = posted[posted.length - 1];
+        t.equal(zoomed.type, 'saveChartLegend', 'range', 'the range is saved with the legend');
+        t.equal(zoomed.values.rangeXFrom, '70', 'range', 'the width FROM end is carried');
+        t.equal(zoomed.values.rangeXTo, '', 'range',
+            'an end left at the outer edge posts EMPTY, so no attribute is written for it');
+        t.equal(zoomed.values.rangeZFrom, '200', 'range', 'the slice FROM end is carried');
+        t.equal(zoomed.values.rangeZTo, '', 'range', 'and its outer end stays empty too');
+
+        // 'Whole range' puts both ends back to the outside.
+        openSurfaceLegend({ minX: 0, maxX: 100, minZ: 0, maxZ: 500 }, zoomed.values);
+        t.equal(lSliders('Width range')[0].value, '70', 'range',
+            'a saved range is pre-filled into the sliders, so the editor shows what the form says');
+        t.equal(lSliders('Slice range')[0].value, '200', 'range', 'on both sliders');
+        t.equal(lSliders('Width range')[1].value, '100', 'range',
+            'and an end that was never set sits at the outside of the range');
+        posted.length = 0;
+        lRow('Width range').querySelector('.range-reset')
+            .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        lRow('Slice range').querySelector('.range-reset')
+            .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        $('legendSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const whole = posted[posted.length - 1];
+        t.equal(`${whole.values.rangeXFrom}|${whole.values.rangeXTo}|${whole.values.rangeZFrom}|${whole.values.rangeZTo}`,
+            '|||', 'range', 'the whole-range button clears all four bounds');
+
+        // A surface that has not rendered yet has no measured range: the row says so instead of guessing.
+        openSurfaceLegend(null);
+        t.equal(lSliders('Width range').length, 0, 'range',
+            'with no measured range there are no sliders to mislead');
+        t.ok(!!lRow('Data range') && !!lRow('Data range').querySelector('.range-note'), 'range',
+            'the editor says the range appears once the form has rendered');
+        $('legendCancel').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    }
+
     // --- 'Cursors' editor: up to two draggable crosshairs, each with its own orientation, style,
     //     colour and readout columns, plus the chart-level readout settings ---
     {

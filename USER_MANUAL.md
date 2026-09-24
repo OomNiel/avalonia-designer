@@ -1777,19 +1777,25 @@ A DataGrid bound to a table becomes a small data-entry grid, WinForms-style:
 
 ## 19. The charting tools (Charts)
 
-The Toolbox's **Charts** category holds two **self-drawing** chart controls. They need no packages, no
+The Toolbox's **Charts** category holds **seven self-drawing chart controls**. They need no packages, no
 image files and no chart engine — the control draws itself, so a chart scales cleanly to any size you
 give it and prints or screenshots like any other control.
 
-| Toolbox item | Control | What it draws |
-|---|---|---|
-| **Line Plot** | `GrumpyLinePlot` | Y values in sample order — the X axis is the sample number (0, 1, 2 …) |
-| **X, Y Plot** | `GrumpyXYPlot` | (x, y) pairs, as a joined line, as markers, or both |
+| Toolbox item | Control | What it draws | Section |
+|---|---|---|---|
+| **Line Plot** | `GrumpyLinePlot` | Y values in sample order — the X axis is the sample number (0, 1, 2 …) | 19.3–19.8 |
+| **X, Y Plot** | `GrumpyXYPlot` | (x, y) pairs, as a joined line, as markers, or both | 19.3–19.8 |
+| **Bar Chart** | `GrumpyBarPlot` | one bar per category — grouped, stacked or 100% | 19.10 |
+| **Area Chart** | `GrumpyAreaPlot` | a filled shape under each line — plain, stacked or 100% | 19.10 |
+| **Pie Chart** | `GrumpyPiePlot` | one wedge per labelled value (a doughnut if you want a hole) | 19.10 |
+| **Waterfall** | `GrumpyWaterfallPlot` | one trace per sampleset, stood behind the next and joined by a mesh | 19.12 |
+| **Surface Chart 3D** | `GrumpySurfacePlot` | a corrugated sheet: one profile per slice along the length, positions across the width | 19.13 |
 
-Both work the same way: numbers come from a **spreadsheet** (or are typed in), each **series** decides
-which columns it reads and how it is drawn, the **axes** describe the scales, and the **legend** lists
-the series with a tick box each. Two more things to configure: up to two **cursors** your users can drag
-to read values off the plot (19.8).
+They all work the same way: numbers come from a **spreadsheet** (or are typed in), each **series** decides
+which columns it reads and how it is drawn, the **legend** names them, and — where a flat frame exists —
+the **axes** describe the scales and up to two **cursors** let a user read values off the plot (19.8).
+The two **projected** charts (the waterfall and the surface) have no cursors and no Axis editor: their
+three axes are drawn in projection, and their own legend selects a range instead (19.12, 19.13).
 
 ### 19.1 Placing a chart
 
@@ -2185,6 +2191,87 @@ the chart draws a surface whose depth is your run number.
 
 > **Charts need no packages or data files of their own.** The chart control is bundled into your project
 > like the other helpers; nothing is added to the `.csproj` beyond what the project already had.
+
+### 19.13 The surface chart 3D (since 0.11.14)
+
+A **surface chart** paints a **sheet**: a value for every position across the width (X) *and* along the
+length (Z), so the height varies in two directions at once. Where the waterfall shows how one trace
+changes from run to run, the surface shows the **shape of the whole sheet** — a corrugated roof, a
+sensor sweep, a temperature map — and you can turn it to look at it from anywhere.
+
+Place it from the **Charts** group in the toolbox: `charts:GrumpySurfacePlot`. Everything from the
+sections above still applies — the **Series**, **Legend** and **Background Gradient** editors, the
+title, border and padding rows, the `.xlsx` reader with its page chooser and `LiveUpdate` reload, and
+the right-click menu. There is **no Axis editor and no cursors**: the cube has three projected axes of
+its own to draw, and there is no flat frame to hang a crosshair on.
+
+| Control | What it draws | Its own properties |
+|---------|---------------|--------------------|
+| **Surface Chart 3D** (`charts:GrumpySurfacePlot`) | A corrugated sheet: one **slice** per spreadsheet column, joined to its neighbours so the picture is the surface itself | **Style** (`GridMesh` / `GridMeshSolid` / `Solid`), **Colour By** (`Sampleset` / `Temperature`), **Low Colour / High Colour**, **Heat Min / Heat Max**, **Solid Opacity**, **Mesh Colour / Thickness**, **Show Base**, **Base Colour**, **Elevation**, **Azimuth**, **Z Spacing**, **Zoom**, **Z Row**, **Z Start**, **Z Step**, **Z Axis Title**, **MinX / MaxX**, **MinY / MaxY**, **MinZ / MaxZ** |
+
+**One column per slice.** Open **Series — Edit series…** and each row is **one slice along the sheet's
+length**: every slice reads the **same shared X column** (the positions across the width, column B by
+default) and its own **Y column** (that slice's height at each of those positions). Six columns of 200
+rows is a sheet of six profiles, and the Series editor lists them, each named by its *Title* for the
+legend and coloured by its own colour.
+
+**Where a slice stands.** The depth comes from the numbers in your spreadsheet, not from the row order:
+**Z Row** names the row that holds **one Z value per slice** — one row of numbers like `0, 5, 10 …`
+along the length — so a sheet whose columns are placed unevenly is drawn unevenly. Where that cell is not
+a number, the slices are numbered from **Z Start** in steps of **Z Step** instead, which is all a typed-in
+sketch needs. `SampleSets="1,2,3; 3,2,1"` writes whole slices inline (one per `;`), so a dropped chart is
+a corrugation you can turn before a workbook exists.
+
+**What the sheet looks like.** **Style** is the first choice:
+
+- **Grid mesh + solid** (the default) draws the mesh over a filled sheet — the full picture.
+- **Grid mesh** draws the quads' edges only, so you see through the sheet to the profiles behind it.
+- **Solid** drops the mesh and paints the surface alone, shading each band by height.
+
+**Solid Opacity** makes the filled sheet see-through, and **Mesh Colour** / **Mesh Thickness** shape the
+mesh lines themselves (the floor's gridlines keep **Grid Colour**, as on every other chart).
+
+**What the colour means.** **Colour By** picks it, exactly as on the other charts: **Sampleset** gives
+every band its slice's own colour, while **Temperature** lays a **ramp by height** from **Low Colour** at
+the valleys to **High Colour** on the ridges — the reading you want when the question is *where are the
+peaks*. **Heat Min** / **Heat Max** pin that ramp, which is what makes several charts comparable: leave
+them empty and each chart spans its own data. Whatever the mode, the gradient is laid **perpendicular to
+the sample axis**, so the colour bands sit level with the data however the cube is turned.
+
+**You can turn it.** **Elevation** is how far above the floor you are looking (default 30; 0 is level
+with the floor, 89 is nearly straight down), **Azimuth** is the angle of the turn (45 is the usual
+three-quarter view), **Z Spacing** is how deep the slices stand apart and **Zoom** fits the picture to
+the frame — and in the running app you can simply **drag the chart** to turn it. Dragging never changes
+the saved form; it only moves your viewpoint.
+
+**The legend of a surface is its RANGE WINDOW.** Instead of ticking traces on and off, the bar carries
+**two sliders**: the first picks the part of the **width** to draw (`X 70 … 110`), the second picks
+**which slices are drawn** — and it *counts* them, "Z 3…4 of 6", because the number of profiles on show
+is the thing being chosen. Two behaviours are worth knowing:
+
+- **A window end snaps to the nearest slice.** "0 … 18" of a sheet sliced every 10 draws the same slices
+  as "0 … 20", so a window can never leave a slice half-shown, and "0 … 4" still names one slice — which
+  is a profile rather than a surface, so nothing is drawn.
+- **The view always re-fits to the window**, so a selection **zooms into** the sheet rather than leaving
+  it small in the middle of the frame. Reading a few slices and then widening the window is the normal
+  way to work: zoom in on the structure, zoom out for the overview.
+
+Both sliders span the **data's own range** (the control reports it), so a handle can never name a value
+the sheet has not got.
+
+**A block under the sheet, when you want one.** **Show Base** fills the space beneath the sheet down to
+the floor — the sheet as a solid block — in **Base Colour**. It is **off by default**, because it changes
+the picture: with it on, a nearer slice hides what is behind it; with it off, the open corridors between
+the profiles stay visible.
+
+**Sample data.** Any page with an **X column of positions** and **one column per slice** works, together
+with a row of **Z values** for the depth (name it with **Z Row**). The workbook page the *Sample data*
+note describes — 12 positions across the width, one profile per column — is exactly the layout it
+reads by default.
+
+> **A surface needs no packages, no chart engine and no image file of its own.** The control draws
+> itself, so it scales and prints; it is bundled into your project like the other helpers, and nothing is
+> added to the `.csproj` beyond what the project already had.
 
 ---
 

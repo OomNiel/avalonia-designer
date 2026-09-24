@@ -2855,7 +2855,7 @@
                     // 'Axis' opens the common/per-series axis editor.
                     if (p.key === 'Axis') openAxisEditor(msg.name, msg.chartAxes || {});
                     // 'Legend' opens the legend editor (side, font, frame, backcolour).
-                    if (p.key === 'Legend') openLegendEditor(msg.name, msg.legendInfo || {});
+                    if (p.key === 'Legend') openLegendEditor(msg.name, msg.legendInfo || {}, msg.legendRange);
                     // 'Background Gradient' opens the gradient editor (a real Avalonia brush).
                     if (p.key === 'Gradient') openGradientEditor(msg.name, msg.brushInfo || {});
                     // 'Cursors' opens the cursor editor (up to two draggable crosshairs).
@@ -5151,6 +5151,73 @@
        and their axes, which are child elements), so this modal is a straight form: the extension
        sends the current values in `msg.legendInfo` and writes them back on 'saveChartLegend'. */
     let legendEdit = null; // { name, values } while the modal is open
+    // The range the chart's DATA covers, measured by the host and reported by the extension:
+    // undefined = this chart's legend is not a zoom control, null = a range chart that has not been
+    // rendered yet, an object = the four bounds the range sliders span.
+    let legendRange;
+
+    /** Two sliders that pick a range inside [lo, hi] — a from end and a to end. The ends are kept in
+     *  order, and an end left at the outer edge posts EMPTY, which means "the whole range": the chart's
+     *  attribute is removed again, so a form nobody has zoomed keeps a short element. */
+    function rangeSliders(values, fromKey, toKey, lo, hi) {
+        const span = hi - lo;
+        const step = span > 0 ? span / 200 : 1;
+        const edge = span > 0 ? span / 1000 : 1e-9;
+        const clamp = (n) => Math.max(lo, Math.min(hi, n));
+        const box = document.createElement('div');
+        box.className = 'range-sliders';
+        const from = document.createElement('input');
+        const to = document.createElement('input');
+        for (const s of [from, to]) {
+            s.type = 'range';
+            s.min = String(lo);
+            s.max = String(hi);
+            s.step = String(step);
+            box.appendChild(s);
+        }
+        const current = (key, fallback) => {
+            const n = Number(values[key]);
+            const unset = values[key] == null || values[key] === '';
+            return unset || !Number.isFinite(n) ? fallback : clamp(n);
+        };
+        from.value = String(current(fromKey, lo));
+        to.value = String(current(toKey, hi));
+        const readout = document.createElement('span');
+        readout.className = 'range-readout';
+        const reset = document.createElement('button');
+        reset.type = 'button';
+        reset.className = 'range-reset';
+        reset.textContent = 'Whole range';
+        reset.title = 'Draw all of it again (the two range attributes are removed from the form).';
+        const show = (a, b) => {
+            const fmt = (n) => (Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1));
+            readout.textContent = fmt(a) + ' \u2026 ' + fmt(b) + '   of ' + fmt(lo) + ' \u2026 ' + fmt(hi);
+        };
+        const sync = (moved) => {
+            let a = clamp(Number(from.value));
+            let b = clamp(Number(to.value));
+            if (a > b) { if (moved === 'from') b = a; else a = b; }
+            from.value = String(a);
+            to.value = String(b);
+            values[fromKey] = a <= lo + edge ? '' : String(a);
+            values[toKey] = b >= hi - edge ? '' : String(b);
+            show(a, b);
+        };
+        from.addEventListener('input', () => sync('from'));
+        to.addEventListener('input', () => sync('to'));
+        reset.addEventListener('click', () => {
+            from.value = String(lo);
+            to.value = String(hi);
+            sync('from');
+        });
+        const head = document.createElement('div');
+        head.className = 'range-head';
+        head.appendChild(readout);
+        head.appendChild(reset);
+        box.appendChild(head);
+        sync('from');
+        return box;
+    }
 
     function renderLegendEditor() {
         els.legendBody.innerHTML = '';
@@ -5189,9 +5256,30 @@
         els.legendBody.appendChild(seriesField('Margin',
             seriesNumber(String(v.margin == null ? '0' : v.margin), (x) => { v.margin = x; }),
             'Space between the frame and the entries inside it, in pixels, added on all four sides \u2014 the frame grows with it, and the names move inwards. 0 keeps the small padding the bar has always had.'));
+
+        // A chart whose legend is also a ZOOM control: the SURFACE chart, whose "legend" is the part of
+        // the sheet to draw. The sliders span the range the DATA covers (the host measures it on every
+        // render), and the chart always re-fits the picture to what is selected \u2014 so a narrow range
+        // ZOOMS in instead of cropping a smaller sheet out of the same one.
+        if (legendRange === undefined) return;
+        if (!legendRange) {
+            const note = document.createElement('div');
+            note.className = 'range-note';
+            note.textContent = 'The range the data covers appears here once the form has rendered.';
+            els.legendBody.appendChild(seriesField('Data range', note,
+                'A surface legend also picks which part of the sheet is drawn \u2014 the bounds come from the workbook, so the form has to render once before they are known.'));
+            return;
+        }
+        els.legendBody.appendChild(seriesField('Width range (X)',
+            rangeSliders(v, 'rangeXFrom', 'rangeXTo', legendRange.minX, legendRange.maxX),
+            'The part of the sheet\u2019s WIDTH that is drawn. The plot is always re-fitted to fill the plot area, so a narrow range magnifies the sheet. Both ends at the outside = the whole width.'));
+        els.legendBody.appendChild(seriesField('Slice range (Z)',
+            rangeSliders(v, 'rangeZFrom', 'rangeZTo', legendRange.minZ, legendRange.maxZ),
+            'WHICH SLICES are drawn: the sheet\u2019s length between these two Z values. The height is the data, so it has no slider \u2014 narrow this one to look at a few corrugations at a time.'));
     }
-    function openLegendEditor(name, info) {
+    function openLegendEditor(name, info, range) {
         legendEdit = { name: name || null, values: Object.assign({}, info || {}) };
+        legendRange = range;
         els.legendTitle.textContent = 'Legend' + (legendEdit.name ? ' — ' + legendEdit.name : '');
         renderLegendEditor();
         els.legendModal.hidden = false;

@@ -66,12 +66,14 @@ module.exports = async (t) => {
     // gained HoverExplode — then to the waterfall type, then to `IsFilled` when every chart gained the
     // fill/restore menu entry (a behaviour change, which no XAML attribute reveals), then up to the
     // waterfall's filled surface (`SurfaceFill` / `SurfaceToFloor`) and back down again when that was
-    // removed — so the marker is `IsFilled` once more, the newest token the shipped file carries. It stays
+    // removed — then to the surface chart 3D (`GrumpySurfacePlot`), and on 2026-09-24 to the triangle
+    // band fill (`BandTriangle`) that stopped a folded band showing the plot's own backcolour through the
+    // sheet: a DRAWING change in an existing type, which a project's old copy cannot show either. It stays
     // the newest token in BOTH twins, which is what refreshes existing projects.
     for (const [lang, file] of [['C#', 'GrumpyCharts.cs'], ['VB', 'GrumpyCharts.vb']]) {
         const marker = bundledComponentSpecs(lang === 'VB')
             .find((s) => s.kind === 'GrumpyCharts').marker;
-        t.equal(marker, 'IsFilled', `chart-${lang}`,
+        t.equal(marker, 'BandTriangle', `chart-${lang}`,
             `${lang}: the GrumpyCharts staleness marker is the newest thing an existing project needs`);
         has(read(file), marker, `chart-${lang}`,
             `${lang}: so the shipped file never looks stale (and a project's old copy is refreshed)`);
