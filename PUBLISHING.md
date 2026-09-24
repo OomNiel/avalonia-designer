@@ -233,8 +233,50 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.11.12` (2026-09-23) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
+> **`0.11.14` (2026-09-24) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
 > the Marketplace upload. THIS is the file to upload.**
+>
+> **Artefact:** `avalonia-designer-0.11.14.vsix`, **1,208,318 bytes** (1.15 MB — back from 5.29 MB, see the
+> housekeeping note below), sha256
+> **`17d3f81b35679b6684329bae9e0f928221d2569bebf0e3d8828d0910a1c24ce6`**, **118 files** (0 source maps),
+> manifest `Version="0.11.14"` and **no `PreRelease` attribute** (a plain, stable upload). Commit
+> **`4b4490a`** on `main`, annotated tag **`v0.11.14`**, pushed. **Verified:** local `sha256sum`, the
+> package's own contents read back out of the VSIX (the packaged `resources/GrumpyCharts.cs` carries
+> `BandTriangle` **4×** and **0** crossing scans; `out/bundledComponents.js` carries the new marker; the
+> packaged manifest says `0.11.14`, a plain `https://github.com/…` repository URL and no `xlsx`
+> dependency), and the file is installed locally as `grumpy.avalonia-designer@0.11.14`. Suite **7,931
+> passed / 0 failed**; the host, a generated C# project and the VB matrix all 0 warnings / 0 errors.
+>
+> **What it adds:** the **surface chart 3D** (`charts:GrumpySurfacePlot`, the seventh type) — one
+> spreadsheet **column per slice** along the sheet's length over a shared X column, the Z of a slice from
+> `Z Row` or `Z Start`/`Z Step`, `GridMesh`/`GridMeshSolid`/`Solid` styles, `Sampleset` or a **Temperature**
+> ramp with `Heat Min`/`Heat Max`, the mesh rows, the view (`Elevation`/`Azimuth`/`Z Spacing`/`Zoom`, drag to
+> turn), `Show Base`/`Base Colour`, and a **range-window legend** whose second slider counts the slices on
+> show; both twins, toolbox, Properties, help text and the designer preview.
+>
+> **What it fixes:** the reported see-through surface — a band was filled as **one closed figure**, and a
+> figure whose outline crosses itself has two loops wound opposite ways, so `NonZero` summed them to zero,
+> dropped the fill and let the plot's own backcolour show through. Bands are now **one triangle pair per
+> sample pair** (`BandTriangle`); on the user's own form the picture is pixel-identical to the previous code
+> with the fold filled (measured: 4,291px of backcolour that used to show through). The **other half** of the
+> bug was that the app compiles the *project's* copy of the chart and the staleness marker was still a token
+> that copy had, so no refresh was ever offered — the **marker moved to `BandTriangle`**, and this is the
+> first release that offers it. An **unused O(n²) crossing scan** went too (computed and never used: 966 ms
+> → 42 ms per render on a 6 × 2048-point sheet), and two assertions that were measuring the wrong thing were
+> corrected (the slice-window sheet-pixel count; the repository URL npm had rewritten).
+>
+> **Housekeeping:** the unused `xlsx` npm dependency is gone (nothing imports it — the chart's workbook
+> reader is C#), which is what takes the VSIX from **5.29 MB** back to **1.15 MB**; the `0.11.13` development
+> number was never built for release and its number is spent.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.11.14.vsix` → leave **Pre-release
+> unchecked** → then confirm with `flags: 914` that the version is `0.11.14` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it
+> is the user's.** Local installs of `0.11.12`/`0.11.13` are superseded by this file (VS Code prunes the
+> older folder on the next window reload).
+
+> **`0.11.12` (2026-09-23) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); then the file
+> for the Marketplace upload, now superseded by `0.11.14` (its number is spent).**
 >
 > **Artefact:** `avalonia-designer-0.11.12.vsix`, **1,159,385 bytes**, sha256
 > **`c7405e6cabe99d39a865da7c4ca9c4aaef36587e6a6a759922c28df2c83fce4d`**, 118 files (0 source maps),
