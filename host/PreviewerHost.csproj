@@ -7,7 +7,40 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PreviewerHost</AssemblyName>
     <RootNamespace>PreviewerHost</RootNamespace>
+
+    <!-- ONE PLATFORM, NOT TWENTY-SIX (2026-09-24). Without a RuntimeIdentifier the restore brings in
+         SkiaSharp's natives — and their debug symbols — for EVERY platform the package can serve: bin/ grew
+         to **578 MB**, of which 569 MB was `runtimes/**` and 304 MB of it `.pdb` files, for a previewer that
+         only ever runs on the machine that built it. That matters because this project is built on the
+         USER's machine the first time a form is previewed, so the waste lands in the extension's own install
+         folder — 583 MB per installed copy, and six copies had accumulated 3.5 GB.
+         The PORTABLE RID (`NETCoreSdkPortableRuntimeIdentifier` — `linux-x64`, `win-x64`, `osx-arm64`) is the
+         one the native packages actually ship for, and it is resolved at BUILD time on whatever machine runs
+         the build — which is always the machine the previewer will run on (locally, or in the remote/WSL
+         where the extension host lives). The distro RID (`ubuntu.24.04-x64`) is the fallback, for an SDK
+         that does not know the portable name. `SelfContained=false` keeps the build framework-dependent: the
+         host is still launched against the machine's .NET 8 by the same path, so nothing about how it RUNS
+         changes — only which natives are copied next to it. Measured: 578 MB → 24 MB (Linux) / 35 MB (win-x64). -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(NETCoreSdkPortableRuntimeIdentifier)' != ''">$(NETCoreSdkPortableRuntimeIdentifier)</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(NETCoreSdkRuntimeIdentifier)' != ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <!-- A RID would otherwise move the output into `bin/Debug/net8.0/<rid>/`, and the extension launches
+         `host/bin/Debug/net8.0/PreviewerHost` — so keep the folder it has always been in. (Found the hard
+         way: the T1 render layer failed with ENOENT on the spawn until this line was added.) -->
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
   </PropertyGroup>
+
+  <!-- …and the natives' DEBUG SYMBOLS go too: SkiaSharp ships an ~80 MB `libSkiaSharp.pdb` per platform, of
+       no use in a host nobody debugs from a user's machine. A RID build copies the natives FLAT into the
+       output folder (there is no `runtimes/` subfolder), which is why both shapes are matched here; our own
+       `PreviewerHost.pdb` is deliberately left alone. -->
+  <Target Name="DropNativeDebugSymbols" AfterTargets="Build">
+    <ItemGroup>
+      <NativeSymbols Include="$(OutDir)runtimes/**/*.pdb" />
+      <NativeSymbols Include="$(OutDir)lib*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(NativeSymbols)" />
+  </Target>
 
   <ItemGroup>
     <!-- ModelHost is a SECOND project inside this folder (the bundled local model server, see

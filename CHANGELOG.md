@@ -12,6 +12,47 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
+## [0.11.19] - 2026-09-24 · *the previewer builds for one platform, not twenty-six*
+
+A housekeeping release, asked for after a question about the extension's size: *"Would it be feasable to
+extract the charting control from the designer extension and make it a plugin for the extension? The reason
+is that this extension byte size is getting very large."* The answer was no — the charts are 793 KB of a
+**583 MB** install — and the measurement found what really was large.
+
+### Fixed — every installed copy carried 578 MB of build output it could never use
+
+- `host/PreviewerHost.csproj` had **no `RuntimeIdentifier`**, so the restore brought in SkiaSharp's natives —
+  and their debug symbols — for **every platform the package serves**: `host/bin/` reached **578 MB**
+  (569 MB of `runtimes/**`, 304 MB of it `.pdb` — including a 80 MB `libSkiaSharp.pdb` per Windows RID).
+  The previewer only ever runs on the machine that built it, and the extension builds it *there* the first
+  time a form is previewed — so the waste landed in the extension's own folder: **583 MB per installed copy,
+  and six copies had accumulated 3.5 GB.**
+- The build now asks for **one** platform (`NETCoreSdkPortableRuntimeIdentifier` — `linux-x64`, `win-x64`,
+  `osx-arm64`; the distro RID as a fallback, and nothing set when neither is known, which is the old but
+  working portable build), stays framework-dependent (`SelfContained=false`, so it still runs against the
+  machine's .NET 8 exactly as before), keeps its output in the folder the extension launches from
+  (`AppendRuntimeIdentifierToOutputPath=false` — without it the output moves to `…/net8.0/<rid>/` and the
+  launcher's spawn fails, which is how this was found), and drops the natives' debug symbols after the build.
+- **Measured:** `host/bin` 578 MB → **24 MB**; a `-r win-x64` cross-build produces the same 24 MB with
+  `PreviewerHost.exe`, `libSkiaSharp.dll`, `libHarfBuzzSharp.dll` and `e_sqlite3.dll` — a Windows user gets
+  the Windows natives and the `.exe` the extension already looks for, and the managed code is untouched.
+- **The old copies can also go.** An installed extension keeps every version that was ever installed from a
+  VSIX; deleting the superseded folders on this machine took the extension's footprint from **3.5 GB to
+  29 MB** without touching a single feature (verified by rendering a chart through the pruned host).
+
+### Notes
+
+- New pins in `tests/t2-logic/packaging.test.js` keep the four properties above and the natives' symbol trim
+  in place, and pin the launch path from both sides — the extension joins `host/bin/<cfg>/<tfm>/<exe>` and
+  the test helper spawns the same folder — so the "RID moved the output" failure cannot come back.
+- Suite **8,100 passed / 0 failed**; the T1 render layer (402) drives the real trimmed host through Skia,
+  HarfBuzz and SQLite, so the saving is proven not to have cost anything.
+- `host/ModelHost` — the *optional* bundled local-AI server — still restores LLamaSharp's natives for every
+  platform and is deliberately **not** trimmed here; the same change applies when that feature is next looked
+  at, and it is the one place where hundreds of megabytes can still appear.
+- This is the release to upload: the Marketplace listing carries `0.11.15`, and this file brings it up to date
+  with everything in `0.11.16` → `0.11.19` (see `PUBLISHING.md`).
+
 ## [0.11.18] - 2026-09-24 · *the height ramp follows the height, and the surface gets its own controls*
 
 Two field reports from one afternoon on the 3D surface, and the batch of requests that came with them.

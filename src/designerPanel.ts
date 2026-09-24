@@ -4674,7 +4674,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 // left alone — isStaleBundledCopy only refreshes provable bundled boilerplate.
                 try {
                     if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'PathPicker',
-                                          fs.readFileSync(src, 'utf8'))) {
+                        fs.readFileSync(src, 'utf8'))) {
                         fs.copyFileSync(src, p);
                         void vscode.window.showInformationMessage(
                             `Updated ${file} to the current bundled version (the pickers now show a file/folder icon).`
@@ -4781,7 +4781,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 // alone, since isStaleBundledCopy only refreshes provable bundled boilerplate.
                 try {
                     if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'GrumpyCharts',
-                                          fs.readFileSync(src, 'utf8'))) {
+                        fs.readFileSync(src, 'utf8'))) {
                         fs.copyFileSync(src, p);
                         void vscode.window.showInformationMessage(
                             `Updated ${file} to the current bundled version (the charts gained multiple `

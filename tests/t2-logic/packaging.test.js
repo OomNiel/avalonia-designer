@@ -332,5 +332,43 @@ module.exports = async (t) => {
     t.ok(/DOTNET_SDK_MISSING_MESSAGE/.test(panel) && /showErrorMessage/.test(panel), 'first-run',
         'and the designer shows it as an error box, not just a one-line status note');
 
+    // ---------- 8) the previewer host builds for ONE platform ------------------
+    // Found on 2026-09-24: the extension builds this project ON THE USER'S MACHINE, and with no
+    // RuntimeIdentifier the restore brought in SkiaSharp's natives — and their debug symbols — for every
+    // platform the package serves. `host/bin/` grew to **578 MB per installed copy** (569 MB of
+    // `runtimes/**`, 304 MB of it `.pdb`), and six installed versions had reached 3.5 GB, while the
+    // previewer only ever runs on the machine that built it. The three properties below plus the symbol
+    // trim are the fix; this test is what keeps them from quietly coming back.
+    const csproj = read('host/PreviewerHost.csproj');
+    t.ok(/<RuntimeIdentifier Condition="'\$\(RuntimeIdentifier\)' == '' and '\$\(NETCoreSdkPortableRuntimeIdentifier\)' != ''">\$\(NETCoreSdkPortableRuntimeIdentifier\)<\/RuntimeIdentifier>/.test(csproj),
+        'host-size', 'the host builds for the SDK\'s PORTABLE platform — linux-x64 / win-x64 / osx-arm64,\n        the RIDs the native packages actually ship for');
+    t.ok(/NETCoreSdkRuntimeIdentifier\)' != ''">\$\(NETCoreSdkRuntimeIdentifier\)/.test(csproj), 'host-size',
+        'with the distro RID (ubuntu.24.04-x64) only as a fallback, and nothing set when neither is known\n         (which is the old, fat, but working build)');
+    t.ok(/<SelfContained>false<\/SelfContained>/.test(csproj), 'host-size',
+        'and stays framework-dependent — it still runs against the machine\'s .NET 8, exactly as before');
+    // The one that bit: a RID moves the output into `bin/Debug/net8.0/<rid>/`, and the extension spawns
+    // `bin/Debug/net8.0/PreviewerHost`. The T1 render layer failed with ENOENT until this was set.
+    t.ok(/<AppendRuntimeIdentifierToOutputPath>false<\/AppendRuntimeIdentifierToOutputPath>/.test(csproj),
+        'host-size', 'the output stays in the folder the extension launches from (a RID would move it)');
+    // A RID build copies the natives FLAT (no `runtimes/` subfolder), which is why both shapes are matched:
+    // a Windows cross-build still carried 124 MB until the `lib*.pdb` line was added. Our own PreviewerHost
+    // pdb is deliberately kept.
+    t.ok(/DropNativeDebugSymbols/.test(csproj) && /runtimes\/\*\*\/\*\.pdb/.test(csproj)
+        && /<NativeSymbols Include="\$\(OutDir\)lib\*\.pdb" \/>/.test(csproj),
+        'host-size', 'and the natives\' debug symbols are dropped in both layouts, our own pdb kept');
+    // The other half of that pair: whatever the csproj does, the launcher must look in the same place.
+    // The extension joins `host/bin/<cfg>/<tfm>/<exe>`, and the test helper joins the same Debug/net8.0
+    // folder — so a RID subfolder (the default when one is set) is exactly what must not happen, and
+    // Windows must find the `.exe` apphost the same build produces.
+    const helper = read('tests/helpers/host.js');
+    const launcher = read('src/hostClient.ts');
+    t.ok(/path\.join\(__dirname, '\.\.', '\.\.', 'host', 'bin', 'Debug', 'net8\.0', 'PreviewerHost'\)/.test(helper),
+        'host-size', 'the test helper launches host/bin/Debug/net8.0/PreviewerHost — the flat path');
+    t.ok(/const binDir = path\.join\(this\.context\.extensionUri\.fsPath, 'host', 'bin', cfg, tfm\);/.test(launcher)
+        && /const tfm = 'net8\.0';/.test(launcher) && /const cfg = 'Debug';/.test(launcher),
+        'host-size', 'and the extension looks in host/bin/<cfg>/<tfm> for the same file');
+    t.ok(/process\.platform === 'win32' \? 'PreviewerHost\.exe' : 'PreviewerHost'/.test(launcher),
+        'host-size', 'Windows is served by the `.exe` apphost of that same flat folder (the cross-build for\n         win-x64 produces exactly PreviewerHost.exe + PreviewerHost.dll + the Windows natives)');
+
     t.note('packaging done');
 };

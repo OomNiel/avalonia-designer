@@ -470,6 +470,19 @@ and the README's single *"Formerly …"* line). The recogniser is then proved to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
 
+### 0.11.19 (2026-09-24) — the previewer builds for one platform, not twenty-six
+
+- `tests/t2-logic/packaging.test.js` (**+6**) — the host's build is pinned where the saving lives: the RID is
+  the SDK's **portable** one (with the distro RID only as a fallback), `SelfContained=false` keeps it
+  framework-dependent, `AppendRuntimeIdentifierToOutputPath=false` keeps the output where the launcher looks
+  — and the natives' debug symbols are dropped in **both** layouts (`runtimes/**/*.pdb` and the flat
+  `lib*.pdb` a RID build produces; the Windows cross-build still carried 124 MB until the second pattern was
+  added). The pair that matters is pinned from both sides: the extension joins `host/bin/<cfg>/<tfm>/<exe>`
+  and the test helper spawns that same folder, and Windows is served by `PreviewerHost.exe` from it.
+- `tests/t1-preview/*` (402) — unchanged, and that is the point: they drive the *real* trimmed host through
+  Skia, HarfBuzz and SQLite on every run, so `host/bin` 578 MB → 24 MB is proven not to have cost anything.
+- Suite **8,100 passed / 0 failed**.
+
 ### 0.11.18 (2026-09-24) — the height ramp, the surface's own controls, and a stale copy that cannot hide
 
 - `tests/t1-preview/surfaceRender.test.js` — the temperature ramp is now measured as a function of the

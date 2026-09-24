@@ -155,7 +155,7 @@ search for *Grumpy's WYSIWYG Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.10.11`**, so the command above installs it; add `--force` to
+The current version is **`0.11.19`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -167,7 +167,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.10.11` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.11.19` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -177,6 +177,18 @@ After installing (or after any update), **reload the window** so the changes tak
 The first time you open a form in the designer, the extension **auto-builds the C# previewer
 host** (this takes a few seconds — you'll see status messages). It also rebuilds the host
 automatically whenever the host source code changes.
+
+> **The build is for THIS machine, and it is small.** The host is built for your own platform only
+> (`linux-x64`, `win-x64`, `osx-arm64` …) — the platform is resolved when the build runs, so a Windows
+> machine gets the Windows natives and the `.exe` it launches, and the folder stays around **24 MB**
+> (before `0.11.19` it collected the native libraries *and* their debug symbols for every platform, which
+> made it 578 MB per copy). Nothing about the runtime changed: it still runs against the .NET 8 installed
+> on the machine.
+>
+> **If VS Code's extensions folder looks large**, the usual cause is *several old copies of this
+> extension*: installing a `.vsix` leaves the previous version's folder behind. Deleting the superseded
+> `~/.vscode/extensions/grumpy.avalonia-designer-<older version>` folders and reloading the window keeps the
+> one you are using and nothing else (2026-09-24: six copies, 3.5 GB → 29 MB).
 
 > **You need the .NET SDK.** The previewer host is a small C# program that the extension builds with
 > `dotnet build` the first time a designer opens, so the .NET SDK must be installed and on your

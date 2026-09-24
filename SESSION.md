@@ -17,6 +17,37 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-09-24, ninth session — 0.11.19)
+
+**The previewer now builds for one platform, not twenty-six.** Asked in the shape of a question — *"Would it
+be feasable to extract the charting control from the designer extension and make it a plugin? … this
+extension byte size is getting very large"* — and answered with measurements rather than agreement: the
+charts are **793 KB** of a **583 MB** install, so a plugin would have saved nothing.
+
+**What went in** (full detail in `CHANGELOG.md` `[0.11.19]` and `NOTES.md` §150):
+
+- **What was actually large:** `host/PreviewerHost.csproj` had no `RuntimeIdentifier`, so `host/bin` collected
+  SkiaSharp natives and debug symbols for **every** platform — **578 MB**, 304 MB of it `.pdb`. The extension
+  builds that host on the *user's* machine, so each installed copy grew to **583 MB** (six copies: 3.5 GB).
+- **The fix:** the SDK's portable RID (distro RID as fallback), `SelfContained=false` (unchanged runtime
+  behaviour), `AppendRuntimeIdentifierToOutputPath=false` — found the hard way, the T1 layer failed with
+  `ENOENT` because a RID moves the output into `…/net8.0/<rid>/` — and the natives' symbols dropped after the
+  build, in both layouts (a Windows cross-build still carried 124 MB until the flat `lib*.pdb` were matched).
+  **578 MB → 24 MB**, identical on `linux-x64` and on a `-r win-x64` cross-build.
+- **The old copies were deleted too:** this machine's six installed versions went from **3.5 GB to 29 MB**,
+  verified by starting the pruned host and rendering a chart with it (the four-slider legend came out right).
+- Six new pins in `packaging.test.js`; suite **8,100 passed / 0 failed**; PROBLEMS clean.
+- **`host/ModelHost` is deliberately untouched** — the optional local-AI server still restores LLamaSharp
+  natives for every platform, and is the one remaining place hundreds of megabytes can appear.
+
+**Two things to know before continuing:**
+
+1. **A RID build is per-machine by design** — it is resolved where the build runs, which is always where the
+   previewer will run (locally, or inside WSL/remote/dev-container). Never set a fixed RID in the csproj:
+   Windows users would then get Linux natives.
+2. **A hand-pruned install stays pruned** until a new version is installed, because the extension only
+   rebuilds the host when a host *source* is newer than the binary.
+
 ## Where the last session left off (2026-09-24, eighth session — 0.11.18)
 
 **The height ramp was following the depth too, and the surface got its own controls.** Two field reports

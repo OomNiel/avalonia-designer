@@ -3958,3 +3958,47 @@ silent instead of asking.
 
 **Suite:** 8,092 passed / 0 failed. Host, generated C# project and the VB matrix: 0 warnings / 0 errors.
 
+### §150 — a build that carried twenty-six platforms, and the question that found it (2026-09-24, 0.11.19)
+
+The question was *"Would it be feasable to extract the charting control from the designer extension and make
+it a plugin? … this extension byte size is getting very large."* Measuring first answered it: the charts are
+**793 KB** of a **583 MB** install (0.13 %), and ~0.1 MB of the 1.18 MB download — so a plugin would have
+saved nothing and cost a second release pipeline, a second staleness source, and a hard dependency for the
+previewer (which *compiles* `resources/GrumpyCharts.cs`, not just copies it).
+
+**What was actually large:** `host/bin/Debug/net8.0` — **578 MB**, of which 569 MB was `runtimes/**` and
+304 MB `.pdb`. Cause: no `RuntimeIdentifier` in `host/PreviewerHost.csproj`, so the restore brought in
+SkiaSharp's natives *and their debug symbols* for every platform NuGet can serve — including an 80 MB
+`libSkiaSharp.pdb` per Windows RID. The extension builds that host on the **user's** machine, so the waste
+landed in the extension's own folder: **583 MB per installed copy**, and six copies = 3.5 GB.
+
+**The fix, in four properties.** `RuntimeIdentifier` = `$(NETCoreSdkPortableRuntimeIdentifier)` (`linux-x64`
+/ `win-x64` / `osx-arm64` — the names the native packages actually ship for; the distro RID
+`ubuntu.24.04-x64` only as a fallback), `SelfContained=false` (framework-dependent — the runtime behaviour is
+untouched), `AppendRuntimeIdentifierToOutputPath=false`, and a target that deletes the natives' `.pdb` after
+the build. **578 MB → 24 MB**, and a `-r win-x64` cross-build produces the same 24 MB with
+`PreviewerHost.exe` + the Windows natives.
+
+**Lessons.**
+
+1. **Measure before agreeing to an architecture change.** "Extract the charts" *felt* like the cause of the
+   size; the chart set was 0.13 % of it. The question was worth asking, and fifteen minutes of `du` saved a
+   second extension plus a duplicated release process.
+2. **A RID moves the output folder.** `bin/Debug/net8.0/<rid>/PreviewerHost` is not where the launcher looks
+   (`host/bin/Debug/net8.0/PreviewerHost`) — the T1 render layer failed with `spawn ENOENT` within seconds of
+   the first attempt. `AppendRuntimeIdentifierToOutputPath=false` is the fix, and the launch path is now
+   pinned by a test from both sides.
+3. **A RID build copies natives FLAT.** The symbol trim's first glob (`runtimes/**/*.pdb`) matched nothing in
+   that layout, and the Windows cross-build still carried 124 MB; `lib*.pdb` in the output root was the
+   missing half. Verify a cleanup on *both* the platform you are on and the one you cannot run — a
+   cross-build (`-r win-x64 -o /tmp/…`) is a real check, not a guess.
+4. **Never pin a fixed RID in the csproj.** The RID must be resolved *where the build runs*, because that is
+   always where the previewer will run (locally, or in WSL/remote/dev-container). A hard-coded `linux-x64`
+   would hand Windows users Linux natives.
+5. **The old installs are the other half.** Installing a `.vsix` leaves the previous version's folder behind —
+   six of them, 3.5 GB. Deleting them (and hand-pruning the current copy's unused RIDs, keeping the local
+   fallback chain `linux-x64` → `linux` → `unix` → `any`) took this machine to **29 MB**, verified by
+   rendering a chart through the pruned host.
+
+**Suite:** 8,100 passed / 0 failed. T1 (402) drives the real trimmed host through Skia, HarfBuzz and SQLite.
+
