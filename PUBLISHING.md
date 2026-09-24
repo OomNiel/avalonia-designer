@@ -233,8 +233,34 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.11.14` (2026-09-24) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
+> **`0.11.15` (2026-09-24) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
 > the Marketplace upload. THIS is the file to upload.**
+>
+> **Artefact:** `avalonia-designer-0.11.15.vsix`, **1,212,493 bytes**, sha256
+> **`e7f2e6bbb27fceed84d78d8745a2776a44ec41513bf0a125874f4b71075f1ee0`**, **118 files** (0 source maps),
+> manifest `Version="0.11.15"` and **no `PreRelease` attribute** (a plain, stable upload). Commit
+> **`4024d5`** on `main`, annotated tag **`v0.11.15`**, pushed. **Verified:** local `sha256sum`, and the
+> package's own contents read back out of the VSIX (the packaged `resources/GrumpyCharts.cs` and `.vb` each
+> carry `CutToWindow` **4×**, and `out/bundledComponents.js` carries the new marker). Suite **7,941 passed /
+> 0 failed**; the host, a generated C# project and the VB matrix all 0 warnings / 0 errors.
+>
+> **What it fixes:** dragging the X window in a **running app** grew two false panels at either end of the
+> surface sheet — the width window **clamped**, so every sample outside it was drawn *at* its edge and the
+> band fill between two slices became a flat slab there. The samples are now **cut** to the window
+> (`CutToWindow`, with the window's own edges interpolated), the height window keeps its documented flattening,
+> and the **staleness marker moved to `CutToWindow`** so a project holding the `0.11.14` chart is offered
+> **Update now**. Measured: with no window the render is pixel-identical to the pre-fix build (0 of 128,800
+> pixels), and the new regression needs no reference image — the same window over two datasets differing only
+> *outside* it must be pixel-identical, with the no-window pair as the control that can fail.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.11.15.vsix` → leave **Pre-release
+> unchecked** → then confirm with `flags: 914` that the version is `0.11.15` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
+> the user's.** `0.11.14` — released the same day — is superseded by this file; installing it replaces the
+> older folder on the next window reload.
+
+> **`0.11.14` (2026-09-24) — released on GitHub (*Latest* that morning); then the file for the Marketplace
+> upload, now superseded by `0.11.15` (its number is spent).**
 >
 > **Artefact:** `avalonia-designer-0.11.14.vsix`, **1,208,318 bytes** (1.15 MB — back from 5.29 MB, see the
 > housekeeping note below), sha256
