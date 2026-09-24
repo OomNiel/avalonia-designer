@@ -159,7 +159,7 @@ module.exports = async (t) => {
     // DRAWING change in an existing type, which a project's old copy silently lacks — see
     // bundledComponents.ts)
     const spec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(spec.marker, 'BandTriangle', 'marker',
+    t.equal(spec.marker, 'CutToWindow', 'marker',
         'the marker is the newest thing an existing project needs a refresh for');
     t.equal(bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts').marker, spec.marker, 'marker',
         'the same in both languages');

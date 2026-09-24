@@ -131,7 +131,12 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // paragraph above warns about — and the user met it: the designer (built from this file) looked
             // right while the app kept drawing see-through bands, because the project's own copy already
             // carried `GrumpySurfacePlot` and so was never reported stale. The marker is the new member.
-            marker: 'BandTriangle'
+            // 2026-09-24, later: the width WINDOW changed from a CLAMP to a CUT (`CutToWindow`). Clamping the
+            // samples onto the window's edges is what made every off-window sample pile up there: dragging the
+            // X slider in a running app grew a false vertical PANEL at each end of the sheet, pinned to the
+            // window edges (and a saved window showed them in the designer too). Again a drawing change in an
+            // existing type — no property of the form changed at all — so the marker follows the new member.
+            marker: 'CutToWindow'
         }
     ];
 }

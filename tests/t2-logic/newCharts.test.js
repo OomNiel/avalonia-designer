@@ -187,7 +187,7 @@ module.exports = async (t) => {
     }
 
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'BandTriangle', 'marker',
+    t.equal(chartSpec.marker, 'CutToWindow', 'marker',
         'the staleness marker is the newest thing an existing project needs (types, attributes, behaviour)');
     const vbSpec = bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts');
     t.equal(vbSpec.marker, chartSpec.marker, 'marker', 'both languages use the same marker');

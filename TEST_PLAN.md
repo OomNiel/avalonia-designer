@@ -470,6 +470,25 @@ and the README's single *"Formerly …"* line). The recogniser is then proved to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
 
+### 0.11.15 (2026-09-24) — the width window is a cut, not a squeeze
+
+- `tests/t1-preview/surfaceRender.test.js` (**76**) — the report that grew this release was *"two 'panels' at
+either end … stationary while changing the range of the x-axes"*, seen only in the **running app** while a
+slider was dragged, and the measurement it bought needs no reference image: **the same chart at the same
+window over two datasets that differ ONLY outside the window must be pixel-identical** (measured: 0 differing
+pixels), because a window is a cut. The **control that proves the measurement can fail** is the same pair with
+**no** window, which must differ (>2,000 pixels — the outside data is 50 against 0 there).
+- `tests/t2-logic/surface.test.js` (**185**) — the source contract in **both twins**: the slice is built from
+`CutToWindow(p.Data.Xs, p.Data.Ys, world.Xs.Min, world.Xs.Max)`, `AddCrossing` interpolates the window's own
+edges into the cut, and the reason is written down where the next reader looks.
+- The marker pins in `bundledComponents`, `newCharts`, `pickerMemory`, `waterfall` and `dataSelector` moved to
+**`CutToWindow`**, and the era fixtures in `bundledComponents.test.js` gained the member — a *drawing* change
+in an existing type is invisible to a copy that already carries the previous marker, which is precisely how
+this one reached a released app before it reached the designer.
+- **Pixels prove both halves**: at `MinX="100" MaxX="120"` on the reporting form the panels are gone, and with
+no window the render is **identical to the pre-fix build** (0 of 128,800 pixels), so the cut only ever removes
+what the window excluded.
+
 ### 0.11.14 (2026-09-24) — the surface chart 3D, and the fold that showed the backcolour
 
 - `tests/t2-logic/surface.test.js` (new, **181**) — the source contract of the seventh chart type: its own

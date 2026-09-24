@@ -17,7 +17,47 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-24, sixth session — 0.11.14)
+## Where the last session left off (2026-09-24, seventh session — 0.11.15)
+
+**The width window is a cut, not a squeeze.** A reported follow-up to `0.11.14`, fixed the same day.
+
+**What went in** (full detail in `CHANGELOG.md` `[0.11.15]` and `NOTES.md` §148):
+
+- **Dragging the X slider in a running app grew two false panels** at either end of the sheet, perpendicular to
+  it and apparently stationary while the window moved. Cause: `SurfaceWorld.UnitX` **clamps**, so every sample
+  outside the window was drawn *at* the window's edge, piling each slice's off-window samples into a vertical
+  line there; the band fill between two slices became a flat slab. The designer never showed it because a saved
+  form has no `MinX`/`MaxX` — the window *is* the data's range.
+- **The samples are now CUT to the window** (`CutToWindow`), with the window's own edges interpolated so the
+  sheet ends exactly on the edge, and a segment that jumps clean over a narrow window contributing both edges.
+  The **height** (Y) window keeps its clamp: there, flattening onto the ceiling/floor is the documented
+  behaviour.
+- **Two measurements worth keeping**: with no window the render is **pixel-identical to the pre-fix build**
+  (0 of 128,800 pixels), and the new regression needs no reference image — the same chart at the same window
+  over two datasets differing **only outside** the window must be pixel-identical, with the no-window pair as
+  the control that proves the measurement can fail.
+- **The marker moved again: `BandTriangle` → `CutToWindow`** (a drawing change in an existing type, no property
+  touched), so a project holding the `0.11.14` chart is offered **Update now**.
+- **A useful negative result**: before finding the clamp I checked the §144 hypothesis — that the designer's
+  programmatic builder and the app's compiled XAML disagree — by building a scratch compiled-XAML project: the
+  two renders are **pixel-identical** (0 of 114,400), so the difference had to be *state*, not implementation.
+- **Docs**: `CHANGELOG` `[0.11.15]`, `USER_MANUAL` §19.13 (the width window cuts, the value window is a scale),
+  `README` version refs, `TEST_PLAN.md` §10, `NOTES.md` §148, `SESSION`, `PUBLISHING`.
+
+**Two things to know before continuing:**
+
+1. **A position window cuts; a value window scales.** If a future report sounds like "data piled up at the edge"
+   of a chart, look for a `Clamp01` on a *position* axis first — and remember the Z window drops whole slices,
+   which is a third flavour of the same idea.
+2. **`CutToWindow` is the staleness marker**, so the next drawing change in `GrumpyCharts` must move it again
+   (the marker is *the newest token the shipped file has that an old copy lacks*, and a private helper's name is
+   a perfectly good token when no property changed).
+
+**State at hand-off:** suite **7,941 passed / 0 failed**; host, generated C# project and the VB matrix 0
+warnings / 0 errors; `package.json` = `0.11.15`; VSIX packaged, audited and installed locally, tagged and
+released on GitHub.
+
+## Where the sixth session left off (2026-09-24, sixth session — 0.11.14)
 
 **The surface chart 3D ships, and the reason its bands showed the plot's backcolour is fixed — in both
 halves.**

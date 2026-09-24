@@ -7161,15 +7161,16 @@ Namespace Global.AvaloniaCharts
 
             If visible.Count < 2 Then Return   ' one slice is a profile, not a surface
 
-            ' The slices of this render: their own samples, their colour, and the depth their Z VALUE puts
-            ' them at.
+            ' The slices of this render: their own samples CUT to the width window, their colour, and the depth
+            ' their Z VALUE puts them at.  The cut is what keeps a window a window — see CutToWindow.
             Dim slices As New List(Of SurfaceSlice)()
             For Each p In visible
                 Dim z As Double = 0
                 If _sliceZ.TryGetValue(p, z) Then z = z Else z = 0
+                Dim cut = CutToWindow(p.Data.Xs, p.Data.Ys, world.Xs.Min, world.Xs.Max)
                 Dim item As New SurfaceSlice With {
-                    .Xs = p.Data.Xs,
-                    .Ys = p.Data.Ys,
+                    .Xs = cut.Xs,
+                    .Ys = cut.Ys,
                     .Color = p.LineColor,
                     .Z = z
                 }
@@ -7365,6 +7366,70 @@ Namespace Global.AvaloniaCharts
             g.EndFigure(True)
             Return want
         End Function
+
+        ''' <summary>
+        ''' One slice's samples CUT to the width window: the samples inside it, plus one point per crossing of
+        ''' the window's own edges (interpolated), so the sheet ends exactly ON the edge instead of losing a
+        ''' sample step there.
+        '''
+        ''' This is what stops a width window growing a WALL at each end.  SurfaceWorld.UnitX clamps, so a
+        ''' sample outside the window is drawn at x = 0 (or 1): while the samples were passed through
+        ''' untouched, every off-window sample of every slice collapsed onto the edge, and the fill between two
+        ''' slices became a flat slab perpendicular to the sheet — two false panels, pinned to the window edges
+        ''' and therefore "stationary" while the window was dragged (reported from the running app 2026-09-24;
+        ''' a SAVED window shows them in the designer too, which is how it was reproduced).  A window is a CUT:
+        ''' data outside it must not reach the picture at all, exactly as the Z window drops whole slices.
+        ''' </summary>
+        Private Shared Function CutToWindow(xs As Double(), ys As Double(), min As Double,
+                                            max As Double) As CutSamples
+            Dim count = Math.Min(xs.Length, ys.Length)
+            If count = 0 OrElse max <= min Then Return New CutSamples With {.Xs = xs, .Ys = ys}
+            Dim keptXs As New List(Of Double)(count + 2)
+            Dim keptYs As New List(Of Double)(count + 2)
+            For i As Integer = 0 To count - 1
+                Dim inside = xs(i) >= min AndAlso xs(i) <= max
+                If i > 0 Then
+                    Dim previousInside = xs(i - 1) >= min AndAlso xs(i - 1) <= max
+                    If inside <> previousInside Then
+                        Crossing(min, max, xs(i - 1), ys(i - 1), xs(i), ys(i), keptXs, keptYs)
+                    ElseIf Not inside AndAlso Math.Min(xs(i - 1), xs(i)) <= min AndAlso Math.Max(xs(i - 1), xs(i)) >= max Then
+                        ' A segment that jumps clean over a narrow window crosses BOTH edges.
+                        Crossing(min, max, xs(i - 1), ys(i - 1), xs(i), ys(i), keptXs, keptYs)
+                    End If
+                End If
+                If inside Then
+                    keptXs.Add(xs(i))
+                    keptYs.Add(ys(i))
+                End If
+            Next
+            Return New CutSamples With {.Xs = keptXs.ToArray(), .Ys = keptYs.ToArray()}
+        End Function
+
+        ''' <summary>The point (or two, when one segment jumps clean over the window) where the segment
+        ''' (x0,y0) -> (x1,y1) meets the window's edges, in the order the segment travels them, so the cut
+        ''' keeps the sheet's own edge sitting ON the window edge.  A segment that neither enters nor leaves
+        ''' the window adds nothing.</summary>
+        Private Shared Sub Crossing(min As Double, max As Double, x0 As Double, y0 As Double, x1 As Double,
+                                     y1 As Double, keptXs As List(Of Double), keptYs As List(Of Double))
+            If x1 > x0 Then
+                AddCrossing(min, x0, y0, x1, y1, keptXs, keptYs)
+                AddCrossing(max, x0, y0, x1, y1, keptXs, keptYs)
+            ElseIf x1 < x0 Then
+                AddCrossing(max, x0, y0, x1, y1, keptXs, keptYs)
+                AddCrossing(min, x0, y0, x1, y1, keptXs, keptYs)
+            End If
+        End Sub
+
+        ''' <summary>One edge of that cut, interpolated — and nothing at all when the edge is not strictly
+        ''' between the two samples (which is how a segment that only touches an edge, or stays outside, is
+        ''' ignored).</summary>
+        Private Shared Sub AddCrossing(edge As Double, x0 As Double, y0 As Double, x1 As Double, y1 As Double,
+                                       keptXs As List(Of Double), keptYs As List(Of Double))
+            Dim t = (edge - x0) / (x1 - x0)
+            If t <= 0 OrElse t >= 1 Then Return
+            keptXs.Add(edge)
+            keptYs.Add(y0 + (y1 - y0) * t)
+        End Sub
 
         ''' <summary>One slice's own profile line, as one figure (broken where a sample is missing).</summary>
         Private Shared Sub AddProfile(g As StreamGeometryContext, world As SurfaceWorld, slice As SurfaceSlice,
@@ -7672,6 +7737,14 @@ Namespace Global.AvaloniaCharts
             Friend Depth As Double
         End Class
 
+        ''' <summary>A slice's two sample arrays after the width window cut them — still index-aligned, and one
+        ''' sample longer at most than the data that was inside the window.  (VB will not take an array-typed
+        ''' tuple element, which is why this is a class rather than the C# twin's named tuple.)</summary>
+        Private NotInheritable Class CutSamples
+            Friend Xs As Double() = Array.Empty(Of Double)()
+            Friend Ys As Double() = Array.Empty(Of Double)()
+        End Class
+
         ''' <summary>To the screen: turn the cube by the azimuth, tip it by the elevation, drop the depth.</summary>
         Private NotInheritable Class SurfaceView
             Friend CosAzimuth As Double
@@ -7715,7 +7788,10 @@ Namespace Global.AvaloniaCharts
             Friend Zs As AxisRange = New AxisRange()
             Friend Depth As Double = 1.0
 
-            ''' <summary>The width positions, across the sheet from 0 to 1.</summary>
+            ''' <summary>The width positions, across the sheet from 0 to 1.  The clamp is only a safety net for the
+            ''' boundary sample and for a hand-set axis range: the samples themselves are CUT to the window
+            ''' before they get here (CutToWindow), because clamping them is what used to pile every off-window
+            ''' sample onto the edge and draw a false panel along it.</summary>
             Friend Function UnitX(x As Double) As Double
                 Return Clamp01((x - Xs.Min) / Math.Max(0.000000001, Xs.Max - Xs.Min))
             End Function

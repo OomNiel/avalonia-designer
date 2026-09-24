@@ -2252,6 +2252,13 @@ is the thing being chosen. Two behaviours are worth knowing:
 - **A window end snaps to the nearest slice.** "0 … 18" of a sheet sliced every 10 draws the same slices
   as "0 … 20", so a window can never leave a slice half-shown, and "0 … 4" still names one slice — which
   is a profile rather than a surface, so nothing is drawn.
+- **A width window CUTS the sheet.** Only the part you select is drawn — the data outside the window never
+  reaches the picture, so the sheet ends exactly on the window's edge (the samples the edge falls between are
+  interpolated onto it). Drag it while the app runs and you are looking through a window at the sheet, not at
+  a squeezed copy of the whole thing.
+- **A value window, by contrast, is a scale.** The part of the height it covers is what the sheet is drawn
+  against: a peak taller than the window flattens onto its ceiling and anything below flattens onto its floor,
+  which is what makes two charts readable against one scale.
 - **The view always re-fits to the window**, so a selection **zooms into** the sheet rather than leaving
   it small in the middle of the frame. Reading a few slices and then widening the window is the normal
   way to work: zoom in on the structure, zoom out for the overview.

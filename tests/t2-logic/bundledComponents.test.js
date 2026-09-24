@@ -137,7 +137,7 @@ internal static class PickerFolderMemory { internal static string? LastFolder { 
     // already carried `GrumpySurfacePlot`, so it was never reported stale: a DRAWING change in an existing
     // type is a marker move like any other, and the new member is what an old copy lacks.
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'BandTriangle', 'spec',
+    t.equal(chartSpec.marker, 'CutToWindow', 'spec',
         'the GrumpyCharts marker is the newest token in the current bundled file');
     const oldCsCharts = `// GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb).
 public sealed class ChartSeries { public double[] Xs = Array.Empty<double>(); }
@@ -237,7 +237,8 @@ public class GrumpySurfacePlot : ChartBase { }`;
         'and one with the surface chart 3D but before its triangle band fill (the app still drew holes)');
     // The current copy: the surface type AND the triangle fill that made the sheet solid.
     const curCsCharts = `${surfaceEraCsCharts}
-public static class BandFill { internal static double BandTriangle() => 0; }`;
+public static class BandFill { internal static double BandTriangle() => 0; }
+public static class WidthWindow { internal static double CutToWindow() => 0; }`;
     t.equal(isStaleBundledCopy(curCsCharts, false, 'GrumpyCharts'), false, 'detect',
         'the current chart file is current (the triangle band fill is the newest thing it ships)');
     t.equal(isStaleBundledCopy(`${oldCsCharts}\n// hand-tweaked below`, false, 'GrumpyCharts'), true, 'detect',
@@ -279,6 +280,8 @@ Public ReadOnly Property IsFilled As Boolean`;
         'the same copy in VB (surface type, no triangle band fill) is stale too — a drawing fix is a marker move');
     t.equal(isStaleBundledCopy(`${curVbCharts}
 Friend Function BandTriangle() As Double
+End Function
+Friend Function CutToWindow() As Double
 End Function`, true, 'GrumpyCharts'), false, 'detect',
         'the current VB chart file is current');
 

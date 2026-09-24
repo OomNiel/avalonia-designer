@@ -73,7 +73,7 @@ module.exports = async (t) => {
     for (const [lang, file] of [['C#', 'GrumpyCharts.cs'], ['VB', 'GrumpyCharts.vb']]) {
         const marker = bundledComponentSpecs(lang === 'VB')
             .find((s) => s.kind === 'GrumpyCharts').marker;
-        t.equal(marker, 'BandTriangle', `chart-${lang}`,
+        t.equal(marker, 'CutToWindow', `chart-${lang}`,
             `${lang}: the GrumpyCharts staleness marker is the newest thing an existing project needs`);
         has(read(file), marker, `chart-${lang}`,
             `${lang}: so the shipped file never looks stale (and a project's old copy is refreshed)`);

@@ -291,11 +291,27 @@ module.exports = (t) => {
     t.equal(defaultFor('ShowBase'), 'False', 'catalog', 'the block row starts off');
     t.equal(defaultFor('BaseColor'), '#3C3C3C', 'catalog', 'and the colour row has the control\'s own default');
 
+    // ---------------------------------------------------------------- the width window is a CUT, not a squeeze
+    // Reported from the running app on 2026-09-24: dragging the X slider grew "two panels at either end …
+    // stationary while changing the range of the x-axes", which the designer never showed. The cause was the
+    // clamp in SurfaceWorld.UnitX — a sample outside the window is drawn AT the window's edge, so each slice's
+    // off-window samples collapsed into a vertical line there and the band fill between two slices became a
+    // flat slab, i.e. a false panel pinned to the edge. The samples are now CUT to the window first, with the
+    // window's own edges interpolated so the sheet still ends exactly on the edge.
+    for (const [lang, text] of TWINS) {
+        const surface = bodyOf(text);
+        t.ok(/CutToWindow\(/.test(surface), lang, `${lang}: a slice's samples are CUT to the width window`);
+        t.ok(/CutToWindow\(p\.Data\.Xs, p\.Data\.Ys, world\.Xs\.Min, world\.Xs\.Max\)/.test(surface), lang,
+            `${lang}: and the slice is built from that cut, so nothing outside the window reaches the picture`);
+        t.ok(/AddCrossing\(/.test(surface), lang, `${lang}: the window's own edges are interpolated into the cut`);
+        t.ok(/must not reach the picture/.test(surface), lang, `${lang}: with the reason written down`);
+    }
+
     // ---------------------------------------------------------------- the staleness marker
     const spec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
     const vbSpec = bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(spec.marker, 'BandTriangle', 'marker',
-        'the marker is the triangle band fill — the newest thing the shipped file has that an old copy cannot show, because a DRAWING change in an existing type is invisible to it');
+    t.equal(spec.marker, 'CutToWindow', 'marker',
+        'the marker is the width-window CUT — the newest thing the shipped file has that an old copy cannot show, because a DRAWING change in an existing type is invisible to it');
     t.equal(vbSpec.marker, spec.marker, 'marker', 'both languages use the same marker');
     for (const [lang, text] of TWINS) {
         t.ok(text.includes(spec.marker), lang, `${lang}: the shipped file never looks stale`);

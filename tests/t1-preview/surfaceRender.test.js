@@ -296,6 +296,42 @@ ${SIX}
             'and that same box is plate in GridMesh, which has no fill — so the measurement can fail',
             `${plateIn(foldMesh.img)} of ${BOX.size * BOX.size} box pixels are plate`);
 
+        // ---------------------------------------------------------------- the width window is a CUT
+        // Reported from the running app on 2026-09-24, just after the fold fix: dragging the X slider grew
+        // "two panels at either end (in the X plane) … perpendicular to the x-plane and stays stationary while
+        // changing the range of the x-axes", which the designer never showed (a saved form has no window). The
+        // cause was SurfaceWorld's clamp: a sample outside the window was drawn AT the window's edge, so every
+        // off-window sample of every slice collapsed onto that edge and the fill between two slices became a
+        // flat slab there — a false panel, pinned to the edge, which is why it looked stationary. A window is
+        // a CUT.
+        //
+        // The measurement needs no reference image: the SAME chart at the SAME window, over two datasets that
+        // differ ONLY outside the window, must come out IDENTICAL — outside data may not reach the picture at
+        // all. The control that proves the measurement can fail is that same pair with no window.
+        const insideRun = [11, 10, 9, 8, 7, 6, 5, 4, 3, 2];      // samples 13…22 — the part the window keeps
+        const edge = (value) => `${Array(12).fill(value).join(',')},${insideRun.join(',')},${value},${value}`;
+        const cutChart = (sets, extra) => `    <charts:GrumpySurfacePlot x:Name="SfCut" Width="320" Height="240"
+      SampleSets="${sets}; ${sets}" Style="Solid" ColorBy="Sampleset" ShowTitle="False" ShowLegend="False"
+      ShowAxes="False" GridStyle="None" PlotBackColor="#000000" BorderThickness="0" ${extra}/>`;
+        const YFIX = 'MinY="0" MaxY="12"';                      // so only X decides the scale
+        const differing = (a, b) => {
+            let n = 0;
+            for (let i = 0; i < a.data.length; i += 4) {
+                if (Math.abs(a.data[i] - b.data[i]) > 8 || Math.abs(a.data[i + 1] - b.data[i + 1]) > 8
+                    || Math.abs(a.data[i + 2] - b.data[i + 2]) > 8) n++;
+            }
+            return n;
+        };
+        const cutA = await shot(cutChart(edge(50), `MinX="13" MaxX="22" ${YFIX}`), 320, 240);
+        const cutB = await shot(cutChart(edge(0), `MinX="13" MaxX="22" ${YFIX}`), 320, 240);
+        t.equal(differing(cutA.img, cutB.img), 0, 'window',
+            'data OUTSIDE the width window never reaches the picture: one window over two different outside datasets is pixel-identical');
+        const wideA = await shot(cutChart(edge(50), YFIX), 320, 240);
+        const wideB = await shot(cutChart(edge(0), YFIX), 320, 240);
+        t.ok(differing(wideA.img, wideB.img) > 2000, 'window',
+            'and with no window those same two datasets DO differ — so the measurement above can fail',
+            `${differing(wideA.img, wideB.img)} differing pixels`);
+
         // ---------------------------------------------------------------- the three STYLES
         const started = Date.now();
         const mesh = await shot(plot('Sf11', 'Style="GridMesh"'));

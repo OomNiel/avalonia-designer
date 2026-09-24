@@ -6306,13 +6306,18 @@ public class GrumpySurfacePlot : ChartBase
 
         if (visible.Count < 2) return;   // one slice is a profile, not a surface
 
-        // The slices of this render: their own samples, and the depth their Z VALUE puts them at.
-        var slices = visible.Select(p => new SurfaceSlice
+        // The slices of this render: their own samples CUT to the width window, and the depth their Z VALUE
+        // puts them at. The cut is what keeps a window a window — see CutToWindow.
+        var slices = visible.Select(p =>
         {
-            Xs = p.Data.Xs,
-            Ys = p.Data.Ys,
-            Color = p.LineColor,
-            Z = _sliceZ.TryGetValue(p, out var z) ? z : 0d
+            var cut = CutToWindow(p.Data.Xs, p.Data.Ys, world.Xs.Min, world.Xs.Max);
+            return new SurfaceSlice
+            {
+                Xs = cut.Xs,
+                Ys = cut.Ys,
+                Color = p.LineColor,
+                Z = _sliceZ.TryGetValue(p, out var z) ? z : 0d
+            };
         }).ToList();
         foreach (var slice in slices) slice.Depth = world.UnitZOf(slice.Z);
 
@@ -6500,6 +6505,75 @@ public class GrumpySurfacePlot : ChartBase
         g.LineTo(r);
         g.EndFigure(true);
         return want;
+    }
+
+    /// <summary>
+    /// One slice's samples CUT to the width window: the samples inside it, plus one point per crossing of
+    /// the window's own edges (interpolated), so the sheet ends exactly ON the edge instead of losing a
+    /// sample step there.
+    ///
+    /// This is what stops a width window growing a WALL at each end. <c>SurfaceWorld.UnitX</c> clamps, so a
+    /// sample outside the window is drawn at <c>x = 0</c> (or 1): while the samples were passed through
+    /// untouched, every off-window sample of every slice collapsed onto the edge, and the fill between two
+    /// slices became a flat slab perpendicular to the sheet — two false panels, pinned to the window edges
+    /// and therefore "stationary" while the window was dragged (reported from the running app 2026-09-24; a
+    /// SAVED window shows them in the designer too, which is how it was reproduced). A window is a CUT:
+    /// data outside it must not reach the picture at all, exactly as the Z window drops whole slices.
+    /// </summary>
+    private static (double[] Xs, double[] Ys) CutToWindow(double[] xs, double[] ys, double min, double max)
+    {
+        var count = Math.Min(xs.Length, ys.Length);
+        if (count == 0 || max <= min) return (xs, ys);
+        var keptXs = new List<double>(count + 2);
+        var keptYs = new List<double>(count + 2);
+        for (var i = 0; i < count; i++)
+        {
+            var inside = xs[i] >= min && xs[i] <= max;
+            if (i > 0)
+            {
+                var previousInside = xs[i - 1] >= min && xs[i - 1] <= max;
+                if (inside != previousInside)
+                    Crossing(min, max, xs[i - 1], ys[i - 1], xs[i], ys[i], keptXs, keptYs);
+                else if (!inside && Math.Min(xs[i - 1], xs[i]) <= min && Math.Max(xs[i - 1], xs[i]) >= max)
+                    Crossing(min, max, xs[i - 1], ys[i - 1], xs[i], ys[i], keptXs, keptYs);
+            }
+            if (inside)
+            {
+                keptXs.Add(xs[i]);
+                keptYs.Add(ys[i]);
+            }
+        }
+        return (keptXs.ToArray(), keptYs.ToArray());
+    }
+
+    /// <summary>The point (or two, when one segment jumps clean over the window) where the segment
+    /// <c>(x0,y0) → (x1,y1)</c> meets the window's edges, in the order the segment travels them, so the cut
+    /// keeps the sheet's own edge sitting ON the window edge. A segment that neither enters nor leaves the
+    /// window adds nothing.</summary>
+    private static void Crossing(double min, double max, double x0, double y0, double x1, double y1,
+                                 List<double> keptXs, List<double> keptYs)
+    {
+        if (x1 > x0)
+        {
+            AddCrossing(min, x0, y0, x1, y1, keptXs, keptYs);
+            AddCrossing(max, x0, y0, x1, y1, keptXs, keptYs);
+        }
+        else if (x1 < x0)
+        {
+            AddCrossing(max, x0, y0, x1, y1, keptXs, keptYs);
+            AddCrossing(min, x0, y0, x1, y1, keptXs, keptYs);
+        }
+    }
+
+    /// <summary>One edge of that cut, interpolated — and nothing at all when the edge is not strictly between
+    /// the two samples (which is how a segment that only touches an edge, or stays outside, is ignored).</summary>
+    private static void AddCrossing(double edge, double x0, double y0, double x1, double y1,
+                                    List<double> keptXs, List<double> keptYs)
+    {
+        var t = (edge - x0) / (x1 - x0);
+        if (t <= 0 || t >= 1) return;
+        keptXs.Add(edge);
+        keptYs.Add(y0 + (y1 - y0) * t);
     }
 
     /// <summary>One slice's own profile line, as one figure (broken where a sample is missing).</summary>
@@ -6876,7 +6950,10 @@ public class GrumpySurfacePlot : ChartBase
         internal AxisRange Zs = new();
         internal double Depth = 1d;
 
-        /// <summary>The width positions, across the sheet from 0 to 1.</summary>
+        /// <summary>The width positions, across the sheet from 0 to 1. The clamp is only a safety net for the
+        /// boundary sample and for a hand-set axis range: the samples themselves are CUT to the window before
+        /// they get here (<see cref="CutToWindow"/>), because clamping them is what used to pile every
+        /// off-window sample onto the edge and draw a false panel along it.</summary>
         internal double UnitX(double x) => Clamp01((x - Xs.Min) / Math.Max(1e-9, Xs.Max - Xs.Min));
 
         /// <summary>The heights, up the sheet from 0 to 1.</summary>

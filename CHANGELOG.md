@@ -12,6 +12,47 @@ versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the n
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
 
+## [0.11.15] - 2026-09-24 · *the width window is a cut, not a squeeze*
+
+A follow-up to `0.11.14`, from a report made while dragging the chart in a **running app**: *"the 3D surface
+plot renders two 'panels' at either end (in the X plane). These panels are perpendicular to the x-plane and
+stays stationary while changing the range of the x-axes."* — and, the detail that pinned it down, *"These
+panels are not shown during design time"* and *"only appears when adjusting the x-range during run time"*.
+
+### Fixed — dragging the X window grew a false panel at each end of the sheet (reported 2026-09-24)
+
+- The width window **clamped** instead of cutting: `SurfaceWorld.UnitX` maps a value onto `0…1` and clamps, so
+a sample **outside** the window was drawn *at* the window's edge. Dragging the X slider therefore piled every
+off-window sample of every slice onto that edge, and the band fill between two neighbouring slices became a
+flat **slab** there — two panels standing perpendicular to the sheet, one at each end, **pinned to the window
+edges** and therefore apparently stationary while the window moved. It is real geometry, recomputed every
+frame, so it was never a stale-pixel artefact.
+- **Why the designer never showed them**: a saved form has no `MinX`/`MaxX`, so the window *is* the data's own
+range and there is nothing outside it to clamp. The preview draws the saved values; the app grew the panels
+the moment a slider moved them inwards. (A *saved* narrow window shows them in the designer too — which is
+how it was reproduced.)
+- **The samples are now CUT to the window** (`CutToWindow`): the samples inside it, plus one interpolated point
+per crossing of the window's own edges, so the sheet still ends exactly ON the edge instead of losing a sample
+step there. A segment that jumps clean over a narrow window contributes both edges. `UnitX`'s clamp stays only
+as a safety net for the boundary sample and for a hand-set axis range.
+- **Measured**: at `MinX="100" MaxX="120"` on the reporting form the panels are gone; with **no** window the
+render is **pixel-identical to before the fix** (0 of 128,800 pixels differ), so nothing else about the picture
+moved. The suite's new regression pins the rule directly — the same chart, the same window, over two datasets
+that differ **only outside** the window, must come out **pixel-identical**, with the same pair and **no** window
+as the control that proves the measurement can fail.
+
+### Notes
+
+- **The bundled-file marker moved again, to `CutToWindow`.** This is a *drawing* change in an existing type —
+no property of any form changed — which is exactly the case an old copy cannot show, so a project still holding
+the `0.11.14` chart is now offered **Update now** on open or save. (Same lesson as `BandTriangle` in
+`0.11.14`: the refresh only knows what the marker tells it.)
+- **The height (Y) window keeps its clamp**, deliberately: there, clamping means values above or below the
+window flatten onto its ceiling or floor, which a test pins as the documented behaviour. A *width* clamp has
+no such reading — it can only pile data into a wall.
+- Suite **7,941 passed / 0 failed** (the surface layer 76, the source contracts 185); the host, a generated C#
+project and the VB matrix all build 0 warnings / 0 errors.
+
 ## [0.11.14] - 2026-09-24 · *the surface chart 3D, and the fill that showed the plot's backcolour through it*
 
 The chart set gains a **seventh control** — a projected **3D surface**, a corrugated sheet read from a

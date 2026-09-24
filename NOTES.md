@@ -3816,3 +3816,74 @@ it and the VSIX had grown from 1.16 MB to **5.29 MB**. Removing it takes the pac
 **Suite:** 7,931 passed / 0 failed (surface layer 74, source contracts 181, `bundledComponents` 56). Host,
 generated C# project and the VB matrix: 0 warnings / 0 errors.
 
+### §148 — a clamp that drew two panels: the width window was a squeeze, not a cut (2026-09-24, 0.11.15)
+
+**The report, and the three clues that mattered.** *"the 3D surface plot renders two 'panels' at either end (in
+the X plane). These panels are perpendicular to the x-plane and stays stationary while changing the range of the
+x-axes"*, then *"These panels are not shown during design time"*, then *"only appears when adjusting the x-range
+during run time"*. Reading those together: the artefact depends on an **interaction** (dragging the slider),
+and on **state a saved form does not have** (a window). Neither could be a redraw bug: a `Render()` paints from
+scratch every frame, so nothing can be "left over" — what changed was the *input*.
+
+**The hypothesis I had to kill first, with a number.** §144's lesson says the designer's preview is a *second
+implementation* (the host's programmatic builder) and that it silently drops what it was never taught — the
+obvious suspect. So I built a scratch project that compiles the form's XAML the way the app does
+(`/tmp/sprobe/compiled`, Avalonia.Headless + Skia + RTB, exactly the host's render call) and compared it with
+the host's render of the same element: **0 of 114,400 pixels differ.** That does not make the builder perfect;
+it makes *this* case not about the builder — so the difference had to be state, and the state that only the app
+has is the window the user was dragging.
+
+**The cause is one `Clamp01`.** `SurfaceWorld.UnitX` maps a value onto `0…1` and clamps, so a sample **outside**
+the window is drawn **at** the window's edge. Drag the X slider inwards and every off-window sample of every
+slice piles onto that edge; the band fill between two neighbouring slices then becomes a flat **slab** standing
+perpendicular to the sheet — one at each end, *pinned to the window edges* (hence "stationary"), rebuilt every
+frame (hence never clearing). A saved form has no `MinX`/`MaxX`, so its window *is* the data's own range, there
+is nothing outside it — and the designer has no panels to show. A **saved** narrow window shows them in the
+designer too; that is how it was reproduced.
+
+**What the fix is, and the four details that make it correct:**
+
+1. **Cut, don't clamp** (`CutToWindow`): keep the samples inside the window, and interpolate the one point per
+   crossing of the window's own edges, so the sheet still ends **exactly on** the edge rather than one sample
+   short of it.
+2. **A segment can jump clean over a narrow window** (sample step > window width): that pair contributes
+   **both** edges, in travel order — otherwise a very narrow window would punch a hole in the sheet.
+3. **`AddCrossing` guards `t ∈ (0,1)`**, which is what makes the edge cases fall out for free (a sample sitting
+   exactly on the edge adds nothing, a segment that only touches one adds nothing) and keeps the walk
+   allocation-free — it runs per sample pair per slice, on the drag path.
+4. **VB will not take an array-typed tuple element** (`As (Xs As Double(), Ys As Double)` compiles as two
+   *`Double`s*, then every `Return (a, b)` is a type error). The C# twin keeps its named tuple; the VB twin has
+   a five-line `CutSamples` holder instead, so the call sites still read `.Xs`/`.Ys` in both.
+
+`UnitX`'s clamp stays, but only as a safety net for the boundary sample and for a hand-set axis range — and its
+doc now says so.
+
+**Measured, both directions.** On the reporting form at `MinX="100" MaxX="120"` the panels are gone; with **no**
+window the picture is **pixel-identical to the pre-fix build** (0 of 128,800 pixels), so the cut only ever
+removes what the window excluded. The new regression needs no reference image at all: **the same chart at the
+same window over two datasets differing ONLY outside the window must be pixel-identical** (0 differing pixels),
+with the same pair and **no** window as the control (>2,000 pixels differ, because the outside data is 50
+against 0 there — the measurement can fail).
+
+**The marker moved again — `BandTriangle` → `CutToWindow`.** A *drawing* change in an existing type, with no
+form property touched, is invisible to a copy that already carries the previous token: that is precisely how
+this reached a released app (`0.11.14`) before it reached the designer. One day, two markers, the same lesson.
+
+**Lessons.**
+
+1. **Prove the render paths identical, then look at state.** "Designer right, app wrong" has two families of
+   cause — a second implementation (§144) and a different *state* (window, zoom, size, runtime data). A single
+   pixel-diff between a compiled-XAML build and the host's builder separates them in one run.
+2. **"Only while dragging" is about inputs, not about repainting.** `Render()` cannot leave anything behind;
+   ask what the drag *writes* (here: `MinX`/`MaxX`), then render the chart with that value saved.
+3. **A clamp means different things on a position axis and a value axis.** On the height it is a scale
+   (flatten onto the ceiling/floor — documented and tested); on the width it is a **wall**, i.e. a picture that
+   claims data where there is none. Same helper, opposite meanings.
+4. **Test the invariant, not the picture**: "data outside the window must not change a pixel" is decidable
+   without a reference image, and no clamp can satisfy it.
+5. **A pre-release "follow-up" release is cheap** when the marker, the changelog and the test plan are already
+   a habit — this one was found, fixed, tested, documented and tagged inside the same session.
+
+**Suite:** 7,941 passed / 0 failed (surface layer 76, source contracts 185). Host, generated C# project and the
+VB matrix: 0 warnings / 0 errors.
+
