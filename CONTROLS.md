@@ -217,21 +217,52 @@ See **USER_MANUAL §19, "The charting tools"** for the full walkthrough.
   one value or four (`4,8,4,8`), and leaving it empty keeps the chart's own small gap. Then gridlines
   (colour/thickness/style), the title (text/show/position/colour/size), the fixed scale overrides
   (`MinX`/`MaxX`/`MinY`/`MaxY`) and `DockPanel.Dock`.
-- **Hardcopy** (0.12.0): the right-click menu carries **Print…** (the platform's own dialog, via
-  `Avae.Printables`) and **Print to PDF…** (`AvaloniaUI.PrintToPDF` — asks for a file, writes vector Skia
-  output, needs no printer). Both sit on **`ChartBase`** (`PrintAsync()` / `PrintToPdfAsync()`, `public
-  async Task`), so every chart type has them, including the pie and the bar, which return before the cursor
-  section of that menu. They are compiled in behind the **`PRINT_SUPPORT`** constant: a project the
-  designer generated from 0.12.0 on defines it and references both packages, the headless `PreviewerHost`
-  does not (so the design canvas has no print entries), and an older project simply has neither until the
-  two packages and the symbol are added (USER_MANUAL §19.14). Each method guards itself — no window, no
-  printing service, no picked file — and swallows its own exceptions, so the menu can never crash a form.
+- **Hardcopy** (0.12.0, reworked in 0.12.1): the right-click menu carries **Print…** (the platform's own
+  dialog, via `Avae.Printables`), **Print to PDF…** (`AvaloniaUI.PrintToPDF` — asks for a file, writes vector
+  Skia output, needs no printer) and **Save as picture…** (PNG through `RenderTargetBitmap`), plus **Ctrl+P**
+  from the keyboard. All of it sits on **`ChartBase`**, so every chart type has it, including the pie and the
+  bar, which return before the cursor section of that menu. Compiled in behind the **`PRINT_SUPPORT`**
+  constant: a project the designer generated from 0.12.0 on defines it and references both packages, the
+  headless `PreviewerHost` does not (so the design canvas has no hardcopy entries), and an older project is
+  offered the two packages plus the symbol the first time a chart is placed in it (USER_MANUAL §19.14).
+- **The page is a real page** (0.12.1): **`PrintPaper`** (`ChartPaper`: `AsDrawn` — the default, the chart's
+  own size edge to edge — `A4` 595 × 842 pt, `Letter` 612 × 792 pt), **`PrintMargin`** (points inside the
+  paper; ignored on `AsDrawn`) and **`PrintLightBackground`** (paint the page white first). The chart is
+  painted onto the page through a `VisualBrush` — `ChartPrintPage`, `internal` — so the PDF stays **vector**,
+  and the page is laid out before it is handed to a backend (an un-laid-out visual renders *nothing*, which
+  is how the PDF path failed with `Invalid create info - no Canvas provided` until it was fixed). These three
+  rows sit **outside** the symbol, so the previewer parses a form that sets them.
+- **The legend on the paper** (0.12.2): **`PrintLegend`** (**`ChartLegendMode`**: `AsDrawn` — the default,
+  whatever the chart shows — `Off` — the graph alone, the legend's room going back to the plot — `On` —
+  forced on for the page). The override is **scoped to the job**: `ApplyPrintLegend` / `LegendRestore` set and
+  put back the chart's own `ShowLegend` around the render — re-laying the chart out at its own size first,
+  because the legend's room is baked into the laid-out positions and a merely invalidated chart would draw
+  the gap with nothing in it — so a print never changes what is on screen. Outside the symbol, like the three
+  rows above.
+- **Printing on Linux** (0.12.2): `Avae.Printables` publishes a real service only for the platforms it targets,
+  and a plain Linux desktop gets its **API-only** asset — `UsePrintables()` compiles, runs and registers
+  nothing, so `Printable.Default` stays null. The bundled **`GrumpyPrint`** helper fills exactly that gap:
+  it renders the page to a temporary PDF (the same vector export the chart writes) and hands it to **CUPS**
+  (`lp [-d printer] -t title file`), after checking `OperatingSystem.IsLinux()` and `lp` on the `PATH` —
+  cached, never throwing. It is consulted only when no service exists, so Windows and macOS keep their own
+  dialog, and `CanPrint` means *either* backend. It deliberately does **not** implement `Avae.Printables`'
+  `IPrintingService`: that interface's `GetVisual()` member is `Friend` in 3.0.7, so VB cannot implement it at
+  all (BC30390) and C# only explicitly — and the two twins stay twins.
+- **The API behind the menu** (0.12.1): `PrintAsync(options)` returns `Task<bool>`, `PrintToPdfAsync(options)`
+  (picker) and `ExportPdfAsync(path|stream, options)`, `ExportPng(path, scale)`, `SaveAsPictureAsync()` — the
+  picker-free ones are what an app or a test drives. **`CanPrint`** is a static test on `Printable.Default`:
+  the menu **disables** `Print…` (tooltip: which call is missing) instead of offering a click that does
+  nothing. Failures go to a **`PrintFailed`** event (plus `Trace`), never thrown, and `_printBusy`/`IsPrinting`
+  stop a second dialog while one export runs. When a platform prints a *file* but not a *Visual*, the chart
+  renders a temporary PDF and hands that over. `ChartPickerMemory.LastExportFolder` remembers the PDF/PNG
+  folder separately from the spreadsheet one.
 
 > **An old copy of the bundled chart file cannot compile the newer series/axis/legend/cursor/brush XAML**
 > (`AVLN2000: Unable to resolve type XYSeries…`, `… type ChartCursor …`, or a `PlotBackBrush` property), and
-> its menu is missing whatever was added since — the **Legend** toggle, the surface legend's sliders and
-> the **Print…** / **Print to PDF…** entries. The designer refreshes it for you: save the form once after
-> using a chart editor, and the project's `GrumpyCharts.cs`/`.vb` is updated — it tells you when.
+> its menu is missing whatever was added since — the **Legend** toggle, the surface legend's sliders, and the
+> **Print…** / **Print to PDF…** / **Save as picture…** entries with the page rows behind them. The designer
+> refreshes it for you: save the form once after using a chart editor, and the project's
+> `GrumpyCharts.cs`/`.vb` is updated — it tells you when.
 
 ---
 

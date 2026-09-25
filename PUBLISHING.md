@@ -233,8 +233,72 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.12.0` (2026-09-25) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); **THIS is the
-> file to upload to the Marketplace.**
+> **`0.12.2` (2026-09-25) — packaged, committed, tagged and released; **THIS is the file to upload to the
+> Marketplace.** It is the Linux-printing follow-up to `0.12.1`, and it carries everything `0.12.1` itself
+> carries — the whole `0.11` chart line, the hardcopy rework and the install size — so one upload brings the
+> listing from `0.11.0` up to date.
+>
+> **Artefact:** `avalonia-designer-0.12.2.vsix`, **1,276,909 bytes**, sha256
+> **`5823f6d917b0d642ed30bb886ecdeff63de1c163c8367df92a1d8f04482350d6`**, **121 files** (0 source maps; 0.12.1
+> had 119 — the two new bundled helpers), manifest `Version="0.12.2"` and **no `PreRelease` attribute** (a
+> plain, stable upload). **Verified:** local `sha256sum`; the packaged `resources/GrumpyCharts.{cs,vb}` **and**
+> `resources/GrumpyPrint.{cs,vb}` open with `BUNDLED-COPY: 0.12.2`; `out/propertyCatalog.js` carries the
+> `PrintLegend` row and `out/bundledComponents.js` the `GrumpyPrint` spec (6 hits — the union member, the
+> entry, the file names and the marker); the packaged `host/PreviewerHost.csproj` links
+> `../resources/GrumpyPrint.cs`; and the packaged `README.md` still links the collage as
+> `…/raw/HEAD/DesignerDemo.png`. Suite **8,495 passed / 0 failed** (host + all generated projects + the VB
+> matrix 0/0, with and without `PRINT_SUPPORT`), PROBLEMS clean.
+>
+> **What it changes** (all of it described in `CHANGELOG.md` `[0.12.2]` and `NOTES.md` §153): the charts now
+> print on a **Linux desktop**, through the new bundled **`GrumpyPrint`** helper, because `Avae.Printables`
+> publishes a real service only for the platforms it targets and an **API-only** asset for a plain Linux build
+> — where `UsePrintables()` registered nothing and **Print…** stayed greyed out. The helper renders the page to
+> a temporary PDF (still vector) and hands it to **CUPS** (`lp`), and it is consulted only when no service
+> exists, so Windows and macOS keep the platform dialog. **`CanPrint`** therefore means *either* backend. The
+> same release adds the **`Print Legend`** row (*As drawn* / *Off* / *On*) to all seven charts, scoped to the
+> job so a print never changes what is on screen, and moves the staleness marker to `GrumpyPrint` so an older
+> project's chart **and** helper are refreshed together.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.12.2.vsix` → leave **Pre-release
+> unchecked** → then confirm with the gallery query below that the version is `0.12.2` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
+> the user's.**
+
+> **`0.12.1` (2026-09-25) — **SUPERSEDED by `0.12.2` — do not upload this file.** It was packaged and
+> verified but never published, and `0.12.2` carries all of it plus Linux printing and the legend row. It is
+> the hardcopy follow-up to `0.12.0`, and it carries everything `0.12.0` itself carries — the whole `0.11`
+> chart line and the install size — so one upload brings the listing from `0.11.0` up to date.
+>
+> **Artefact:** `avalonia-designer-0.12.1.vsix`, **1,262,058 bytes**, sha256
+> **`7c2026e76771dd6d87640e892ee186a48c80948389918befb156fa89a6d89ad7`**, **119 files** (0 source maps),
+> manifest `Version="0.12.1"` and **no `PreRelease` attribute** (a plain, stable upload). **Not committed,
+> not tagged, not released** — superseded before any GitHub side was made. **Verified:** local
+> `sha256sum`; the packaged `resources/GrumpyCharts.{cs,vb}` open with `BUNDLED-COPY: 0.12.1`; the packaged
+> `host/PreviewerHost.csproj` carries `NETCoreSdkPortableRuntimeIdentifier` and
+> `AppendRuntimeIdentifierToOutputPath`; `out/printSupport.js`, the `PrintPaper` rows in
+> `out/propertyCatalog.js` and `offerPrintSupport` in `out/designerPanel.js` are all inside the package; and
+> the packaged `README.md` links the collage as `…/raw/HEAD/DesignerDemo.png`. Suite **8,346 passed /
+> 0 failed**.
+>
+> **What it changes** (the preview of the print path, all of it described in `CHANGELOG.md` `[0.12.1]`):
+> **Print…** is disabled with a tooltip naming the missing call instead of offering a click that does
+> nothing; failures go to a new `PrintFailed` event rather than a bare `catch`; the page can be real paper
+> (**Print Paper** A4/US Letter, **Print Margin**, **Print on White** — three rows on all seven charts, the
+> chart painted onto the page so the PDF stays vector); **Save as picture…** (PNG) and **Ctrl+P** joined the
+> menu; `ExportPdfAsync(path|stream)` / `ExportPng(path, scale)` make the output reachable without a picker;
+> and the designer now offers the two packages plus `PRINT_SUPPORT` to a project generated before `0.12.0`.
+> `0.12.1` also fixes the A4 page that rendered nothing through the PDF backend (an un-laid-out visual) —
+> found by the new headless harness, which measures the page size and the pixels of both outputs.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.12.1.vsix` → leave **Pre-release
+> unchecked** → then confirm with the gallery query below that the version is `0.12.1` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
+> the user's.**
+
+> **`0.12.0` (2026-09-25) — GitHub release only; **SUPERSEDED by `0.12.2` (and by `0.12.1`) — do not upload this file.** Its
+> `.vsix` stays attached to its own GitHub release as the record of that build. It was the release that put
+> **hardcopy output** on the charts and brought the listing up from `0.11.0` with the whole `0.11` chart line
+> and the install size.
 >
 > **Corrected baseline:** the stable listing carries **`0.11.0`**, not `0.11.15` — read back from the gallery
 > on 2026-09-25 (`0.11.0`, last updated 2026-09-20; `vsce show` lists the same four: `0.11.0`, `0.10.10`,

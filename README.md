@@ -47,7 +47,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.12.0`**, so the command above installs it (add `-force` to reinstall, or to
+The current version is **`0.12.2`**, so the command above installs it (add `-force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -56,11 +56,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.12.0.vsix --force
+code --install-extension avalonia-designer-0.12.2.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.12.0` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.12.2` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -194,10 +194,18 @@ The chart's own frame rows are in the same panel — backcolour and opacity, the
 between that border and the chart frame (it pushes the title, the legend bar and the plot inward; leave it
 empty and nothing moves), and a **Background Gradient** (linear, radial or conic, with three colour stops).
 The workbook is chosen from the chart's **right-click menu** (*Choose spreadsheet…*). That menu also carries
-**Print…** (the platform's own print dialog) and **Print to PDF…** (pick a file, get a PDF — on every
-platform), on every chart type including the pie and the bar. Both come from two small packages
-(`Avae.Printables` + `AvaloniaUI.PrintToPDF`) that a **newly generated** project already references and
-enables; the previewer deliberately has neither, so the designer canvas stays printer-free. The whole
+the hardcopy output: **Print…** (the platform's own print dialog), **Print to PDF…** (pick a file, get a PDF
+— on every platform) and **Save as picture…** (a PNG), on every chart type including the pie and the bar;
+**Ctrl+P** does the same from the keyboard. **Print Paper** (*As drawn*, the default, or A4 / US Letter),
+**Print Margin**, **Print on White** and **Print Legend** (*As drawn*, **Off** for the graph alone, or *On*)
+are rows in the Properties panel, and they describe a real page — the chart is painted onto it rather than
+rasterised into it, so the PDF stays **vector**. The two packages behind the print entries
+(`Avae.Printables` + `AvaloniaUI.PrintToPDF`) arrive with a **newly generated** project, and an older one is
+offered them the first time a chart is placed. `Print…` needs one of two backends: the platform's own print
+dialog (registered with `AppBuilder.UsePrintables()` — Windows, macOS, GTK), or, **on a Linux desktop**, the
+bundled **`GrumpyPrint`** helper driving **CUPS** (`lp`), which is why it is no longer greyed out there;
+without either it comes up disabled with the reason in its tooltip, while the PDF and PNG paths keep working.
+The previewer deliberately has neither package, so the design canvas stays printer-free. The whole
 walkthrough is **USER_MANUAL §19** (§19.14 for hardcopy).
 
 ## 8. A property grid that behaves like a real one

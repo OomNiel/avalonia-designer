@@ -66,7 +66,7 @@
     - [The Data Selector editor — which file, and which page (since 0.11.7)](#1911-the-data-selector-editor--which-file-and-which-page-since-0117)
     - [The waterfall chart (since 0.11.12)](#1912-the-waterfall-chart-since-01112)
     - [The surface chart 3D (since 0.11.14)](#1913-the-surface-chart-3d-since-01114)
-    - [Printing a chart — hardcopy and PDF (since 0.12.0)](#1914-printing-a-chart--hardcopy-and-pdf-since-0120)
+    - [Printing a chart — hardcopy and PDF (since 0.12.0; page, PNG and Ctrl+P since 0.12.1; Linux printing and Print Legend since 0.12.2)](#1914-printing-a-chart--hardcopy-and-pdf-since-0120)
 
 ---
 
@@ -160,7 +160,7 @@ search for *Grumpy's WYSIWYG Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.12.0`**, so the command above installs it; add `--force` to
+The current version is **`0.12.2`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -172,7 +172,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.12.0` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.12.2` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -1813,8 +1813,8 @@ which columns it reads and how it is drawn, the **legend** names them, and — w
 the **axes** describe the scales and up to two **cursors** let a user read values off the plot (19.8).
 The two **projected** charts (the waterfall and the surface) have no cursors and no Axis editor: their
 three axes are drawn in projection, and their own legend selects a range instead (19.12, 19.13).
-Every one of them also puts the picture on paper: the right-click menu's **Print…** and **Print to PDF…**
-entries (19.14) work on all seven, cursors or no cursors.
+Every one of them also puts the picture on paper: the right-click menu's **Print…**, **Print to PDF…** and
+**Save as picture…** entries (19.14) work on all seven, cursors or no cursors — and so does **Ctrl+P**.
 
 ### 19.1 Placing a chart
 
@@ -2352,7 +2352,7 @@ reads by default.
 
 ### 19.14 Printing a chart — hardcopy and PDF (since 0.12.0)
 
-Avalonia ships no print API, so the chart's **right-click menu** carries two entries that borrow one — on
+Avalonia ships no print API, so the chart's **right-click menu** carries three entries that borrow one — on
 **every** chart type, including the pie and the bar, which skip the rest of that menu because they have no
 cursors:
 
@@ -2360,22 +2360,53 @@ cursors:
 |---|---|
 | **Print…** | Opens the platform's own print dialog (printer, paper, copies) and draws the chart onto the page. |
 | **Print to PDF…** | Asks you for a file name, then writes the chart to a **PDF** — no dialog and no printer, so it works on every platform. |
+| **Save as picture…** | Asks for a file name and writes a **PNG** — no printer anywhere in the path. |
 
-Three things are worth knowing before you go looking for them:
+**Ctrl+P** does the same from the keyboard while the chart has focus (the control takes the keyboard for its
+cursor keys anyway). On a build where printing is not available — see the second point below — Ctrl+P
+exports a PDF rather than doing nothing.
+
+Four things are worth knowing before you go looking for them:
 
 - **They are in the app you run, not on the design canvas.** The designer's preview is drawn by a headless
-  host built *without* the printing packages, so its chart menu shows neither entry. Press **F5** and
+  host built *without* the printing packages, so its chart menu shows none of the three. Press **F5** and
   right-click the chart in the running window.
-- **The page is the size of the control.** A chart drawn 600 × 300 gets a 600 × 300 page (about 21 × 10.6 cm)
-  with the chart filling it; fitting that to A4 or turning it to landscape is the print dialog's business.
-  The PDF is **vector** output, so enlarging it stays sharp. Size the chart as the shape you want on paper.
-- **A failure can never take your form down.** Both entries check what they need first (a window, a printer
-  service, a file the user really picked) and both swallow their own errors, so the worst case is that
-  nothing is printed.
+- **`Print…` can be greyed out, and it says why.** It needs one of two backends: the *platform's own print
+  dialog*, which needs an app that registered it with `AppBuilder.UsePrintables()` on a platform that has one
+  — or, **on a Linux desktop**, the **CUPS** client that the bundled helper drives, which needs nothing more
+  than `lp` on your `PATH` (it comes with CUPS: `sudo apt install cups-client` on Debian and Ubuntu, for
+  instance). Both are bundled with the chart, so a project generated from 0.12.2 on prints on Linux without
+  any further setup. With neither, the entry is **disabled** and its tooltip names both routes — the chart
+  itself is fine, and **Print to PDF…** and **Save as picture…** never need a printer at all.
+- **The page is yours to choose (since 0.12.1).** Three rows in the chart's Properties panel decide it:
+  **Print Paper** — *As drawn* (the default: the chart's own size becomes the page, edge to edge), **A4** or
+  **US Letter** — **Print Margin**, the room inside the paper in points (1/72 inch; ignored while the page is
+  the chart itself) and **Print on White**, which paints the page white first, for a chart with a dark plot
+  background. On real paper the chart is scaled to *fit* the margin and never stretched, and the output stays
+  **vector**, so enlarging it is still sharp — a chart drawn 600 × 300 on *As drawn* gives a 600 × 300 page
+  (about 21 × 10.6 cm), and A4 gives a real 595 × 842 pt page whatever size the chart has on screen. Fitting
+  that sheet to a particular printer is still the print dialog's business.
+- **The legend on the paper is yours to choose too (since 0.12.2).** **Print Legend** is the fourth row:
+  *As drawn* (the default — whatever the chart shows is what prints), **Off** — the graph alone, with the room
+  the legend took given back to the plot, which is what a hardcopy usually wants — and **On**, which draws it
+  on the page even while it is switched off on screen (the right-click **Legend** entry is the on-screen one).
+  The row steers the **output** only: the chart on screen keeps its own setting, before and after.
+- **A failure can never take your form down — and it does not disappear either.** Every path checks what it
+  needs first (a window, a printing service, a file the user really picked, a folder that can be written),
+  and a second menu click while one export is in flight is ignored instead of opening a second dialog.
+  Failures are reported through the chart's **`PrintFailed`** event plus a trace line rather than being
+  swallowed, so an app can surface them itself; the same output is available to your own code with no dialog
+  at all — **`ExportPdfAsync(path)`**, **`ExportPdfAsync(stream)`** and **`ExportPng(path, scale)`** return
+  `true` or `false`, and **`IsPrinting`** says whether one is running.
 
 **What a project needs for them.** A project created **from 0.12.0 on** already has all of it — the two
-packages, the `PRINT_SUPPORT` symbol and `.UsePrintables()` in `Program`. An older project compiles the
-bundled `GrumpyCharts` unchanged and simply has no print entries; to add them, reference the two packages:
+packages, the `PRINT_SUPPORT` symbol and `.UsePrintables()` in `Program` — and from **0.12.2** the chart is
+copied in **together with `GrumpyPrint.cs` / `GrumpyPrint.vb`**, the helper that prints through CUPS on Linux
+(one without the other does not compile, so the designer copies them as a pair: **save** the form holding a
+chart, or place a chart, and an older project gets both). An older project compiles the
+bundled `GrumpyCharts` unchanged and simply has no hardcopy entries; the designer says so the first time you
+place a chart in one and offers to add **the project-file half** for you (the two packages and the symbol —
+it never edits your `Program`). By hand it is two steps — reference the packages:
 
 ```xml
 <PackageReference Include="Avae.Printables" Version="3.0.7" />
@@ -2395,7 +2426,8 @@ then define the symbol — in **C#** the constant list is semicolon-separated, i
 
 and call `.UsePrintables()` where the app is built — in `Program`'s `BuildAvaloniaApp()`, next to
 `.UsePlatformDetect()`, with `using Avae.Printables;` (C#) or `Imports Avae.Printables` (VB) at the top of
-that file. If the symbol is missing, nothing fails: the chart quietly has no print entries.
+that file. A project where the symbol is missing does not fail to build: the chart simply has no hardcopy
+entries, and the designer's offer above is the shortcut.
 
 > **Do not try to set the VB symbol in a `BeforeTargets="VbcCompile"` target.** It looks like it works and
 > does not: the SDK assigns `FinalDefineConstants` after that target has run, so the value is thrown away

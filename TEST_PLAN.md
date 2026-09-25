@@ -1,6 +1,21 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-25 · Status: **full suite green on this machine — 8,121 passed / 0 failed / 0 skipped (61 s)**
+Date: 2026-09-25 · Status: **full suite green on this machine — 8,495 passed / 0 failed / 0 skipped (67 s)**
+
+> 2026-09-25, later still: **`0.12.2`** made the charts print on a **Linux desktop** and put the legend on the
+> paper under the user's control. `Avae.Printables` ships a real service only for the platforms it targets — a
+> plain Linux build gets an **API-only** asset, so `UsePrintables()` registered nothing and **Print…** stayed
+> greyed out — and the new bundled helper **`GrumpyPrint`** renders the page to a temporary PDF and hands it to
+> **CUPS**. The T4 harness now drives the printer path with a **stub `lp`** and, in a second run, with an empty
+> `PATH`, so the assertions hold on any machine; the legend row is measured by diffing three PNGs of the same
+> page. **8,346 → 8,495** assertions, `0 failed`.
+
+> 2026-09-25, later: **`0.12.1`** reworked the hardcopy path `0.12.0` introduced. The print entry is
+> **disabled** (with a tooltip naming the missing call) instead of silently dead when no printing service is
+> registered; failures are reported through a new `PrintFailed` event instead of being swallowed; the page can
+> be real paper (A4 / US Letter, a margin, a white page) — three rows on all seven charts; and the export
+> gained picker-free entry points, PNG output, Ctrl+P and a folder memory of its own. **8,121 → 8,346**
+> assertions, `0 failed` — and the new runtime layer found the release's one real bug.
 
 > 2026-09-25: **`0.12.0`** added **hardcopy output** to the charts — `Print…` (the platform dialog) and
 > `Print to PDF…` on the right-click menu of all seven types — and with it the release's one real bug:
@@ -480,6 +495,63 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.12.2 (2026-09-25) — printing on Linux, and a legend row only the paper sees
+
+- **`tests/t4-runtime/printExport.test.js` grew to 70**, and it now drives the harness **twice**, in two
+  situations it creates itself: once with a **stub `lp`** in front of the `PATH` (a few lines of shell that
+  record their command line and keep the file they are handed) and once with an **empty folder as the whole
+  `PATH`**, so no CUPS client exists anywhere. That is why the suite no longer depends on the machine it runs
+  on: the CUPS answer is cached on first look, the harness installs the folder before anything asks for it,
+  and the same assertions hold on a box with two printers and on one without CUPS at all.
+  Measured, not assumed: the recorded argv is exactly `-t "Harness chart" <file>` (three arguments, no printer
+  named), the file handed over is a real PDF **of the chart's own 400 × 200 page**, its series colour
+  rasterises out of it with `pdftoppm`, and the temporary PDF is **gone** once `lp` returns — the chart
+  rendered the page itself, spooled it, and cleaned up. With no `lp` at all, the entry refuses and reports
+  through `PrintFailed`, exactly as before.
+- **The Print Legend row is measured too**: three PNGs of the same page — as drawn, forced *Off*, and forced
+  *On* while the chart itself hides the legend — with the pixels diffed between them (both differ by more than
+  500 px, the series colour is still in the legend-less one, so the GRAPH is what it keeps), and `ShowLegend`
+  asserted unchanged after each export. That last part is what the first attempt got wrong: a chart with no
+  *named* series draws one unnamed line and **no legend at all**, so the diff was 0 and the assertion was
+  measuring nothing — the fixture now adds a `LineSeries { Title = "Sales" }`.
+- `tests/t2-logic/printSupport.test.js` gained the helper's contract: both twins carry `Available`, the
+  `IsLinux` + `lp`-on-`PATH` pair, `ArgumentList` (a list, so no shell and no quoting bugs), the temporary PDF
+  and its deletion, `-t`, and the `#if`/`#else` split the previewer compiles. The helper must **not** implement
+  `Avae.Printables`' `IPrintingService` — its `GetVisual()` member is `Friend` in 3.0.7, so VB cannot implement
+  it at all — and `PrintFileAsync` is the path a legend override prints through. The scaffold writing both
+  files, the host link, the bundled spec and the designer's copy-with-the-chart are pinned beside it.
+- The staleness marker moved `ExportPdfAsync` → **`GrumpyPrint`** (so a `0.12.1` project's chart file is
+  refreshed, and the helper is copied in with it, since one without the other does not compile), with the six
+  marker assertions and the era fixtures updated alongside.
+
+### 0.12.1 (2026-09-25) — the print path, measured rather than inspected
+
+- `tests/t4-runtime/printExport.test.js` (new, **37**) — **why it exists**: "the page can be A4" and "the PDF
+  contains the chart" are claims about layout and output, and both compile perfectly while producing nothing.
+  It builds a headless app with `PRINT_SUPPORT` and the two real packages, writes the files, and reads them
+  back: `pdfinfo` reports **595 × 842 pt** for the A4 export and the chart's own size for the default; the A4
+  PNG is 595 × 842 px with **20 px of clean paper** in its margin (the margin *and* the white page measured,
+  not assumed); the series colour appears in the PNG **and** in the PDF rasterised with `pdftoppm`; `PrintFailed`
+  fires exactly once for an unwritable path; a detached chart refuses quietly (and reports nothing); `CanPrint`
+  is false while the app never called `UsePrintables()`; and the busy flag is down again at the end. It found
+  the release's one real bug on its first run — the page wrapper was laid out on the PNG path only, so the PDF
+  path threw `Invalid create info - no Canvas provided`.
+- `tests/t2-logic/printSupport.test.js` (new, **165**) — the source contract instead: the same members in both
+  twins (the page options, the event, the exports, the availability test); the gating split (page rows and the
+  PNG export outside `PRINT_SUPPORT`, the print/PDF methods inside); **no `Await` inside a `Catch`** in either
+  twin (BC36943 — C# allows it, VB does not, and the fallback had to be restructured in both); no
+  `#Disable Warning` left in the VB hardcopy handlers; and `addPrintSupport` proven idempotent *and* a
+  byte-for-byte no-op on a project the scaffold generates today.
+- The catalog gained `PrintPaper` / `PrintMargin` / `PrintLightBackground` on all seven charts, so the T5
+  property audit compiles them into a real VB app — which is how "a form that sets them still loads in the
+  previewer" is checked without a hand-written fixture.
+- `tests/t2-logic/chartFill.test.js` — one old guard was strengthened rather than relaxed: its
+  Esc-before-cursor-keys order check compared two `indexOf` results inside a 900-character window, and the new
+  Ctrl+P branch pushed the cursor marker out of that window, so both came back `-1` and the assertion had
+  quietly become `-1 < -1`. It now requires both markers to be found, so it can only pass when the order is
+  really right.
+- Suite **8,346 passed / 0 failed** (from 8,121).
 
 ### 0.12.0 (2026-09-25) — hardcopy output, and a VB symbol that was never defined
 

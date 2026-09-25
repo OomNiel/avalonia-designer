@@ -6,11 +6,106 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.12.0` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.12.2` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.12.2] - 2026-09-25 · *printing on Linux, and the legend on the paper*
+
+### Added
+
+- **Charts print on a Linux desktop.** `Avae.Printables` publishes a real printing service only for the
+  platforms it targets — Windows (WinRT), macOS, GTK-Linux, the browser, Android, iOS — plus an **API-only
+  fallback** for everything else. A plain Linux desktop build restores that fallback, where
+  `AppBuilder.UsePrintables()` compiles, runs and registers *nothing*: `Printable.Default` stays null, so
+  **Print…** stayed disabled on the very machine the chart was drawn on. The new bundled helper
+  **`GrumpyPrint`** (`resources/GrumpyPrint.cs` / `.vb`, copied into a project beside its chart) fills that
+  gap and only that gap: the page is rendered to a temporary PDF — the same vector export the chart already
+  writes — and handed to **CUPS** (`lp [-d printer] -t "job title" file`). Nothing is registered over a real
+  service, so Windows and macOS keep the platform's own dialog.
+- **`Print Legend`** — a fourth hardcopy row on all seven charts: *As drawn* (the default: what you see is
+  what prints), **Off** (the graph alone, with the room the legend took given back to the plot — the usual
+  hardcopy) and **On** (draw it on the page even while it is hidden on screen). It steers the **output** only:
+  the chart's own `ShowLegend` is set and put back around the job, so the screen never changes.
+- **`ChartLegendMode`** / **`ChartPrintOptions.Legend`** and **`GrumpyPrint.PrintFileAsync(file, title,
+  printer)`** for an application that drives the exports itself.
+
+### Changed
+
+- **`CanPrint` no longer means "Avae.Printables has a service"** but "this machine can put a page on paper":
+  the platform service *or* the CUPS helper. Its tooltip names both routes, and `PrintAsync` branches on it —
+  a legend override renders the page itself and prints that **file**, because a printer backend must never be
+  handed the live chart in a changed state.
+- **The staleness marker moved `ExportPdfAsync` → `GrumpyPrint`**, so a project holding a `0.12.1` chart file
+  is refreshed — and **`GrumpyPrint.cs` / `.vb` is copied in together with the chart**, since one without the
+  other does not compile. A project that has neither and places a chart gets both.
+- **`AllowUnsafeBlocks`-free, package-free:** the helper adds no dependency at all — `System.Diagnostics` for
+  the process and `AvaloniaUI.PrintToPDF`, which the printing project already references.
+
+## [0.12.1] - 2026-09-25 · *the print path, made honest*
+
+A follow-up to `0.12.0`, written after reading the hardcopy code back. Every point was about the edges
+rather than the middle: a menu entry that could silently do nothing, failures that vanished without a
+trace, and two printer packages whose page geometry was never used.
+
+### Added
+
+- **`Print Paper`, `Print Margin` and `Print on White`** — real rows in the Properties panel of all seven
+  charts. *As drawn* (the default, and the behaviour `0.12.0` had) keeps the chart's own size; **A4** and
+  **US Letter** put it on paper with a margin in points, and *Print on White* paints the page before the
+  chart arrives, for a dark plot background. The page is composed as a real page visual — the chart is
+  painted through a `VisualBrush`, so the PDF stays **vector** — and the rows are declared *outside*
+  `PRINT_SUPPORT`, so a form that sets them still loads in the headless previewer.
+- **`Save as picture…`** (PNG) joins the chart's right-click menu, and **Ctrl+P** prints — or, on a build
+  with no printing service, exports a PDF, because a key that can never do anything is worse than one that
+  degrades to the path that always works.
+- **`ExportPdfAsync(path, options)`**, **`ExportPdfAsync(stream, options)`** and **`ExportPng(path, scale)`**:
+  the same output with no file picker, so an application — or a test — can drive it. A picked file with no
+  local path is written through its stream instead of being skipped, and when a platform can print a *file*
+  but not a *Visual* the chart renders a temporary PDF and hands that over.
+- **`PrintFailed`** (an event) plus a `Trace` line, and **`IsPrinting`**: the chart still never throws into
+  the caller, but an app can now see why nothing came out.
+- The PDF/PNG folder is remembered separately from the spreadsheet folder — printing a chart no longer moves
+  the workbook picker.
+- **The designer notices a project that cannot print** (one generated before `0.12.0`) and offers to add the
+  two packages and the symbol to its project file — idempotent, and byte-identical on a project the designer
+  generated itself. `Program`'s `.UsePrintables()` stays the user's to add, which the disabled menu entry
+  then explains; USER_MANUAL §19.14 has the same two lines for anyone doing it by hand.
+
+### Fixed
+
+- **`Print…` no longer offers a click that does nothing.** With no printing service registered —
+  `UsePrintables()` never called, or a platform without one — the entry is **disabled**, with the reason in
+  its tooltip. `CanPrint` reads `Printable.Default`, PDF and PNG never need it.
+- **A page that actually renders.** The first cut laid the A4 wrapper out on the PNG path only, so the PDF
+  path threw `ArgumentException: Invalid create info - no Canvas provided` — an un-laid-out visual draws
+  nothing, and the backend runs no layout pass of its own. The layout now happens once, in the shared helper
+  every export uses.
+- A null or whitespace path, a cancelled picker, an unwritable folder and a missing service are reported
+  instead of swallowed; a second menu click while one export is in flight is ignored rather than opening a
+  second dialog.
+
+### Notes
+
+- **Verified by measurement, not by inspection.** `tests/t4-runtime/printExport.test.js` (37) builds a
+  headless app with both packages and then reads its own output back: `pdfinfo` reports **595 × 842 pt** for
+  A4 and the chart's own size for the default; the A4 PNG is 595 × 842 px with **20 px of clean paper** in
+  the margin (so the margin and the white page are real, not assumed); the series colour is present in the
+  PNG *and* in the rasterised PDF; `PrintFailed` fires exactly once for a bad path; a detached chart refuses
+  quietly; and the guard is released afterwards.
+- `tests/t2-logic/printSupport.test.js` (165) holds the source contract instead: the same members in both
+  twins, the gating split, the VB traps (**no `Await` inside a `Catch`** — BC36943, where C# is happy — and no
+  `#Disable Warning` left in the hardcopy handlers), and `addPrintSupport` proven to be a no-op on freshly
+  generated projects.
+- The staleness marker moved `printItem` → **`ExportPdfAsync`**, so a project holding `0.12.0`'s chart file
+  refreshes on the next save (and then gets the offer above).
+- One old guard was strengthened on the way: the `chartFill` test checked that the Esc branch precedes the
+  cursor keys inside a 900-character window, which the new Ctrl+P branch pushed past — both markers came back
+  as `-1`, so the assertion had quietly become `-1 < -1`. It now requires both to be found.
+- Suite **8,346 passed / 0 failed** (from 8,121); the host, all 10 generated projects and the VB matrix build
+  0 errors / 0 warnings, with and without `PRINT_SUPPORT`.
 
 ## [0.12.0] - 2026-09-25 · *hardcopy output for the charting controls*
 

@@ -4073,3 +4073,104 @@ two menu entries.
 
 **Suite:** 8,121 passed / 0 failed (+18 from the new T0 probe, +2 from the packaging pins). PROBLEMS clean.
 
+---
+
+### §152 — the print path, and a page that was never laid out (2026-09-25, 0.12.1)
+
+Asked for an opinion on the hardcopy feature that had just shipped in 0.12.0, then asked to implement it. The
+review said the shape was right and the edges were wrong, and that is where the work went: **six items**, all
+of them about what happens when something is *not* there.
+
+**What the code does now.** `CanPrint` (a guarded `Printable.Default is not null`) decides whether the menu
+offers **Print…** at all: with no service it is disabled, with the reason in its tooltip, because the old
+behaviour — a click that did nothing — reads as a broken menu rather than a missing call. Failures go to a
+`PrintFailed` event plus a `Trace` line instead of a bare `catch { }`. The page can be real paper
+(`ChartPrintOptions` / `ChartPaper` with `A4`, `Letter`, a margin and `LightBackground`), surfaced as three
+rows on all seven charts and declared **outside** `PRINT_SUPPORT` so the previewer still parses a form that
+sets them. `ExportPdfAsync(path|stream)`, `ExportPng(path, scale)` and `SaveAsPictureAsync()` give an app (or
+a test) the output with no picker, a picked file with no local path writes through its stream, and a platform
+that prints a *file* but not a *Visual* gets a temporary PDF instead. Plus `IsPrinting`, the export folder
+memory, Ctrl+P, and a designer offer to add the packages and the symbol to a project generated before 0.12.0.
+
+**Two lessons, both about things that pass while doing nothing.**
+
+1. **A composed visual must be laid out before a renderer gets it.** The A4 page wrapper worked through
+   `RenderTargetBitmap` — that path measured and arranged it — and failed through `Print.ToFileAsync` with
+   `ArgumentException: Invalid create info - no Canvas provided`, because the PDF backend draws what it is
+   given and runs no layout pass of its own. The fix was to move the layout into the shared `PageVisuals`
+   helper. What is worth keeping is *how* it was found: the new T4 harness (`printExport`, 37) measures its own
+   output — `pdfinfo` for the page size, the suite's PNG reader for the pixels, `pdftoppm` for the rasterised
+   PDF — and it failed on the first run. Reading the code twice had not shown it.
+2. **VB forbids `Await` inside a `Catch` (BC36943); C# does not.** The file-print fallback was written the C#
+   way first and the VB twin would not compile. The fallback now holds the exception (`visualFailure = ex`)
+   and acts after the catch — in both files, deliberately the same shape — and the contract test asserts that
+   no `await` sits inside a catch in either twin, because a divergence here is invisible until vbc says so.
+
+**Also worth remembering:** the `chartFill` test's Esc-before-cursor-keys check compared two `indexOf` results
+inside a 900-character window; the new Ctrl+P branch pushed the cursor marker past it, both came back `-1`, and
+the assertion had quietly become `-1 < -1`. It now requires both markers to be found. A window is not a
+contract — that is the same mistake as §149's marker token, one level down.
+
+**Docs (this pass, at the user's request):** CHANGELOG `[0.12.1]`, README (install refs + §7 hardcopy),
+USER_MANUAL §19.14 rewritten (three entries, Ctrl+P, the greyed-out Print…, the page rows, the event, the
+per-language wiring, the designer's offer) plus the §19 intro and TOC, CONTROLS' hardcopy entry split into
+three bullets, TEST_PLAN's 0.12.1 log, SESSION hand-off, PUBLISHING's state note. Version bumped to **0.12.1**
+with all 14 bundled stamps (the stamp test ties them to `package.json`).
+
+**Suite:** 8,346 passed / 0 failed. Host, all 10 generated projects and the VB matrix 0/0, with and without
+`PRINT_SUPPORT`.
+
+### §153 — printing on Linux, and a legend row only the paper sees (2026-09-25, 0.12.2)
+
+**The problem was the library, not the code.** The user reported **Print…** greyed out in a project that had
+everything: `PRINT_SUPPORT`, both packages, `.UsePrintables()`, a current chart copy. `Avae.Printables` is a
+community library, and its `lib/net8.0/` asset — the one a plain Linux *desktop* build restores — is
+**45,568 bytes of API with no service behind it**; the real implementations live in the `net8.0-gtk1.0`,
+`net8.0-macos15.0`, `net8.0-windows10.0.19041`, `net8.0-browser1.0`, Android and iOS assets. So
+`UsePrintables()` compiled, ran and registered *nothing*, `Printable.Default` stayed null, and the chart
+correctly disabled the entry. (Proved by hash: the `Avae.Printables.dll` next to the user's app was
+byte-identical to the plain `net8.0` asset.)
+
+**Two routes were offered; the user picked "PDF + CUPS service".** The first implementation implemented
+`IPrintingService` and registered it with `Printable.SetDefault(...)` — and it had to be thrown away:
+reflection finally showed that interface also declares **`Visual GetVisual()`**, which is **`Friend`**
+(inaccessible) in 3.0.7. VB therefore cannot implement the interface *at all* (`BC30390`), and C# only
+explicitly — so one twin could never have matched the other. **The lesson: a contract you cannot implement in
+both languages is not a contract this repo can use.** The shipped design is smaller and identical in both
+twins: `GrumpyPrint` is a plain static helper the *chart* consults — `CanPrint` is "the platform service **or**
+`GrumpyPrint.Available`", and `PrintAsync` renders the page and calls `GrumpyPrint.PrintAsync(page, title)`
+when `Printable.Default` is null. Nothing is registered over a real service, so Windows and macOS are
+untouched.
+
+**The legend row needed a re-layout, and the test needed a named series.** `PrintLegend` (*As drawn* / *Off* /
+*On*) cannot be handed to a printer backend as a visual — that would mean leaving the *live* chart changed
+while Avae renders it whenever it likes — so an override renders the page itself and prints the **file**
+(`Printable.PrintAsync(file, …)` or the new `GrumpyPrint.PrintFileAsync`), with the chart's own `ShowLegend`
+set and put back through `ApplyPrintLegend` / `LegendRestore`. Two traps found by the new measurements:
+
+- **An invalidated chart is not a re-laid-out one.** The legend's room is baked into the laid-out positions,
+  so `InvalidateMeasure()` alone left the picture identical (the T4 diff was **0 px**). `RelayoutForLegend()`
+  measures and arranges at the size the chart already has — the same discipline `PageVisuals` uses for the
+  page, and safe because the designer writes an explicit `Width`/`Height`, so the desired size cannot change.
+- **A chart with no *named* series has no legend to hide.** `MeasureLegend` bails out on `plots.Count == 0`:
+  "a chart without series elements draws one unnamed line, and there is nothing to name or switch off". The
+  harness chart used a bare `Values` line, so as-drawn and off were byte-identical. It now adds a
+  `LineSeries { Title = "Sales" }` (the property is **`Title`**, not `Name`) — and the row became measurable.
+
+**VB traps met on the way:** an enum member called `On` is a keyword (`BC30817` "On GoTo…") — the member is
+`[On]` in VB while the C# member and the XAML value stay plain `On`; and `Using` needs its `End Using`, so the
+PNG export's override block had to be closed (a partial edit left it dangling, which is exactly why the
+compiler check runs after every twin edit).
+
+**Tests.** The T4 harness now runs **twice**: with a **stub `lp`** in front of the `PATH` (which records its
+argv and keeps the file it is handed) and with an **empty folder as the whole `PATH`**. That is what makes the
+CUPS assertions machine-independent — the answer is cached on first look, so the harness installs the folder
+before anything asks for it. Measured: the argv is exactly `-t "Harness chart" <file>`, the file is a real PDF
+of the chart's own 400 × 200 page, its series colour rasterises out of it, and the temp file is gone
+afterwards. Suite **8,346 → 8,495**, 0 failed.
+
+**Docs (this pass, at the user's request):** CHANGELOG `[0.12.2]`, README §7, USER_MANUAL §19.14 (the two
+backends, the CUPS route, the legend row, the "save the form to get the helper" step) + install/version refs,
+CONTROLS' hardcopy bullets, TEST_PLAN's 0.12.2 log, SESSION hand-off, PUBLISHING's record. Version **0.12.2**
+with all 16 bundled stamps.
+

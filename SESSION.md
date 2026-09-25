@@ -17,6 +17,71 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-09-25, twelfth session — 0.12.2 packaged, tagged and released)
+
+**Charts print on a Linux desktop now, and the paper can leave the legend off.** The user reported **Print…**
+greyed out on a project that was wired correctly, picked the **"PDF + CUPS service"** route out of the options
+offered, then asked for the **Print Legend** row, the docs and the release — so `0.12.2` carries both, every doc
+is in line, and the GitHub release is made.
+
+**What 0.12.2 added** (full detail in `CHANGELOG.md` `[0.12.2]`, `NOTES.md` §153, `USER_MANUAL` §19.14):
+
+- **`GrumpyPrint`** — a new bundled helper (C#, and its VB twin): the page is rendered to a temporary PDF and
+  handed to **CUPS** (`lp [-d printer] -t "title" file`). It exists because `Avae.Printables` publishes a real
+  service only for the platforms it targets and an **API-only** asset for a plain Linux desktop — where
+  `UsePrintables()` compiles, runs and registers *nothing*, so `Printable.Default` stayed null and **Print…**
+  stayed greyed out on the very machine the chart was drawn on. Windows and macOS are untouched: the helper is
+  consulted only when no service exists.
+- **`Print Legend`** on all seven charts — *As drawn* (default), *Off* (the graph only, the legend's room back
+  to the plot) and *On* — scoped to the job: the chart's own `ShowLegend` is set and put back around the render,
+  so the screen never changes.
+- **`CanPrint` means "this machine can put a page on paper"** (the platform service *or* CUPS), the marker
+  moved to `GrumpyPrint`, and **the helper is copied in together with the chart** — a project holding one
+  without the other does not compile. In an older project, **save** the form holding a chart (or place one) and
+  both are refreshed.
+
+**What the previous session (0.12.1) did** — detail in `CHANGELOG.md` `[0.12.1]`, `NOTES.md` §152:
+
+- **Availability instead of a dead click:** `CanPrint` reads `Printable.Default`; with no service the
+  **Print…** entry is disabled and its tooltip names `AppBuilder.UsePrintables()`. PDF and PNG never need it.
+- **Failures are reported:** a `PrintFailed` event + `Trace` line replaced the bare `catch { }`, and the same
+  output is reachable from code — `ExportPdfAsync(path|stream)`, `ExportPng(path, scale)` — with `IsPrinting`
+  and a re-entrancy guard (`_printBusy`) so a second click cannot open a second dialog.
+- **Real paper:** `ChartPrintOptions` / `ChartPaper` (`AsDrawn` default, `A4`, `Letter`, `Margin`,
+  `LightBackground`) exposed as **Print Paper / Print Margin / Print on White** on all seven charts, composed
+  by a `ChartPrintPage` wrapper that paints the chart through a `VisualBrush` (the PDF stays vector). These
+  rows sit outside `PRINT_SUPPORT` so the previewer still parses them.
+- **`Save as picture…`** (PNG) and **Ctrl+P** joined the menu; the export folder is remembered separately from
+  the spreadsheet folder; a picked file with no local path is written through its stream; a platform that
+  prints a file but not a Visual gets a temporary PDF.
+- **The designer notices a project that cannot print** (one from before 0.12.0) and offers the project-file
+  half of the fix — `src/printSupport.ts`, idempotent, VB comma form only, byte-identical on generated
+  projects; `Program`'s `.UsePrintables()` stays the user's.
+- **A real bug found by the new harness:** the A4 page wrapper was laid out on the PNG path only, so the PDF
+  path threw `Invalid create info - no Canvas provided`. Fixed in the shared `PageVisuals` helper.
+- **Tests:** `tests/t2-logic/printSupport.test.js` (165) and `tests/t4-runtime/printExport.test.js` (37, with
+  `printProgram.cs.tpl`); the staleness marker moved `printItem` → `ExportPdfAsync`; the `chartFill` order
+  guard was strengthened (it had degenerated to `-1 < -1`); suite **8,346 passed / 0 failed** (from 8,121),
+  host + 10 generated projects + VB matrix 0/0, PROBLEMS clean.
+- **Docs + version:** `package.json`/lockfile/14 bundled stamps → **0.12.1**; CHANGELOG, README, USER_MANUAL,
+  CONTROLS, TEST_PLAN, NOTES §152, this file, PUBLISHING state note.
+
+**Open / next:**
+
+1. **`0.12.2` is the upload candidate; the Marketplace still carries `0.11.0`.** `0.12.1` was packaged but never
+   published — `0.12.2` supersedes it (its content, plus Linux printing and the legend row), so upload
+   `avalonia-designer-0.12.2.vsix` and mark the `0.12.1` ledger entry superseded. `0.12.0`'s asset stays on
+   its own GitHub release as the record of that build.
+2. **Printing on Linux is proved with a STUB `lp`, not a real printer.** The harness asserts the argv, the
+   rendered page and the cleanup; the last mile — paper coming out of the Canon — is still the user's to
+   eyeball, along with a real PDF and a real printed page.
+3. **`Avae.Printables` is a community library.** Its `Friend` `IPrintingService.GetVisual()` is what forced the
+   helper's shape; if a future release makes that member public, the interface route becomes viable again — but
+   it would still have to work in VB too, or the twins diverge.
+4. **`host/ModelHost`** still restores LLamaSharp natives for every platform — untouched on purpose.
+5. **Unrelated dirty files** still in the tree: `resources/ColumnFollower.cs` (a formatter re-indented the
+   `case` blocks) and `package-lock.json` (lost its trailing newline).
+
 ## Where the last session left off (2026-09-25, tenth session — 0.12.0 released)
 
 **The user's own hardcopy feature was verified, its VB half turned out never to have existed, and the work
