@@ -233,10 +233,62 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.11.19` (2026-09-24) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); **THIS is the
-> file to upload to the Marketplace.** The listing still carries `0.11.15`, so this file brings it up to date
-> with everything in `0.11.16` → `0.11.19`: the 3D surface's height ramp (a per-band gradient mixed the
-> height with the depth), the missing crest at the top of the ramp, the off-screen colour palette,
+> **`0.12.0` (2026-09-25) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); **THIS is the
+> file to upload to the Marketplace.**
+>
+> **Corrected baseline:** the stable listing carries **`0.11.0`**, not `0.11.15` — read back from the gallery
+> on 2026-09-25 (`0.11.0`, last updated 2026-09-20; `vsce show` lists the same four: `0.11.0`, `0.10.10`,
+> `0.10.2`, `0.9.0`). **Nothing between `0.11.1` and `0.11.19` ever reached the listing**, so the earlier
+> "brings the listing up from `0.11.15`" lines in the entries below are wrong — this one upload spans the
+> whole `0.11` chart line (bar/area/pie, the waterfall and the 3D surface, cursors, the Data Selector, the
+> height ramp, `ZoomX`/`ZoomY` with four packed legend sliders, the *Legend* menu entry, whole-page loading),
+> the install size (583 MB → ~24 MB per copy) and hardcopy output.
+>
+> **Artefact:** `avalonia-designer-0.12.0.vsix`, **1,243,932 bytes**, sha256
+> **`7817b7c33051aaaf97a99d8a36a581dd6bfe9d6c1e540da70e0c071b482e46b6`**, **118 files** (0 source maps),
+> manifest `Version="0.12.0"` and **no `PreRelease` attribute** (a plain, stable upload). Commit
+> **`69ac3f2`** on `main`, annotated tag **`v0.12.0`** (`69ac3f2` too), pushed. Release URL:
+> <https://github.com/OomNiel/avalonia-designer/releases/tag/v0.12.0> — the attached asset was downloaded
+> again and `cmp`-ed against the local file: **byte-identical**. **Verified:** local `sha256sum`; the packaged
+> `resources/GrumpyCharts.cs` opens with `// BUNDLED-COPY: 0.12.0`; the packaged `host/PreviewerHost.csproj`
+> carries `NETCoreSdkPortableRuntimeIdentifier` and `AppendRuntimeIdentifierToOutputPath`; and the packaged
+> `README.md` links the collage as
+> `https://github.com/OomNiel/avalonia-designer/raw/HEAD/DesignerDemo.png` — which is why `DesignerDemo.png`
+> is committed and pushed: the gallery fetches it from the repository, and the file is deliberately **not**
+> in the VSIX. Suite **8,121 passed / 0 failed**; the host, all 10 generated projects (C#/VB) and the new
+> print-symbol probe build 0 warnings / 0 errors.
+>
+> **What it changes:** hardcopy output for the charts — **Print…** (the platform's own dialog,
+> Avae.Printables 3.0.7) and **Print to PDF…** (AvaloniaUI.PrintToPDF 0.6.0, Skia vector output, no printer
+> needed) on the right-click menu of **all seven** chart types, including the cursor-less pie and bar, behind
+> `PRINT_SUPPORT`. Newly generated projects — C# and VB — reference both packages, define the symbol and call
+> `AppBuilder.UsePrintables()`; older projects compile unchanged and opt in by hand (`USER_MANUAL` §19.14).
+> **The VB half of that feature did not exist before this release:** the symbol was set from a
+> `BeforeTargets="VbcCompile"` target, which the SDK overwrites afterwards, so every VB project built green
+> with the block compiled out. It is a comma token in `DefineConstants` now (vbc's `/define:` takes commas;
+> the C# semicolon form is `BC31030`) and the guard is a build that references the gated members
+> (`tests/t0-build/printsupport.test.js`). The README also gained its at-a-glance collage, and the chart help
+> panel says where the two entries appear.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.12.0.vsix` → leave **Pre-release
+> unchecked** → then confirm with the gallery query below that the version is `0.12.0` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
+> the user's.**
+
+```bash
+# What the STABLE listing carries right now — run before the upload (0.11.0 on 2026-09-25) and again
+# after it (must print 0.12.0 and the hash above). Flag 16 adds the version properties, 2 the files.
+curl -s -X POST 'https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery' \
+  -H 'Accept: application/json;api-version=7.2-preview.1' -H 'Content-Type: application/json' \
+  -d '{"filters":[{"criteria":[{"filterType":7,"value":"grumpy.avalonia-designer"}]}],"flags":914}' \
+  | python3 -c "import json,sys; e=json.load(sys.stdin)['results'][0]['extensions'][0]; \
+v=e['versions'][0]; p={x['key']:x['value'] for x in v.get('properties',[])}; \
+print(v['version'], v['lastUpdated'], p.get('Microsoft.VisualStudio.Services.VsixSha256'))"
+```
+
+> **`0.11.19` (2026-09-24) — GitHub release only; **SUPERSEDED by `0.12.0` — do not upload this file.** It
+> brought the chart work of `0.11.16` → `0.11.19` with it: the 3D surface's height ramp (a per-band gradient
+> mixed the height with the depth), the missing crest at the top of the ramp, the off-screen colour palette,
 > `ZoomX`/`ZoomY` with four packed legend sliders, **Legend on/off** in the chart's right-click menu,
 > whole-page loading through the new `sheetShape` host verb, the stale-bundled-copy fix, and the install size.
 >
@@ -261,11 +313,9 @@ listing when that release is uploaded — a repo-only README edit does not.
 > machine** the six accumulated installed copies were pruned from 3.5 GB to 29 MB, verified by rendering a
 > chart through the pruned host.
 >
-> **Upload:** publisher portal → *Update* → `avalonia-designer-0.11.19.vsix` → leave **Pre-release
-> unchecked** → then confirm with `flags: 914` that the version is `0.11.19` and
-> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
-> the user's.** `0.11.16` and `0.11.17` were never released, `0.11.18` is GitHub-only, and `0.11.15` (the
-> current listing) is superseded by this file.
+> **Do not upload this file — `0.12.0` supersedes it.** `0.11.16` and `0.11.17` were never released,
+> `0.11.18` is GitHub-only, and the listing was still on `0.11.0` throughout, so nothing was missed by
+> skipping it.
 
 > **`0.11.18` (2026-09-24) — released on GitHub (*Latest*, `draft=false`, `prerelease=false`); the file for
 > the Marketplace upload. THIS is the file to upload.**
