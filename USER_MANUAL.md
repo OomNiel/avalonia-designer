@@ -62,6 +62,11 @@
     - [Chart properties you set directly](#197-chart-properties-you-set-directly)
     - [Cursors — read values off the plot](#198-cursors--read-values-off-the-plot)
     - [Tips, limits and fixes](#199-tips-limits-and-fixes)
+    - [Bar, Area and Pie charts (since 0.11.11)](#1910-bar-area-and-pie-charts-since-01111)
+    - [The Data Selector editor — which file, and which page (since 0.11.7)](#1911-the-data-selector-editor--which-file-and-which-page-since-0117)
+    - [The waterfall chart (since 0.11.12)](#1912-the-waterfall-chart-since-01112)
+    - [The surface chart 3D (since 0.11.14)](#1913-the-surface-chart-3d-since-01114)
+    - [Printing a chart — hardcopy and PDF (since 0.12.0)](#1914-printing-a-chart--hardcopy-and-pdf-since-0120)
 
 ---
 
@@ -155,7 +160,7 @@ search for *Grumpy's WYSIWYG Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.11.19`**, so the command above installs it; add `--force` to
+The current version is **`0.12.0`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -167,7 +172,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.11.19` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.12.0` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -1808,6 +1813,8 @@ which columns it reads and how it is drawn, the **legend** names them, and — w
 the **axes** describe the scales and up to two **cursors** let a user read values off the plot (19.8).
 The two **projected** charts (the waterfall and the surface) have no cursors and no Axis editor: their
 three axes are drawn in projection, and their own legend selects a range instead (19.12, 19.13).
+Every one of them also puts the picture on paper: the right-click menu's **Print…** and **Print to PDF…**
+entries (19.14) work on all seven, cursors or no cursors.
 
 ### 19.1 Placing a chart
 
@@ -2338,9 +2345,63 @@ and is loaded the same way. The workbook page the *Sample data*
 note describes — 12 positions across the width, one profile per column — is exactly the layout it
 reads by default.
 
-> **A surface needs no packages, no chart engine and no image file of its own.** The control draws
-> itself, so it scales and prints; it is bundled into your project like the other helpers, and nothing is
-> added to the `.csproj` beyond what the project already had.
+> **A surface needs no chart engine and no image file of its own.** The control draws itself, so it scales
+> and prints; it is bundled into your project like the other helpers. The one thing a newly generated
+> project adds on its behalf is the pair of small printing packages behind the **Print…** / **Print to
+> PDF…** menu entries (19.14) — a project from before 0.12.0 has neither and works without them.
+
+### 19.14 Printing a chart — hardcopy and PDF (since 0.12.0)
+
+Avalonia ships no print API, so the chart's **right-click menu** carries two entries that borrow one — on
+**every** chart type, including the pie and the bar, which skip the rest of that menu because they have no
+cursors:
+
+| Menu entry | What it does |
+|---|---|
+| **Print…** | Opens the platform's own print dialog (printer, paper, copies) and draws the chart onto the page. |
+| **Print to PDF…** | Asks you for a file name, then writes the chart to a **PDF** — no dialog and no printer, so it works on every platform. |
+
+Three things are worth knowing before you go looking for them:
+
+- **They are in the app you run, not on the design canvas.** The designer's preview is drawn by a headless
+  host built *without* the printing packages, so its chart menu shows neither entry. Press **F5** and
+  right-click the chart in the running window.
+- **The page is the size of the control.** A chart drawn 600 × 300 gets a 600 × 300 page (about 21 × 10.6 cm)
+  with the chart filling it; fitting that to A4 or turning it to landscape is the print dialog's business.
+  The PDF is **vector** output, so enlarging it stays sharp. Size the chart as the shape you want on paper.
+- **A failure can never take your form down.** Both entries check what they need first (a window, a printer
+  service, a file the user really picked) and both swallow their own errors, so the worst case is that
+  nothing is printed.
+
+**What a project needs for them.** A project created **from 0.12.0 on** already has all of it — the two
+packages, the `PRINT_SUPPORT` symbol and `.UsePrintables()` in `Program`. An older project compiles the
+bundled `GrumpyCharts` unchanged and simply has no print entries; to add them, reference the two packages:
+
+```xml
+<PackageReference Include="Avae.Printables" Version="3.0.7" />
+<PackageReference Include="AvaloniaUI.PrintToPDF" Version="0.6.0" />
+```
+
+then define the symbol — in **C#** the constant list is semicolon-separated, in **VB** it is a comma list
+(vbc's `/define:` switch takes commas, and the `;` form stops the build with `BC31030`):
+
+```xml
+<!-- C# -->
+<DefineConstants>$(DefineConstants);PRINT_SUPPORT</DefineConstants>
+
+<!-- VB -->
+<DefineConstants>$(DefineConstants),PRINT_SUPPORT</DefineConstants>
+```
+
+and call `.UsePrintables()` where the app is built — in `Program`'s `BuildAvaloniaApp()`, next to
+`.UsePlatformDetect()`, with `using Avae.Printables;` (C#) or `Imports Avae.Printables` (VB) at the top of
+that file. If the symbol is missing, nothing fails: the chart quietly has no print entries.
+
+> **Do not try to set the VB symbol in a `BeforeTargets="VbcCompile"` target.** It looks like it works and
+> does not: the SDK assigns `FinalDefineConstants` after that target has run, so the value is thrown away
+> and the `#If PRINT_SUPPORT Then` block is compiled out *while the build stays green*. The `DefineConstants`
+> line above is the one that reaches the compiler — checked 2026-09-25 on the .NET 10 SDK, where the switch
+> vbc receives ends in `…,PLATFORM="AnyCPU",,PRINT_SUPPORT,_MyType="Empty"`.
 
 ---
 

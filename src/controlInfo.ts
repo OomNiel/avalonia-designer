@@ -346,11 +346,29 @@ const INFO: Record<string, ControlInfo> = {
     }
 };
 
+/** The seven bundled chart controls all derive from the same `ChartBase`, so they all share the
+ *  right-click menu's hardcopy entries (0.12.0) — one sentence here beats repeating it in seven
+ *  `use` strings, and it stays true if a new chart type is added. */
+const CHART_TAGS = new Set([
+    'GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot',
+    'GrumpyAreaPlot', 'GrumpyPiePlot', 'GrumpyWaterfallPlot', 'GrumpySurfacePlot'
+]);
+
+const CHART_HARDCOPY_HELP =
+    ' In the app you run (F5) the chart\'s right-click menu also carries Print… (the platform\'s own '
+    + 'print dialog) and Print to PDF… (it asks for a file, then writes one — on every platform). Both '
+    + 'need a real window and a printer service, so the designer preview, which draws with the headless '
+    + 'host, offers neither.';
+
 /** Returns the plain-language info for a control tag (falls back to a generic entry). */
 export function controlInfoFor(tag: string): ControlInfo {
-    return INFO[tag] || {
-        label: tag,
-        desc: `A ${tag} control.`,
-        use: 'Select it on the canvas and use the Properties panel to adjust it.'
-    };
+    const info = INFO[tag];
+    if (!info) {
+        return {
+            label: tag,
+            desc: `A ${tag} control.`,
+            use: 'Select it on the canvas and use the Properties panel to adjust it.'
+        };
+    }
+    return CHART_TAGS.has(tag) ? { ...info, use: info.use + CHART_HARDCOPY_HELP } : info;
 }

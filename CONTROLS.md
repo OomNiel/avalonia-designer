@@ -162,8 +162,9 @@ internal/template parts have no published summary and are described by role inst
 | Surface Chart 3D | `charts:GrumpySurfacePlot` | A corrugated sheet drawn as a real surface: one **slice per spreadsheet column** along the sheet's length (a shared X column for the positions across the width, each slice's own Y column for its height), neighbouring slices joined so the picture *is* the surface. **Style** (`GridMesh` / `GridMeshSolid` / `Solid`), **Colour By** (`Sampleset` / `Temperature` ramp from **Low Colour** at the valleys to **High Colour** on the ridges, with **Heat Min** / **Heat Max**), **Solid Opacity**, **Mesh Colour / Thickness**, and the view (**Elevation**, **Azimuth**, **Z Spacing**, **Zoom**, **X Axis Zoom %** / **Y Axis Zoom %** (how big an axis is DRAWN, 1…100 % of the fitted size, ranges untouched), turnable by dragging). **Where a slice stands** comes from **Z Row** (one row of Z values, one per slice) or from **Z Start** / **Z Step**. Its legend is a **range window** and a **size bar**: one slider for the **width** (`MinX`/`MaxX`), one for the **slices on show** (`MinZ`/`MaxZ`, counted in slices — *"Z 3…4 of 6"*, the view re-fitting to it) and one per axis' **zoom** (one handle each, since a size is a single number, the four packing to 26px apart). Picking a page in the Data Selector loads the **whole sheet** (one series per data column, a stale slice window cleared). **Show Base** / **Base Colour** fill the space under the sheet. `SampleSets` writes whole slices inline; no cursors and no Axis editor (the cube's three axes are projected). | ✅ Toolbox *(Charts)* |
 
 All of them come from the bundled **`GrumpyCharts.cs` / `.vb`** file (namespace `using:AvaloniaCharts`), copied
-into every new project next to the other helpers — no package, no image file, nothing to install. See
-**USER_MANUAL §19, "The charting tools"** for the full walkthrough.
+into every new project next to the other helpers — no chart engine, no image file, nothing to install beyond
+the two small printing packages the **Print…** / **Print to PDF…** menu entries need (see *Hardcopy* below).
+See **USER_MANUAL §19, "The charting tools"** for the full walkthrough.
 
 - **Data**: `Values` (line plot / bar / area / pie) or `Points` (X,Y plot) for typed-in data, `SampleSets` for a
   waterfall written by hand (`"1,2,3; 4,5,6"` = two sets of three samples), or `SourceFile`
@@ -216,11 +217,21 @@ into every new project next to the other helpers — no package, no image file, 
   one value or four (`4,8,4,8`), and leaving it empty keeps the chart's own small gap. Then gridlines
   (colour/thickness/style), the title (text/show/position/colour/size), the fixed scale overrides
   (`MinX`/`MaxX`/`MinY`/`MaxY`) and `DockPanel.Dock`.
+- **Hardcopy** (0.12.0): the right-click menu carries **Print…** (the platform's own dialog, via
+  `Avae.Printables`) and **Print to PDF…** (`AvaloniaUI.PrintToPDF` — asks for a file, writes vector Skia
+  output, needs no printer). Both sit on **`ChartBase`** (`PrintAsync()` / `PrintToPdfAsync()`, `public
+  async Task`), so every chart type has them, including the pie and the bar, which return before the cursor
+  section of that menu. They are compiled in behind the **`PRINT_SUPPORT`** constant: a project the
+  designer generated from 0.12.0 on defines it and references both packages, the headless `PreviewerHost`
+  does not (so the design canvas has no print entries), and an older project simply has neither until the
+  two packages and the symbol are added (USER_MANUAL §19.14). Each method guards itself — no window, no
+  printing service, no picked file — and swallows its own exceptions, so the menu can never crash a form.
 
 > **An old copy of the bundled chart file cannot compile the newer series/axis/legend/cursor/brush XAML**
-> (`AVLN2000: Unable to resolve type XYSeries…`, `… type ChartCursor …`, or a `PlotBackBrush` property). The
-> designer refreshes it for you: save the form once after using a chart editor, and the project's
-> `GrumpyCharts.cs`/`.vb` is updated — it tells you when.
+> (`AVLN2000: Unable to resolve type XYSeries…`, `… type ChartCursor …`, or a `PlotBackBrush` property), and
+> its menu is missing whatever was added since — the **Legend** toggle, the surface legend's sliders and
+> the **Print…** / **Print to PDF…** entries. The designer refreshes it for you: save the form once after
+> using a chart editor, and the project's `GrumpyCharts.cs`/`.vb` is updated — it tells you when.
 
 ---
 

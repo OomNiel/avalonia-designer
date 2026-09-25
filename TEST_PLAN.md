@@ -1,6 +1,17 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-23 · Status: **full suite green on this machine — 7,549 passed / 0 failed / 0 skipped (57 s)**
+Date: 2026-09-25 · Status: **full suite green on this machine — 8,121 passed / 0 failed / 0 skipped (61 s)**
+
+> 2026-09-25: **`0.12.0`** added **hardcopy output** to the charts — `Print…` (the platform dialog) and
+> `Print to PDF…` on the right-click menu of all seven types — and with it the release's one real bug:
+> **the VB symbol that compiles the feature in was never defined.** The first wiring set `PRINT_SUPPORT`
+> inside a `BeforeTargets="VbcCompile"` target, and the SDK assigns `FinalDefineConstants` *after* that
+> target runs, so the value was overwritten on every build: `dotnet build` stayed green while
+> `#If PRINT_SUPPORT Then` was compiled out, which is to say every VB project had no print entries and
+> nothing said so. It is now `<DefineConstants>$(DefineConstants),PRINT_SUPPORT</DefineConstants>` — a
+> **comma** list, because vbc's `/define:` switch takes commas (the C# `;` form is rejected with `BC31030`)
+> — and the switch vbc really receives ends in `…,PLATFORM="AnyCPU",,PRINT_SUPPORT,_MyType="Empty"`, with
+> `DEBUG`/`TRACE` intact. **8,101 → 8,121** assertions, `0 failed`.
 
 > 2026-09-23: **`0.11.12`** added 603 assertions for the **waterfall chart** (`charts:GrumpyWaterfallPlot`,
 > the sixth chart type) and its **Z Column** series row. Two new files: `t2-logic/waterfall` (**174**) and
@@ -93,7 +104,7 @@ one that touches the standing **"no automated UI runs"** rule (see §7 — decis
 
 | Layer | Name | Technique | Covers |
 |---|---|---|---|
-| **T0** | Static / build | `tsc`, `node --check` on webview JS, `dotnet build host`, `dotnet build` of every generated project (C#+VB) | Compiles everywhere, 0 warnings/errors |
+| **T0** | Static / build | `tsc`, `node --check` on webview JS, `dotnet build host`, `dotnet build` of every generated project (C#+VB), and a C#/VB probe that *references* the chart's `PRINT_SUPPORT`-gated print members | Compiles everywhere, 0 warnings/errors; a conditional-compilation symbol that never reached the compiler |
 | **T1** | Host preview probes | Drive `PreviewerHost` over WebSocket (render XAML → PNG + control bounds), decode + assert pixels/bounds | Placement, sizing, preview fidelity, title bar, images, item compaction, Body lock, themes |
 | **T2** | Extension logic probes | `node` + vscode stub → `XamlModel`, `codeBehind`, `codeBehindCheck`, `controlEvents`, `propertyCatalog`, `assetCatalog`, `dataSetModel/Generator`, `projectScaffold`, `projectCreator`, undo/redo history, `bundledComponents` | Model ops, code-behind generation/cleanup + fix & alternative rules, the generated event catalog, property defs, asset scanning, .adset round-trips, generated code correctness, marketplace packaging rules |
 | **T3** | Webview DOM tests | `jsdom` + stubbed `acquireVsCodeApi` → `designer.js`/`dataSet.js` interaction | Click-select, drag outline + drop, context menu, dropdown, modals, ItemsSource picker, shortcuts, event chooser, handler menu, ⚠ badges, ⚙ Settings, code-issue alternatives, toolbar categories folding the **real** markup. The fixture must mirror **every** `$('…')` id in `media/designer.js` — an assertion fails loudly if one is missing (a stale fixture used to make the script throw on load and run 5 of ~360 checks) |
@@ -469,6 +480,26 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.12.0 (2026-09-25) — hardcopy output, and a VB symbol that was never defined
+
+- `tests/t0-build/printsupport.test.js` (new, **18**) — **why it exists**: a text check on the project file
+  passed the broken VB wiring happily, so the guard is a build. It generates a C# and a VB project through
+  the real scaffold, drops a probe class into each that *references* `PrintAsync`/`PrintToPdfAsync`, and
+  requires a warning-free build — the probe cannot compile unless the symbol reached the compiler
+  (`BC30456 … 'PrintAsync' is not a member` in VB, `CS1061` in C#, otherwise). Around it: the project text is
+  checked for the right separator (comma for VB, semicolon for C#), for the absence of any
+  `FinalDefineConstants`/`<Target>` poking the compiler, for both `PackageReference`s and for
+  `Imports Avae.Printables` + `.UsePrintables()` in `Program` — and the bundled file is checked to still
+  *gate* both members, so the probe can never pass for the wrong reason.
+- `tests/t2-logic/packaging.test.js` (**+2**) — the README's new at-a-glance collage is pinned from **both**
+  sides: `DesignerDemo.png` is excluded from the `.vsix` (it is ~900 KB, four times the rest of the package,
+  and vsce rewrites a relative README image link to the repository) *and* the README really links it.
+- The T0 matrix (10 generated projects, assertions unchanged) now compiles the print block in VB as well: 0
+  errors / 0 warnings — the VB half of the feature's only real verification.
+- `src/controlInfo.ts` — the seven chart controls share one appended sentence about the two menu entries,
+  keyed off a tag set rather than seven copies of a `use` string.
+- Suite **8,121 passed / 0 failed**.
 
 ### 0.11.19 (2026-09-24) — the previewer builds for one platform, not twenty-six
 

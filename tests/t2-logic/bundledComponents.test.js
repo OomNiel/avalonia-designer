@@ -137,8 +137,8 @@ internal static class PickerFolderMemory { internal static string? LastFolder { 
     // already carried `GrumpySurfacePlot`, so it was never reported stale: a DRAWING change in an existing
     // type is a marker move like any other, and the new member is what an old copy lacks.
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'legendItem', 'spec',
-        'the GrumpyCharts marker is the newest token in the current bundled file');
+    t.equal(chartSpec.marker, 'printItem', 'spec',
+        'the GrumpyCharts marker is the newest token in the current bundled file (the hardcopy "Print…"/"Print to PDF…" menu entries)');
     const oldCsCharts = `// GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb).
 public sealed class ChartSeries { public double[] Xs = Array.Empty<double>(); }
 public abstract class ChartBase : Control { public string? SourceFile { get; set; } }`;
@@ -227,9 +227,6 @@ public abstract class ChartBase
 }`;
     t.equal(isStaleBundledCopy(fillEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'and one with fill/restore but before the surface chart 3D (the toolbox writes that now)');
-    // The surface type was the newest thing the designer could write, so this is the copy every refreshed
-    // project held — and 2026-09-24 changed how that EXISTING type draws (the band fill became triangle
-    // pairs). It has the type and no such member, which is exactly the state ChartTestCS was in when its
     // bands kept showing the plot's backcolour through the sheet.
     const surfaceEraCsCharts = `${fillEraCsCharts}
 public class GrumpySurfacePlot : ChartBase { }`;
@@ -248,11 +245,16 @@ public static class WidthWindow { internal static double CutToWindow() => 0; }`;
 public static class HeightLevels { internal static double CutToLevels() => 0; }`;
     t.equal(isStaleBundledCopy(levelEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
         'and one with the level-cut ramp but before the legend grew its two zoom sliders (the copy a running\n         app had while the designer preview already showed four)');
-    // The current copy: everything above plus today's legend and menu entry.
-    const curCsCharts = `${levelEraCsCharts}
+    // The current copy: everything above plus today's legend toggle and the hardcopy menu entries.
+    const legendEraCsCharts = `${levelEraCsCharts}
 private static readonly object legendItem = null;`;
+    t.equal(isStaleBundledCopy(legendEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'a copy with the four-slider legend but no hardcopy menu is stale (the marker moved to printItem)');
+    // The current copy: everything above plus the Print… / Print to PDF… entries themselves.
+    const curCsCharts = `${legendEraCsCharts}
+private static readonly object printItem = null;`;
     t.equal(isStaleBundledCopy(curCsCharts, false, 'GrumpyCharts'), false, 'detect',
-        'the current chart file is current (the four-slider legend and the Legend menu entry are the newest\n         things it ships)');
+        'the current chart file is current (the hardcopy menu entries are the newest thing it ships)');
     t.equal(isStaleBundledCopy(`${oldCsCharts}\n// hand-tweaked below`, false, 'GrumpyCharts'), true, 'detect',
         'an old chart file with extra edits still refreshes (the bundled header is intact)');
     const oldVbCharts = `' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs).
@@ -303,7 +305,8 @@ End Function`;
     t.equal(isStaleBundledCopy(levelEraVbCharts, true, 'GrumpyCharts'), true, 'detect',
         'and the VB copy that has the level-cut ramp but not the four-slider legend');
     t.equal(isStaleBundledCopy(`${levelEraVbCharts}
-Private Shared ReadOnly legendItem As Object = Nothing`, true, 'GrumpyCharts'), false,
+Private Shared ReadOnly legendItem As Object = Nothing
+Private Shared ReadOnly printItem As Object = Nothing`, true, 'GrumpyCharts'), false,
         'detect', 'the current VB chart file is current');
 
     // The SHIPPED resource files must never look stale: a marker that drifts out of the resources is

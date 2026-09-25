@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.11.19
+// BUNDLED-COPY: 0.12.0
 // GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs.
 //
@@ -97,6 +97,16 @@ using Avalonia.Media;
 using Avalonia.Metadata;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+
+#if PRINT_SUPPORT
+// Hardcopy output is provided by two OPTIONAL, third-party libraries that a generated project opts
+// into (it references both packages, defines PRINT_SUPPORT and calls AppBuilder.UsePrintables()).
+// The feature is compiled out — and therefore costs nothing — when PRINT_SUPPORT is undefined, which
+// is how the headless PreviewerHost (and its fill/restore driver) build this same file with no
+// printer package in reach. See projectScaffold.ts / bundledComponents.ts.
+using Avae.Printables;
+using AvaloniaUI.PrintToPDF;
+#endif
 
 namespace AvaloniaCharts;
 
@@ -2098,6 +2108,68 @@ public abstract class ChartBase : Control
         }
     }
 
+#if PRINT_SUPPORT
+    // ---- hardcopy printing ---------------------------------------------------------------
+
+    /// <summary>
+    /// Sends the chart to the platform's native print dialog (Avae.Printables). Does nothing
+    /// when the control has no <see cref="TopLevel"/> yet (a designer preview) or when no
+    /// printing service has been registered with <c>AppBuilder.UsePrintables()</c> — in that
+    /// case Avae.Printables' own <c>Printable.Default</c> is null and the call is a silent no-op
+    /// by design, so it is always safe to invoke from the menu.
+    /// </summary>
+    public async Task PrintAsync()
+    {
+        if (TopLevel.GetTopLevel(this) is null) return;   // headless preview / design surface
+        try
+        {
+            // The chart is a Visual: hand it — and only it — to the printer. A null/empty Name
+            // falls back to a readable job title for the print queue.
+            var title = !string.IsNullOrWhiteSpace(Name) ? Name : "Grumpy chart";
+            await Printable.PrintVisualsAsync(new[] { (Visual)this }, title);
+        }
+        catch
+        {
+            // A failed print must never take the form down: leave a menu click without feedback.
+        }
+    }
+
+    /// <summary>
+    /// Renders the chart to a PDF file the user picks (AvaloniaUI.PrintToPDF, via the Skia PDF
+    /// backend — no native print dialog, so it works on every platform). Does nothing when the
+    /// control has no <see cref="TopLevel"/> yet (a designer preview), so it is always safe to
+    /// call.
+    /// </summary>
+    public async Task PrintToPdfAsync()
+    {
+        var top = TopLevel.GetTopLevel(this);
+        if (top?.StorageProvider is not { } storage) return;
+        var suggested = string.IsNullOrWhiteSpace(Name) ? "chart" : Name;
+        var options = new FilePickerSaveOptions
+        {
+            SuggestedFileName = suggested + ".pdf",
+            DefaultExtension = "pdf",
+            FileTypeChoices = new[]
+            {
+                new FilePickerFileType("PDF document") { Patterns = new[] { "*.pdf" } },
+                new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+            },
+            ShowOverwritePrompt = true
+        };
+        var file = await storage.SaveFilePickerAsync(options);
+        var path = file?.TryGetLocalPath() ?? "";
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            await Print.ToFileAsync(path, this);
+        }
+        catch
+        {
+            // A failed save must never take the form down.
+        }
+    }
+#endif
+
     /// <summary>True when at least one series has points to draw.</summary>
     private bool HasAnyData() => _lastPlotCount > 0;
 
@@ -3574,6 +3646,20 @@ public abstract class ChartBase : Control
             InvalidateVisual();
         };
         items.Add(legendItem);
+
+        // HARDCOPY (every chart type gets these): a native PRINT dialog (Avae.Printables) and a
+        // SAVE-TO-PDF (AvaloniaUI.PrintToPDF, Skia-backed — cross-platform). Both are guarded inside
+        // the methods (no TopLevel => no-op in the preview; no printing service => Avae no-ops), so the
+        // entries are always safe to offer. They live BEFORE the !SupportsCursors return below so the
+        // pie and the bar — which skip the whole cursor section — still expose them.
+#if PRINT_SUPPORT
+        var printItem = new MenuItem { Header = "Print…" };
+        printItem.Click += (_, _) => _ = PrintAsync();
+        items.Add(printItem);
+        var pdfItem = new MenuItem { Header = "Print to PDF…" };
+        pdfItem.Click += (_, _) => _ = PrintToPdfAsync();
+        items.Add(pdfItem);
+#endif
 
         // A chart that has no cursors (the pie and the bar) gets no cursor entries at all: the toggles,
         // the readout position, add / remove / reset and "copy readout" are every one of them about

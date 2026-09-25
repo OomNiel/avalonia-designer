@@ -17,6 +17,51 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-09-25, tenth session — 0.11.20)
+
+**The user's own hardcopy feature was verified, and its VB half turned out never to have existed.** They
+added `Print…` / `Print to PDF…` to the chart menu behind `PRINT_SUPPORT` and asked for a review of the code
+changes before touching the docs.
+
+**What went in** (full detail in `CHANGELOG.md` `[0.11.20]`, `NOTES.md` §151, `USER_MANUAL` §19.14):
+
+- **Found: the VB symbol was never defined.** `src/projectScaffold.ts` set `PRINT_SUPPORT` from a
+  `BeforeTargets="VbcCompile"` target, and the SDK assigns `FinalDefineConstants` *after* that target runs —
+  so every VB project compiled with the feature silently absent, with 0 errors and 0 warnings. Fixed with
+  `<DefineConstants>$(DefineConstants),PRINT_SUPPORT</DefineConstants>` (comma, not semicolon: vbc's
+  `/define:` takes commas, and the `;` form is `BC31030`). Proven by reading the switch vbc received:
+  `…,PLATFORM="AnyCPU",,PRINT_SUPPORT,_MyType="Empty"`, `DEBUG`/`TRACE` intact.
+- **Why the earlier checks missed it:** "compiles with the symbol, 0 errors" is meaningless when the symbol
+  can be dropped — a skipped conditional block compiles perfectly. The new guard **references the gated
+  members**: `tests/t0-build/printsupport.test.js` generates a C# and a VB project, adds a probe calling
+  `PrintAsync()`/`PrintToPdfAsync()`, and requires a clean build (`BC30456`/`CS1061` without the symbol).
+- **C# was fine all along**, and the T0 matrix (10 generated projects) now compiles the print block in VB
+  too: 0 errors / 0 warnings.
+- **Docs brought in line:** the `[0.11.20]` changelog note had explained the broken mechanism as if it worked;
+  it now names the overwrite, the comma rule and the two packages. `USER_MANUAL` §19.14 (new) documents
+  hardcopy — menu, page-size behaviour, the per-language wiring, and the `BeforeTargets` trap in a warning
+  box; the manual's §19 intro, its TOC (which was also missing 19.10–19.13) and the "no packages" note were
+  corrected. `CONTROLS.md` charts section gained the `ChartBase` methods, `PRINT_SUPPORT` and the packages;
+  `TEST_PLAN.md` gained the 0.11.20 log entry and a T0 row that names the probe.
+- **The README image** (`DesignerDemo.png`, 3303×2242, 896 KB) sits directly under the *"Formerly Avalonia
+  Designer for VS Code"* notice box, and is excluded from the `.vsix` — vsce rewrites a relative README image
+  link to the repository, so the gallery serves it from GitHub and the package stays ~1.2 MB. Pinned from
+  both sides in `packaging.test.js`.
+- **In-extension help:** the seven chart controls share one appended sentence in `controlInfo.ts` about the
+  two menu entries (a tag set, not seven copies).
+- Suite **8,121 passed / 0 failed** (+20); PROBLEMS clean; `npm run compile` clean.
+
+**Open / next:**
+
+1. **`0.11.20` is uncommitted** (HEAD `2242ac3`, ~30 modified files + 1 new file `DesignerDemo.png`, 1 new
+   test). Nothing was packaged, tagged or pushed this session — the user asked only for the fix and the docs.
+2. **The Marketplace upload of the print feature is the developer's step** (publisher portal,
+   `PUBLISHING.md`) once 0.11.20 has a `.vsix`; `PUBLISHING.md` still names 0.11.19 as the candidate.
+3. **A real printed page and a real PDF from the user's own app** are still unverified by them — the page is
+   the size of the control, so the paper view is worth one look (their rule: they run the app).
+4. **`host/ModelHost`** still restores LLamaSharp natives for every platform (the last place hundreds of
+   megabytes can appear) — untouched on purpose.
+
 ## Where the last session left off (2026-09-24, ninth session — 0.11.19)
 
 **The previewer now builds for one platform, not twenty-six.** Asked in the shape of a question — *"Would it

@@ -122,7 +122,7 @@ module.exports = async (t) => {
     for (const [lang, text] of TWINS) {
         const menu = text.slice(text.indexOf(lang === 'cs' ? 'private void ShowChartMenu()'
             : 'Private Sub ShowChartMenu()'));
-        const body = menu.slice(0, 4000);
+        const body = menu.slice(0, 6000);
         const gate = body.indexOf(lang === 'cs' ? 'if (!SupportsCursors)' : 'If Not SupportsCursors Then');
         t.ok(gate >= 0, lang, `${lang}: the chart menu asks whether this chart type has cursors`);
         const separator = body.indexOf(lang === 'cs' ? 'items.Add(new Separator());'

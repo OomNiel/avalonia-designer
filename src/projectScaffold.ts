@@ -23,6 +23,12 @@ import { withDesignerHeader } from './xamlHeader';
 const AVALONIA_VERSION = '12.1.1';
 const TARGET_FRAMEWORK = 'net10.0';
 const MAIN_FORM_NAME = 'MainWindow';
+// Hardcopy printing on the chart controls (GrumpyCharts) is compiled in behind PRINT_SUPPORT.
+// Avae.Printables provides the native print dialog (platform services); AvaloniaUI.PrintToPDF
+// provides cross-platform PDF export via Skia. Generated projects define PRINT_SUPPORT, reference
+// both packages and call AppBuilder.UsePrintables() — see csproj()/vbproj() and programCs()/programVb().
+const AVAE_PRINTABLES_VERSION = '3.0.7';
+const AVALONIAUI_PRINTTOPDF_VERSION = '0.6.0';
 
 export interface ScaffoldOptions {
     language: 'cs' | 'vb';
@@ -135,6 +141,10 @@ function csproj(ns: string): string {
     <TargetFramework>${TARGET_FRAMEWORK}</TargetFramework>
     <Nullable>enable</Nullable>
     <RootNamespace>${ns}</RootNamespace>
+    <!-- Compiles the bundled GrumpyCharts.cs "Print…"/"Print to PDF…" menu entries + methods
+         (Avae.Printables + AvaloniaUI.PrintToPDF). Omitted in the headless PreviewerHost, which
+         links the same file but carries no printer packages. -->
+    <DefineConstants>$(DefineConstants);PRINT_SUPPORT</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -143,6 +153,9 @@ function csproj(ns: string): string {
     <PackageReference Include="Avalonia.Themes.Fluent" Version="${AVALONIA_VERSION}" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="${AVALONIA_VERSION}" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="${AVALONIA_VERSION}" />
+    <!-- Hardcopy output for the chart controls (see GrumpyCharts.cs #if PRINT_SUPPORT). -->
+    <PackageReference Include="Avae.Printables" Version="${AVAE_PRINTABLES_VERSION}" />
+    <PackageReference Include="AvaloniaUI.PrintToPDF" Version="${AVALONIAUI_PRINTTOPDF_VERSION}" />
   </ItemGroup>
 
 </Project>
@@ -158,6 +171,20 @@ function vbproj(ns: string): string {
     <Nullable>enable</Nullable>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <RootNamespace>${ns}</RootNamespace>
+    <!-- Compiles the bundled GrumpyCharts.vb "Print…"/"Print to PDF…" menu entries +
+         methods (Avae.Printables + AvaloniaUI.PrintToPDF).
+         VB only: vbc's /define: switch is COMMA-separated, and the SDK builds
+         FinalDefineConstants from $(DefineConstants) itself — so PRINT_SUPPORT has to be
+         appended HERE as a comma token. Two forms that look right and are not:
+           • the C# idiom  $(DefineConstants);PRINT_SUPPORT  is handed to vbc verbatim and
+             fails with BC31030 ("Conditional compilation constant '; ^^ ^^ PRINT_SUPPORT'
+             is not valid");
+           • setting FinalDefineConstants in a BeforeTargets="VbcCompile" target is
+             overwritten again before the compiler runs — the build succeeds and the
+             #If PRINT_SUPPORT block is silently compiled OUT (which is worse, because
+             nothing tells you the feature is missing).
+         DEBUG/TRACE are untouched: they are added by the SDK, not by this line. -->
+    <DefineConstants>$(DefineConstants),PRINT_SUPPORT</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -166,6 +193,9 @@ function vbproj(ns: string): string {
     <PackageReference Include="Avalonia.Themes.Fluent" Version="${AVALONIA_VERSION}" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="${AVALONIA_VERSION}" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="${AVALONIA_VERSION}" />
+    <!-- Hardcopy output for the chart controls (see GrumpyCharts.vb #If PRINT_SUPPORT). -->
+    <PackageReference Include="Avae.Printables" Version="${AVAE_PRINTABLES_VERSION}" />
+    <PackageReference Include="AvaloniaUI.PrintToPDF" Version="${AVALONIAUI_PRINTTOPDF_VERSION}" />
   </ItemGroup>
 
 </Project>
@@ -196,6 +226,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avae.Printables;
 using AvaloniaChrome;
 
 namespace ${ns};
@@ -219,7 +250,7 @@ public static class Program
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
 
     public static AppBuilder BuildAvaloniaApp() =>
-        AppBuilder.Configure<App>().UsePlatformDetect().LogToTrace();
+        AppBuilder.Configure<App>().UsePlatformDetect().UsePrintables().LogToTrace();
 }
 `;
 }
@@ -229,6 +260,7 @@ function programVb(): string {
 Imports Avalonia.Controls
 Imports Avalonia.Controls.ApplicationLifetimes
 Imports Avalonia.Markup.Xaml
+Imports Avae.Printables
 
 Public Class App
     Inherits Application
@@ -254,6 +286,7 @@ Module Program
     Function BuildAvaloniaApp() As AppBuilder
         Return AppBuilder.Configure(Of App)() _
             .UsePlatformDetect() _
+            .UsePrintables() _
             .LogToTrace()
     End Function
 End Module

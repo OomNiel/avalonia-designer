@@ -39,6 +39,10 @@ SESSION.md
 # the version with the background outside the ring removed, GrumpyWhite.png the white glyph derived
 # from it (see NOTES.md §88) — only the two derived files are referenced by the manifest.
 Grumpy_128x128.png
+# The README's at-a-glance collage. It is ~900 KB — four times the rest of the package — and vsce
+# rewrites relative README image links to the repository, so the Marketplace serves it from GitHub
+# either way. Excluded to keep the .vsix at ~1.2 MB; Grumpy.png (27 KB, the logo) still ships.
+DesignerDemo.png
 # Build metadata: VS Code only needs package.json plus the compiled out/ folder.
 tsconfig.json
 # The icon generator (tools/make-activitybar-icon.py) is a developer tool, not runtime code: it draws

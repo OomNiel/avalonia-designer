@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.11.19
+// BUNDLED-COPY: 0.12.0
 // PathPicker.cs — BUNDLED RESOURCE (the VB twin is resources/PathPicker.vb). Copied into every
 // generated project, next to GrumpyPanel.cs / ExifImageLoader.cs.
 //

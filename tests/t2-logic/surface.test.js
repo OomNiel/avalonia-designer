@@ -387,8 +387,8 @@ module.exports = (t) => {
     // ---------------------------------------------------------------- the staleness marker
     const spec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
     const vbSpec = bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(spec.marker, 'legendItem', 'marker',
-        'the marker is the height-LEVEL ramp CUT — the newest thing the shipped file has that an old copy cannot show, because a DRAWING change in an existing type is invisible to it');
+    t.equal(spec.marker, 'printItem', 'marker',
+        'the marker is the NEW Hardcopy menu token `printItem` — the newest thing the shipped file has that an old copy cannot show, because the "Print…"/"Print to PDF…" entries are gated behind PRINT_SUPPORT in the bundled file');
     t.equal(vbSpec.marker, spec.marker, 'marker', 'both languages use the same marker');
     for (const [lang, text] of TWINS) {
         t.ok(text.includes(spec.marker), lang, `${lang}: the shipped file never looks stale`);

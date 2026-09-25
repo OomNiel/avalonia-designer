@@ -4002,3 +4002,74 @@ the build. **578 MB → 24 MB**, and a `-r win-x64` cross-build produces the sam
 
 **Suite:** 8,100 passed / 0 failed. T1 (402) drives the real trimmed host through Skia, HarfBuzz and SQLite.
 
+---
+
+### §151 — the feature that was compiled out, and a green build that proved nothing (2026-09-25, 0.12.0)
+
+The user wrote the hardcopy feature themselves — `Print…` and `Print to PDF…` on the chart menu, behind
+`PRINT_SUPPORT`, with `Avae.Printables` + `AvaloniaUI.PrintToPDF` wired into `projectScaffold.ts` — and asked
+for a review. The C# side was fine. **The VB side never had the feature at all**, and every signal said
+otherwise: the generated VB project built with 0 errors *and* 0 warnings, the whole suite was green, and the
+project file contained the word `PRINT_SUPPORT`.
+
+**The bug.** The VB wiring was a target:
+
+```xml
+<Target Name="GrumpyChartsPrintSupport" BeforeTargets="VbcCompile">
+  <PropertyGroup>
+    <FinalDefineConstants>$(FinalDefineConstants),PRINT_SUPPORT</FinalDefineConstants>
+  </PropertyGroup>
+</Target>
+```
+
+`FinalDefineConstants` looks like the right property — it is the one vbc actually consumes — but the SDK
+assigns it **after** that target runs (`Microsoft.VisualBasic.CurrentVersion.targets`, line 145). The value
+was overwritten on every build, the symbol never existed, and `#If PRINT_SUPPORT Then` was compiled out. The
+correct place is the property group, as a **comma** token:
+
+```xml
+<!-- VB: the switch vbc receives is comma-separated -->
+<DefineConstants>$(DefineConstants),PRINT_SUPPORT</DefineConstants>
+<!-- C#: semicolons are this one's separator -->
+<DefineConstants>$(DefineConstants);PRINT_SUPPORT</DefineConstants>
+```
+
+Verified on .NET SDK 10 by reading the switch vbc was actually given:
+`FinalDefineConstants = CONFIG="Debug",DEBUG=-1,TRACE=-1,PLATFORM="AnyCPU",,PRINT_SUPPORT,_MyType="Empty"` —
+the symbol is there and `DEBUG`/`TRACE` (which the SDK appends itself) survived the double comma.
+
+**The two lessons, both about verification rather than about VB.**
+
+1. **"It compiles with the symbol" is not evidence when the symbol can be silently dropped.** The changelog
+   said exactly that — *"compile both with `PRINT_SUPPORT` … 0 errors"* — and it was true and meaningless,
+   because a file whose conditional block is skipped compiles perfectly. The check that works is a build that
+   **references the gated members**: `tests/t0-build/printsupport.test.js` generates a C# and a VB project,
+   drops in a probe that calls `PrintAsync()`/`PrintToPdfAsync()`, and requires a clean build. It fails with
+   `BC30456`/`CS1061` when the symbol is missing, and it passed immediately after the one-line fix. A text
+   assertion on the project file would have passed the broken wiring without blinking.
+2. **This is the marker lesson again, one level down (§149).** There, a marker token could not see a change
+   that did not touch it; here, a *symbol* check could not see that the symbol was never defined. Both times
+   the fix is the same shape: assert the effect (the members exist, the picture changed), not the intent (the
+   token is present, the property is set).
+
+**Kept from the review as well:** the VB naive `;` form fails with `BC31030` — the user knew, which is why
+they reached for `FinalDefineConstants` — and an existing project that never adds the symbol or the packages
+still compiles unchanged (its copy of `GrumpyCharts.{cs,vb}` simply has no print entries), so no old project
+breaks. `Avae.Printables` / `AvaloniaUI.PrintToPDF` are pinned at 3.0.7 / 0.6.0 and both are needed: only the
+second one exports a PDF without a printer.
+
+**Docs corrected rather than extended:** the `[0.12.0]` changelog entry had explained the *wrong* mechanism
+as if it worked, so it now names the overwrite and the comma rule; `USER_MANUAL` §19.14 documents the
+per-language form with the `BeforeTargets` trap in a warning box, and `CONTROLS.md` gained the `ChartBase`
+method names and the two packages.
+
+**Also this session:** the README's at-a-glance collage (`DesignerDemo.png`, 3303×2242) sits under the
+"Formerly *Avalonia Designer for VS Code*" notice, and is **excluded from the `.vsix`** — it is ~900 KB, four
+times the rest of the package, and vsce rewrites a relative README image link to the repository, so the
+gallery serves it from GitHub either way. Pinned from both sides in `packaging.test.js` (ignored *and*
+linked), because an ignored file the README never links and a linked file that is ignored are equally wrong.
+The seven chart controls also share one appended sentence in `controlInfo.ts` (keyed off a tag set) about the
+two menu entries.
+
+**Suite:** 8,121 passed / 0 failed (+18 from the new T0 probe, +2 from the packaging pins). PROBLEMS clean.
+

@@ -150,9 +150,16 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // and *"the right click legend on/off is not available in the runtime menu"*: the preview draws
             // the host's copy of this file while the app compiles the PROJECT's own, and a stale copy carried
             // `CutToLevels` already — so, exactly as with `BandTriangle` and `CutToWindow`, a change of this
-            // kind is invisible until the marker names something only the new copy has. `legendItem` is that
-            // token: no copy that lacks today's menu entry can draw today's legend either.
-            marker: 'legendItem'
+            // kind is invisible until the marker names something only the new copy has. `legendItem` was that
+            // token: no copy that lacks today's menu entry could draw today's legend either.
+            // 2026-09-25: the chart menu gained HARDCOPY — "Print…" (native dialog, Avae.Printables) and
+            // "Print to PDF…" (Skia-backed PDF, AvaloniaUI.PrintToPDF). The code lives behind a PRINT_SUPPORT
+            // compile symbol (the headless PreviewerHost links this file with no printer packages, so the
+            // entries are compiled out there and cost nothing). A stale project copy has neither the symbol's
+            // usings nor the `printItem` token, and would not offer the menu; the marker moves to `printItem`
+            // so such copies are refreshed — and, once refreshed, the project's csproj must ALSO gain the two
+            // packages + PRINT_SUPPORT + AppBuilder.UsePrintables() for the entries to compile and work.
+            marker: 'printItem'
         }
     ];
 }

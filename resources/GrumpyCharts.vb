@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.11.19
+' BUNDLED-COPY: 0.12.0
 ' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb.
 '
@@ -46,6 +46,11 @@ Imports Avalonia.Media
 Imports Avalonia.Metadata
 Imports Avalonia.Platform.Storage
 Imports Avalonia.Threading
+
+#If PRINT_SUPPORT Then
+Imports Avae.Printables
+Imports AvaloniaUI.PrintToPDF
+#End If
 
 Namespace Global.AvaloniaCharts
 
@@ -2455,6 +2460,56 @@ Namespace Global.AvaloniaCharts
             End Try
         End Function
 
+#If PRINT_SUPPORT Then
+        ' ---- hardcopy printing ---------------------------------------------------------------
+
+        ''' <summary>
+        ''' Sends the chart to the platform's native print dialog (Avae.Printables). Does nothing
+        ''' when the control has no TopLevel yet (a designer preview) or when no printing service
+        ''' has been registered with AppBuilder.UsePrintables() — Printable.Default is then null and
+        ''' the call is a silent no-op, so it is always safe to invoke from the menu.
+        ''' </summary>
+        Public Async Function PrintAsync() As Task
+            If TopLevel.GetTopLevel(Me) Is Nothing Then Return
+            Try
+                Dim title As String = If(String.IsNullOrEmpty(Name), "Grumpy chart", Name)
+                Await Printable.PrintVisualsAsync(New Visual() {Me}, title)
+            Catch
+                ' A failed print must never take the form down.
+            End Try
+        End Function
+
+        ''' <summary>
+        ''' Renders the chart to a PDF file the user picks (AvaloniaUI.PrintToPDF, via the Skia PDF
+        ''' backend — no native print dialog, so it works on every platform). Does nothing when the
+        ''' control has no TopLevel yet (a designer preview), so it is always safe to call.
+        ''' </summary>
+        Public Async Function PrintToPdfAsync() As Task
+            Dim top = TopLevel.GetTopLevel(Me)
+            If top Is Nothing OrElse top.StorageProvider Is Nothing Then Return
+            Dim storage = top.StorageProvider
+            Dim suggested As String = If(String.IsNullOrEmpty(Name), "chart", Name)
+            Dim options As New FilePickerSaveOptions With {
+                .SuggestedFileName = suggested & ".pdf",
+                .DefaultExtension = "pdf",
+                .FileTypeChoices = New FilePickerFileType() {
+                    New FilePickerFileType("PDF document") With {.Patterns = New String() {"*.pdf"}},
+                    New FilePickerFileType("All files") With {.Patterns = New String() {"*"}}
+                },
+                .ShowOverwritePrompt = True
+            }
+            Dim file = Await storage.SaveFilePickerAsync(options)
+            Dim picked As String = Nothing
+            If file IsNot Nothing Then picked = file.TryGetLocalPath()
+            If String.IsNullOrWhiteSpace(picked) Then Return
+            Try
+                Await Print.ToFileAsync(picked, Me)
+            Catch
+                ' A failed save must never take the form down.
+            End Try
+        End Function
+#End If
+
         ''' <summary>True when at least one series has points to draw.</summary>
         Private Function HasAnyData() As Boolean
             Return _lastPlotCount > 0
@@ -3886,6 +3941,30 @@ Namespace Global.AvaloniaCharts
                                              InvalidateVisual()
                                          End Sub
             items.Add(legendItem)
+
+#If PRINT_SUPPORT Then
+            ' HARDCOPY (every chart type): a native PRINT dialog (Avae.Printables) and a SAVE-TO-PDF
+            ' (AvaloniaUI.PrintToPDF, Skia-backed — cross-platform). Both are guarded inside the
+            ' methods (no TopLevel => no-op in the preview; no service => Avae no-ops), so the
+            ' entries are always safe to offer. Placed BEFORE the !SupportsCursors return so the pie
+            ' and the bar — which skip the cursor section — still expose them.
+            Dim printItem As New MenuItem With {.Header = "Print…"}
+            AddHandler printItem.Click,
+                Sub(sender As Object, e As RoutedEventArgs)
+#Disable Warning BC42358 ' deliberately fire-and-forget (matches BrowseForFile's click handler)
+                    PrintAsync()
+#Enable Warning BC42358
+                End Sub
+            items.Add(printItem)
+            Dim pdfItem As New MenuItem With {.Header = "Print to PDF…"}
+            AddHandler pdfItem.Click,
+                Sub(sender As Object, e As RoutedEventArgs)
+#Disable Warning BC42358
+                    PrintToPdfAsync()
+#Enable Warning BC42358
+                End Sub
+            items.Add(pdfItem)
+#End If
 
             ' A chart that has no cursors (the pie and the bar) gets no cursor entries at all: the toggles,
             ' the readout position, add / remove / reset and "copy readout" are every one of them about

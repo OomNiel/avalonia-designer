@@ -147,6 +147,15 @@ module.exports = async (t) => {
         'developer notes stay out of the package');
     t.ok(/^README\.md/m.test(ignore) === false && /^CHANGELOG\.md/m.test(ignore) === false, 'packaging',
         'while README and CHANGELOG DO ship (the Marketplace renders them)');
+    // The README's at-a-glance collage is ~900 KB — four times the rest of the package — and it does
+    // not have to ship: vsce rewrites a relative README image link to the repository, so the gallery
+    // and the VS Code details view fetch it from GitHub. Pinned together with the link, because an
+    // ignored file that the README never mentions is just as wrong as a linked file that is ignored
+    // (one shows a broken image, the other wastes a megabyte of every install).
+    t.ok(/^DesignerDemo\.png$/m.test(ignore), 'packaging',
+        'the big README collage is excluded from the .vsix (served from the repository instead)');
+    t.ok(/<img\s+src="DesignerDemo\.png"/.test(read('README.md')), 'packaging',
+        'and the README really links it (relative, so vsce can rewrite it for the gallery)');
     // vsce does NOT use gitignore's "last match wins": a negated pattern (`!x`) beats every ignore
     // pattern wherever it sits (collectFiles() in vsce's package.js). So the maps can only stay out
     // if nothing negates out/ as a whole — a `!out/**` puts all ~30 of them straight back in.

@@ -17,6 +17,10 @@
 > **Formerly *Avalonia Designer for VS Code*.** The extension id is unchanged — `grumpy.avalonia-designer` — so
 > your settings, shortcuts and downloaded models keep working, and searching for the old name still finds it.
 
+<p align="center">
+  <img src="DesignerDemo.png" width="1000" alt="Grumpy's WYSIWYG Designer at a glance: the form designer with its toolbox and Properties panel, step-by-step debugging, the control editors, the DataSet designer, and the charting tools — a 3D surface chart, a pie chart and an XY plot.">
+</p>
+
 A **WYSIWYG form designer for the [Avalonia](https://avaloniaui.net) UI framework** that lives inside
 VS Code: drop controls on a design surface, set their properties in a friendly panel, and let the
 extension write the **XAML** ***and*** the C#/VB.NET code-behind for you.
@@ -43,7 +47,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.11.19`**, so the command above installs it (add `-force` to reinstall, or to
+The current version is **`0.12.0`**, so the command above installs it (add `-force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -52,11 +56,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.11.19.vsix --force
+code --install-extension avalonia-designer-0.12.0.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.11.19` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.12.0` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -189,8 +193,12 @@ border and series line drawn in the colour of the series it follows, and a `ΔX`
 The chart's own frame rows are in the same panel — backcolour and opacity, the border, **Padding**, the room
 between that border and the chart frame (it pushes the title, the legend bar and the plot inward; leave it
 empty and nothing moves), and a **Background Gradient** (linear, radial or conic, with three colour stops).
-The workbook is chosen from the chart's **right-click menu** (*Choose spreadsheet…*). The whole walkthrough
-is **USER_MANUAL §19**.
+The workbook is chosen from the chart's **right-click menu** (*Choose spreadsheet…*). That menu also carries
+**Print…** (the platform's own print dialog) and **Print to PDF…** (pick a file, get a PDF — on every
+platform), on every chart type including the pie and the bar. Both come from two small packages
+(`Avae.Printables` + `AvaloniaUI.PrintToPDF`) that a **newly generated** project already references and
+enables; the previewer deliberately has neither, so the designer canvas stays printer-free. The whole
+walkthrough is **USER_MANUAL §19** (§19.14 for hardcopy).
 
 ## 8. A property grid that behaves like a real one
 

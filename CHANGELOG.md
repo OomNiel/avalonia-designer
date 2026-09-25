@@ -6,11 +6,79 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.11.12` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.12.0` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.12.0] - 2026-09-25 · *hardcopy output for the charting controls*
+
+A **minor** bump rather than the `0.11.20` the work was built under: printing is a new user-facing capability,
+and **nothing between `0.11.1` and `0.11.19` reached the Marketplace** — the stable listing still carries
+`0.11.0` (read back from the gallery API on 2026-09-25; the earlier entries here and in `PUBLISHING.md`
+assumed `0.11.15` was live) — so this single upload spans the whole chart line plus the print work, and the
+line moves up with the feature instead of carrying another number that would only ever be built.
+
+Avalonia ships no print API, so the chart right-click menu now offers two entries — on every chart type,
+including the cursor-less pie and bar — backed by the two community libraries instead:
+
+**Print…** — the platform's native print dialog (Avae.Printables 3.0.7), and **Print to PDF…** — a Skia-backed
+PDF export (AvaloniaUI.PrintToPDF 0.6.0), which needs no dialog and so works on every platform. Both are
+guarded inside their methods (a chart with no `TopLevel`, or a build in which no printing service was
+registered with `UsePrintables()`, does nothing) and each swallows its own exceptions, so a menu click can
+never take a form down. The designer preview does not even *have* the entries: the headless `PreviewerHost`
+links the same file without `PRINT_SUPPORT`, so the canvas stays printer-free.
+
+### Added
+
+- `Print…` and `Print to PDF…` menu items on `ChartBase.ShowChartMenu`, placed before the `!SupportsCursors`
+  early return so the pie and the bar still expose them; wired to async `PrintAsync` / `PrintToPdfAsync`
+  methods. The `printItem` literal is the new staleness marker, so an existing project's bundled copy of
+  `GrumpyCharts.{cs,vb}` refreshes on the next save.
+- The whole feature is compiled in behind `PRINT_SUPPORT` (`#if` in C#, `#If PRINT_SUPPORT Then` in the VB
+  twin). The headless `PreviewerHost` — and the headless fill harness — link the *same* file with no printer
+  packages, so they build untouched.
+- Generated projects are wired for it: they reference `Avae.Printables 3.0.7` + `AvaloniaUI.PrintToPDF 0.6.0`,
+  define `PRINT_SUPPORT`, and call `AppBuilder.UsePrintables()` from `Program` (`projectScaffold.ts`, both
+  languages). Projects generated before this release opt in by hand — add the two packages plus
+  `PRINT_SUPPORT` to the project file and `.UsePrintables()` to `Program`; without them the bundled
+  `GrumpyCharts.{cs,vb}` compile unchanged and simply have no print entries.
+- The README's at-a-glance collage (`DesignerDemo.png`): the form designer, step-by-step debugging, the
+  control editors, the DataSet designer and the three chart families in one picture, right below the
+  *"Formerly Avalonia Designer for VS Code"* notice. It is excluded from the `.vsix` — it is ~900 KB, four
+  times the rest of the package, and vsce rewrites a relative README image link to the repository, so the
+  gallery serves it from GitHub either way — and `packaging.test.js` pins both halves (excluded *and*
+  linked).
+- The chart help panel (`controlInfo.ts`) tells the user where the two entries appear: in the app they run,
+  not on the headless design canvas.
+
+### Fixed
+
+- **`PRINT_SUPPORT` really is defined for VB now — it never was.** The first VB wiring set it in a
+  `BeforeTargets="VbcCompile"` target, and the SDK assigns `FinalDefineConstants` *after* that target runs,
+  so the value was overwritten every time: `dotnet build` stayed green while `#If PRINT_SUPPORT Then` was
+  compiled out, i.e. every VB project had no Print entries and nothing said so. It is now appended to
+  `DefineConstants` as a **comma** token — vbc's `/define:` switch is comma-separated (the C# semicolon form
+  is rejected with `BC31030`), and the SDK builds `FinalDefineConstants` from it, so the symbol survives:
+  `FinalDefineConstants = CONFIG="Debug",DEBUG=-1,TRACE=-1,PLATFORM="AnyCPU",,PRINT_SUPPORT,_MyType="Empty"`.
+- The class of failure, not just the instance: `tests/t0-build/printsupport.test.js` now generates a C# and a
+  VB project, drops in a probe that *references* `PrintAsync`/`PrintToPdfAsync`, and builds it. A text check
+  on the project file would have passed the broken wiring; a probe cannot.
+
+### Notes
+
+- Verified: the headless host builds (0 errors / 0 warnings, no print packages); the t0-build matrix of all
+  10 generated projects (C#/VB × 5 templates) builds with 0 errors / 0 warnings — now including the VB print
+  block, which the fixed symbol finally compiles — and the full suite is **8,121 passed / 0 failed**.
+- **What that verification did *not* prove, and why the bug got as far as it did:** `GrumpyCharts.{cs,vb}`
+  "compiling with `PRINT_SUPPORT` defined, 0 errors" was true and worthless for VB, because a file whose
+  conditional block never gets the symbol compiles perfectly. The check that means something is a build that
+  *references* the gated members — `tests/t0-build/printsupport.test.js` now does exactly that, in both
+  languages, so a symbol that fails to reach the compiler fails the suite instead of a user's build.
+- The PDF path was measured, not assumed: a headless Skia app exported a 265,672-byte PDF (1 page, vector
+  ops), and rasterising it at 150 dpi gave a 1250 × 625 page carrying **2,058 px of the series colour** — the
+  chart really is in the file. Page size is the control's size, so printing is worth one real-world look.
 
 ## [0.11.19] - 2026-09-24 · *the previewer builds for one platform, not twenty-six*
 
