@@ -19,7 +19,7 @@
  * current version ships. A genuinely customised file (header changed/removed) is left alone.
  */
 
-export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'GrumpyCharts';
+export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'GrumpyCharts' | 'GrumpyPrint';
 
 export interface BundledSpec {
     kind: BundledKind;
@@ -156,10 +156,41 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // "Print to PDF…" (Skia-backed PDF, AvaloniaUI.PrintToPDF). The code lives behind a PRINT_SUPPORT
             // compile symbol (the headless PreviewerHost links this file with no printer packages, so the
             // entries are compiled out there and cost nothing). A stale project copy has neither the symbol's
-            // usings nor the `printItem` token, and would not offer the menu; the marker moves to `printItem`
+            // usings nor the `printItem` token, and would not offer the menu; the marker moved to `printItem`
             // so such copies are refreshed — and, once refreshed, the project's csproj must ALSO gain the two
             // packages + PRINT_SUPPORT + AppBuilder.UsePrintables() for the entries to compile and work.
-            marker: 'printItem'
+            // 2026-09-25, later: that hardcopy path was overhauled — the print entry is DISABLED instead of
+            // silently doing nothing when no printing service is registered (`CanPrint` against
+            // `Printable.Default`), failures are reported through a `PrintFailed` event instead of being
+            // swallowed, the page can be real paper (`ChartPrintOptions` / `ChartPaper`: A4, Letter, margin,
+            // light background) via a `ChartPrintPage` wrapper that keeps the chart vector, PDF export works
+            // without a picker (`ExportPdfAsync`) and through a stream when a file has no local path, PNG
+            // export (`ExportPng` / `SaveAsPictureAsync`) and Ctrl+P arrived, plus a `PrintFailed`-carrying
+            // re-entrancy guard. `ExportPdfAsync` is the token only this copy has.
+            // 2026-09-25, last of the day: `CanPrint` no longer means "Avae.Printables has a service" but
+            // "this machine can put a page on paper" — it also accepts the bundled `GrumpyPrint` helper, which
+            // drives CUPS (`lp`) on Linux desktops, where that library installs an API-only asset and registers
+            // nothing, so the entry used to stay greyed out on the very machine the chart was drawn on. The
+            // chart calls `GrumpyPrint.Available`, so a copy without that call keeps a disabled entry and would
+            // not compile against today's helper-less XAML-free API — `GrumpyPrint` is the token only this copy
+            // has. The same release added the `PrintLegend` row — the legend on the PAPER (As drawn / Off / On),
+            // scoped to the job so the chart on screen never changes — which ships in the same copy, so the one
+            // marker covers both.
+            marker: 'GrumpyPrint'
+        },
+        {
+            kind: 'GrumpyPrint',
+            file: vb ? 'GrumpyPrint.vb' : 'GrumpyPrint.cs',
+            // A bundled file of its own (added 2026-09-25): the chart's Print… entry, its PDF/PNG exports
+            // and Ctrl+P work on Windows and macOS through Avae.Printables' native service, but that
+            // community library ships an API-only asset for a plain Linux desktop — `UsePrintables()`
+            // registers nothing there and `Printable.Default` stays null. This helper renders the page to a
+            // temporary PDF and hands it to CUPS, so the chart prints on Linux too, with no extra package in
+            // the extension. It is copied in (and refreshed) together with the chart, which calls it.
+            bundled: /BUNDLED RESOURCE/,
+            // The newest member: the `lp` invocation itself. A copy that predates the CUPS path has no
+            // such method (and the content comparison above would catch it too).
+            marker: 'SendFileAsync'
         }
     ];
 }

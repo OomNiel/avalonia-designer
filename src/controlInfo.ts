@@ -355,10 +355,15 @@ const CHART_TAGS = new Set([
 ]);
 
 const CHART_HARDCOPY_HELP =
-    ' In the app you run (F5) the chart\'s right-click menu also carries Print… (the platform\'s own '
-    + 'print dialog) and Print to PDF… (it asks for a file, then writes one — on every platform). Both '
-    + 'need a real window and a printer service, so the designer preview, which draws with the headless '
-    + 'host, offers neither.';
+    ' In the app you run (F5) the chart\'s right-click menu also carries Print…, Print to PDF… (it asks for a '
+    + 'file, then writes one — on every platform) and Save as picture… (a PNG); Ctrl+P does the same from the '
+    + 'keyboard. Print… needs a real window and either the platform\'s own print dialog (registered with '
+    + 'AppBuilder.UsePrintables() — Windows, macOS, GTK) or, on a Linux desktop, the CUPS client `lp`: both '
+    + 'paths are bundled, so on Linux it prints through CUPS with that one installed. \"Print to PDF…\" and '
+    + '\"Save as picture…\" need neither. In the designer preview, which draws with the headless host, none of '
+    + 'them is offered. The page they use is set by the Print Paper / Print Margin / Print on White rows in '
+    + 'this panel; the default, As drawn, keeps the chart\'s own size — and the runtime Legend toggle leaves '
+    + 'the legend off the paper when you only want the graph.';
 
 /** Returns the plain-language info for a control tag (falls back to a generic entry). */
 export function controlInfoFor(tag: string): ControlInfo {

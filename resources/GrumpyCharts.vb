@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.0
+' BUNDLED-COPY: 0.12.2
 ' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb.
 '
@@ -28,6 +28,7 @@
 Imports System
 Imports System.Collections.Generic
 Imports System.ComponentModel
+Imports System.Diagnostics
 Imports System.Globalization
 Imports System.IO
 Imports System.IO.Compression
@@ -43,6 +44,7 @@ Imports Avalonia.Input.Platform
 Imports Avalonia.Interactivity
 Imports Avalonia.Layout
 Imports Avalonia.Media
+Imports Avalonia.Media.Imaging
 Imports Avalonia.Metadata
 Imports Avalonia.Platform.Storage
 Imports Avalonia.Threading
@@ -1027,6 +1029,122 @@ Namespace Global.AvaloniaCharts
         Friend YAxis As Axis = Nothing
         Friend XRange As New AxisRange()
         Friend YRange As New AxisRange()
+    End Class
+
+    ''' <summary>The paper a chart is placed on when it is printed or exported to PDF / PNG — the
+    ''' chart's PrintPaper row picks one, and ChartPrintOptions is what the methods take.</summary>
+    Public Enum ChartPaper
+        ''' <summary>The chart's own size becomes the page: no paper, no margin, nothing cropped. Default.</summary>
+        AsDrawn
+        ''' <summary>A4 portrait, 595 × 842 points (210 × 297 mm).</summary>
+        A4
+        ''' <summary>US Letter portrait, 612 × 792 points (8.5 × 11 in).</summary>
+        Letter
+    End Enum
+
+    ''' <summary>
+    ''' Where a chart sits on the page for the print / PDF / PNG output: a paper size in PDF points
+    ''' (1/72 inch), the margin inside it, and whether the page is painted white first.
+    ''' The no-argument defaults reproduce the original behaviour exactly — the page IS the chart,
+    ''' drawn edge to edge — so a form that never mentions these rows prints as it always did.
+    ''' </summary>
+    Public NotInheritable Class ChartPrintOptions
+        ''' <summary>Page width in points — 0 (with a 0 height) means "the chart's own size".</summary>
+        Public Property PageWidth As Double
+
+        ''' <summary>Page height in points — 0 (with a 0 width) means "the chart's own size".</summary>
+        Public Property PageHeight As Double
+
+        ''' <summary>The margin inside the page, in points. Ignored while the page is the chart's own size.</summary>
+        Public Property Margin As Double = 18
+
+        ''' <summary>Paint the page white before the chart is drawn on it — what a hardcopy of a chart
+        ''' with a dark plot background needs. Off by default: what you see is what prints.</summary>
+        Public Property LightBackground As Boolean
+
+        ''' <summary>Whether the legend appears on the page. ChartLegendMode.AsDrawn by default — what you
+        ''' see is what prints — so a form that never mentions the row is unaffected. Anything else is applied
+        ''' around the render and then PUT BACK, so the chart on screen is never left changed.</summary>
+        Public Property Legend As ChartLegendMode
+
+        ''' <summary>True when real paper was asked for, rather than the chart's own size.</summary>
+        Public ReadOnly Property HasPage As Boolean
+            Get
+                Return PageWidth > 0 AndAlso PageHeight > 0
+            End Get
+        End Property
+        ''' <summary>An independent copy — the presets hand out fresh instances, so a caller may change one.</summary>
+        Public Function Clone() As ChartPrintOptions
+            Return DirectCast(MemberwiseClone(), ChartPrintOptions)
+        End Function
+
+        ''' <summary>The original behaviour: the chart's own size is the page.</summary>
+        Public Shared ReadOnly Property AsDrawn As ChartPrintOptions
+            Get
+                Return New ChartPrintOptions()
+            End Get
+        End Property
+
+        ''' <summary>A4 portrait (595 × 842 pt) with the default margin.</summary>
+        Public Shared ReadOnly Property A4 As ChartPrintOptions
+            Get
+                Return New ChartPrintOptions With {.PageWidth = 595, .PageHeight = 842}
+            End Get
+        End Property
+
+        ''' <summary>US Letter portrait (612 × 792 pt) with the default margin.</summary>
+        Public Shared ReadOnly Property Letter As ChartPrintOptions
+            Get
+                Return New ChartPrintOptions With {.PageWidth = 612, .PageHeight = 792}
+            End Get
+        End Property
+    End Class
+
+    ''' <summary>Whether the legend goes on the page for a print or an export — the chart's PrintLegend row
+    ''' picks one. It steers the OUTPUT only: the chart on screen keeps whatever its right-click Legend toggle
+    ''' and its ShowLegend property say, and both are put back once the job is done.</summary>
+    Public Enum ChartLegendMode
+
+        ''' <summary>Whatever the chart shows now. Default — what you see is what prints.</summary>
+        AsDrawn
+
+        ''' <summary>Leave the legend off the page: the graph only, with the room it took given back to the plot.</summary>
+        Off
+
+        ''' <summary>Put the legend on the page even while it is hidden on screen.</summary>
+        ''' <remarks>[On] is bracketed because On is a VB keyword — the MEMBER (and the XAML value the
+        ''' designer writes) is still plain "On" in both languages.</remarks>
+        [On]
+    End Enum
+
+    ''' <summary>
+    ''' The page a chart is drawn onto when the print options ask for real paper: white when the light
+    ''' background is on, then the chart scaled to FIT (never stretched) inside the margin.
+    ''' A separate visual is needed because a control cannot have two parents — the chart is painted
+    ''' through a VisualBrush, which keeps it VECTOR in the PDF, so enlarging the output stays sharp.
+    ''' </summary>
+    Friend NotInheritable Class ChartPrintPage
+        Inherits Control
+
+        Private ReadOnly _chart As Control
+        Private ReadOnly _options As ChartPrintOptions
+
+        Friend Sub New(chart As Control, options As ChartPrintOptions)
+            _chart = chart
+            _options = options
+            Width = options.PageWidth
+            Height = options.PageHeight
+        End Sub
+
+        Public Overrides Sub Render(context As DrawingContext)
+            Dim width As Double = If(Double.IsNaN(Width) OrElse Width <= 0, _options.PageWidth, Width)
+            Dim height As Double = If(Double.IsNaN(Height) OrElse Height <= 0, _options.PageHeight, Height)
+            Dim page As New Rect(0, 0, width, height)
+            If _options.LightBackground Then context.FillRectangle(Brushes.White, page)
+            Dim margin As Double = Math.Max(0, _options.Margin)
+            Dim inner As New Rect(margin, margin, Math.Max(1, width - 2 * margin), Math.Max(1, height - 2 * margin))
+            context.DrawRectangle(New VisualBrush With {.Visual = _chart, .Stretch = Stretch.Uniform}, CType(Nothing, IPen), inner)
+        End Sub
     End Class
 
     ''' <summary>
@@ -2460,52 +2578,457 @@ Namespace Global.AvaloniaCharts
             End Try
         End Function
 
-#If PRINT_SUPPORT Then
-        ' ---- hardcopy printing ---------------------------------------------------------------
+        ' ---- hardcopy: the page, the PNG export and the print / PDF paths ---------------------
+        '
+        ' The three Print* rows describe the page an export or a print job uses. They are declared
+        ' OUTSIDE the #If so the headless previewer can still parse a form that sets them; the print
+        ' and PDF methods need Avae.Printables / AvaloniaUI.PrintToPDF and live behind the symbol.
+
+        ''' <summary>The paper a chart is printed or exported onto. ChartPaper.AsDrawn — the chart's own
+        ''' size, edge to edge — is the default, so nothing changes for existing forms.</summary>
+        Public Shared ReadOnly PrintPaperProperty As StyledProperty(Of ChartPaper) = AvaloniaProperty.Register(Of ChartBase, ChartPaper)(NameOf(PrintPaper))
+
+        Public Property PrintPaper As ChartPaper
+            Get
+                Return GetValue(PrintPaperProperty)
+            End Get
+            Set(value As ChartPaper)
+                SetValue(PrintPaperProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The margin inside that paper, in points (1/72 inch). Ignored while PrintPaper is
+        ''' ChartPaper.AsDrawn — the page IS the chart then.</summary>
+        Public Shared ReadOnly PrintMarginProperty As StyledProperty(Of Double) = AvaloniaProperty.Register(Of ChartBase, Double)(NameOf(PrintMargin), 18.0)
+
+        Public Property PrintMargin As Double
+            Get
+                Return GetValue(PrintMarginProperty)
+            End Get
+            Set(value As Double)
+                SetValue(PrintMarginProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Paint the page white before drawing the chart on it — for hardcopy of a chart whose
+        ''' plot background is dark. Off by default: what you see is what prints.</summary>
+        Public Shared ReadOnly PrintLightBackgroundProperty As StyledProperty(Of Boolean) = AvaloniaProperty.Register(Of ChartBase, Boolean)(NameOf(PrintLightBackground))
+
+        Public Property PrintLightBackground As Boolean
+            Get
+                Return GetValue(PrintLightBackgroundProperty)
+            End Get
+            Set(value As Boolean)
+                SetValue(PrintLightBackgroundProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Whether the LEGEND goes on the printed / exported page. ChartLegendMode.AsDrawn (the
+        ''' default) prints what the chart shows; ChartLegendMode.Off leaves the legend off the paper — the
+        ''' graph only, which is what a hardcopy of a chart usually wants — and ChartLegendMode.On forces it
+        ''' on. The override lasts for that one job and the chart's own ShowLegend is put back afterwards, so
+        ''' the screen is never left changed. The PNG export and the PDF paths honour it too; the designer
+        ''' preview shows the chart as drawn.</summary>
+        Public Shared ReadOnly PrintLegendProperty As StyledProperty(Of ChartLegendMode) =
+            AvaloniaProperty.Register(Of ChartBase, ChartLegendMode)(NameOf(PrintLegend))
+
+        Public Property PrintLegend As ChartLegendMode
+            Get
+                Return GetValue(PrintLegendProperty)
+            End Get
+            Set(value As ChartLegendMode)
+                SetValue(PrintLegendProperty, value)
+            End Set
+        End Property
 
         ''' <summary>
-        ''' Sends the chart to the platform's native print dialog (Avae.Printables). Does nothing
-        ''' when the control has no TopLevel yet (a designer preview) or when no printing service
-        ''' has been registered with AppBuilder.UsePrintables() — Printable.Default is then null and
-        ''' the call is a silent no-op, so it is always safe to invoke from the menu.
+        ''' Raised when a print or an export fails — no printing service, a printer that refuses the job,
+        ''' an unwritable folder, a cancelled dialog that got as far as the file system. The chart never
+        ''' throws into the caller (a menu click must not take a form down) and the menu itself stays
+        ''' silent, so this event — plus the trace line — is where an app finds out why nothing happened.
         ''' </summary>
-        Public Async Function PrintAsync() As Task
-            If TopLevel.GetTopLevel(Me) Is Nothing Then Return
+        Public Event PrintFailed As EventHandler(Of Exception)
+
+        Private _printBusy As Boolean
+
+        ''' <summary>True while a print dialog or an export is running. A second menu click while one is
+        ''' in flight is ignored rather than opening a second dialog.</summary>
+        Public ReadOnly Property IsPrinting As Boolean
+            Get
+                Return _printBusy
+            End Get
+        End Property
+
+        ''' <summary>Reports a failure without ever throwing: a trace line for the developer, and the
+        ''' PrintFailed event for the app.</summary>
+        Private Sub RaisePrintFailed([error] As Exception)
             Try
-                Dim title As String = If(String.IsNullOrEmpty(Name), "Grumpy chart", Name)
-                Await Printable.PrintVisualsAsync(New Visual() {Me}, title)
+                Trace.WriteLine("GrumpyCharts: print/export failed — " & [error].Message)
             Catch
-                ' A failed print must never take the form down.
+                ' never throw
+            End Try
+            Try
+                RaiseEvent PrintFailed(Me, [error])
+            Catch
+                ' a broken handler must not break the chart
+            End Try
+        End Sub
+
+        ''' <summary>The page the three rows describe.</summary>
+        Private Function CurrentPrintOptions() As ChartPrintOptions
+            Dim options As ChartPrintOptions
+            Select Case PrintPaper
+                Case ChartPaper.A4
+                    options = ChartPrintOptions.A4
+                Case ChartPaper.Letter
+                    options = ChartPrintOptions.Letter
+                Case Else
+                    options = ChartPrintOptions.AsDrawn
+            End Select
+            options.Margin = PrintMargin
+            options.LightBackground = PrintLightBackground
+            options.Legend = PrintLegend
+            Return options
+        End Function
+
+        ''' <summary>The visuals a print job or an export draws: the page wrapper when the options ask
+        ''' for paper, otherwise the chart itself — which is what the first release always passed.
+        ''' The wrapper is ours and has never been laid out, so the layout pass happens HERE: a backend
+        ''' draws what it is given and does not run one for us, and an un-laid-out page renders empty.
+        ''' The chart itself is already laid out — it must NOT be measured again.</summary>
+        Private Function PageVisuals(options As ChartPrintOptions) As Visual()
+            If Not options.HasPage Then Return New Visual() {Me}
+            Dim page As New ChartPrintPage(Me, options)
+            page.Measure(New Size(options.PageWidth, options.PageHeight))
+            page.Arrange(New Rect(0, 0, options.PageWidth, options.PageHeight))
+            Return New Visual() {page}
+        End Function
+
+        ''' <summary>
+        ''' Applies the legend the print options ask for and answers the undo: Nothing when the options say
+        ''' "as drawn" (nothing is touched), otherwise a handle that puts the chart's own ShowLegend back. The
+        ''' page is re-laid-out on every render (PageVisuals does that), which is what makes the override
+        ''' visible at all: the legend takes its room out of the plot, so the two pictures really differ.
+        ''' </summary>
+        Private Function ApplyPrintLegend(options As ChartPrintOptions) As IDisposable
+            If options.Legend = ChartLegendMode.AsDrawn Then Return Nothing
+            Dim wanted As Boolean = (options.Legend = ChartLegendMode.[On])
+            Dim saved As Boolean = ShowLegend
+            If saved = wanted Then Return Nothing
+            ShowLegend = wanted
+            RelayoutForLegend()
+            Return New LegendRestore(Me, saved)
+        End Function
+
+        ''' <summary>
+        ''' Re-runs the chart's own layout at the size it is already arranged at, so the legend it has just
+        ''' gained or lost takes its room out of (or gives it back to) the plot before anything renders it.
+        ''' The legend's room is baked into the laid-out positions, so a chart that is merely invalidated still
+        ''' draws at the old ones for as long as no layout pass has run: the export would put the legend back
+        ''' (or leave the gap where it used to be). The chart has a size of its own — the designer writes Width
+        ''' and Height — and the measure is given exactly that, so its desired size does not change and nothing
+        ''' around it moves: the same measure-then-arrange discipline PageVisuals uses for the page.
+        ''' </summary>
+        Private Sub RelayoutForLegend()
+            Dim size = Bounds.Size
+            If size.Width <= 0 OrElse size.Height <= 0 Then Return
+            Measure(size)
+            Arrange(New Rect(Bounds.Position, size))
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>The async form of ApplyPrintLegend, for the render paths: the chart's own legend setting
+        ''' is put back when the render returns — or when it throws, because the handle is held in a Using.
+        ''' </summary>
+        Private Async Function WithPrintLegendAsync(Of T)(options As ChartPrintOptions, render As Func(Of Task(Of T))) As Task(Of T)
+            Using restore = ApplyPrintLegend(options)
+                Return Await render()
+            End Using
+        End Function
+
+        ''' <summary>Puts the chart's own legend setting back when the job is done — even when it failed, since
+        ''' the caller holds this in a Using.</summary>
+        Private NotInheritable Class LegendRestore
+            Implements IDisposable
+
+            Private ReadOnly _chart As ChartBase
+            Private ReadOnly _saved As Boolean
+
+            Friend Sub New(chart As ChartBase, saved As Boolean)
+                _chart = chart
+                _saved = saved
+            End Sub
+
+            Public Sub Dispose() Implements IDisposable.Dispose
+                If _chart.ShowLegend = _saved Then Return
+                _chart.ShowLegend = _saved
+                _chart.RelayoutForLegend()
+            End Sub
+        End Class
+
+        Private Function JobTitle() As String
+            Return If(String.IsNullOrWhiteSpace(Name), "Grumpy chart", Name)
+        End Function
+
+        Private Shared Function FolderOf(path As String) As String
+            Try
+                If String.IsNullOrWhiteSpace(path) Then Return Nothing
+                Return System.IO.Path.GetDirectoryName(path)
+            Catch
+                Return Nothing
+            End Try
+        End Function
+
+        Private Shared Async Function SuggestLastExportFolder(storage As IStorageProvider, picker As FilePickerSaveOptions) As Task
+            Dim last = ChartPickerMemory.LastExportFolder
+            If last Is Nothing Then Return
+            Try
+                picker.SuggestedStartLocation = Await storage.TryGetFolderFromPathAsync(New Uri(last))
+            Catch
+                ' The remembered folder is gone — let the platform choose.
             End Try
         End Function
 
         ''' <summary>
-        ''' Renders the chart to a PDF file the user picks (AvaloniaUI.PrintToPDF, via the Skia PDF
-        ''' backend — no native print dialog, so it works on every platform). Does nothing when the
-        ''' control has no TopLevel yet (a designer preview), so it is always safe to call.
+        ''' Renders the chart — or its page, when the Print* rows ask for paper — to a PNG file. No
+        ''' printing package is involved, so this works everywhere, the headless previewer included.
         ''' </summary>
-        Public Async Function PrintToPdfAsync() As Task
-            Dim top = TopLevel.GetTopLevel(Me)
-            If top Is Nothing OrElse top.StorageProvider Is Nothing Then Return
-            Dim storage = top.StorageProvider
-            Dim suggested As String = If(String.IsNullOrEmpty(Name), "chart", Name)
-            Dim options As New FilePickerSaveOptions With {
-                .SuggestedFileName = suggested & ".pdf",
-                .DefaultExtension = "pdf",
-                .FileTypeChoices = New FilePickerFileType() {
-                    New FilePickerFileType("PDF document") With {.Patterns = New String() {"*.pdf"}},
-                    New FilePickerFileType("All files") With {.Patterns = New String() {"*"}}
-                },
-                .ShowOverwritePrompt = True
-            }
-            Dim file = Await storage.SaveFilePickerAsync(options)
-            Dim picked As String = Nothing
-            If file IsNot Nothing Then picked = file.TryGetLocalPath()
-            If String.IsNullOrWhiteSpace(picked) Then Return
+        Public Function ExportPng(path As String, Optional scale As Double = 2) As Boolean
+            If String.IsNullOrWhiteSpace(path) Then Return False
+            If _printBusy Then Return False
+            _printBusy = True
             Try
-                Await Print.ToFileAsync(picked, Me)
-            Catch
-                ' A failed save must never take the form down.
+                Dim options = CurrentPrintOptions()
+                Using legend = ApplyPrintLegend(options)
+                    Dim visual = PageVisuals(options)(0)
+                    Dim width = If(options.HasPage, options.PageWidth, Bounds.Width)
+                    Dim height = If(options.HasPage, options.PageHeight, Bounds.Height)
+                    If width <= 0 OrElse height <= 0 Then Return False
+                    If scale <= 0 Then scale = 1
+                    Dim pixels As New PixelSize(
+                        Math.Max(1, CInt(Math.Round(width * scale))),
+                        Math.Max(1, CInt(Math.Round(height * scale))))
+                    Using bitmap As New RenderTargetBitmap(pixels, New Vector(96 * scale, 96 * scale))
+                        bitmap.Render(visual)
+                        bitmap.Save(path, New PngBitmapEncoderOptions())
+                    End Using
+                    Return True
+                End Using
+            Catch ex As Exception
+                RaisePrintFailed(ex)
+                Return False
+            Finally
+                _printBusy = False
+            End Try
+        End Function
+
+        ''' <summary>Asks for a file and saves the chart to it as a PNG (the menu's "Save as picture…").
+        ''' Works on every platform, with or without a printing service.</summary>
+        Public Async Function SaveAsPictureAsync() As Task(Of Boolean)
+            Dim top = TopLevel.GetTopLevel(Me)
+            If top Is Nothing OrElse top.StorageProvider Is Nothing Then Return False
+            Dim storage = top.StorageProvider
+            Try
+                Dim picker As New FilePickerSaveOptions With {
+                    .Title = "Save the chart as a picture",
+                    .SuggestedFileName = If(String.IsNullOrWhiteSpace(Name), "chart", Name) & ".png",
+                    .DefaultExtension = "png",
+                    .FileTypeChoices = New FilePickerFileType() {
+                        New FilePickerFileType("PNG image") With {.Patterns = New String() {"*.png"}},
+                        New FilePickerFileType("All files") With {.Patterns = New String() {"*"}}
+                    },
+                    .ShowOverwritePrompt = True
+                }
+                Await SuggestLastExportFolder(storage, picker)
+                Dim file = Await storage.SaveFilePickerAsync(picker)
+                Dim picked As String = Nothing
+                If file IsNot Nothing Then picked = file.TryGetLocalPath()
+                If String.IsNullOrWhiteSpace(picked) Then Return False
+                Dim ok = ExportPng(picked)
+                If ok Then ChartPickerMemory.LastExportFolder = FolderOf(picked)
+                Return ok
+            Catch ex As Exception
+                RaisePrintFailed(ex)
+                Return False
+            End Try
+        End Function
+
+#If PRINT_SUPPORT Then
+        ''' <summary>
+        ''' True when this machine can really put a page on paper: either the platform's own service
+        ''' (the app called AppBuilder.UsePrintables() AND the platform provides one) or, on a Linux
+        ''' desktop, the CUPS client (lp) the bundled GrumpyPrint drives — that library ships only an API
+        ''' for a plain Linux desktop, so Printable.Default stays null there and this entry used to stay
+        ''' greyed out on the very machine the chart was drawn on. Print… cannot work without one of the
+        ''' two, which is why the menu disables that entry instead of offering a click that does nothing;
+        ''' the PDF and PNG paths never need either.
+        ''' </summary>
+        Public Shared ReadOnly Property CanPrint As Boolean
+            Get
+                Try
+                    If Printable.Default IsNot Nothing Then Return True
+                Catch
+                    ' No service — try CUPS.
+                End Try
+                Return GrumpyPrint.Available
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' Sends the chart to the platform's native print dialog (Avae.Printables). Returns False — and
+        ''' raises PrintFailed — when there is no window, no printing service, or the printer refuses the
+        ''' job; it never throws.
+        ''' When the platform cannot print a Visual but can print a file, the page is rendered to a
+        ''' temporary PDF and that is handed over instead, so one code path covers both kinds of backend.
+        ''' </summary>
+        Public Async Function PrintAsync(Optional options As ChartPrintOptions = Nothing) As Task(Of Boolean)
+            If _printBusy Then Return False
+            If TopLevel.GetTopLevel(Me) Is Nothing Then Return False
+            If Not CanPrint Then
+                RaisePrintFailed(New InvalidOperationException("Nothing here can print: call AppBuilder.UsePrintables() where the app is built (it needs a platform with a native service — USER_MANUAL 19.14), or install a CUPS client (lp) on Linux. 'Print to PDF…' and 'Save as picture…' need neither."))
+                Return False
+            End If
+            _printBusy = True
+            Try
+                Dim title = JobTitle()
+                Dim wanted = If(options, CurrentPrintOptions())
+                ' A LEGEND override is about the PAGE, and the printer backends are handed the LIVE chart —
+                ' which the chart owns and must not be left changed (Avae renders it when it likes). So this one
+                ' case renders the page itself — the same vector PDF the export writes — and prints that FILE,
+                ' which both backends accept. Everything else stays exactly as it was.
+                If wanted.Legend <> ChartLegendMode.AsDrawn Then
+                    Dim pdf As String = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "grumpychart-" & Guid.NewGuid().ToString("N") & ".pdf")
+                    Await WithPrintLegendAsync(wanted, Async Function()
+                                                               Await Print.ToFileAsync(pdf, PageVisuals(wanted))
+                                                               Return True
+                                                           End Function)
+                    ' Left behind on purpose, like the fallback below: a spooler may still be reading it.
+                    If Printable.Default IsNot Nothing Then
+                        Await Printable.PrintAsync(pdf, Nothing, title)
+                    Else
+                        Await GrumpyPrint.PrintFileAsync(pdf, title)
+                    End If
+                    Return True
+                End If
+                Dim visuals = PageVisuals(wanted)
+                Dim visualFailure As Exception = Nothing
+                Try
+                    ' Two ways onto paper, and only one of them can be present here: the platform's own
+                    ' service (Windows, macOS, GTK) or, on a Linux desktop, CUPS through the bundled helper.
+                    ' The page visual is the same either way — paper size, margin and white background come
+                    ' from the chart's own options — so the two backends cannot drift apart.
+                    If Printable.Default IsNot Nothing Then
+                        Await Printable.PrintVisualsAsync(visuals, title)
+                    Else
+                        Await GrumpyPrint.PrintAsync(visuals(0), title)
+                    End If
+                    Return True
+                Catch ex As Exception
+                    ' Held, not handled here: VB forbids Await inside a Catch, so the fallback below runs
+                    ' outside this block in BOTH twins — the two files stay the same shape.
+                    visualFailure = ex
+                End Try
+                ' Some backends print a FILE but not a Visual: render the page to a temporary PDF and
+                ' hand that over. The file is deliberately left behind — a spooler may still be reading
+                ' it when this returns, and the OS cleans the temp folder up. With no service at all
+                ' there is nothing to hand it to, so the failure above stands as the one that explains it.
+                If Printable.Default Is Nothing Then
+                    RaisePrintFailed(visualFailure)
+                    Return False
+                End If
+                Try
+                    Dim temp As String = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "grumpychart-" & Guid.NewGuid().ToString("N") & ".pdf")
+                    Await Print.ToFileAsync(temp, visuals)
+                    Await Printable.PrintAsync(temp, Nothing, title)
+                    Return True
+                Catch
+                    RaisePrintFailed(visualFailure)   ' the first failure is the one that explains it
+                    Return False
+                End Try
+            Catch ex As Exception
+                RaisePrintFailed(ex)
+                Return False
+            Finally
+                _printBusy = False
+            End Try
+        End Function
+
+        ''' <summary>
+        ''' Asks for a file and writes the chart to it as a PDF (AvaloniaUI.PrintToPDF, Skia-backed — no
+        ''' native dialog, so it works on every platform). Remembers the folder for the next time, and
+        ''' writes through the picked file's stream when it has no local path (a remote or virtual file
+        ''' system). Returns False — and raises PrintFailed — instead of throwing.
+        ''' </summary>
+        Public Async Function PrintToPdfAsync(Optional options As ChartPrintOptions = Nothing) As Task(Of Boolean)
+            Dim top = TopLevel.GetTopLevel(Me)
+            If top Is Nothing OrElse top.StorageProvider Is Nothing Then Return False
+            Dim storage = top.StorageProvider
+            Try
+                Dim picker As New FilePickerSaveOptions With {
+                    .Title = "Export the chart to PDF",
+                    .SuggestedFileName = If(String.IsNullOrWhiteSpace(Name), "chart", Name) & ".pdf",
+                    .DefaultExtension = "pdf",
+                    .FileTypeChoices = New FilePickerFileType() {
+                        New FilePickerFileType("PDF document") With {.Patterns = New String() {"*.pdf"}},
+                        New FilePickerFileType("All files") With {.Patterns = New String() {"*"}}
+                    },
+                    .ShowOverwritePrompt = True
+                }
+                Await SuggestLastExportFolder(storage, picker)
+                Dim file = Await storage.SaveFilePickerAsync(picker)
+                If file Is Nothing Then Return False
+                Dim picked = file.TryGetLocalPath()
+                Dim ok As Boolean
+                If String.IsNullOrWhiteSpace(picked) Then
+                    ok = Await ExportPdfAsync(Await file.OpenWriteAsync(), options)
+                Else
+                    ok = Await ExportPdfAsync(picked, options)
+                End If
+                If ok Then ChartPickerMemory.LastExportFolder = FolderOf(picked)
+                Return ok
+            Catch ex As Exception
+                RaisePrintFailed(ex)
+                Return False
+            End Try
+        End Function
+
+        ''' <summary>Writes the chart (or its page) to a PDF file. No picker and no dialog — the entry
+        ''' point an app — or a test — can call directly.</summary>
+        Public Async Function ExportPdfAsync(path As String, Optional options As ChartPrintOptions = Nothing) As Task(Of Boolean)
+            If String.IsNullOrWhiteSpace(path) OrElse _printBusy Then Return False
+            _printBusy = True
+            Try
+                Dim wanted = If(options, CurrentPrintOptions())
+                Await WithPrintLegendAsync(wanted, Async Function()
+                                                       Await Print.ToFileAsync(path, PageVisuals(wanted))
+                                                       Return True
+                                                   End Function)
+                Return True
+            Catch ex As Exception
+                RaisePrintFailed(ex)
+                Return False
+            Finally
+                _printBusy = False
+            End Try
+        End Function
+
+        ''' <summary>Writes the chart (or its page) as PDF into an open stream — the path that also works
+        ''' where a picked file has no local path.</summary>
+        Public Async Function ExportPdfAsync(stream As Stream, Optional options As ChartPrintOptions = Nothing) As Task(Of Boolean)
+            If stream Is Nothing OrElse _printBusy Then Return False
+            _printBusy = True
+            Try
+                Dim wanted = If(options, CurrentPrintOptions())
+                Await WithPrintLegendAsync(wanted, Async Function()
+                                                       Await Print.ToStreamAsync(stream, PageVisuals(wanted))
+                                                       Return True
+                                                   End Function)
+                Return True
+            Catch ex As Exception
+                RaisePrintFailed(ex)
+                Return False
+            Finally
+                _printBusy = False
             End Try
         End Function
 #End If
@@ -2630,6 +3153,17 @@ Namespace Global.AvaloniaCharts
                 e.Handled = True
                 Return
             End If
+#If PRINT_SUPPORT Then
+            ' Ctrl+P (Cmd+P on macOS) prints the chart: the control already takes the keyboard for its
+            ' cursor keys, so the shortcut costs nothing. On a build with no printing service the PDF
+            ' export takes over — a key combination that can never do anything is worse than one that
+            ' degrades to the path that always works.
+            If e.Key = Key.P AndAlso (e.KeyModifiers And (KeyModifiers.Control Or KeyModifiers.Meta)) <> 0 Then
+                Dim started = If(CanPrint, PrintAsync(), PrintToPdfAsync())
+                e.Handled = True
+                Return
+            End If
+#End If
             Dim live = LiveCursorIndexes()
             If live.Count = 0 Then Return
             If e.Key <> Key.Left AndAlso e.Key <> Key.Right AndAlso e.Key <> Key.Up AndAlso e.Key <> Key.Down Then Return
@@ -3948,22 +4482,31 @@ Namespace Global.AvaloniaCharts
             ' methods (no TopLevel => no-op in the preview; no service => Avae no-ops), so the
             ' entries are always safe to offer. Placed BEFORE the !SupportsCursors return so the pie
             ' and the bar — which skip the cursor section — still expose them.
-            Dim printItem As New MenuItem With {.Header = "Print…"}
-            AddHandler printItem.Click,
-                Sub(sender As Object, e As RoutedEventArgs)
-#Disable Warning BC42358 ' deliberately fire-and-forget (matches BrowseForFile's click handler)
-                    PrintAsync()
-#Enable Warning BC42358
-                End Sub
+            ' HARDCOPY (every chart type): a native PRINT dialog (Avae.Printables — or CUPS on a Linux
+            ' desktop, where that library has no service of its own: see GrumpyPrint), a SAVE-TO-PDF
+            ' (AvaloniaUI.PrintToPDF, Skia-backed — cross-platform) and a PNG "Save as picture…". The
+            ' print entry is DISABLED — not hidden — when NEITHER is available, with the reason in its
+            ' tooltip: a click that silently does nothing was the old behaviour and it read as a broken
+            ' menu. Placed BEFORE the !SupportsCursors return so the pie and the bar — which skip the
+            ' cursor section — still expose them.
+            Dim printItem As New MenuItem With {.Header = "Print…", .IsEnabled = CanPrint}
+            If Not CanPrint Then
+                ToolTip.SetTip(printItem, "Nothing here can print — call AppBuilder.UsePrintables() in Program on a platform with a native service, or install a CUPS client (lp) on Linux (USER_MANUAL 19.14)")
+            End If
+            AddHandler printItem.Click, Async Sub(sender As Object, e As RoutedEventArgs)
+                                           Await PrintAsync()
+                                       End Sub
             items.Add(printItem)
             Dim pdfItem As New MenuItem With {.Header = "Print to PDF…"}
-            AddHandler pdfItem.Click,
-                Sub(sender As Object, e As RoutedEventArgs)
-#Disable Warning BC42358
-                    PrintToPdfAsync()
-#Enable Warning BC42358
-                End Sub
+            AddHandler pdfItem.Click, Async Sub(sender As Object, e As RoutedEventArgs)
+                                          Await PrintToPdfAsync()
+                                      End Sub
             items.Add(pdfItem)
+            Dim pngItem As New MenuItem With {.Header = "Save as picture…"}
+            AddHandler pngItem.Click, Async Sub(sender As Object, e As RoutedEventArgs)
+                                          Await SaveAsPictureAsync()
+                                      End Sub
+            items.Add(pngItem)
 #End If
 
             ' A chart that has no cursors (the pie and the bar) gets no cursor entries at all: the toggles,
@@ -8221,58 +8764,94 @@ Namespace Global.AvaloniaCharts
     Friend NotInheritable Class ChartPickerMemory
         Private Shared _folder As String = Nothing
         Private Shared _loaded As Boolean = False
+        Private Shared _exportFolder As String = Nothing
+        Private Shared _exportLoaded As Boolean = False
 
         Private Sub New()
         End Sub
 
         Private Shared ReadOnly Property StorePath As String
             Get
-                Dim entry = System.Reflection.Assembly.GetEntryAssembly()
-                Dim name As String = If(entry Is Nothing, Nothing, entry.GetName().Name)
-                If String.IsNullOrEmpty(name) Then name = System.Reflection.Assembly.GetExecutingAssembly().GetName().Name
-                If String.IsNullOrEmpty(name) Then name = "app"
-                Dim root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-                If String.IsNullOrEmpty(root) Then root = System.IO.Path.GetTempPath()
-                Dim dir = System.IO.Path.Combine(root, name)
-                Try
-                    System.IO.Directory.CreateDirectory(dir)
-                Catch
-                    ' The failing write is what reports it.
-                End Try
-                Return System.IO.Path.Combine(dir, "GrumpyCharts.lastfolder")
+                Return StorePathFor("GrumpyCharts.lastfolder")
             End Get
         End Property
 
-        ''' <summary>The folder the last pick used (Nothing = let the platform choose), or Nothing once it is gone.</summary>
+        Private Shared Function StorePathFor(fileName As String) As String
+            Dim entry = System.Reflection.Assembly.GetEntryAssembly()
+            Dim name As String = If(entry Is Nothing, Nothing, entry.GetName().Name)
+            If String.IsNullOrEmpty(name) Then name = System.Reflection.Assembly.GetExecutingAssembly().GetName().Name
+            If String.IsNullOrEmpty(name) Then name = "app"
+            Dim root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+            If String.IsNullOrEmpty(root) Then root = System.IO.Path.GetTempPath()
+            Dim dir = System.IO.Path.Combine(root, name)
+            Try
+                System.IO.Directory.CreateDirectory(dir)
+            Catch
+                ' The failing write is what reports it.
+            End Try
+            Return System.IO.Path.Combine(dir, fileName)
+        End Function
+
+        ''' <summary>The folder the last SPREADSHEET pick used, or Nothing once it is gone.</summary>
         Friend Shared Property LastFolder As String
             Get
                 If Not _loaded Then
                     _loaded = True
-                    Try
-                        If System.IO.File.Exists(StorePath) Then _folder = System.IO.File.ReadAllText(StorePath).Trim()
-                    Catch
-                        _folder = Nothing
-                    End Try
+                    _folder = Load(StorePath)
                 End If
-                ' A folder on a drive that is no longer mounted is worse than no answer: the platform would
-                ' open the dialog inside a path that does not exist.
-                If String.IsNullOrEmpty(_folder) OrElse Not System.IO.Directory.Exists(_folder) Then Return Nothing
-                Return _folder
+                Return Usable(_folder)
             End Get
             Set(value As String)
                 _loaded = True
                 _folder = value
-                Try
-                    If String.IsNullOrEmpty(value) Then
-                        If System.IO.File.Exists(StorePath) Then System.IO.File.Delete(StorePath)
-                    Else
-                        System.IO.File.WriteAllText(StorePath, value)
-                    End If
-                Catch
-                    ' Best effort.
-                End Try
+                Save(StorePath, value)
             End Set
         End Property
+
+        ''' <summary>The folder the last PDF/PNG EXPORT went to — a separate memory from the spreadsheet
+        ''' one, so printing a chart does not move the workbook picker (and the other way round).</summary>
+        Friend Shared Property LastExportFolder As String
+            Get
+                If Not _exportLoaded Then
+                    _exportLoaded = True
+                    _exportFolder = Load(StorePathFor("GrumpyCharts.lastexport"))
+                End If
+                Return Usable(_exportFolder)
+            End Get
+            Set(value As String)
+                _exportLoaded = True
+                _exportFolder = value
+                Save(StorePathFor("GrumpyCharts.lastexport"), value)
+            End Set
+        End Property
+
+        ''' <summary>A folder on a drive that is no longer mounted is worse than no answer: the platform
+        ''' would open the dialog inside a path that does not exist.</summary>
+        Private Shared Function Usable(folder As String) As String
+            If String.IsNullOrEmpty(folder) OrElse Not System.IO.Directory.Exists(folder) Then Return Nothing
+            Return folder
+        End Function
+
+        Private Shared Function Load(file As String) As String
+            Try
+                If System.IO.File.Exists(file) Then Return System.IO.File.ReadAllText(file).Trim()
+            Catch
+                ' Best effort.
+            End Try
+            Return Nothing
+        End Function
+
+        Private Shared Sub Save(file As String, value As String)
+            Try
+                If String.IsNullOrEmpty(value) Then
+                    If System.IO.File.Exists(file) Then System.IO.File.Delete(file)
+                Else
+                    System.IO.File.WriteAllText(file, value)
+                End If
+            Catch
+                ' Best effort.
+            End Try
+        End Sub
     End Class
 
 End Namespace

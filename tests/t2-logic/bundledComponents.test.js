@@ -136,9 +136,15 @@ internal static class PickerFolderMemory { internal static string? LastFolder { 
     // in the running app while the designer — built from this file — looked right. The project's own copy
     // already carried `GrumpySurfacePlot`, so it was never reported stale: a DRAWING change in an existing
     // type is a marker move like any other, and the new member is what an old copy lacks.
+    // 2026-09-25, last of the day: PRINTING gained a second backend. Avae.Printables ships a real service
+    // for Windows, macOS and GTK, but the API-only asset for a plain Linux desktop — so `Printable.Default`
+    // stayed null there and the disabled Print… entry stayed disabled on the very machine the chart was
+    // drawn on. The chart now asks the bundled `GrumpyPrint` helper (CUPS, `lp`) as well, so `CanPrint` and
+    // the Print… handler changed shape: a copy without that call keeps a dead entry, which only a refresh
+    // can fix. The marker is `GrumpyPrint` — the newest token in the current file.
     const chartSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(chartSpec.marker, 'printItem', 'spec',
-        'the GrumpyCharts marker is the newest token in the current bundled file (the hardcopy "Print…"/"Print to PDF…" menu entries)');
+    t.equal(chartSpec.marker, 'GrumpyPrint', 'spec',
+        'the GrumpyCharts marker is the newest token in the current bundled file (the CUPS print path: CanPrint now accepts GrumpyPrint.Available and PrintAsync renders the page for lp)');
     const oldCsCharts = `// GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb).
 public sealed class ChartSeries { public double[] Xs = Array.Empty<double>(); }
 public abstract class ChartBase : Control { public string? SourceFile { get; set; } }`;
@@ -249,12 +255,20 @@ public static class HeightLevels { internal static double CutToLevels() => 0; }`
     const legendEraCsCharts = `${levelEraCsCharts}
 private static readonly object legendItem = null;`;
     t.equal(isStaleBundledCopy(legendEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
-        'a copy with the four-slider legend but no hardcopy menu is stale (the marker moved to printItem)');
-    // The current copy: everything above plus the Print… / Print to PDF… entries themselves.
-    const curCsCharts = `${legendEraCsCharts}
+        'a copy with the four-slider legend but no hardcopy menu is stale (the marker moved on)');
+    // A copy that has the hardcopy menu but not this release's overhaul of it.
+    const hardcopyEraCsCharts = `${legendEraCsCharts}
 private static readonly object printItem = null;`;
+    t.equal(isStaleBundledCopy(hardcopyEraCsCharts, false, 'GrumpyCharts'), true, 'detect',
+        'and one with the Print…/Print to PDF… entries but before the print path was gated, reportable and exportable');
+    // The current copy: everything above plus the overhaul itself, and the CUPS backend on top.
+    const curCsCharts = `${hardcopyEraCsCharts}
+public static bool CanPrint => true;
+public event EventHandler<Exception>? PrintFailed;
+public Task<bool> ExportPdfAsync(string path) => Task.FromResult(true);
+public static bool CanPrintCups => GrumpyPrint.Available;`;
     t.equal(isStaleBundledCopy(curCsCharts, false, 'GrumpyCharts'), false, 'detect',
-        'the current chart file is current (the hardcopy menu entries are the newest thing it ships)');
+        'the current chart file is current (printing through CUPS on Linux is the newest thing it ships)');
     t.equal(isStaleBundledCopy(`${oldCsCharts}\n// hand-tweaked below`, false, 'GrumpyCharts'), true, 'detect',
         'an old chart file with extra edits still refreshes (the bundled header is intact)');
     const oldVbCharts = `' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs).
@@ -306,13 +320,26 @@ End Function`;
         'and the VB copy that has the level-cut ramp but not the four-slider legend');
     t.equal(isStaleBundledCopy(`${levelEraVbCharts}
 Private Shared ReadOnly legendItem As Object = Nothing
-Private Shared ReadOnly printItem As Object = Nothing`, true, 'GrumpyCharts'), false,
-        'detect', 'the current VB chart file is current');
+Private Shared ReadOnly printItem As Object = Nothing`, true, 'GrumpyCharts'), true,
+        'detect', 'the VB copy with the first hardcopy menu but not this release\'s overhaul is stale');
+    t.equal(isStaleBundledCopy(`${levelEraVbCharts}
+Private Shared ReadOnly legendItem As Object = Nothing
+Private Shared ReadOnly printItem As Object = Nothing
+Public Shared ReadOnly Property CanPrint As Boolean
+Public Event PrintFailed As EventHandler(Of Exception)
+Public Function ExportPdfAsync(path As String) As Task(Of Boolean)
+Public Shared ReadOnly Property CanPrintCups As Boolean
+    Get
+        Return GrumpyPrint.Available
+    End Get
+End Property`, true, 'GrumpyCharts'), false,
+        'detect', 'the current VB chart file is current (with the CUPS backend it now drives on Linux)');
 
     // The SHIPPED resource files must never look stale: a marker that drifts out of the resources is
     // worse than none, because then every project's chart file is rewritten on every save.
     const ROOT = path.join(__dirname, '..', '..');
-    for (const name of ['GrumpyCharts.cs', 'GrumpyCharts.vb', 'ChromeWindow.cs', 'ChromeWindow.vb',
+    for (const name of ['GrumpyCharts.cs', 'GrumpyCharts.vb', 'GrumpyPrint.cs', 'GrumpyPrint.vb',
+        'ChromeWindow.cs', 'ChromeWindow.vb',
         'AnchorHelper.cs', 'AnchorHelper.vb', 'PathPicker.cs', 'PathPicker.vb']) {
         const forVb = name.endsWith('.vb');
         const kind = name.replace(/\.(cs|vb)$/, '');
@@ -389,8 +416,8 @@ Private Shared ReadOnly printItem As Object = Nothing`, true, 'GrumpyCharts'), f
     // --- The language picks the right file names ---
     const vb = bundledComponentSpecs(true).map((s) => s.file).sort();
     const cs = bundledComponentSpecs(false).map((s) => s.file).sort();
-    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","GrumpyCharts.vb","PathPicker.vb"]', 'spec', 'VB spec file names');
-    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","GrumpyCharts.cs","PathPicker.cs"]', 'spec', 'C# spec file names');
+    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","GrumpyCharts.vb","GrumpyPrint.vb","PathPicker.vb"]', 'spec', 'VB spec file names');
+    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","GrumpyCharts.cs","GrumpyPrint.cs","PathPicker.cs"]', 'spec', 'C# spec file names');
 
     // ---------------------------------------------------------------- the version STAMP every copy carries
     // A release is where a project's copy and the extension's part company, so the version is stamped into

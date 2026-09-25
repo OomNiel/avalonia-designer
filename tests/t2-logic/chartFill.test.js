@@ -144,9 +144,14 @@ module.exports = async (t) => {
         t.ok(lang === 'cs' ? /RestorePlacement\(\);\s*e\.Handled = true;\s*return;/.test(keysBody.replace(/\r/g, ''))
             : /RestorePlacement\(\)[\s\S]{0,80}e\.Handled = True[\s\S]{0,40}Return/.test(keysBody),
             lang, `${lang}: and it is marked handled, so nothing else reacts to the same Esc`);
-        t.ok(keysBody.indexOf('Key.Escape') < keysBody.indexOf('LiveCursorIndexes'), lang,
+        // The order of the two branches is checked over the WHOLE handler, not a character window: the
+        // window used to be 900 and stopped reaching the cursor branch when Ctrl+P joined the handler, at
+        // which point `indexOf` returned -1 for both and the check silently compared "-1 < -1". Both
+        // markers must be found, so it can only pass when the order really is right.
+        const escAt = keys.indexOf('Key.Escape');
+        const cursorAt = keys.indexOf('LiveCursorIndexes');
+        t.ok(escAt >= 0 && cursorAt >= 0 && escAt < cursorAt, lang,
             `${lang}: the Esc branch comes BEFORE the cursor keys' early return (which would otherwise swallow it)`);
-
         // ---------------------------------------------------------------- Esc must be reachable
         t.ok(lang === 'cs'
             ? /IsRightButtonPressed\)[\s\S]{0,600}Focus\(\);\s*ShowChartMenu\(\);/.test(text)

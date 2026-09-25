@@ -1902,6 +1902,31 @@ function splitPaneBorderOf(el: Element): string {
  * Custom Window-derived roots (e.g. `chrome:ChromeWindow`) are treated as a Window
  * so all form-manipulation properties (Title, size, CanResize, position, ...) appear.
  */
+// --- hardcopy output (2026-09-25) ---------------------------------------------------------
+// The page a chart is printed or exported onto. The same three rows belong to all seven charts, so
+// they are appended here rather than copied into seven entries. AsDrawn — the chart's own size, edge
+// to edge — is the default, so a form that never touches these rows prints exactly as it did before,
+// and the headless previewer parses them without a printer package (they are declared outside the
+// PRINT_SUPPORT symbol in the bundled file for that reason).
+const CHART_PRINT_PAPERS = ['AsDrawn', 'A4', 'Letter'];
+// Whether the LEGEND goes on the page. AsDrawn (the default) prints what the chart shows, so nothing
+// changes for a form that leaves the row alone; Off puts the graph on the paper with the legend's room
+// given back to the plot — the usual hardcopy — and On forces it on. The override is scoped to the job
+// in the bundled file: the chart on screen keeps its own ShowLegend whatever this says.
+const CHART_PRINT_LEGENDS = ['AsDrawn', 'Off', 'On'];
+
+const CHART_PRINT_ROWS: PropTemplate[] = [
+    { key: 'PrintPaper', label: 'Print Paper', kind: 'dropdown', options: CHART_PRINT_PAPERS },
+    { key: 'PrintMargin', label: 'Print Margin', kind: 'number' },
+    { key: 'PrintLightBackground', label: 'Print on White', kind: 'dropdown', options: BOOL },
+    { key: 'PrintLegend', label: 'Print Legend', kind: 'dropdown', options: CHART_PRINT_LEGENDS }
+];
+
+for (const tag of ['GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAreaPlot',
+    'GrumpyPiePlot', 'GrumpyWaterfallPlot', 'GrumpySurfacePlot']) {
+    CONTROL_PROPS[tag] = (CONTROL_PROPS[tag] ?? []).concat(CHART_PRINT_ROWS);
+}
+
 // ---------------- Properties panel sections ----------------
 /**
  * The Properties panel files its rows into these sections — ALWAYS in this order, for every
@@ -2048,7 +2073,12 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // State flags of the 2026-09-19 controls
             'IsIndeterminate', 'IsSnapToTickEnabled', 'ShowButtonSpinner',
             // GrumpyCharts: join the X,Y points with a line, and re-read the spreadsheet on change
-            'Connected', 'LiveUpdate'
+            'Connected', 'LiveUpdate',
+            // GrumpyCharts hardcopy (2026-09-25): the page a chart prints or exports onto — which
+            // paper, the margin inside it, whether the page is painted white first, and whether the
+            // LEGEND goes on the paper at all. AsDrawn (the default) keeps the chart's own size and
+            // prints the legend as drawn, which is what the rows did nothing about before.
+            'PrintPaper', 'PrintMargin', 'PrintLightBackground', 'PrintLegend'
         ]
     }
 ];

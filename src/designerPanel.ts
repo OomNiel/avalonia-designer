@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute } from './xamlModel';
+import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute, CHARTS_TAGS } from './xamlModel';
 import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
     chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush, chartSlicesOf, writeChartSlices,
@@ -33,7 +33,8 @@ import { publishApp, installApp, packageState, watchForPackage, stopWatchingPack
 import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTableName } from './dataSetModel';
 import { readDataSetFiles } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
-import { bundledComponentSpecs, isStaleBundledCopy } from './bundledComponents';
+import { bundledComponentSpecs, isStaleBundledCopy, type BundledKind } from './bundledComponents';
+import { printSupportStateFor, addPrintSupport, PrintLanguage } from './printSupport';
 import { statusLines, repairWithAI } from './assistantUi';
 import { hostGate, clearHostGate } from './hostCheck';
 import { learnConventions } from './conventionsUi';
@@ -353,6 +354,8 @@ const CHROME_ROOT_PROPS = new Set(['TitleBarTitle', 'TitleBarIcon', 'TitleBarHei
  * Documents already warned that the project lacks the Avalonia.Controls.DataGrid package.
  */
 const dataGridWarnedDocs = new Set<string>();
+/** Documents already told that their project cannot print a chart (once per document is enough). */
+const printWarnedDocs = new Set<string>();
 
 /**
  * Returns the AnchorHelper file name the project needs if it's missing, else null.
@@ -2662,6 +2665,18 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                             );
                         }
                     }
+                    // The charts' HARDCOPY entries are compiled in behind PRINT_SUPPORT and need the two
+                    // printer packages — new projects have them, older ones do not, and their absence is
+                    // invisible (the bundled chart simply has no Print entries). Say so once, and offer
+                    // the project-file half of the fix; the Program line stays the user's (see
+                    // printSupport.ts).
+                    if (CHARTS_TAGS.includes(msg.tag)) {
+                        const docKey = doc.uri.toString();
+                        if (!printWarnedDocs.has(docKey)) {
+                            printWarnedDocs.add(docKey);
+                            void this.offerPrintSupport(doc.uri);
+                        }
+                    }
                     // If the name had to be made unique, keep name-derived Content/Text in sync
                     // (e.g. a Button renamed Button1 -> Button2 should not still say "Button1").
                     if (name !== snip.name) {
@@ -4354,6 +4369,48 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         } catch { /* best-effort */ }
     }
 
+    /** Tells the user once that a chart placed in this project has no Print…/Print to PDF… entries yet,
+     *  and offers to add the project-file half of what they need (the packages and PRINT_SUPPORT).
+     *  Silently does nothing when the project is complete — which is the case for every project the
+     *  designer generated from 0.12.0 on, so this never nags. */
+    private async offerPrintSupport(axamlUri: vscode.Uri): Promise<void> {
+        const proj = findProject(axamlUri);
+        if (!proj) return;
+        const state = printSupportStateFor(proj.projectUri.fsPath);
+        if (state.complete) return;
+        const missing = [
+            state.packages ? '' : 'the two printer packages',
+            state.symbol ? '' : 'the PRINT_SUPPORT symbol',
+            state.usePrintables ? '' : '.UsePrintables() in Program'
+        ].filter(Boolean).join(', ');
+        const canFixProjectFile = !state.packages || !state.symbol;
+        const pick = await vscode.window.showWarningMessage(
+            `This project can't print a chart yet — missing ${missing}. ` +
+            'The chart compiles without them; it just has no Print… / Print to PDF… menu entries.',
+            ...(canFixProjectFile ? ['Add the packages and the symbol'] : [])
+        );
+        if (pick !== 'Add the packages and the symbol') return;
+        const ok = this.ensurePrintSupport(proj);
+        void vscode.window.showInformationMessage(ok
+            ? 'Added the printer packages and PRINT_SUPPORT to the project file. Run the app (F5) to print a chart.'
+            : 'Could not edit the project file — add the packages and PRINT_SUPPORT by hand (USER_MANUAL §19.14).');
+    }
+
+    /** Appends the printer packages + PRINT_SUPPORT to the project file (idempotent — see
+     *  printSupport.ts). Does NOT touch Program: the .UsePrintables() call is the user's. */
+    private ensurePrintSupport(proj: ProjectInfo): boolean {
+        try {
+            const p = proj.projectUri.fsPath;
+            const text = fs.readFileSync(p, 'utf8');
+            const language: PrintLanguage = p.toLowerCase().endsWith('.vbproj') ? 'vb' : 'cs';
+            const updated = addPrintSupport(text, language);
+            if (updated !== text) fs.writeFileSync(p, updated, 'utf8');
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     /** Binds a DataSet table asset picked in the form designer. Records the EXACT same state the
      *  DataSet designer's "Bind to control" dropdown records (boundTo/boundToType + the shared
      *  per-DataSet SQLite default for a no-storage table), writes the code-behind ItemsSource,
@@ -4768,33 +4825,48 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      *  with every NEW project, like GrumpyPanel. A project created before it existed needs the file
      *  next to ChromeWindow — otherwise the saved <charts:GrumpyLinePlot> won't compile. */
     private ensureGrumpyChartsHelper(doc: DesignerDocument): boolean {
+        const proj = findProject(doc.uri);
+        if (!proj) return false;
+        const folder = path.dirname(proj.projectUri.fsPath);
+        const vb = proj.language === 'vb';
+        // The chart first, then the print helper it calls on Linux (GrumpyPrint): the two are bundled
+        // and copied together, since a project holding one without the other does not compile.
+        let touched = this.ensureBundledFileIn(folder, vb, 'GrumpyCharts',
+            'the chart set gained the printing, the paper options and the exports your form uses'
+        );
+        if (this.ensureBundledFileIn(folder, vb, 'GrumpyPrint',
+            'the chart prints through CUPS on Linux, where Avae.Printables has no service of its own'
+        )) {
+            touched = true;
+        }
+        return touched;
+    }
+
+    /**
+     * Copies one bundled file next to the project file — or refreshes the copy already there. Only
+     * provable bundled boilerplate is replaced (a file the user edited is left alone, see
+     * `isStaleBundledCopy`); the answer says whether anything on disk was written.
+     */
+    private ensureBundledFileIn(folder: string, vb: boolean, kind: BundledKind, why: string): boolean {
         try {
-            const proj = findProject(doc.uri);
-            if (!proj) return false;
-            const vb = proj.language === 'vb';
-            const file = vb ? 'GrumpyCharts.vb' : 'GrumpyCharts.cs';
-            const p = path.join(path.dirname(proj.projectUri.fsPath), file);
-            const src = path.join(this.context.extensionUri.fsPath, 'resources', file);
+            const spec = bundledComponentSpecs(vb).find((s) => s.kind === kind);
+            if (!spec) return false;
+            const src = path.join(this.context.extensionUri.fsPath, 'resources', spec.file);
             if (!fs.existsSync(src)) return false;
+            const p = path.join(folder, spec.file);
             if (fs.existsSync(p)) {
-                // A copy older than the current bundled version is refreshed; a customised copy is left
-                // alone, since isStaleBundledCopy only refreshes provable bundled boilerplate.
-                try {
-                    if (isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, 'GrumpyCharts',
-                        fs.readFileSync(src, 'utf8'))) {
-                        fs.copyFileSync(src, p);
-                        void vscode.window.showInformationMessage(
-                            `Updated ${file} to the current bundled version (the charts gained multiple `
-                            + 'series and the axis objects this form uses).'
-                        );
-                        return true;
-                    }
-                } catch { /* unreadable — leave the file alone */ }
-                return false;
+                if (!isStaleBundledCopy(fs.readFileSync(p, 'utf8'), vb, kind, fs.readFileSync(src, 'utf8'))) {
+                    return false;
+                }
+                fs.copyFileSync(src, p);
+                void vscode.window.showInformationMessage(
+                    `Updated ${spec.file} to the current bundled version (${why}).`
+                );
+                return true;
             }
             fs.copyFileSync(src, p);
             void vscode.window.showInformationMessage(
-                `Added ${file} (the chart controls are bundled with new projects — copied it in so this one compiles).`
+                `Added ${spec.file} (${why} — copied it in so this project compiles).`
             );
             return true;
         } catch { return false; }

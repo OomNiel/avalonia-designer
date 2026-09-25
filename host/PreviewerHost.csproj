@@ -77,6 +77,11 @@
          projects) is linked so the builder can realise <charts:GrumpyLinePlot> / <charts:GrumpyXYPlot>
          and draw the real chart in the designer canvas. -->
     <Compile Include="../resources/GrumpyCharts.cs" Link="GrumpyCharts.cs" />
+    <!-- GrumpyPrint (the CUPS printer path the chart falls back to on Linux) is bundled with the
+         chart and copied into the same projects, so it is linked here too. Without PRINT_SUPPORT the
+         host compiles its empty half — which is exactly the build that must keep working, since the
+         headless previewer has no printer packages at all. -->
+    <Compile Include="../resources/GrumpyPrint.cs" Link="GrumpyPrint.cs" />
   </ItemGroup>
 
 </Project>

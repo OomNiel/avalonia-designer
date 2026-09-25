@@ -29,6 +29,9 @@ const MAIN_FORM_NAME = 'MainWindow';
 // both packages and call AppBuilder.UsePrintables() — see csproj()/vbproj() and programCs()/programVb().
 const AVAE_PRINTABLES_VERSION = '3.0.7';
 const AVALONIAUI_PRINTTOPDF_VERSION = '0.6.0';
+// Exported so the designer can offer the same two packages to an existing project (see printSupport.ts)
+// without a second copy of the version numbers to keep in step.
+export { AVAE_PRINTABLES_VERSION, AVALONIAUI_PRINTTOPDF_VERSION };
 
 export interface ScaffoldOptions {
     language: 'cs' | 'vb';
@@ -62,6 +65,14 @@ export interface ScaffoldOptions {
     chartsCs?: string;
     /** Contents of GrumpyCharts.vb (bundled resource — see chartsCs). Optional. */
     chartsVb?: string;
+    /** Contents of GrumpyPrint.cs (bundled resource — the CUPS printer path the chart falls back to
+     *  when the platform has no Avae.Printables service of its own: a plain Linux desktop installs
+     *  the library's API-only asset, so nothing registers `Printable.Default` there). GrumpyCharts
+     *  calls it whenever PRINT_SUPPORT is on, so the two files are copied together. Optional, like
+     *  the other bundled files. */
+    grumpyPrintCs?: string;
+    /** Contents of GrumpyPrint.vb (bundled resource — see grumpyPrintCs). Optional. */
+    grumpyPrintVb?: string;
     /** Contents of ColumnFollower.cs (bundled resource — the live one-column view a read-only
      *  control follows a bound DataGrid with). Optional: when omitted the file is not written, so
      *  tests that don't care about followers keep generating exactly the old file set. */
@@ -77,7 +88,7 @@ export interface ScaffoldOptions {
 
 /** Writes a complete, ready-to-run Avalonia project into projectPath. */
 export function generateProjectScaffold(opts: ScaffoldOptions): void {
-    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, chartsCs, chartsVb, followerCs, followerVb, vbBridgeDll } = opts;
+    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb, followerCs, followerVb, vbBridgeDll } = opts;
     const rootNamespace = sanitize(name);
     const formName = MAIN_FORM_NAME;
 
@@ -91,6 +102,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (grumpyCs) write(projectPath, 'GrumpyPanel.cs', grumpyCs);
         if (pathPickerCs) write(projectPath, 'PathPicker.cs', pathPickerCs);
         if (chartsCs) write(projectPath, 'GrumpyCharts.cs', chartsCs);
+        if (grumpyPrintCs) write(projectPath, 'GrumpyPrint.cs', grumpyPrintCs);
         if (followerCs) write(projectPath, 'ColumnFollower.cs', followerCs);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.cs', buildCsCodeBehind(formName, 'Window', rootNamespace, tpl.handlers));
@@ -104,6 +116,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (grumpyVb) write(projectPath, 'GrumpyPanel.vb', grumpyVb);
         if (pathPickerVb) write(projectPath, 'PathPicker.vb', pathPickerVb);
         if (chartsVb) write(projectPath, 'GrumpyCharts.vb', chartsVb);
+        if (grumpyPrintVb) write(projectPath, 'GrumpyPrint.vb', grumpyPrintVb);
         if (followerVb) write(projectPath, 'ColumnFollower.vb', followerVb);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.vb', buildVbCodeBehind(formName, 'Window', tpl.handlers));

@@ -197,8 +197,8 @@ module.exports = async (t) => {
     // DRAWING change in an existing type, which a project's old copy silently lacks — see
     // bundledComponents.ts)
     const spec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(spec.marker, 'printItem', 'marker',
-        'the marker is the newest thing an existing project needs a refresh for');
+    t.equal(spec.marker, 'GrumpyPrint', 'marker',
+        'the marker is the newest thing an existing project needs a refresh for (the CUPS print path)');
     t.equal(bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts').marker, spec.marker, 'marker',
         'the same in both languages');
     t.ok(cs.includes(spec.marker) && vb.includes(spec.marker), 'marker',

@@ -50,10 +50,12 @@ function generateProject({ language, tplId, name, outDir = OUT_DIR }) {
     const pathPickerVb = readResource('PathPicker.vb');
     const chartsCs = readResource('GrumpyCharts.cs');
     const chartsVb = readResource('GrumpyCharts.vb');
+    const grumpyPrintCs = readResource('GrumpyPrint.cs');
+    const grumpyPrintVb = readResource('GrumpyPrint.vb');
     generateProjectScaffold({
         language, tpl, name, projectPath: dir,
         chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, followerCs, followerVb,
-        pathPickerCs, pathPickerVb, chartsCs, chartsVb
+        pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb
     });
     return dir;
 }

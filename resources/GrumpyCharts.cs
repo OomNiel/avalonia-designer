@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.0
+// BUNDLED-COPY: 0.12.2
 // GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs.
 //
@@ -80,6 +80,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
@@ -94,6 +95,7 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Metadata;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -1061,6 +1063,116 @@ internal sealed class Plot
     internal Axis? YAxis;
     internal AxisRange XRange = new();
     internal AxisRange YRange = new();
+}
+
+/// <summary>The paper a chart is placed on when it is printed or exported to PDF / PNG — the chart's
+/// <c>PrintPaper</c> row picks one, and <see cref="ChartPrintOptions"/> is what the methods take.</summary>
+public enum ChartPaper
+{
+    /// <summary>The chart's own size becomes the page: no paper, no margin, nothing cropped. Default.</summary>
+    AsDrawn,
+
+    /// <summary>A4 portrait, 595 × 842 points (210 × 297 mm).</summary>
+    A4,
+
+    /// <summary>US Letter portrait, 612 × 792 points (8.5 × 11 in).</summary>
+    Letter
+}
+
+/// <summary>Whether the legend goes on the page for a print or an export — the chart's <c>PrintLegend</c>
+/// row picks one. It steers the OUTPUT only: the chart on screen keeps whatever its right-click Legend
+/// toggle and its <c>ShowLegend</c> property say, and both are put back once the job is done.</summary>
+public enum ChartLegendMode
+{
+    /// <summary>Whatever the chart shows now. Default — what you see is what prints.</summary>
+    AsDrawn,
+
+    /// <summary>Leave the legend off the page: the graph only, with the room it took given back to the plot.</summary>
+    Off,
+
+    /// <summary>Put the legend on the page even while it is hidden on screen.</summary>
+    On
+}
+
+/// <summary>
+/// Where a chart sits on the page for the print / PDF / PNG output: a paper size in PDF points
+/// (1/72 inch), the margin inside it, and whether the page is painted white first.
+/// <para>
+/// The no-argument defaults reproduce the original behaviour exactly — the page IS the chart, drawn
+/// edge to edge — so a form that never mentions these rows prints as it always did. <see cref="A4"/> and
+/// <see cref="Letter"/> are the presets the chart's <c>PrintPaper</c> row selects; the export methods take
+/// one of these directly when an app wants a page the designer does not offer.
+/// </para>
+/// </summary>
+public sealed class ChartPrintOptions
+{
+    /// <summary>Page width in points — 0 (with a 0 height) means "the chart's own size".</summary>
+    public double PageWidth { get; set; }
+
+    /// <summary>Page height in points — 0 (with a 0 width) means "the chart's own size".</summary>
+    public double PageHeight { get; set; }
+
+    /// <summary>The margin inside the page, in points. Ignored while the page is the chart's own size.</summary>
+    public double Margin { get; set; } = 18;
+
+    /// <summary>Paint the page white before the chart is drawn on it — what a hardcopy of a chart with a
+    /// dark plot background needs. Off by default: what you see is what prints.</summary>
+    public bool LightBackground { get; set; }
+
+    /// <summary>Whether the legend appears on the page. <see cref="ChartLegendMode.AsDrawn"/> by default —
+    /// what you see is what prints — so a form that never mentions the row is unaffected. Anything else is
+    /// applied around the render and then PUT BACK, so the chart on screen is never left changed.</summary>
+    public ChartLegendMode Legend { get; set; }
+
+    /// <summary>True when real paper was asked for, rather than the chart's own size.</summary>
+    public bool HasPage => PageWidth > 0 && PageHeight > 0;
+
+    /// <summary>An independent copy — the presets hand out fresh instances, so a caller may change one.</summary>
+    public ChartPrintOptions Clone() => (ChartPrintOptions)MemberwiseClone();
+
+    /// <summary>The original behaviour: the chart's own size is the page.</summary>
+    public static ChartPrintOptions AsDrawn => new();
+
+    /// <summary>A4 portrait (595 × 842 pt) with the default margin.</summary>
+    public static ChartPrintOptions A4 => new() { PageWidth = 595, PageHeight = 842 };
+
+    /// <summary>US Letter portrait (612 × 792 pt) with the default margin.</summary>
+    public static ChartPrintOptions Letter => new() { PageWidth = 612, PageHeight = 792 };
+}
+
+/// <summary>
+/// The page a chart is drawn onto when the print options ask for real paper: white when the light
+/// background is on, then the chart scaled to FIT (never stretched) inside the margin.
+/// <para>
+/// A separate visual is needed because a control cannot have two parents — the chart is painted
+/// through a <see cref="VisualBrush"/>, which keeps it VECTOR in the PDF (no bitmap in between), so
+/// enlarging the output stays sharp.
+/// </para>
+/// </summary>
+internal sealed class ChartPrintPage : Control
+{
+    private readonly Control _chart;
+    private readonly ChartPrintOptions _options;
+
+    internal ChartPrintPage(Control chart, ChartPrintOptions options)
+    {
+        _chart = chart;
+        _options = options;
+        Width = options.PageWidth;
+        Height = options.PageHeight;
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        var width = double.IsNaN(Width) || Width <= 0 ? _options.PageWidth : Width;
+        var height = double.IsNaN(Height) || Height <= 0 ? _options.PageHeight : Height;
+        var page = new Rect(0, 0, width, height);
+        if (_options.LightBackground) context.FillRectangle(Brushes.White, page);
+        var margin = Math.Max(0, _options.Margin);
+        var inner = new Rect(margin, margin,
+            Math.Max(1, width - 2 * margin), Math.Max(1, height - 2 * margin));
+        context.DrawRectangle(new VisualBrush { Visual = _chart, Stretch = Stretch.Uniform }, null, inner);
+    }
 }
 
 /// <summary>
@@ -2108,64 +2220,477 @@ public abstract class ChartBase : Control
         }
     }
 
-#if PRINT_SUPPORT
-    // ---- hardcopy printing ---------------------------------------------------------------
+    // ---- hardcopy: the page, the PNG export and the print / PDF paths -----------------------------
+    //
+    // The three Print* rows describe the page an export or a print job uses. They are declared OUTSIDE
+    // the #if so the headless previewer can still parse a form that sets them; the print and PDF
+    // methods need Avae.Printables / AvaloniaUI.PrintToPDF and live behind the symbol.
+
+    /// <summary>The paper a chart is printed or exported onto. <see cref="ChartPaper.AsDrawn"/> — the
+    /// chart's own size, edge to edge — is the default, so nothing changes for existing forms.</summary>
+    public static readonly StyledProperty<ChartPaper> PrintPaperProperty =
+        AvaloniaProperty.Register<ChartBase, ChartPaper>(nameof(PrintPaper));
+
+    public ChartPaper PrintPaper
+    {
+        get => GetValue(PrintPaperProperty);
+        set => SetValue(PrintPaperProperty, value);
+    }
+
+    /// <summary>The margin inside that paper, in points (1/72 inch). Ignored while
+    /// <see cref="PrintPaper"/> is <see cref="ChartPaper.AsDrawn"/> — the page IS the chart then.</summary>
+    public static readonly StyledProperty<double> PrintMarginProperty =
+        AvaloniaProperty.Register<ChartBase, double>(nameof(PrintMargin), 18d);
+
+    public double PrintMargin
+    {
+        get => GetValue(PrintMarginProperty);
+        set => SetValue(PrintMarginProperty, value);
+    }
+
+    /// <summary>Paint the page white before drawing the chart on it — for hardcopy of a chart whose
+    /// plot background is dark. Off by default: what you see is what prints.</summary>
+    public static readonly StyledProperty<bool> PrintLightBackgroundProperty =
+        AvaloniaProperty.Register<ChartBase, bool>(nameof(PrintLightBackground));
+
+    public bool PrintLightBackground
+    {
+        get => GetValue(PrintLightBackgroundProperty);
+        set => SetValue(PrintLightBackgroundProperty, value);
+    }
+
+    /// <summary>Whether the LEGEND goes on the printed / exported page. <see cref="ChartLegendMode.AsDrawn"/>
+    /// (the default) prints what the chart shows; <see cref="ChartLegendMode.Off"/> leaves the legend off
+    /// the paper — the graph only, which is what a hardcopy of a chart usually wants — and
+    /// <see cref="ChartLegendMode.On"/> forces it on. The override lasts for that one job and the chart's
+    /// own <see cref="ShowLegend"/> is put back afterwards, so the screen is never left changed. The PNG
+    /// export and the PDF paths honour it too; the designer preview shows the chart as drawn.</summary>
+    public static readonly StyledProperty<ChartLegendMode> PrintLegendProperty =
+        AvaloniaProperty.Register<ChartBase, ChartLegendMode>(nameof(PrintLegend));
+
+    public ChartLegendMode PrintLegend
+    {
+        get => GetValue(PrintLegendProperty);
+        set => SetValue(PrintLegendProperty, value);
+    }
 
     /// <summary>
-    /// Sends the chart to the platform's native print dialog (Avae.Printables). Does nothing
-    /// when the control has no <see cref="TopLevel"/> yet (a designer preview) or when no
-    /// printing service has been registered with <c>AppBuilder.UsePrintables()</c> — in that
-    /// case Avae.Printables' own <c>Printable.Default</c> is null and the call is a silent no-op
-    /// by design, so it is always safe to invoke from the menu.
+    /// Raised when a print or an export fails — no printing service, a printer that refuses the job, an
+    /// unwritable folder, a cancelled dialog that got as far as the file system. The chart never throws
+    /// into the caller (a menu click must not take a form down) and the menu itself stays silent, so
+    /// this event — plus the trace line — is where an app finds out why nothing happened.
     /// </summary>
-    public async Task PrintAsync()
+    public event EventHandler<Exception>? PrintFailed;
+
+    private bool _printBusy;
+
+    /// <summary>True while a print dialog or an export is running. A second menu click while one is in
+    /// flight is ignored rather than opening a second dialog.</summary>
+    public bool IsPrinting => _printBusy;
+
+    /// <summary>Reports a failure without ever throwing: a trace line for the developer, and the
+    /// <see cref="PrintFailed"/> event for the app.</summary>
+    private void RaisePrintFailed(Exception error)
     {
-        if (TopLevel.GetTopLevel(this) is null) return;   // headless preview / design surface
+        try { Trace.WriteLine("GrumpyCharts: print/export failed — " + error.Message); } catch { /* never throw */ }
+        try { PrintFailed?.Invoke(this, error); } catch { /* a broken handler must not break the chart */ }
+    }
+
+    /// <summary>The page the three rows describe.</summary>
+    private ChartPrintOptions CurrentPrintOptions()
+    {
+        var options = PrintPaper switch
+        {
+            ChartPaper.A4 => ChartPrintOptions.A4,
+            ChartPaper.Letter => ChartPrintOptions.Letter,
+            _ => ChartPrintOptions.AsDrawn
+        };
+        options.Margin = PrintMargin;
+        options.LightBackground = PrintLightBackground;
+        options.Legend = PrintLegend;
+        return options;
+    }
+
+    /// <summary>The visuals a print job or an export draws: the page wrapper when the options ask for
+    /// paper, otherwise the chart itself — which is what the first release always passed.
+    /// <para>
+    /// The wrapper is ours and has never been laid out, so the layout pass happens HERE: a backend
+    /// draws what it is given and does not run one for us, and an un-laid-out page renders empty (a
+    /// PDF whose page size is right and whose paint is nothing). The chart itself is already laid out
+    /// — it must NOT be measured again, or its live placement would move.
+    /// </para></summary>
+    private Visual[] PageVisuals(ChartPrintOptions options)
+    {
+        if (!options.HasPage) return new Visual[] { this };
+        var page = new ChartPrintPage(this, options);
+        page.Measure(new Size(options.PageWidth, options.PageHeight));
+        page.Arrange(new Rect(0, 0, options.PageWidth, options.PageHeight));
+        return new Visual[] { page };
+    }
+
+    /// <summary>
+    /// Applies the legend the print options ask for and answers the undo: <c>null</c> when the options say
+    /// "as drawn" (nothing is touched), otherwise a handle that puts the chart's own <see cref="ShowLegend"/>
+    /// back. The page is re-laid-out on every render (<see cref="PageVisuals"/> does that), which is what
+    /// makes the override visible at all: the legend takes its room out of the plot, so the two pictures
+    /// really differ.
+    /// </summary>
+    private IDisposable? ApplyPrintLegend(ChartPrintOptions options)
+    {
+        if (options.Legend == ChartLegendMode.AsDrawn) return null;
+        var wanted = options.Legend == ChartLegendMode.On;
+        var saved = ShowLegend;
+        if (saved == wanted) return null;
+        ShowLegend = wanted;
+        RelayoutForLegend();
+        return new LegendRestore(this, saved);
+    }
+
+    /// <summary>
+    /// Re-runs the chart's own layout at the size it is already arranged at, so the legend it has just
+    /// gained or lost takes its room out of (or gives it back to) the plot before anything renders it.
+    /// <para>
+    /// The legend's room is baked into the laid-out positions, so a chart that is merely invalidated still
+    /// draws at the old ones for as long as no layout pass has run: the export would put the legend back (or
+    /// leave the gap where it used to be). The chart has a size of its own — the designer writes Width and
+    /// Height — and the measure is given exactly that, so its desired size does not change and nothing around
+    /// it moves: the same measure-then-arrange discipline <see cref="PageVisuals"/> uses for the page.
+    /// </para>
+    /// </summary>
+    private void RelayoutForLegend()
+    {
+        var size = Bounds.Size;
+        if (size.Width <= 0 || size.Height <= 0) return;
+        Measure(size);
+        Arrange(new Rect(Bounds.Position, size));
+        InvalidateVisual();
+    }
+
+    /// <summary>The async form of <see cref="ApplyPrintLegend"/>, for the render paths: the chart's own
+    /// legend setting is put back when the render returns — or when it throws, because the handle is held
+    /// in a <c>using</c>.</summary>
+    private async Task<T> WithPrintLegendAsync<T>(ChartPrintOptions options, Func<Task<T>> render)
+    {
+        using var restore = ApplyPrintLegend(options);
+        return await render();
+    }
+
+    /// <summary>Puts the chart's own legend setting back when the job is done — even when it failed, since
+    /// the caller holds this in a <c>using</c>.</summary>
+    private sealed class LegendRestore : IDisposable
+    {
+        private readonly ChartBase _chart;
+        private readonly bool _saved;
+
+        internal LegendRestore(ChartBase chart, bool saved)
+        {
+            _chart = chart;
+            _saved = saved;
+        }
+
+        public void Dispose()
+        {
+            if (_chart.ShowLegend == _saved) return;
+            _chart.ShowLegend = _saved;
+            _chart.RelayoutForLegend();
+        }
+    }
+
+    private string JobTitle() => string.IsNullOrWhiteSpace(Name) ? "Grumpy chart" : Name!;
+
+    private static string? FolderOf(string? path)
+    {
+        try { return string.IsNullOrWhiteSpace(path) ? null : Path.GetDirectoryName(path); }
+        catch { return null; }
+    }
+
+    private static async Task SuggestLastExportFolder(IStorageProvider storage, FilePickerSaveOptions picker)
+    {
+        var last = ChartPickerMemory.LastExportFolder;
+        if (last is null) return;
+        try { picker.SuggestedStartLocation = await storage.TryGetFolderFromPathAsync(new Uri(last)); }
+        catch { /* the remembered folder is gone — let the platform choose */ }
+    }
+
+    /// <summary>
+    /// Renders the chart — or its page, when the Print* rows ask for paper — to a PNG file. No printing
+    /// package is involved, so this works everywhere, the headless previewer included.
+    /// </summary>
+    public bool ExportPng(string path, double scale = 2)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (_printBusy) return false;
+        _printBusy = true;
         try
         {
-            // The chart is a Visual: hand it — and only it — to the printer. A null/empty Name
-            // falls back to a readable job title for the print queue.
-            var title = !string.IsNullOrWhiteSpace(Name) ? Name : "Grumpy chart";
-            await Printable.PrintVisualsAsync(new[] { (Visual)this }, title);
+            var options = CurrentPrintOptions();
+            using var legend = ApplyPrintLegend(options);
+            var visual = PageVisuals(options)[0];
+            var width = options.HasPage ? options.PageWidth : Bounds.Width;
+            var height = options.HasPage ? options.PageHeight : Bounds.Height;
+            if (width <= 0 || height <= 0) return false;
+            if (scale <= 0) scale = 1;
+            var pixels = new PixelSize(
+                Math.Max(1, (int)Math.Round(width * scale)),
+                Math.Max(1, (int)Math.Round(height * scale)));
+            using var bitmap = new RenderTargetBitmap(pixels, new Vector(96 * scale, 96 * scale));
+            bitmap.Render(visual);
+            bitmap.Save(path, new PngBitmapEncoderOptions());
+            return true;
         }
-        catch
+        catch (Exception error)
         {
-            // A failed print must never take the form down: leave a menu click without feedback.
+            RaisePrintFailed(error);
+            return false;
+        }
+        finally
+        {
+            _printBusy = false;
+        }
+    }
+
+    /// <summary>Asks for a file and saves the chart to it as a PNG (the menu's "Save as picture…").
+    /// Works on every platform, with or without a printing service.</summary>
+    public async Task<bool> SaveAsPictureAsync()
+    {
+        var top = TopLevel.GetTopLevel(this);
+        if (top?.StorageProvider is not { } storage) return false;
+        try
+        {
+            var picker = new FilePickerSaveOptions
+            {
+                Title = "Save the chart as a picture",
+                SuggestedFileName = (string.IsNullOrWhiteSpace(Name) ? "chart" : Name) + ".png",
+                DefaultExtension = "png",
+                FileTypeChoices = new[]
+                {
+                    new FilePickerFileType("PNG image") { Patterns = new[] { "*.png" } },
+                    new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                },
+                ShowOverwritePrompt = true
+            };
+            await SuggestLastExportFolder(storage, picker);
+            var file = await storage.SaveFilePickerAsync(picker);
+            var path = file?.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            var ok = ExportPng(path!);
+            if (ok) ChartPickerMemory.LastExportFolder = FolderOf(path);
+            return ok;
+        }
+        catch (Exception error)
+        {
+            RaisePrintFailed(error);
+            return false;
+        }
+    }
+
+#if PRINT_SUPPORT
+    /// <summary>
+    /// True when this machine can really put a page on paper: either the platform's own service (the
+    /// app called <c>AppBuilder.UsePrintables()</c> AND the platform provides one) or, on a Linux
+    /// desktop, the CUPS client (<c>lp</c>) the bundled <see cref="GrumpyPrint"/> drives — that library
+    /// ships only an API for a plain Linux desktop, so <c>Printable.Default</c> stays null there and
+    /// this entry used to stay greyed out on the very machine the chart was drawn on. <c>Print…</c>
+    /// cannot work without one of the two, which is why the menu disables that entry instead of
+    /// offering a click that does nothing; the PDF and PNG paths never need either.
+    /// </summary>
+    public static bool CanPrint
+    {
+        get
+        {
+            try { if (Printable.Default is not null) return true; } catch { /* no service — try CUPS */ }
+            return GrumpyPrint.Available;
         }
     }
 
     /// <summary>
-    /// Renders the chart to a PDF file the user picks (AvaloniaUI.PrintToPDF, via the Skia PDF
-    /// backend — no native print dialog, so it works on every platform). Does nothing when the
-    /// control has no <see cref="TopLevel"/> yet (a designer preview), so it is always safe to
-    /// call.
+    /// Sends the chart to the platform's native print dialog (Avae.Printables). Returns false — and
+    /// raises <see cref="PrintFailed"/> — when there is no window, no printing service, or the printer
+    /// refuses the job; it never throws.
+    /// <para>
+    /// When the platform cannot print a Visual but can print a file, the page is rendered to a
+    /// temporary PDF and that is handed over instead, so one code path covers both kinds of backend.
+    /// </para>
     /// </summary>
-    public async Task PrintToPdfAsync()
+    public async Task<bool> PrintAsync(ChartPrintOptions? options = null)
     {
-        var top = TopLevel.GetTopLevel(this);
-        if (top?.StorageProvider is not { } storage) return;
-        var suggested = string.IsNullOrWhiteSpace(Name) ? "chart" : Name;
-        var options = new FilePickerSaveOptions
+        if (_printBusy) return false;
+        if (TopLevel.GetTopLevel(this) is null) return false;   // designer preview / headless fill harness
+        if (!CanPrint)
         {
-            SuggestedFileName = suggested + ".pdf",
-            DefaultExtension = "pdf",
-            FileTypeChoices = new[]
-            {
-                new FilePickerFileType("PDF document") { Patterns = new[] { "*.pdf" } },
-                new FilePickerFileType("All files") { Patterns = new[] { "*" } }
-            },
-            ShowOverwritePrompt = true
-        };
-        var file = await storage.SaveFilePickerAsync(options);
-        var path = file?.TryGetLocalPath() ?? "";
-        if (string.IsNullOrWhiteSpace(path)) return;
+            RaisePrintFailed(new InvalidOperationException(
+                "Nothing here can print: call AppBuilder.UsePrintables() where the app is built (it needs a " +
+                "platform with a native service — USER_MANUAL §19.14), or install a CUPS client (lp) on Linux. " +
+                "'Print to PDF…' and 'Save as picture…' need neither."));
+            return false;
+        }
+        _printBusy = true;
         try
         {
-            await Print.ToFileAsync(path, this);
+            var title = JobTitle();
+            var wanted = options ?? CurrentPrintOptions();
+            // A LEGEND override is about the PAGE, and the printer backends are handed the LIVE chart —
+            // which the chart owns and must not be left changed (Avae renders it when it likes). So this one
+            // case renders the page itself — the same vector PDF the export writes — and prints that FILE,
+            // which both backends accept. Everything else stays exactly as it was.
+            if (wanted.Legend != ChartLegendMode.AsDrawn)
+            {
+                var pdf = Path.Combine(Path.GetTempPath(),
+                    "grumpychart-" + Guid.NewGuid().ToString("N") + ".pdf");
+                await WithPrintLegendAsync(wanted, async () =>
+                {
+                    await Print.ToFileAsync(pdf, PageVisuals(wanted));
+                    return true;
+                });
+                // Left behind on purpose, like the fallback below: a spooler may still be reading it.
+                if (Printable.Default is not null) await Printable.PrintAsync(pdf, null, title);
+                else await GrumpyPrint.PrintFileAsync(pdf, title);
+                return true;
+            }
+            var visuals = PageVisuals(wanted);
+            Exception? visualFailure = null;
+            try
+            {
+                // Two ways onto paper, and only one of them can be present here: the platform's own
+                // service (Windows, macOS, GTK) or, on a Linux desktop, CUPS through the bundled helper.
+                // The page visual is the same either way — paper size, margin and white background come
+                // from the chart's own options — so the two backends cannot drift apart.
+                if (Printable.Default is not null) await Printable.PrintVisualsAsync(visuals, title);
+                else await GrumpyPrint.PrintAsync(visuals[0], title);
+                return true;
+            }
+            catch (Exception error)
+            {
+                // Held, not handled here: VB forbids Await inside a catch, so the fallback below runs
+                // outside this block in BOTH twins — the two files stay the same shape.
+                visualFailure = error;
+            }
+            // Some backends print a FILE but not a Visual: render the page to a temporary PDF and hand
+            // that over. The file is deliberately left behind — a spooler may still be reading it when
+            // this returns, and the OS cleans the temp folder up. With no service at all there is nothing
+            // to hand it to, so the failure above stands as the one that explains it.
+            if (Printable.Default is null)
+            {
+                RaisePrintFailed(visualFailure!);
+                return false;
+            }
+            try
+            {
+                var temp = Path.Combine(Path.GetTempPath(),
+                    "grumpychart-" + Guid.NewGuid().ToString("N") + ".pdf");
+                await Print.ToFileAsync(temp, visuals);
+                await Printable.PrintAsync(temp, null, title);
+                return true;
+            }
+            catch
+            {
+                RaisePrintFailed(visualFailure!);   // the first failure is the one that explains it
+                return false;
+            }
         }
-        catch
+        catch (Exception error)
         {
-            // A failed save must never take the form down.
+            RaisePrintFailed(error);
+            return false;
+        }
+        finally
+        {
+            _printBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Asks for a file and writes the chart to it as a PDF (AvaloniaUI.PrintToPDF, Skia-backed — no
+    /// native dialog, so it works on every platform). Remembers the folder for the next time, and
+    /// writes through the picked file's stream when it has no local path (a remote or virtual file
+    /// system). Returns false — and raises <see cref="PrintFailed"/> — instead of throwing.
+    /// </summary>
+    public async Task<bool> PrintToPdfAsync(ChartPrintOptions? options = null)
+    {
+        var top = TopLevel.GetTopLevel(this);
+        if (top?.StorageProvider is not { } storage) return false;
+        try
+        {
+            var picker = new FilePickerSaveOptions
+            {
+                Title = "Export the chart to PDF",
+                SuggestedFileName = (string.IsNullOrWhiteSpace(Name) ? "chart" : Name) + ".pdf",
+                DefaultExtension = "pdf",
+                FileTypeChoices = new[]
+                {
+                    new FilePickerFileType("PDF document") { Patterns = new[] { "*.pdf" } },
+                    new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                },
+                ShowOverwritePrompt = true
+            };
+            await SuggestLastExportFolder(storage, picker);
+            var file = await storage.SaveFilePickerAsync(picker);
+            if (file is null) return false;
+            var path = file.TryGetLocalPath();
+            var ok = string.IsNullOrWhiteSpace(path)
+                ? await ExportPdfAsync(await file.OpenWriteAsync(), options)
+                : await ExportPdfAsync(path!, options);
+            if (ok) ChartPickerMemory.LastExportFolder = FolderOf(path);
+            return ok;
+        }
+        catch (Exception error)
+        {
+            RaisePrintFailed(error);
+            return false;
+        }
+    }
+
+    /// <summary>Writes the chart (or its page) to a PDF file. No picker and no dialog — the entry point
+    /// an app — or a test — can call directly.</summary>
+    public async Task<bool> ExportPdfAsync(string path, ChartPrintOptions? options = null)
+    {
+        if (string.IsNullOrWhiteSpace(path) || _printBusy) return false;
+        _printBusy = true;
+        try
+        {
+            var wanted = options ?? CurrentPrintOptions();
+            await WithPrintLegendAsync(wanted, async () =>
+            {
+                await Print.ToFileAsync(path, PageVisuals(wanted));
+                return true;
+            });
+            return true;
+        }
+        catch (Exception error)
+        {
+            RaisePrintFailed(error);
+            return false;
+        }
+        finally
+        {
+            _printBusy = false;
+        }
+    }
+
+    /// <summary>Writes the chart (or its page) as PDF into an open stream — the path that also works
+    /// where a picked file has no local path.</summary>
+    public async Task<bool> ExportPdfAsync(Stream stream, ChartPrintOptions? options = null)
+    {
+        if (stream is null || _printBusy) return false;
+        _printBusy = true;
+        try
+        {
+            var wanted = options ?? CurrentPrintOptions();
+            await WithPrintLegendAsync(wanted, async () =>
+            {
+                await Print.ToStreamAsync(stream, PageVisuals(wanted));
+                return true;
+            });
+            return true;
+        }
+        catch (Exception error)
+        {
+            RaisePrintFailed(error);
+            return false;
+        }
+        finally
+        {
+            _printBusy = false;
         }
     }
 #endif
@@ -2296,6 +2821,18 @@ public abstract class ChartBase : Control
             e.Handled = true;
             return;
         }
+#if PRINT_SUPPORT
+        // Ctrl+P (Cmd+P on macOS) prints the chart: the control already takes the keyboard for its
+        // cursor keys, so the shortcut costs nothing. On a build with no printing service the PDF
+        // export takes over — a key combination that can never do anything is worse than one that
+        // degrades to the path that always works.
+        if (e.Key is Key.P && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0)
+        {
+            _ = CanPrint ? PrintAsync() : PrintToPdfAsync();
+            e.Handled = true;
+            return;
+        }
+#endif
         var live = LiveCursorIndexes();
         if (live.Count == 0) return;
         if (e.Key is not (Key.Left or Key.Right or Key.Up or Key.Down)) return;
@@ -3653,12 +4190,26 @@ public abstract class ChartBase : Control
         // entries are always safe to offer. They live BEFORE the !SupportsCursors return below so the
         // pie and the bar — which skip the whole cursor section — still expose them.
 #if PRINT_SUPPORT
-        var printItem = new MenuItem { Header = "Print…" };
+        // HARDCOPY (every chart type): a native PRINT dialog (Avae.Printables — or CUPS on a Linux
+        // desktop, where that library has no service of its own: see GrumpyPrint), a SAVE-TO-PDF
+        // (AvaloniaUI.PrintToPDF, Skia-backed — cross-platform) and a PNG "Save as picture…". The
+        // print entry is DISABLED — not hidden — when NEITHER is available, with the reason in its
+        // tooltip: a click that silently does nothing was the old behaviour and it read as a broken
+        // menu. Placed BEFORE the !SupportsCursors return so the pie and the bar — which skip the
+        // cursor section — still expose them.
+        var printItem = new MenuItem { Header = "Print…", IsEnabled = CanPrint };
+        if (!CanPrint)
+            ToolTip.SetTip(printItem,
+                "Nothing here can print — call AppBuilder.UsePrintables() in Program on a platform with a "
+                + "native service, or install a CUPS client (lp) on Linux (USER_MANUAL 19.14)");
         printItem.Click += (_, _) => _ = PrintAsync();
         items.Add(printItem);
         var pdfItem = new MenuItem { Header = "Print to PDF…" };
         pdfItem.Click += (_, _) => _ = PrintToPdfAsync();
         items.Add(pdfItem);
+        var pngItem = new MenuItem { Header = "Save as picture…" };
+        pngItem.Click += (_, _) => _ = SaveAsPictureAsync();
+        items.Add(pngItem);
 #endif
 
         // A chart that has no cursors (the pie and the bar) gets no cursor entries at all: the toggles,
@@ -7344,54 +7895,80 @@ internal static class ChartPickerMemory
 {
     private static string? _folder;
     private static bool _loaded;
+    private static string? _exportFolder;
+    private static bool _exportLoaded;
 
-    private static string StorePath
+    private static string StorePath => StorePathFor("GrumpyCharts.lastfolder");
+
+    private static string StorePathFor(string fileName)
     {
-        get
-        {
-            var name = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name
-                       ?? System.Reflection.Assembly.GetExecutingAssembly().GetName().Name
-                       ?? "app";
-            var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (string.IsNullOrEmpty(root)) root = Path.GetTempPath();
-            var dir = Path.Combine(root, name);
-            try { Directory.CreateDirectory(dir); } catch { /* the failing write is what reports it */ }
-            return Path.Combine(dir, "GrumpyCharts.lastfolder");
-        }
+        var name = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name
+                   ?? System.Reflection.Assembly.GetExecutingAssembly().GetName().Name
+                   ?? "app";
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrEmpty(root)) root = Path.GetTempPath();
+        var dir = Path.Combine(root, name);
+        try { Directory.CreateDirectory(dir); } catch { /* the failing write is what reports it */ }
+        return Path.Combine(dir, fileName);
     }
 
-    /// <summary>The folder the last pick used (null = let the platform choose), or null once it is gone.</summary>
+    private static string? Load(string file)
+    {
+        try { return File.Exists(file) ? File.ReadAllText(file).Trim() : null; }
+        catch { return null; }
+    }
+
+    private static void Save(string file, string? value)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                if (File.Exists(file)) File.Delete(file);
+            }
+            else
+            {
+                File.WriteAllText(file, value!);
+            }
+        }
+        catch { /* best effort */ }
+    }
+
+    /// <summary>A folder on a drive that is no longer mounted is worse than no answer: the platform
+    /// would open the dialog inside a path that does not exist.</summary>
+    private static string? Usable(string? folder)
+        => string.IsNullOrEmpty(folder) || !Directory.Exists(folder) ? null : folder;
+
+    /// <summary>The folder the last SPREADSHEET pick used, or null once it is gone.</summary>
     internal static string? LastFolder
     {
         get
         {
-            if (!_loaded)
-            {
-                _loaded = true;
-                try { if (File.Exists(StorePath)) _folder = File.ReadAllText(StorePath).Trim(); }
-                catch { _folder = null; }
-            }
-            // A folder on a drive that is no longer mounted is worse than no answer: the platform would
-            // open the dialog inside a path that does not exist.
-            if (string.IsNullOrEmpty(_folder) || !Directory.Exists(_folder)) return null;
-            return _folder;
+            if (!_loaded) { _loaded = true; _folder = Load(StorePath); }
+            return Usable(_folder);
         }
         set
         {
             _loaded = true;
             _folder = value;
-            try
-            {
-                if (string.IsNullOrEmpty(value))
-                {
-                    if (File.Exists(StorePath)) File.Delete(StorePath);
-                }
-                else
-                {
-                    File.WriteAllText(StorePath, value!);
-                }
-            }
-            catch { /* best effort */ }
+            Save(StorePath, value);
+        }
+    }
+
+    /// <summary>The folder the last PDF/PNG EXPORT went to — a separate memory from the spreadsheet one,
+    /// so printing a chart does not move the workbook picker (and the other way round).</summary>
+    internal static string? LastExportFolder
+    {
+        get
+        {
+            if (!_exportLoaded) { _exportLoaded = true; _exportFolder = Load(StorePathFor("GrumpyCharts.lastexport")); }
+            return Usable(_exportFolder);
+        }
+        set
+        {
+            _exportLoaded = true;
+            _exportFolder = value;
+            Save(StorePathFor("GrumpyCharts.lastexport"), value);
         }
     }
 }

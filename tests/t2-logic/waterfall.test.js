@@ -250,7 +250,7 @@ module.exports = async (t) => {
     // the marker like a new type or attribute does.
     const spec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpyCharts');
     const vbSpec = bundledComponentSpecs(true).find((s) => s.kind === 'GrumpyCharts');
-    t.equal(spec.marker, 'printItem', 'marker',
-        'the marker is the newest thing an existing project needs a refresh for');
+    t.equal(spec.marker, 'GrumpyPrint', 'marker',
+        'the marker is the newest thing an existing project needs a refresh for (the CUPS print path)');
     t.equal(vbSpec.marker, spec.marker, 'marker', 'both languages use the same marker');
 };

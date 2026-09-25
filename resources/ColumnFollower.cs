@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.0
+// BUNDLED-COPY: 0.12.2
 // ColumnFollower.cs — BUNDLED RESOURCE (the VB twin is resources/ColumnFollower.vb). Copied into
 // every generated project, next to AnchorHelper.cs / ExifImageLoader.cs.
 //
@@ -86,29 +86,29 @@ public class ColumnFollower<TRow, TValue> : ObservableCollection<TValue>
         switch (e.Action)
         {
             case NotifyCollectionChangedAction.Add:
-            {
-                var row = (TRow)e.NewItems![0]!;
-                if (Skipped(row)) return;
-                var at = e.NewStartingIndex >= 0 ? e.NewStartingIndex : _rows.Count;
-                var index = MirrorIndex(at);
-                _mirror.Insert(index, row);
-                base.InsertItem(index, _select(row));
-                Watch(row);
-                break;
-            }
-            case NotifyCollectionChangedAction.Remove:
-            {
-                foreach (var item in e.OldItems!)
                 {
-                    var row = (TRow)item!;
-                    var index = _mirror.IndexOf(row);
-                    if (index < 0) continue;
-                    Unwatch(row);
-                    _mirror.RemoveAt(index);
-                    base.RemoveItem(index);
+                    var row = (TRow)e.NewItems![0]!;
+                    if (Skipped(row)) return;
+                    var at = e.NewStartingIndex >= 0 ? e.NewStartingIndex : _rows.Count;
+                    var index = MirrorIndex(at);
+                    _mirror.Insert(index, row);
+                    base.InsertItem(index, _select(row));
+                    Watch(row);
+                    break;
                 }
-                break;
-            }
+            case NotifyCollectionChangedAction.Remove:
+                {
+                    foreach (var item in e.OldItems!)
+                    {
+                        var row = (TRow)item!;
+                        var index = _mirror.IndexOf(row);
+                        if (index < 0) continue;
+                        Unwatch(row);
+                        _mirror.RemoveAt(index);
+                        base.RemoveItem(index);
+                    }
+                    break;
+                }
             default:
                 // Replace / Move / Reset (a whole-collection swap) — rebuild; keeps the code tiny.
                 Mirror();
