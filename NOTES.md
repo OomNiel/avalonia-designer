@@ -115,8 +115,9 @@ npm run test:runtime      # T4 headless      node tests/runner.js --file <name> 
 ## 3. Architecture & data flow
 
 ```
-Toolbox (TreeView) ──click-to-arm / click-canvas-to-place──▶ Webview canvas (custom editor for *.axaml)
-        (drag-drop also supported; on Linux/Xorg the click-to-place path is the reliable one)
+Toolbox (TreeView) ──drag OR click-to-arm──▶ Webview canvas (custom editor for *.axaml)
+        (drag now works everywhere: the tag is armed via an `armTool` postMessage on drag-start,
+         because VS Code does not bridge the TreeView's drag MIME into a webview)
         webview ──postMessage──▶ extension host (TS) ──WebSocket JSON──▶ PreviewerHost (C#, headless)
         host replies: PNG base64 + controls[{name,type,x,y,width,height,parent,values}] + gridCells
 ```
@@ -1658,7 +1659,9 @@ moveToContainer/saveItems/saveGridDefs/moveToCell/browseFile/pickItemsSource/set
   inline `<!-- note -->` does not survive a save). That is why each generated/saved `.axaml` carries
   the fixed notice from `src/xamlHeader.ts` — it is re-stamped on every save instead of being
   preserved.
-- Toolbox **drag** is unreliable on Linux/Xorg — the reliable path is **click the tool, then click the canvas**.
+- Toolbox **drag** now works (2026-09-26, §154): the tag is armed via an `armTool` postMessage on
+  drag-start, because VS Code does not bridge the TreeView's drag MIME types into a webview. The click-to-place
+  path remains the reliable fallback on Linux/Xorg where the native bridge is still flaky.
 - The preview's runtime XAML loader is unreliable (falls back to the programmatic builder).
 - The T0 10-project build matrix is slow — run on demand (`npm run test:build`).
 
@@ -4173,4 +4176,44 @@ afterwards. Suite **8,346 → 8,495**, 0 failed.
 backends, the CUPS route, the legend row, the "save the form to get the helper" step) + install/version refs,
 CONTROLS' hardcopy bullets, TEST_PLAN's 0.12.2 log, SESSION hand-off, PUBLISHING's record. Version **0.12.2**
 with all 16 bundled stamps.
+
+---
+
+### §154 — drag a control, drop it on the canvas (2026-09-26)
+
+**Symptom:** dragging a tool out of the Toolbox sidebar started the drag (the cursor changed, the
+`dragover` highlight appeared on the canvas) but releasing it **did nothing** — no control was placed,
+and no error was shown. The click-to-place path (`click tool → click canvas`) worked fine.
+
+**Root cause — a VS Code boundary, not a code crash.** The Toolbox is a `TreeView` whose
+`TreeDragAndDropController.handleDrag` stashes the control's tag in a custom MIME type
+(`application/x-avalonia-control`). The canvas, however, lives in a **custom-editor webview**, and the
+VS Code API is explicit: *"Mime types added in handleDrag won't be available outside the application."*
+The webview is "outside the application", so its native `drop` event's `event.dataTransfer` is empty.
+The webview's drop handler read that empty dataTransfer, hit `if (!tag)` and bailed to the status text
+*("Drag a control from the Toolbox view.")* — hence "dropping does nothing". The custom MIME only ever
+survives a drop onto **another tree item in the same tree**, which this extension never does.
+
+This is also why the notes listed toolbox drag as *"unreliable on Linux/Xorg"*: on Linux the native
+TreeView→webview drag is the fragile part, but the *real* failure was that the tag was never bridged at
+all, on any platform.
+
+**The fix — carry the tag on the one channel that always works (the webview message pipe).**
+`ToolboxProvider.handleDrag` now also fires `armDesignerTool` (wired in `extension.ts` to
+`AvaloniaDesignerProvider.armToolInActiveDesigner`), which posts the existing `armTool` message to the
+active designer — the **exact same path click-to-place uses**. The webview's `drop` handler now reads
+the armed tag (`state.pendingTag`) **first** and only falls back to `event.dataTransfer` for other
+(future) drop sources. Because arming goes over `postMessage` (the backbone of every webview→host call
+in this extension) rather than the native drag payload, it is independent of the OS/Electron drag bridge
+and works on Linux as well.
+
+**Two-line mental model:**
+- Before: drag MIME set in handleDrag → webview reads dataTransfer → *empty* → nothing.
+- After: drag MIME set in handleDrag **+** tag armed via `armTool` → webview reads armed tag → `drop` posted → placed.
+
+**Tests:** T3 (`tests/t3-webview/designer.test.js`) gains two scenarios — an armed tool dropped with an
+*empty* `dataTransfer` posts `drop` with the armed tag at the right design coords, and an empty drop with
+no armed tool posts nothing and shows the explanation. Both fail on the old code (`TypeError` reading
+`.type` off the missing message) and pass with the fix. T2/T3 remain green (**5,242 + 857**).
+
 
