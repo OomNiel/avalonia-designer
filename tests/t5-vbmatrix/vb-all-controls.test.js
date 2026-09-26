@@ -139,7 +139,7 @@ module.exports = async (t) => {
     // renders a stand-in (Border/Button/ToggleButton). Their real-tag XAML + every listed property
     // are still compile-verified against Avalonia 12.1.1 in Phase D (the authoritative gate).
     const AV12_PREVIEW = new Set(['GroupBox', 'HyperlinkButton', 'CommandBar', 'CommandBarButton', 'CommandBarToggleButton', 'CommandBarSeparator']);
-    t.equal(controls.length, 52, 'toolbox', 'all placeable controls enumerated',
+    t.equal(controls.length, 53, 'toolbox', 'all placeable controls enumerated',
         `${controls.length}: ${controls.map((c) => c.tag).join(', ')}`);
     const tags = controls.map((c) => c.tag);
 

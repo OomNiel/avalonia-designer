@@ -24,6 +24,10 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'eventModal', 'eventTitle', 'eventHint', 'eventList', 'eventRemember', 'eventRememberWrap', 'eventSkip', 'eventWire',
     'sliceModal', 'sliceTitle', 'sliceList', 'sliceFields', 'sliceHead', 'sliceAdd', 'sliceDel', 'sliceSave', 'sliceCancel',
     'dataModal', 'dataTitle', 'dataKind', 'dataFields', 'dataHead', 'dataSave', 'dataCancel',
+    // the Cells editor for a GrumpySheet (2026-09-27): the grid, its size boxes, the name box and the
+    // fx input the active cell is typed in.
+    'sheetModal', 'sheetTitle', 'sheetRows', 'sheetCols', 'sheetAddress', 'sheetFormula',
+    'sheetGrid', 'sheetGridWrap', 'sheetClear', 'sheetSave', 'sheetCancel',
     'handlerModal', 'handlerTitle', 'handlerHint', 'handlerList', 'handlerAdd', 'handlerClose',
     'btnCodeSettings', 'settingsModal', 'settingsHint', 'settingsModes', 'settingsBadges', 'settingsSave', 'settingsCancel',
     // the dialog's own "still arriving" marker (2026-09-17), left of Cancel/Save
@@ -118,6 +122,11 @@ function setup(omit = []) {
             || id === 'gradientSave' || id === 'gradientCancel'
             || id === 'codeRecheck' || id === 'codeFixAll' || id === 'codeClose') return 'button';
         if (id === 'splitCount') return 'input';
+        // The spreadsheet editor: three buttons, three inputs, the grid itself, and the name box.
+        if (id === 'sheetSave' || id === 'sheetCancel' || id === 'sheetClear') return 'button';
+        if (id === 'sheetRows' || id === 'sheetCols' || id === 'sheetFormula') return 'input';
+        if (id === 'sheetGrid') return 'table';
+        if (id === 'sheetAddress') return 'span';
         if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
@@ -3375,6 +3384,70 @@ module.exports = async (t) => {
         openAt(vw - 1, vh - 1);
         t.ok(parseFloat(menu.style.top) >= 4 && parseFloat(menu.style.left) >= 4, 'ctx-menu',
             'and it is clamped to the viewport', `top=${menu.style.top} left=${menu.style.left}`);
+    }
+
+    // ---- the Cells editor (GrumpySheet, 2026-09-27) ---------------------------------------------------
+    // What a spreadsheet has to get right in the DESIGNER: the row opens the grid, the cells the form
+    // already has are drawn in it, typing in the fx box writes the active cell, Save posts the whole grid
+    // as one message, and dragging the fill handle continues a series — the same prediction the control
+    // applies at run time (1, 2 → 3, 4 …), which is why the numbers below are worth asserting.
+    {
+        const sh = setup();
+        sh.msg({
+            type: 'properties', name: 'Sheet1',
+            properties: [{ key: 'Cells', label: 'Edit cells…', kind: 'button', value: 'Edit cells…' }],
+            sheetInfo: {
+                rows: 6, columns: 4,
+                cells: [
+                    { row: 1, column: 1, text: 'Item' },
+                    { row: 2, column: 1, text: '1' },
+                    { row: 3, column: 1, text: '2' }
+                ]
+            }
+        });
+        const openButton = sh.$('propsBody').querySelector('[data-prop-key="Cells"]');
+        t.ok(!!openButton, 'sheet-editor', 'the Cells row renders a button (or the editor is unreachable)');
+        openButton.dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        t.equal(sh.$('sheetModal').hidden, false, 'sheet-editor', 'clicking it opens the grid');
+        t.equal(sh.$('sheetGrid').querySelectorAll('tr').length, 7, 'sheet-editor',
+            'one header row plus the sheet’s six');
+        t.equal(sh.$('sheetGrid').querySelectorAll('th').length, 11, 'sheet-editor',
+            'a header cell per column and per row, plus the corner (4 + 6 + 1)');
+        t.equal(sh.$('sheetAddress').textContent, 'A1', 'sheet-editor', 'the name box names the active cell');
+        t.equal(sh.$('sheetFormula').value, 'Item', 'sheet-editor', 'and the fx box holds its contents');
+        t.equal(sh.$('sheetRows').value, '6', 'sheet-editor', 'the size boxes show the sheet’s own size');
+
+        // Typing in the fx box writes the ACTIVE cell — the habit the control teaches at run time.
+        sh.$('sheetFormula').value = 'Qty';
+        sh.$('sheetFormula').dispatchEvent(new sh.window.Event('input', { bubbles: true }));
+        const cell = (r, c) => sh.$('sheetGrid').querySelector(`td[data-row="${r}"][data-col="${c}"]`);
+        t.equal(cell(1, 1).textContent, 'Qty', 'sheet-editor', 'typing in the fx box writes the active cell');
+
+        const fire = (el, type, opts = {}) => el.dispatchEvent(
+            new sh.window.MouseEvent(type, { bubbles: true, cancelable: true, ...opts }));
+
+        // Select A2:A3 (the values 1 and 2) and drag the fill handle down: the series continues 3, 4.
+        fire(cell(2, 1), 'mousedown');
+        fire(cell(3, 1), 'mousedown', { shiftKey: true });
+        t.ok(cell(3, 1).classList.contains('sheet-sel'), 'sheet-editor', 'shift-click extends the selection');
+        const handle = sh.$('sheetGridWrap').querySelector('.sheet-handle');
+        t.ok(!!handle, 'sheet-editor', 'the selection grows a fill handle');
+        fire(handle, 'mousedown');
+        fire(cell(5, 1), 'mouseover');
+        fire(sh.window.document, 'mouseup');
+        t.equal(cell(4, 1).textContent, '3', 'sheet-editor', 'dragging the handle continues 1, 2 with 3');
+        t.equal(cell(5, 1).textContent, '4', 'sheet-editor', '…and with 4');
+
+        // Save carries the whole grid in one message: that is what the panel turns into child elements.
+        fire(sh.$('sheetSave'), 'click');
+        const saved = sh.posted.filter((m) => m.type === 'saveSheetCells').pop();
+        t.ok(!!saved, 'sheet-editor', 'Save posts the cells');
+        t.equal(saved.rows, 6, 'sheet-editor', 'with the sheet’s row count');
+        t.equal(saved.columns, 4, 'sheet-editor', 'and its column count');
+        const a1 = (saved.cells || []).find((c) => c.row === 1 && c.column === 1);
+        t.equal(a1 && a1.text, 'Qty', 'sheet-editor', 'and the cell that was typed in');
+        t.equal(sh.$('sheetModal').hidden, true, 'sheet-editor', 'and the editor closes');
     }
 
     t.note('T3 done');

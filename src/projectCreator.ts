@@ -211,6 +211,8 @@ function generateProject(opts: GenerateOptions): void {
         // has to keep up with `resources/`, and why tests/t2-logic/projectScaffold.test.js now checks it.
         grumpyPrintCs: readResource(context, 'resources/GrumpyPrint.cs'),
         grumpyPrintVb: readResource(context, 'resources/GrumpyPrint.vb'),
+        sheetCs: readResource(context, 'resources/GrumpySheet.cs'),
+        sheetVb: readResource(context, 'resources/GrumpySheet.vb'),
         followerCs: readResource(context, 'resources/ColumnFollower.cs'),
         followerVb: readResource(context, 'resources/ColumnFollower.vb'),
         vbBridgeDll: vbBridgeDllPath()

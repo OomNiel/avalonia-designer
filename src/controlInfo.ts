@@ -343,7 +343,12 @@ const INFO: Record<string, ControlInfo> = {
         label: 'Command Bar Separator',
         desc: 'A thin divider between groups of command buttons (Avalonia 12 control).',
         use: 'Add it between commands in CommandBar.PrimaryCommands to visually group them.'
-    }
+    },
+    GrumpySheet: {
+        label: 'Spreadsheet',
+        desc: 'A spreadsheet grid — 26 columns (A…Z) and 50 rows by default — with lettered headers that stay frozen, ranges you select by dragging, in-place typing, drag-to-autofill and a formula bar. It draws itself: no NuGet package, no template, no assets.',
+        use: 'In the designer, the cell contents are typed in through the Cells row in the Properties panel (Edit cells…), which writes them into the form as <spread:SheetCell> elements and sets Rows/Columns there too. In the app you run the sheet is live: click a cell and type, drag to select a range, click a column letter or a row number to select the whole line, and drag the small square at the bottom-right of the selection to fill a series — 1, 2 becomes 3, 4, 5 …, 2, 4 becomes 6, 8 …, Item1, Item2 becomes Item3, and anything else repeats. Delete clears the selection, F2 or a double click edits the active cell, Esc abandons an edit, and the fx box at the top shows and edits the active cell\'s contents (Ctrl+U or a click puts the caret there). Read what the user typed with GetCell(row, column), write it with SetCell(row, column, text) — both 1-based — and react to every committed change with the CellChanged event; Allow Editing = False turns the sheet into a read-only result grid. The cell text is stored verbatim, so a formula like =SUM(B2:B6) is kept and shown; evaluating it is the next phase.'
+    },
 };
 
 /** The seven bundled chart controls all derive from the same `ChartBase`, so they all share the

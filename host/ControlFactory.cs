@@ -190,7 +190,13 @@ public class ControlFactory
             // The surface (2026-09-23) ships four slices inline, so a dropped chart is a corrugation you
             // can turn straight away — a real sheet names one spreadsheet column per slice (one series
             // each) and carries its Z values in the sheet's own row.
-            ["GrumpySurfacePlot"] = n => $"<charts:GrumpySurfacePlot x:Name=\"{n}\" Width=\"320\" Height=\"220\" SampleSets=\"0,20,40,50,40,20,0,20,40,50,40,20,0; 0,18,36,45,36,18,0,18,36,45,36,18,0; 0,16,32,40,32,16,0,16,32,40,32,16,0; 0,14,28,35,28,14,0,14,28,35,28,14,0\" Title=\"Surface\" ShowTitle=\"True\" ShowLegend=\"False\"/>"
+            ["GrumpySurfacePlot"] = n => $"<charts:GrumpySurfacePlot x:Name=\"{n}\" Width=\"320\" Height=\"220\" SampleSets=\"0,20,40,50,40,20,0,20,40,50,40,20,0; 0,18,36,45,36,18,0,18,36,45,36,18,0; 0,16,32,40,32,16,0,16,32,40,32,16,0; 0,14,28,35,28,14,0,14,28,35,28,14,0\" Title=\"Surface\" ShowTitle=\"True\" ShowLegend=\"False\"/>",
+            // --- GrumpySheet (the bundled AvaloniaSpreadsheet control, 2026-09-26) ---
+            // A spreadsheet that draws itself: a header row and one row of data ship in the snippet, so a
+            // freshly dropped sheet looks like a sheet rather than an empty box. Its cells are CHILD
+            // ELEMENTS (the content property), and the `spread:` prefix (xmlns:spread=
+            // "using:AvaloniaSpreadsheet") is declared by the extension when it places the control.
+            ["GrumpySheet"] = n => $"<spread:GrumpySheet x:Name=\"{n}\" Width=\"560\" Height=\"320\">\n    <spread:SheetCell Row=\"1\" Column=\"1\" Text=\"Item\"/>\n    <spread:SheetCell Row=\"1\" Column=\"2\" Text=\"Qty\"/>\n    <spread:SheetCell Row=\"2\" Column=\"1\" Text=\"Widget\"/>\n    <spread:SheetCell Row=\"2\" Column=\"2\" Text=\"3\"/>\n</spread:GrumpySheet>"
         };
     }
 
@@ -271,6 +277,9 @@ public class ControlFactory
         // The bundled GrumpyCharts controls (AvaloniaCharts.GrumpyLinePlot / .GrumpyXYPlot) — linked
         // into the host from resources/GrumpyCharts.cs so the builder draws the real chart.
         ["GrumpyLinePlot"] = typeof(AvaloniaCharts.GrumpyLinePlot),
+        // GrumpySheet, the bundled AvaloniaSpreadsheet control. Without this entry the preview falls
+        // back to a blank stand-in: nothing throws, the sheet is simply empty on the canvas.
+        ["GrumpySheet"] = typeof(AvaloniaSpreadsheet.GrumpySheet),
         ["GrumpyXYPlot"] = typeof(AvaloniaCharts.GrumpyXYPlot),
         ["GrumpyBarPlot"] = typeof(AvaloniaCharts.GrumpyBarPlot),
         ["GrumpyAreaPlot"] = typeof(AvaloniaCharts.GrumpyAreaPlot),

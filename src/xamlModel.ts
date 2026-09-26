@@ -73,6 +73,11 @@ export const CHARTS_TAGS = [
     'GrumpyWaterfallPlot', 'GrumpySurfacePlot'
 ];
 
+/** The bundled GrumpySheet tag (the AvaloniaSpreadsheet control set). Listed here for the same reason
+ *  as CHARTS_TAGS above: sheetCells.ts imports THIS module, so the xmlns:spread declaration cannot be
+ *  ensured by importing it back. */
+export const SHEET_TAGS = ['GrumpySheet'];
+
 /**
  * Tags that are single-content containers (ContentControl / HeaderedContentControl
  * subclasses). In XAML they accept at most ONE child element (their Content). When the
@@ -367,6 +372,11 @@ export class XamlModel {
         // imports THIS one, so importing it back would make a cycle.
         if (CHARTS_TAGS.includes(localName(el.tagName))) {
             this.ensureXmlns('charts', 'using:AvaloniaCharts');
+        }
+        // GrumpySheet is a third bundled control set (AvaloniaSpreadsheet) — its snippet uses the
+        // `spread` prefix, so the root must declare xmlns:spread for the XAML to compile.
+        if (SHEET_TAGS.includes(localName(el.tagName))) {
+            this.ensureXmlns('spread', 'using:AvaloniaSpreadsheet');
         }
 
         const parentTag = localName(parent.tagName);

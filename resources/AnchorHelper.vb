@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.8
+' BUNDLED-COPY: 0.12.9
 Imports System
 Imports System.Runtime.CompilerServices
 Imports Avalonia

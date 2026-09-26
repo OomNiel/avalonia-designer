@@ -698,6 +698,9 @@ public class XamlRenderer
         // preview as empty while rendering fine at runtime. Populate them explicitly.
         ApplyChartSeries(ctrl, elem);
 
+        // A GrumpySheet keeps its cells as PLAIN objects for the same reason.
+        ApplySheetCells(ctrl, elem);
+
         // Recurse into child elements so controls nested inside panels (e.g. a
         // Canvas inside a StackPanel) are created too — otherwise they vanish from
         // the preview. Property elements (Foo.Bar) are skipped by the type map.
@@ -751,6 +754,29 @@ public class XamlRenderer
             ApplyProperty(ctrl, "SelectedIndex", selAttr.Value);
         }
         return ctrl;
+    }
+
+    /// <summary>
+    /// A GrumpySheet holds its cells as PLAIN objects rather than as child Controls, so the
+    /// Panel/ContentControl recursion never reaches them. Read them here from the element's children
+    /// (<c>&lt;spread:SheetCell Row="1" Column="1" Text="Item"/&gt;</c>) — the same shape the C#/VB
+    /// control reads from XAML at run time, so what the canvas draws is what the app will show. A cell
+    /// with no address, or an address the sheet does not have, is skipped by the control itself.
+    /// </summary>
+    private static void ApplySheetCells(Control ctrl, XElement elem)
+    {
+        if (ctrl is not AvaloniaSpreadsheet.GrumpySheet sheet) return;
+        foreach (var child in elem.Elements())
+        {
+            if (!child.Name.LocalName.Equals("SheetCell", StringComparison.Ordinal)) continue;
+            var rowAttr = child.Attributes().FirstOrDefault(a => a.Name.LocalName == "Row");
+            var columnAttr = child.Attributes().FirstOrDefault(a => a.Name.LocalName == "Column");
+            if (rowAttr is null || columnAttr is null) continue;
+            if (!int.TryParse(rowAttr.Value.Trim(), out var row)) continue;
+            if (!int.TryParse(columnAttr.Value.Trim(), out var column)) continue;
+            var textAttr = child.Attributes().FirstOrDefault(a => a.Name.LocalName == "Text");
+            sheet.SetCell(row, column, textAttr is null ? string.Empty : textAttr.Value);
+        }
     }
 
     /// <summary>

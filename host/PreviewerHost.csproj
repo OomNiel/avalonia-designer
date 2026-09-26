@@ -77,6 +77,10 @@
          projects) is linked so the builder can realise <charts:GrumpyLinePlot> / <charts:GrumpyXYPlot>
          and draw the real chart in the designer canvas. -->
     <Compile Include="../resources/GrumpyCharts.cs" Link="GrumpyCharts.cs" />
+    <!-- GrumpySheet (the bundled AvaloniaSpreadsheet spreadsheet control) is linked for the same
+         reason: without it the builder would fall back to an empty stand-in and a designed sheet
+         would preview BLANK — the failure mode of a missing TypeMap entry, which throws nothing. -->
+    <Compile Include="../resources/GrumpySheet.cs" Link="GrumpySheet.cs" />
     <!-- GrumpyPrint (the CUPS printer path the chart falls back to on Linux) is bundled with the
          chart and copied into the same projects, so it is linked here too. Without PRINT_SUPPORT the
          host compiles its empty half — which is exactly the build that must keep working, since the

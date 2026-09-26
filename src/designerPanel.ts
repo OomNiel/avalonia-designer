@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute, CHARTS_TAGS } from './xamlModel';
+import { isSheetTag, sheetInfoOf, writeSheetCells } from './sheetCells';
 import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
     chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush, chartSlicesOf, writeChartSlices,
@@ -2748,6 +2749,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     if (isChartTag(msg.tag)) {
                         this.ensureGrumpyChartsHelper(doc);
                     }
+                    // GrumpySheet: same story — a project created before it existed needs
+                    // GrumpySheet.cs/.vb next to ChromeWindow, or the saved <spread:…> won't compile.
+                    if (isSheetTag(msg.tag)) {
+                        this.ensureSheetHelper(doc);
+                    }
                     if (msg.tag === 'GrumpyStatus' && name) {
                         try { await insertStatusDateClock(doc.uri, `${name}Date`); }
                         catch { /* best-effort — the status clock must not fail the placement */ }
@@ -3388,6 +3394,23 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.render(doc, panel);
                     await this.sendProperties(doc, panel, msg.name);
                     if (sliceNote) void vscode.window.showWarningMessage(sliceNote);
+                    return;
+                }
+                case 'saveSheetCells': {
+                    // 'Edit cells…' on a GrumpySheet: the cells (child elements), plus how many rows
+                    // and columns the sheet has. The cells are rewritten whole, exactly as the chart's
+                    // series are, so a cell the editor dropped leaves the form with it.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || !isSheetTag(localName(el.tagName))) return;
+                    const before = doc.model.serialize(true);
+                    doc.model.setProperty(el, 'Rows', String(msg.rows ?? ''));
+                    doc.model.setProperty(el, 'Columns', String(msg.columns ?? ''));
+                    writeSheetCells(doc.model, el, Array.isArray(msg.cells) ? msg.cells : []);
+                    // The <spread:SheetCell> elements need the project's bundled sheet to be current.
+                    this.ensureSheetHelper(doc);
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
                 case 'requestSheets': {
@@ -4849,6 +4872,19 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     }
 
     /**
+     * GrumpySheet (the bundled AvaloniaSpreadsheet spreadsheet control behind the Toolbox's
+     * Spreadsheet tool) travels with a project like the charts do: a form holding
+     * &lt;spread:GrumpySheet&gt; needs the file next to ChromeWindow, or the saved form will not compile
+     * (AVLN2000: unable to resolve the `spread:` type). A project created from 0.12.9 on has it.
+     */
+    private ensureSheetHelper(doc: DesignerDocument): boolean {
+        const proj = findProject(doc.uri);
+        if (!proj) return false;
+        return this.ensureBundledFileIn(path.dirname(proj.projectUri.fsPath), proj.language === 'vb',
+            'GrumpySheet', 'this form holds a spreadsheet, which the project did not have yet');
+    }
+
+    /**
      * Copies one bundled file next to the project file — or refreshes the copy already there. Only
      * provable bundled boilerplate is replaced (a file the user edited is left alone, see
      * `isStaleBundledCopy`); the answer says whether anything on disk was written.
@@ -5255,6 +5291,11 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             // The Data Selector editor's working copy (source kind, file, page, data file). The page
             // LIST is not here: it comes from the workbook via the host, when the editor asks for it.
             msg.dataSource = chartDataSourceOf(el);
+        }
+        // GrumpySheet: the cells editor's working copy — the grid size and every non-blank cell, sorted
+        // by row then column, so the webview can draw the sheet without asking for anything else.
+        if (isSheetTag(localName(el.tagName))) {
+            msg.sheetInfo = sheetInfoOf(el);
         }
         await panel.webview.postMessage(msg);
     }
@@ -7045,6 +7086,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // a project created before the charts gained multiple series keeps its old copy, and its build
         // then fails on the <charts:XYSeries> elements the designer just saved (2026-09-20).
         if (text.includes('charts:Grumpy')) this.ensureGrumpyChartsHelper(document);
+        // A form that uses a spreadsheet needs THIS project's bundled GrumpySheet to be current — a
+        // project from before 0.12.9 has no such file at all, and its build would fail on the element.
+        if (text.includes('spread:GrumpySheet')) this.ensureSheetHelper(document);
     }
 
     async saveCustomDocumentAs(document: DesignerDocument, destination: vscode.Uri): Promise<void> {
@@ -7856,6 +7900,31 @@ ${publishButtons}      <span class="sep"></span>
         <div class="modal-buttons">
           <button id="dataCancel" type="button" class="modal-btn">Cancel</button>
           <button id="dataSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="sheetModal" class="modal" hidden>
+      <div class="modal-box modal-sheet">
+        <h3 id="sheetTitle">Cells</h3>
+        <p class="modal-hint">Type in the cells — <b>Rows</b> and <b>Columns</b> set how big the sheet is,
+          and the cells you leave are written into the form as <code>&lt;spread:SheetCell&gt;</code>
+          elements. Click a column letter or a row number to select that whole line, drag across cells for
+          a range, and drag the small square at the selection's bottom-right corner to <b>fill a
+          series</b> (1, 2 becomes 3, 4, 5 …; 2, 4 becomes 6, 8 …; Item1, Item2 becomes Item3; anything
+          else repeats). The active cell is typed in the box on the right of this row — the same habit
+          the sheet teaches at run time. A leading <code>=</code> is kept as written: the sheet stores a
+          formula as text for now.</p>
+        <div class="sheet-bar">
+          <label class="sheet-size">Rows <input id="sheetRows" type="number" min="1" max="500" step="1"></label>
+          <label class="sheet-size">Columns <input id="sheetCols" type="number" min="1" max="100" step="1"></label>
+          <span id="sheetAddress" class="sheet-address">A1</span>
+          <input id="sheetFormula" class="sheet-formula" type="text" placeholder="the active cell's contents">
+        </div>
+        <div id="sheetGridWrap" class="sheet-wrap"><table id="sheetGrid" class="sheet-grid"></table></div>
+        <div class="modal-buttons">
+          <button id="sheetClear" type="button" class="modal-btn">Clear cells</button>
+          <button id="sheetCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="sheetSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

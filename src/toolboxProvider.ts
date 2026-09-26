@@ -23,6 +23,9 @@ const TOOLBOX_CATEGORY_PROGRESS = 'Progress, status & misc';
 const TOOLBOX_CATEGORY_BARS = 'Bars';
 // GrumpyCharts — the bundled AvaloniaCharts control set (a line plot and an X,Y plot).
 const TOOLBOX_CATEGORY_CHARTS = 'Charts';
+// GrumpySheet — the bundled AvaloniaSpreadsheet control. Its own category because it is a
+// document-shaped control rather than a field, a list or a chart.
+const TOOLBOX_CATEGORY_SPREADSHEET = 'Spreadsheet';
 const TOOLBOX_CATEGORY_DEV = 'Dev Helpers';
 
 /**
@@ -76,6 +79,11 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     // The surface chart 3D (2026-09-23): one spreadsheet column per slice along the sheet's length, joined
     // into a surface — mesh, mesh over solid, or solid, with a temperature ramp by height.
     { label: 'Surface Chart 3D', tag: 'GrumpySurfacePlot', group: TOOLBOX_CATEGORY_CHARTS },
+    // GrumpySheet (2026-09-26): the bundled AvaloniaSpreadsheet control — a self-drawing spreadsheet,
+    // 26 columns (A…Z) and 50 rows by default, with frozen headers, multi-cell selection, in-place
+    // editing, drag-to-autofill and a formula bar. Its cells are typed in through the Cells editor in
+    // the Properties panel, which writes them into the form as <spread:SheetCell> elements.
+    { label: 'Spreadsheet', tag: 'GrumpySheet', group: TOOLBOX_CATEGORY_SPREADSHEET },
     { label: 'Panel', tag: 'Panel', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'Grid', tag: 'Grid', group: TOOLBOX_CATEGORY_LAYOUT },
     { label: 'StackPanel', tag: 'StackPanel', group: TOOLBOX_CATEGORY_LAYOUT },
@@ -128,6 +136,7 @@ export const TOOLBOX_CATEGORIES: { label: string; group: string }[] = [
     { label: TOOLBOX_CATEGORY_ITEMS, group: TOOLBOX_CATEGORY_ITEMS },
     { label: TOOLBOX_CATEGORY_LAYOUT, group: TOOLBOX_CATEGORY_LAYOUT },
     { label: TOOLBOX_CATEGORY_SHAPES, group: TOOLBOX_CATEGORY_SHAPES },
+    { label: TOOLBOX_CATEGORY_SPREADSHEET, group: TOOLBOX_CATEGORY_SPREADSHEET },
     { label: TOOLBOX_CATEGORY_DATA, group: TOOLBOX_CATEGORY_DATA },
     { label: TOOLBOX_CATEGORY_PROGRESS, group: TOOLBOX_CATEGORY_PROGRESS },
     { label: TOOLBOX_CATEGORY_BARS, group: TOOLBOX_CATEGORY_BARS },

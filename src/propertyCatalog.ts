@@ -705,6 +705,31 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
     // --- GrumpyCharts (the bundled AvaloniaCharts control set, 2026-09-19) ---
     // The two charts share every styling row; they differ in the data row (Values for a line plot,
     // Points for an X,Y plot) and in the marker rows, which only the X,Y plot draws.
+    // GrumpySheet — the bundled AvaloniaSpreadsheet control (2026-09-26). The cell CONTENTS are not
+    // rows: they are child elements, typed in through the Cells editor, the way a chart's series are.
+    // What lives here is the sheet itself: how big a cell is, what it is painted in, and the three
+    // switches that decide what it offers. Rows and Columns are set inside that same editor, because
+    // it is the thing that draws the grid those two numbers describe (and the keys 'Rows'/'Columns'
+    // are already the DataGrid's editors — one key, one section).
+    GrumpySheet: [
+        { key: 'Cells', label: 'Edit cells…', kind: 'button', desc: 'Open the spreadsheet grid: type in the cells, select a range and drag its fill handle to continue a series. What you leave is written into the form as <spread:SheetCell> elements, and the Rows/Columns boxes at the top of the same dialog set how big the sheet is.' },
+        { key: 'ColumnWidth', label: 'Column Width', kind: 'number', unit: 'px', defaultValue: '72' },
+        { key: 'RowHeight', label: 'Row Height', kind: 'number', unit: 'px', defaultValue: '22' },
+        { key: 'HeaderWidth', label: 'Header Width', kind: 'number', unit: 'px', defaultValue: '44' },
+        { key: 'HeaderHeight', label: 'Header Height', kind: 'number', unit: 'px', defaultValue: '24' },
+        { key: 'FontFamilyName', label: 'Font Family', kind: 'text', defaultValue: '' },
+        { key: 'FontSize', label: 'Font Size', kind: 'number', defaultValue: '12' },
+        { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS, defaultValue: '#C9CED6' },
+        { key: 'CellBackColor', label: 'Cell Back', kind: 'color', options: COLORS, defaultValue: '#FFFFFF' },
+        { key: 'TextColor', label: 'Text Colour', kind: 'color', options: COLORS, defaultValue: '#1E2228' },
+        { key: 'HeaderBackColor', label: 'Header Back', kind: 'color', options: COLORS, defaultValue: '#EFF1F4' },
+        { key: 'HeaderTextColor', label: 'Header Text', kind: 'color', options: COLORS, defaultValue: '#39404A' },
+        { key: 'SelectionColor', label: 'Selection', kind: 'color', options: COLORS, defaultValue: '#2D7DD2' },
+        { key: 'SelectionFillColor', label: 'Selection Fill', kind: 'color', options: COLORS, defaultValue: '#DCE9FA' },
+        { key: 'ShowHeaders', label: 'Show Headers', kind: 'dropdown', options: BOOL, defaultValue: 'True' },
+        { key: 'ShowFormulaBar', label: 'Formula Bar', kind: 'dropdown', options: BOOL, defaultValue: 'True' },
+        { key: 'AllowEditing', label: 'Allow Editing', kind: 'dropdown', options: BOOL, defaultValue: 'True' }
+    ],
     GrumpyLinePlot: [
         // Dockable like any panel child: DockPanel.Dock. Choosing a real dock makes the designer wrap
         // the chart in a DockPanel (when it isn't in one) and clear the free-axis size, so the chart
@@ -1968,7 +1993,10 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'Grid.Row', 'Grid.Column',
             'Orientation', 'Spacing', 'ItemWidth', 'ItemHeight', 'LastChildFill',
             'MaxDropDownHeight', 'SizeToContent', 'CanResize', 'AutoSizeToCell', 'TitleBarHeight',
-            'WindowState', 'WindowStartupLocation'
+            'WindowState', 'WindowStartupLocation',
+            // How big a cell is: the DataGrid's own column/row sizing and the sheet's, which share the
+            // keys (both are an honest size), plus the sheet's two header measurements.
+            'ColumnWidth', 'RowHeight', 'HeaderWidth', 'HeaderHeight'
         ]
     },
     {
@@ -1991,6 +2019,12 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'LineColor', 'LineThickness', 'LineStyle',
             'MarkerStyle', 'MarkerSize',
             'ShowGrid', 'GridColor', 'GridThickness', 'GridStyle',
+            // GrumpySheet (2026-09-26): the sheet's own colours — the grid lines it shares the
+            // GridColor key with, the paper the cells are drawn on, the text, the headers, and the
+            // selection's outline and wash. Every one of them has the sheet's default on the row, so
+            // the panel shows what the control draws rather than a blank.
+            'CellBackColor', 'TextColor', 'HeaderBackColor', 'HeaderTextColor',
+            'SelectionColor', 'SelectionFillColor',
             'ShowAxes', 'AxisColor',
             'ShowMajorTicks', 'MajorTickLength', 'ShowMinorTicks', 'MinorTickLength',
             'ShowTickLabels', 'TickLabelFontSize', 'ShowAxisTitles',
@@ -2041,7 +2075,10 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'OnContent', 'OffContent', 'Mask', 'Watermark', 'FormatString',
             // GrumpyCharts: the axis names (the spreadsheet's row-1 column headers by default), and the
             // waterfall's depth-axis name.
-            'XAxisTitle', 'YAxisTitle', 'ZAxisTitle'
+            'XAxisTitle', 'YAxisTitle', 'ZAxisTitle',
+            // GrumpySheet's own text rows (its FontFamilyName is a NAME, not a FontFamily — a plain
+            // Control has no FontFamily property to set).
+            'FontFamilyName'
         ]
     },
     {
@@ -2052,6 +2089,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // GrumpyCharts: the Data Selector editor FIRST — it is where a chart's data comes from, and the
             // values below it (the inline array, the workbook columns) are what it points at.
             'DataSelector',
+            // GrumpySheet: the Cells editor, for the same reason — it is where a sheet's contents are,
+            // and the geometry the rows below it set describes the grid it draws.
+            'Cells',
             'ItemsSource', 'SelectedItem', 'SelectedIndex',
             'PathType', 'SelectedPath', 'Filter', 'InitialFolder', 'IsPathReadOnly',
             'AutoGenerateColumns', 'IsReadOnly',
@@ -2092,7 +2132,10 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // goes on the paper at all, and colour or mono (mono hides the plot background for the job).
             // AsDrawn (the default) keeps the chart's own size and prints the legend as drawn, which is
             // what the rows did nothing about before.
-            'PrintPaper', 'PrintMargin', 'PrintLightBackground', 'PrintLegend', 'PrintInk'
+            'PrintPaper', 'PrintMargin', 'PrintLightBackground', 'PrintLegend', 'PrintInk',
+            // GrumpySheet's three switches: whether the headers are drawn, whether the formula bar is,
+            // and whether the user of the form can type in it at all.
+            'ShowHeaders', 'ShowFormulaBar', 'AllowEditing'
         ]
     }
 ];

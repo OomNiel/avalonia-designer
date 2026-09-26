@@ -19,7 +19,7 @@
  * current version ships. A genuinely customised file (header changed/removed) is left alone.
  */
 
-export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'GrumpyCharts' | 'GrumpyPrint';
+export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'GrumpyCharts' | 'GrumpyPrint' | 'GrumpySheet';
 
 export interface BundledSpec {
     kind: BundledKind;
@@ -34,6 +34,14 @@ export interface BundledSpec {
 /** The bundled component files for a project's language (vb vs cs). */
 export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
     return [
+        {
+            kind: 'GrumpySheet',
+            file: vb ? 'GrumpySheet.vb' : 'GrumpySheet.cs',
+            bundled: /BUNDLED RESOURCE/,
+            // New in 0.12.9, so no older copy exists to refresh — the marker names the type itself,
+            // which is the token whose absence means "this file is not the sheet at all".
+            marker: 'GrumpySheet'
+        },
         {
             kind: 'ChromeWindow',
             file: vb ? 'ChromeWindow.vb' : 'ChromeWindow.cs',

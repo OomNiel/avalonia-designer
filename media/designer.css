@@ -2463,3 +2463,126 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     border-radius: 3px;
     background: transparent;
 }
+
+/* ---- the spreadsheet editor (GrumpySheet, 2026-09-27) ------------------------------------------
+   A real table rather than a canvas: the browser lays the grid out, and a cell is a <td>, so
+   selection and the fill handle are a class and an absolutely-positioned square. The headers are
+   sticky, which is what keeps the letters and numbers in view while the wrap scrolls. */
+.modal-sheet {
+    width: min(96vw, 1100px);
+}
+
+.sheet-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+}
+
+.sheet-size {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.sheet-size input {
+    width: 62px;
+}
+
+.sheet-address {
+    min-width: 52px;
+    padding: 3px 6px;
+    border: 1px solid var(--border, #444);
+    border-radius: 3px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.sheet-formula {
+    flex: 1;
+    min-width: 120px;
+}
+
+.sheet-wrap {
+    position: relative;
+    max-height: 52vh;
+    overflow: auto;
+    border: 1px solid var(--border, #444);
+}
+
+.sheet-grid {
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 12px;
+}
+
+.sheet-grid th,
+.sheet-grid td {
+    border: 1px solid var(--border, #3a3a3a);
+    height: 22px;
+    min-width: 72px;
+    max-width: 72px;
+    padding: 0 4px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.sheet-grid th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--vscode-editorWidget-background, #2b2b2b);
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.sheet-grid th.sheet-rowhead {
+    top: auto;
+    left: 0;
+    z-index: 3;
+    min-width: 44px;
+    max-width: 44px;
+}
+
+.sheet-grid th.sheet-corner {
+    left: 0;
+    z-index: 4;
+    min-width: 44px;
+    max-width: 44px;
+}
+
+.sheet-grid td {
+    cursor: cell;
+}
+
+.sheet-grid td.sheet-num {
+    text-align: right;
+}
+
+.sheet-grid td.sheet-sel {
+    background: var(--vscode-editor-selectionBackground, #264f78);
+}
+
+.sheet-grid td.sheet-active {
+    outline: 2px solid var(--vscode-focusBorder, #2d7dd2);
+    outline-offset: -2px;
+}
+
+.sheet-grid td.sheet-fill {
+    background: rgba(45, 125, 210, 0.35);
+}
+
+.sheet-handle {
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    background: var(--vscode-focusBorder, #2d7dd2);
+    border: 1px solid var(--vscode-editor-background, #1e1e1e);
+    cursor: crosshair;
+    z-index: 5;
+}

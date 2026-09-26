@@ -218,6 +218,17 @@
         dataSave: $('dataSave'),
         dataCancel: $('dataCancel'),
         sliceModal: $('sliceModal'),
+        sheetModal: $('sheetModal'),
+        sheetTitle: $('sheetTitle'),
+        sheetRows: $('sheetRows'),
+        sheetCols: $('sheetCols'),
+        sheetAddress: $('sheetAddress'),
+        sheetFormula: $('sheetFormula'),
+        sheetGrid: $('sheetGrid'),
+        sheetGridWrap: $('sheetGridWrap'),
+        sheetClear: $('sheetClear'),
+        sheetSave: $('sheetSave'),
+        sheetCancel: $('sheetCancel'),
         sliceTitle: $('sliceTitle'),
         sliceList: $('sliceList'),
         sliceFields: $('sliceFields'),
@@ -3072,6 +3083,9 @@
                     if (p.key === 'Slices') openSliceEditor(msg.name, msg.sliceInfo || {});
                     // 'Data Selector' opens the data-source editor (source, workbook, page, data file).
                     if (p.key === 'DataSelector') openDataEditor(msg.name, msg.dataSource || {});
+                    // 'Edit cells…' opens the spreadsheet editor — the grid whose cells are written into
+                    // the form as <spread:SheetCell> elements.
+                    if (p.key === 'Cells') openSheetEditor(msg.name, msg.sheetInfo || {});
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -4019,6 +4033,7 @@
             if (!els.gradientModal.hidden) closeGradientEditor();
             if (!els.cursorModal.hidden) closeCursorEditor();
             if (!els.sliceModal.hidden) closeSliceEditor();
+            if (!els.sheetModal.hidden) closeSheetEditor();
             if (!els.dataModal.hidden) closeDataEditor();
             if (!els.codeModal.hidden) closeCodeFixes();
         }
@@ -6035,6 +6050,359 @@
         els.dataModal.hidden = false;
         refreshSheets();
     }
+    // ---- the spreadsheet editor (GrumpySheet, 2026-09-27) ----------------------------------------
+    // The table IS the sheet: a cell is a <td>, the row/column headers are the sticky <th>s, and the
+    // ACTIVE cell is typed in the fx box on the size row — the habit the control at run time teaches,
+    // where a value is edited in the cell or in the bar. Selection, the fill handle and the series
+    // prediction follow that control's rules exactly (1, 2 → 3, 4, 5 …; 2, 4 → 6, 8 …; Item1, Item2 →
+    // Item3; anything else repeats), so the designer previews what the app will fill.
+    let sheetEdit = null;
+
+    function sheetKey(row, column) { return row + ':' + column; }
+
+    function sheetColumnName(column) {
+        let value = column < 1 ? 1 : Math.floor(column);
+        let letters = '';
+        while (value > 0) {
+            letters = String.fromCharCode(65 + ((value - 1) % 26)) + letters;
+            value = Math.floor((value - 1) / 26);
+        }
+        return letters;
+    }
+
+    function sheetText(row, column) {
+        const value = sheetEdit.cells.get(sheetKey(row, column));
+        return value == null ? '' : value;
+    }
+
+    function sheetSet(row, column, text) {
+        const value = text == null ? '' : String(text);
+        if (value.length === 0) sheetEdit.cells.delete(sheetKey(row, column));
+        else sheetEdit.cells.set(sheetKey(row, column), value);
+    }
+
+    /** The corners of the selection, with whole columns/rows resolved to their full extent. */
+    function sheetBounds() {
+        const s = sheetEdit.sel;
+        return {
+            r1: s.wholeCol ? 1 : Math.min(s.r1, s.r2),
+            r2: s.wholeCol ? sheetEdit.rows : Math.max(s.r1, s.r2),
+            c1: s.wholeRow ? 1 : Math.min(s.c1, s.c2),
+            c2: s.wholeRow ? sheetEdit.columns : Math.max(s.c1, s.c2)
+        };
+    }
+
+    /** Moves the active cell (and the whole selection when Shift is not held). */
+    function sheetFocus(row, column, extend) {
+        const s = sheetEdit.sel;
+        s.r1 = Math.max(1, Math.min(sheetEdit.rows, row));
+        s.c1 = Math.max(1, Math.min(sheetEdit.columns, column));
+        if (!extend) {
+            s.r2 = s.r1;
+            s.c2 = s.c1;
+            s.wholeCol = false;
+            s.wholeRow = false;
+        }
+        renderSheet();
+    }
+
+    /** Drags the selection out to a cell (the mousedown that started it decides the anchor). */
+    function sheetDragTo(row, column) {
+        if (!sheetEdit || (!sheetEdit.dragging && !sheetEdit.fill)) return;
+        const s = sheetEdit.sel;
+        if (sheetEdit.fill) {
+            sheetEdit.fill.row = row;
+            sheetEdit.fill.column = column;
+            renderSheet();
+            return;
+        }
+        if (s.wholeCol) s.c1 = column;
+        else if (s.wholeRow) s.r1 = row;
+        else { s.r2 = row; s.c2 = column; }
+        renderSheet();
+    }
+
+    /** What the next values should be, from the ones the selection gave (the control's own rules). */
+    function sheetPredict(values, count) {
+        const out = [];
+        const texts = values.map((v) => String(v == null ? '' : v));
+        const numbers = texts.map((t) => (t.trim().length > 0 && !isNaN(Number(t)) ? Number(t) : null));
+        const allNumbers = numbers.length > 0 && numbers.every((n) => n !== null);
+        const decimals = texts.reduce((most, t) => {
+            const dot = t.indexOf('.');
+            return dot >= 0 ? Math.max(most, t.length - dot - 1) : most;
+        }, 0);
+        const format = (n) => (decimals > 0 ? n.toFixed(decimals) : String(Math.round(n)));
+        if (allNumbers && numbers.length >= 2) {
+            const step = numbers[1] - numbers[0];
+            let steady = true;
+            for (let i = 2; i < numbers.length; i++) {
+                if (Math.abs(numbers[i] - numbers[i - 1] - step) > 1e-9) { steady = false; break; }
+            }
+            if (steady) {
+                const last = numbers[numbers.length - 1];
+                for (let i = 0; i < count; i++) out.push(format(last + step * (i + 1)));
+                return out;
+            }
+        }
+        if (allNumbers && numbers.length === 1) {
+            for (let i = 0; i < count; i++) out.push(format(numbers[0] + i + 1));
+            return out;
+        }
+        const parts = texts.map((t) => /^(.*?)(\d+)$/.exec(t));
+        if (parts.length > 0 && parts.every((p) => p && p[1] === parts[0][1])) {
+            const last = parseInt(parts[parts.length - 1][2], 10);
+            let step = 1;
+            if (parts.length >= 2) {
+                const previous = parseInt(parts[parts.length - 2][2], 10);
+                step = (last - previous) || 1;
+            }
+            for (let i = 0; i < count; i++) out.push(parts[0][1] + String(last + step * (i + 1)));
+            return out;
+        }
+        for (let i = 0; i < count; i++) out.push(texts[i % texts.length]);
+        return out;
+    }
+
+    /** Writes the predicted series into the area the fill handle was dragged over. */
+    function sheetApplyFill() {
+        const fill = sheetEdit.fill;
+        sheetEdit.fill = null;
+        if (!fill || fill.row == null || fill.column == null) { renderSheet(); return; }
+        const source = sheetBounds();
+        if (fill.row > source.r2) {
+            for (let column = source.c1; column <= source.c2; column++) {
+                const values = [];
+                for (let row = source.r1; row <= source.r2; row++) values.push(sheetText(row, column));
+                const written = sheetPredict(values, fill.row - source.r2);
+                for (let i = 0; i < written.length; i++) sheetSet(source.r2 + 1 + i, column, written[i]);
+            }
+            sheetEdit.sel.r1 = source.r1;
+            sheetEdit.sel.c1 = source.c1;
+            sheetEdit.sel.r2 = fill.row;
+            sheetEdit.sel.c2 = source.c2;
+        } else if (fill.column > source.c2) {
+            for (let row = source.r1; row <= source.r2; row++) {
+                const values = [];
+                for (let column = source.c1; column <= source.c2; column++) values.push(sheetText(row, column));
+                const written = sheetPredict(values, fill.column - source.c2);
+                for (let i = 0; i < written.length; i++) sheetSet(row, source.c2 + 1 + i, written[i]);
+            }
+            sheetEdit.sel.r1 = source.r1;
+            sheetEdit.sel.c1 = source.c1;
+            sheetEdit.sel.r2 = source.r2;
+            sheetEdit.sel.c2 = fill.column;
+        }
+        renderSheet();
+    }
+
+    function renderSheet() {
+        if (!sheetEdit) return;
+        const table = els.sheetGrid;
+        table.innerHTML = '';
+        const bounds = sheetBounds();
+        const fill = sheetEdit.fill;
+        const fillRow = fill && fill.row != null ? fill.row : null;
+        const fillColumn = fill && fill.column != null ? fill.column : null;
+
+        const head = document.createElement('tr');
+        const corner = document.createElement('th');
+        corner.className = 'sheet-corner';
+        corner.addEventListener('mousedown', () => {
+            sheetEdit.sel.r1 = 1; sheetEdit.sel.c1 = 1;
+            sheetEdit.sel.r2 = sheetEdit.rows; sheetEdit.sel.c2 = sheetEdit.columns;
+            renderSheet();
+        });
+        head.appendChild(corner);
+        for (let c = 1; c <= sheetEdit.columns; c++) {
+            const th = document.createElement('th');
+            th.textContent = sheetColumnName(c);
+            th.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                const s = sheetEdit.sel;
+                if (!e.shiftKey) { s.c1 = c; s.wholeCol = true; s.wholeRow = false; }
+                s.c2 = c;
+                sheetEdit.dragging = true;
+                renderSheet();
+            });
+            th.addEventListener('mouseover', () => sheetDragTo(1, c));
+            head.appendChild(th);
+        }
+        table.appendChild(head);
+
+        for (let r = 1; r <= sheetEdit.rows; r++) {
+            const tr = document.createElement('tr');
+            const th = document.createElement('th');
+            th.className = 'sheet-rowhead';
+            th.textContent = String(r);
+            th.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                const s = sheetEdit.sel;
+                if (!e.shiftKey) { s.r1 = r; s.wholeRow = true; s.wholeCol = false; }
+                s.r2 = r;
+                sheetEdit.dragging = true;
+                renderSheet();
+            });
+            th.addEventListener('mouseover', () => sheetDragTo(r, 1));
+            tr.appendChild(th);
+            for (let c = 1; c <= sheetEdit.columns; c++) {
+                const td = document.createElement('td');
+                const text = sheetText(r, c);
+                td.textContent = text;
+                if (text.length > 0 && !isNaN(Number(text))) td.className = 'sheet-num';
+                td.dataset.row = String(r);
+                td.dataset.col = String(c);
+                if (r >= bounds.r1 && r <= bounds.r2 && c >= bounds.c1 && c <= bounds.c2) {
+                    td.classList.add('sheet-sel');
+                }
+                if (fillRow != null) {
+                    const lastRow = Math.max(fillRow, bounds.r2);
+                    const lastColumn = Math.max(fillColumn != null ? fillColumn : bounds.c2, bounds.c2);
+                    if (r > bounds.r2 && r <= lastRow && c >= bounds.c1 && c <= bounds.c2) {
+                        td.classList.add('sheet-fill');
+                    }
+                    if (c > bounds.c2 && c <= lastColumn && r >= bounds.r1 && r <= bounds.r2) {
+                        td.classList.add('sheet-fill');
+                    }
+                }
+                if (r === sheetEdit.sel.r1 && c === sheetEdit.sel.c1) td.classList.add('sheet-active');
+                td.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    sheetEdit.dragging = true;
+                    sheetFocus(r, c, e.shiftKey);
+                });
+                td.addEventListener('mouseover', () => sheetDragTo(r, c));
+                td.addEventListener('dblclick', () => { els.sheetFormula.focus(); els.sheetFormula.select(); });
+                tr.appendChild(td);
+            }
+            table.appendChild(tr);
+        }
+
+        const existing = els.sheetGridWrap.querySelector('.sheet-handle');
+        if (existing) existing.remove();
+        const active = table.querySelector(`td[data-row="${sheetEdit.sel.r1}"][data-col="${sheetEdit.sel.c1}"]`);
+        if (active) {
+            const handle = document.createElement('div');
+            handle.className = 'sheet-handle';
+            handle.style.left = (active.offsetLeft + active.offsetWidth - 4) + 'px';
+            handle.style.top = (active.offsetTop + active.offsetHeight - 4) + 'px';
+            handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                sheetEdit.fill = { r1: sheetEdit.sel.r1, c1: sheetEdit.sel.c1 };
+                sheetEdit.fill.row = null;
+                sheetEdit.fill.column = null;
+            });
+            els.sheetGridWrap.appendChild(handle);
+        }
+
+        els.sheetAddress.textContent = sheetColumnName(sheetEdit.sel.c1) + String(sheetEdit.sel.r1);
+        if (document.activeElement !== els.sheetFormula) {
+            els.sheetFormula.value = sheetText(sheetEdit.sel.r1, sheetEdit.sel.c1);
+        }
+    }
+
+    function openSheetEditor(name, info) {
+        const rows = Math.max(1, Math.min(500, Math.floor(Number(info.rows) || 50)));
+        const columns = Math.max(1, Math.min(100, Math.floor(Number(info.columns) || 26)));
+        sheetEdit = {
+            name: name || null,
+            rows: rows,
+            columns: columns,
+            cells: new Map(),
+            sel: { r1: 1, c1: 1, r2: 1, c2: 1, wholeCol: false, wholeRow: false },
+            dragging: false,
+            fill: null
+        };
+        (info.cells || []).forEach((cell) => {
+            if (!cell) return;
+            const row = Math.floor(Number(cell.row));
+            const column = Math.floor(Number(cell.column));
+            if (!(row >= 1) || !(column >= 1) || row > rows || column > columns) return;
+            sheetSet(row, column, cell.text);
+        });
+        els.sheetTitle.textContent = 'Cells' + (sheetEdit.name ? ' \u2014 ' + sheetEdit.name : '');
+        els.sheetRows.value = String(rows);
+        els.sheetCols.value = String(columns);
+        els.sheetFormula.value = '';
+        renderSheet();
+        els.sheetModal.hidden = false;
+        els.sheetFormula.focus();
+    }
+
+    function closeSheetEditor() {
+        els.sheetModal.hidden = true;
+        sheetEdit = null;
+    }
+
+    els.sheetRows.addEventListener('change', () => {
+        if (!sheetEdit) return;
+        sheetEdit.rows = Math.max(1, Math.min(500, Math.floor(Number(els.sheetRows.value) || 50)));
+        els.sheetRows.value = String(sheetEdit.rows);
+        renderSheet();
+    });
+    els.sheetCols.addEventListener('change', () => {
+        if (!sheetEdit) return;
+        sheetEdit.columns = Math.max(1, Math.min(100, Math.floor(Number(els.sheetCols.value) || 26)));
+        els.sheetCols.value = String(sheetEdit.columns);
+        renderSheet();
+    });
+    // The active cell is edited HERE, like the control's own fx box — one place to type, no per-cell
+    // inputs, and a formula is simply the text it is given.
+    els.sheetFormula.addEventListener('input', () => {
+        if (!sheetEdit) return;
+        sheetSet(sheetEdit.sel.r1, sheetEdit.sel.c1, els.sheetFormula.value);
+        renderSheet();
+        els.sheetFormula.focus();
+    });
+    els.sheetFormula.addEventListener('keydown', (e) => {
+        if (!sheetEdit) return;
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            sheetFocus(sheetEdit.sel.r1 + (e.shiftKey ? -1 : 1), sheetEdit.sel.c1, false);
+            els.sheetFormula.focus();
+            els.sheetFormula.select();
+        } else if (e.key === 'Escape') {
+            closeSheetEditor();
+        }
+    });
+    els.sheetClear.addEventListener('click', () => {
+        if (!sheetEdit) return;
+        const bounds = sheetBounds();
+        for (let r = bounds.r1; r <= bounds.r2; r++) {
+            for (let c = bounds.c1; c <= bounds.c2; c++) sheetSet(r, c, '');
+        }
+        renderSheet();
+    });
+    els.sheetSave.addEventListener('click', () => {
+        if (sheetEdit) {
+            const cells = [];
+            sheetEdit.cells.forEach((text, key) => {
+                const parts = key.split(':');
+                cells.push({ row: Number(parts[0]), column: Number(parts[1]), text: text });
+            });
+            post({
+                type: 'saveSheetCells', name: sheetEdit.name,
+                rows: sheetEdit.rows, columns: sheetEdit.columns, cells: cells
+            });
+        }
+        closeSheetEditor();
+    });
+    els.sheetCancel.addEventListener('click', () => closeSheetEditor());
+    els.sheetModal.addEventListener('click', (e) => {
+        if (e.target === els.sheetModal) closeSheetEditor(); // click outside the box
+    });
+    els.sheetGridWrap.addEventListener('mouseover', (e) => {
+        const td = e.target && e.target.closest ? e.target.closest('td') : null;
+        if (!td || !sheetEdit) return;
+        sheetDragTo(Number(td.dataset.row), Number(td.dataset.col));
+    });
+    document.addEventListener('mouseup', () => {
+        if (!sheetEdit) return;
+        if (sheetEdit.fill) { sheetApplyFill(); return; }
+        sheetEdit.dragging = false;
+    });
+
     function closeDataEditor() { els.dataModal.hidden = true; dataEdit = null; }
     els.dataSave.addEventListener('click', () => {
         if (dataEdit) {

@@ -339,6 +339,7 @@ End Property`, true, 'GrumpyCharts'), false,
     // worse than none, because then every project's chart file is rewritten on every save.
     const ROOT = path.join(__dirname, '..', '..');
     for (const name of ['GrumpyCharts.cs', 'GrumpyCharts.vb', 'GrumpyPrint.cs', 'GrumpyPrint.vb',
+        'GrumpySheet.cs', 'GrumpySheet.vb',
         'ChromeWindow.cs', 'ChromeWindow.vb',
         'AnchorHelper.cs', 'AnchorHelper.vb', 'PathPicker.cs', 'PathPicker.vb']) {
         const forVb = name.endsWith('.vb');
@@ -416,8 +417,8 @@ End Property`, true, 'GrumpyCharts'), false,
     // --- The language picks the right file names ---
     const vb = bundledComponentSpecs(true).map((s) => s.file).sort();
     const cs = bundledComponentSpecs(false).map((s) => s.file).sort();
-    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","GrumpyCharts.vb","GrumpyPrint.vb","PathPicker.vb"]', 'spec', 'VB spec file names');
-    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","GrumpyCharts.cs","GrumpyPrint.cs","PathPicker.cs"]', 'spec', 'C# spec file names');
+    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","GrumpyCharts.vb","GrumpyPrint.vb","GrumpySheet.vb","PathPicker.vb"]', 'spec', 'VB spec file names');
+    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","GrumpyCharts.cs","GrumpyPrint.cs","GrumpySheet.cs","PathPicker.cs"]', 'spec', 'C# spec file names');
 
     // ---------------------------------------------------------------- the version STAMP every copy carries
     // A release is where a project's copy and the extension's part company, so the version is stamped into

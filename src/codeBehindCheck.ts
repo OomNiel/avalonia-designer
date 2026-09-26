@@ -1226,6 +1226,8 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
     // GrumpyCharts: the chart controls live in the bundled AvaloniaCharts file, so a form that uses
     // one needs GrumpyCharts.cs (or .vb) beside ChromeWindow.cs.
     needsHelper('GrumpyCharts', /\bGrumpy(?:Line|XY)Plot\b/.test(code.body) || /\bcharts:Grumpy(?:Line|XY)Plot\b/.test(ax.text));
+    // GrumpySheet: the bundled AvaloniaSpreadsheet spreadsheet control (0.12.9).
+    needsHelper('GrumpySheet', /\bGrumpySheet\b/.test(code.body) || /\bspread:GrumpySheet\b/.test(ax.text));
     needsHelper('AnchorHelper', /\bAnchorHelper\b/.test(code.body) || /\bchrome:AnchorHelper\b/.test(ax.text));
     needsHelper('ColumnFollower', /\bColumnFollower\b/.test(code.body));
 
@@ -1245,6 +1247,7 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
     needImport('Avalonia.Controls.Shapes',
         /\bAs\s+(?:Line|Rectangle|Ellipse|Arc|Sector|Polygon|Polyline|Path|Shape)\b/.test(code.body));
     needImport('AvaloniaChrome', /\bAs\s+(?:GrumpyPanel|ChromeWindow|PathPicker)\b/.test(code.body));
+    needImport('AvaloniaSpreadsheet', /\bAs\s+GrumpySheet\b/.test(code.body));
     needImport('Avalonia.Platform.Storage', /\b(?:FilePickerFileTypes|StorageProvider|FilePickerOpenOptions)\b/.test(code.body));
     needImport('System.Data', /\bAs\s+(?:DataTable|DataRow|DataSet)\b/.test(code.body));
     needImport('Avalonia.Input', /\bAs\s+(?:PointerEventArgs|KeyEventArgs|TappedEventArgs)\b/.test(code.body));

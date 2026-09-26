@@ -73,6 +73,11 @@ export interface ScaffoldOptions {
     grumpyPrintCs?: string;
     /** Contents of GrumpyPrint.vb (bundled resource — see grumpyPrintCs). Optional. */
     grumpyPrintVb?: string;
+    /** Contents of GrumpySheet.cs (bundled resource — the AvaloniaSpreadsheet spreadsheet control
+     *  behind the Toolbox's Spreadsheet tool). Optional, like the other bundled files. */
+    sheetCs?: string;
+    /** Contents of GrumpySheet.vb (bundled resource — see sheetCs). Optional. */
+    sheetVb?: string;
     /** Contents of ColumnFollower.cs (bundled resource — the live one-column view a read-only
      *  control follows a bound DataGrid with). Optional: when omitted the file is not written, so
      *  tests that don't care about followers keep generating exactly the old file set. */
@@ -88,7 +93,7 @@ export interface ScaffoldOptions {
 
 /** Writes a complete, ready-to-run Avalonia project into projectPath. */
 export function generateProjectScaffold(opts: ScaffoldOptions): void {
-    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb, followerCs, followerVb, vbBridgeDll } = opts;
+    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb, sheetCs, sheetVb, followerCs, followerVb, vbBridgeDll } = opts;
     const rootNamespace = sanitize(name);
     const formName = MAIN_FORM_NAME;
 
@@ -103,6 +108,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (pathPickerCs) write(projectPath, 'PathPicker.cs', pathPickerCs);
         if (chartsCs) write(projectPath, 'GrumpyCharts.cs', chartsCs);
         if (grumpyPrintCs) write(projectPath, 'GrumpyPrint.cs', grumpyPrintCs);
+        if (sheetCs) write(projectPath, 'GrumpySheet.cs', sheetCs);
         if (followerCs) write(projectPath, 'ColumnFollower.cs', followerCs);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.cs', buildCsCodeBehind(formName, 'Window', rootNamespace, tpl.handlers));
@@ -117,6 +123,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (pathPickerVb) write(projectPath, 'PathPicker.vb', pathPickerVb);
         if (chartsVb) write(projectPath, 'GrumpyCharts.vb', chartsVb);
         if (grumpyPrintVb) write(projectPath, 'GrumpyPrint.vb', grumpyPrintVb);
+        if (sheetVb) write(projectPath, 'GrumpySheet.vb', sheetVb);
         if (followerVb) write(projectPath, 'ColumnFollower.vb', followerVb);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.vb', buildVbCodeBehind(formName, 'Window', tpl.handlers));

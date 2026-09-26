@@ -395,6 +395,10 @@ const VB_CHROME_NS_TYPES = new Set(['GrumpyPanel', 'ChromeWindow', 'PathPicker']
 const VB_CHARTS_NS_TYPES = new Set(['GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAreaPlot',
     'GrumpyPiePlot', 'GrumpyWaterfallPlot', 'GrumpySurfacePlot', 'PieSlice']);
 
+/** GrumpySheet (the bundled AvaloniaSpreadsheet control) — the same rule for its own namespace.
+ *  Without this the VB form fails with BC30002 on an accessor like `… As GrumpySheet`. */
+const VB_SHEET_NS_TYPES = new Set(['GrumpySheet']);
+
 /** Rebuilds the accessor block: strips old accessors, adds one per named control before `End Class`. */
 export function applyAccessors(text: string, controls: { name: string; type: string }[]): string {
     // U+FEFF is only valid as the VERY FIRST character. Earlier versions prepended imports BEFORE
@@ -424,11 +428,13 @@ export function applyAccessors(text: string, controls: { name: string; type: str
             .replace(/^Imports\s+Avalonia\.Controls\.Shapes\s*$/gm, '')
             .replace(/^Imports\s+Avalonia\.Controls\s*$/gm, '')
             .replace(/^Imports\s+AvaloniaChrome\s*$/gm, '')
-            .replace(/^Imports\s+AvaloniaCharts\s*$/gm, '');
+            .replace(/^Imports\s+AvaloniaCharts\s*$/gm, '')
+            .replace(/^Imports\s+AvaloniaSpreadsheet\s*$/gm, '');
         let prefix = 'Imports Avalonia.Controls\n';
         if (controls.some((c) => VB_SHAPES_NS.has(c.type))) prefix += 'Imports Avalonia.Controls.Shapes\n';
         if (controls.some((c) => VB_CHROME_NS_TYPES.has(c.type))) prefix += 'Imports AvaloniaChrome\n';
         if (controls.some((c) => VB_CHARTS_NS_TYPES.has(c.type))) prefix += 'Imports AvaloniaCharts\n';
+        if (controls.some((c) => VB_SHEET_NS_TYPES.has(c.type))) prefix += 'Imports AvaloniaSpreadsheet\n';
         out = prefix + out;
     }
     return (hadBom ? '\uFEFF' : '') + out;

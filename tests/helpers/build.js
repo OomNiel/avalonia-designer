@@ -52,10 +52,12 @@ function generateProject({ language, tplId, name, outDir = OUT_DIR }) {
     const chartsVb = readResource('GrumpyCharts.vb');
     const grumpyPrintCs = readResource('GrumpyPrint.cs');
     const grumpyPrintVb = readResource('GrumpyPrint.vb');
+    const sheetCs = readResource('GrumpySheet.cs');
+    const sheetVb = readResource('GrumpySheet.vb');
     generateProjectScaffold({
         language, tpl, name, projectPath: dir,
         chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, followerCs, followerVb,
-        pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb
+        pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb, sheetCs, sheetVb
     });
     return dir;
 }
