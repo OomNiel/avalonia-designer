@@ -3597,6 +3597,102 @@ module.exports = async (t) => {
         t.equal(sh.$('sheetModal').hidden, true, 'sheet-editor', 'and the editor closes');
     }
 
+    // ---- the Cells editor's sizing handles (2026-09-26) ----------------------------------------------
+    // The design-time half of what a header border does in the running control: drag it and that column or
+    // row gets a size of its own, saved as the sheet's own sparse ColumnWidths / RowHeights ("3:120"). The
+    // gesture has to MATCH the control, which is why the numbers asserted here are the control's rules: its
+    // 16px floor (MinTrackSize), the sheet's own ColumnWidth/RowHeight for a track without a size, and the
+    // sparse text the attribute is written in.
+    {
+        const sh = setup();
+        const fire = (el, type, opts = {}) => el.dispatchEvent(
+            new sh.window.MouseEvent(type, { bubbles: true, cancelable: true, ...opts }));
+        sh.msg({
+            type: 'properties', name: 'Sheet1',
+            properties: [{ key: 'Cells', label: 'Edit cells…', kind: 'button', value: 'Edit cells…' }],
+            sheetInfo: {
+                rows: 4, columns: 3, cells: [],
+                columnWidth: 80, rowHeight: 20,
+                // Column B already has one of its own, as a dragged border would have left it.
+                columnWidths: { 2: 120 }, rowHeights: {}
+            }
+        });
+        const openButton = sh.$('propsBody').querySelector('[data-prop-key="Cells"]');
+        fire(openButton, 'click');
+
+        const table = sh.$('sheetGrid');
+        const cols = table.querySelectorAll('col');
+        t.equal(cols.length, 4, 'sheet-size', 'a <col> per column, plus the one for the row headers');
+        t.equal(cols[0].style.width, '44px', 'sheet-size', 'the row-header column keeps its own width');
+        t.equal(cols[1].style.width, '80px', 'sheet-size', 'a column with no size of its own uses ColumnWidth');
+        t.equal(cols[2].style.width, '120px', 'sheet-size', 'and one with a dragged size uses that');
+        t.equal(table.style.tableLayout, 'fixed', 'sheet-size',
+            'the table is fixed-layout, or the browser would re-flow every drag to fit its contents');
+        const rows = table.querySelectorAll('tr');
+        t.equal(rows[1].style.height, '20px', 'sheet-size', 'rows take the sheet’s own RowHeight');
+
+        const gripCol = table.querySelectorAll('th.sheet-colhead')[0].querySelector('.sheet-grip-col');
+        const gripRow = table.querySelectorAll('th.sheet-rowhead')[1].querySelector('.sheet-grip-row');
+        t.ok(!!gripCol && !!gripRow, 'sheet-size', 'every column and row header carries a sizing grip');
+        t.equal(table.querySelectorAll('.sheet-grip-col').length, 3, 'sheet-size', 'one per column');
+        t.equal(table.querySelectorAll('.sheet-grip-row').length, 4, 'sheet-size', 'one per row');
+
+        // Drag column A's border 40px to the right: 80 becomes 120.
+        fire(gripCol, 'mousedown', { clientX: 100, clientY: 10 });
+        fire(sh.window.document, 'mousemove', { clientX: 140, clientY: 10 });
+        t.equal(table.querySelectorAll('col')[1].style.width, '120px', 'sheet-size',
+            'the column follows the pointer while it is being dragged');
+        t.equal(sh.$('sheetAddress').textContent, 'Column A  120 px', 'sheet-size',
+            'and the size is readable while dragging, in the name box');
+        fire(sh.window.document, 'mouseup');
+        t.equal(table.querySelectorAll('col')[1].style.width, '120px', 'sheet-size', 'the size is kept on release');
+
+        // The control's own floor (MinTrackSize) applies here too: A is 120 now, so -200 would be -80 — well
+        // past the floor, which is the point of the check.
+        const gripA = table.querySelectorAll('th.sheet-colhead')[0].querySelector('.sheet-grip-col');
+        fire(gripA, 'mousedown', { clientX: 100, clientY: 10 });
+        fire(sh.window.document, 'mousemove', { clientX: -200, clientY: 10 });
+        fire(sh.window.document, 'mouseup');
+        t.equal(table.querySelectorAll('col')[1].style.width, '16px', 'sheet-size',
+            'a column is never dragged below the control’s 16px minimum');
+
+        // Drag row 2's border down by 14: 20 becomes 34.
+        const gripTwo = table.querySelectorAll('th.sheet-rowhead')[1].querySelector('.sheet-grip-row');
+        fire(gripTwo, 'mousedown', { clientX: 10, clientY: 100 });
+        fire(sh.window.document, 'mousemove', { clientX: 10, clientY: 114 });
+        fire(sh.window.document, 'mouseup');
+        t.equal(table.querySelectorAll('tr')[2].style.height, '34px', 'sheet-size', 'a row is sized the same way');
+
+        // Save carries both size maps, so the form gets ColumnWidths / RowHeights.
+        fire(sh.$('sheetSave'), 'click');
+        const saved = sh.posted.filter((m) => m.type === 'saveSheetCells').pop();
+        t.equal(JSON.stringify(saved.columnWidths), JSON.stringify({ 1: 16, 2: 120 }), 'sheet-size',
+            'Save posts the column sizes the borders were dragged to');
+        t.equal(JSON.stringify(saved.rowHeights), JSON.stringify({ 2: 34 }), 'sheet-size',
+            'and the row sizes');
+
+        // Double-clicking a grip puts that track back on the sheet's own size — the editor's equivalent of
+        // clearing the number, so a form is never stuck with a size it cannot undo.
+        const sh2 = setup();
+        sh2.msg({
+            type: 'properties', name: 'Sheet1',
+            properties: [{ key: 'Cells', label: 'Edit cells…', kind: 'button', value: 'Edit cells…' }],
+            sheetInfo: { rows: 3, columns: 3, cells: [], columnWidth: 90, rowHeight: 20, columnWidths: { 2: 140 }, rowHeights: { 1: 40 } }
+        });
+        fire(sh2.$('propsBody').querySelector('[data-prop-key="Cells"]'), 'click');
+        const t2table = sh2.$('sheetGrid');
+        fire(t2table.querySelectorAll('th.sheet-colhead')[1].querySelector('.sheet-grip-col'), 'dblclick');
+        fire(t2table.querySelectorAll('th.sheet-rowhead')[0].querySelector('.sheet-grip-row'), 'dblclick');
+        t.equal(t2table.querySelectorAll('col')[2].style.width, '90px', 'sheet-size',
+            'double-clicking a column border puts it back on ColumnWidth');
+        t.equal(t2table.querySelectorAll('tr')[1].style.height, '20px', 'sheet-size',
+            'and a row border back on RowHeight');
+        fire(sh2.$('sheetSave'), 'click');
+        const cleared = sh2.posted.filter((m) => m.type === 'saveSheetCells').pop();
+        t.equal(JSON.stringify(cleared.columnWidths), '{}', 'sheet-size',
+            'and Save then carries no sizes at all, which is what removes the attributes');
+    }
+
     // ---- the Cells editor's formatting bar (2026-09-27) -----------------------------------------------
     // What formatting has to get right in the DESIGNER: the bar acts on the whole SELECTION, as Ctrl+B
     // does at run time; it reads back from the active cell; a setting left on the sheet's own is sent as

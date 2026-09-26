@@ -718,8 +718,10 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         // sheet in a DockPanel (when it isn't already in one) and clear the free-axis size, so it
         // stretches to that edge; 'None' removes the attribute and leaves it where it was placed.
         // (The charts have the same row for the same reason.)
-        { key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS,
-            desc: 'Pin the sheet to an edge of a DockPanel: Left/Right give it a column of its own (the Width is its thickness), Top/Bottom a band (the Height is), and Fill takes what is left. The designer wraps the sheet in a DockPanel for you if it is not already in one.' },
+        {
+            key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS,
+            desc: 'Pin the sheet to an edge of a DockPanel: Left/Right give it a column of its own (the Width is its thickness), Top/Bottom a band (the Height is), and Fill takes what is left. The designer wraps the sheet in a DockPanel for you if it is not already in one.'
+        },
         { key: 'Cells', label: 'Edit cells…', kind: 'button', desc: 'Open the spreadsheet grid: type in the cells, select a range and drag its fill handle to continue a series. What you leave is written into the form as <spread:SheetCell> elements, and the Rows/Columns boxes at the top of the same dialog set how big the sheet is. The formatting bar in that dialog — bold, italics, size, font, text colour, highlight, alignment — applies to everything selected and shows the active cell’s own settings; a setting left on the sheet’s own is not written to the form at all, and Clear formatting drops the lot.' },
         { key: 'ColumnWidth', label: 'Column Width', kind: 'number', unit: 'px', defaultValue: '72' },
         { key: 'RowHeight', label: 'Row Height', kind: 'number', unit: 'px', defaultValue: '22' },

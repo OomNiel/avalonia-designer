@@ -176,8 +176,10 @@ module.exports = async (t) => {
     t.note('the info payload the webview editor is opened with');
     const info = sheet.sheetInfoOf(findSheet(model(SHEET('Rows="8" Columns="3"',
         '<spread:SheetCell Row="1" Column="1" Text="x"/>'))));
-    t.equal(JSON.stringify(info), '{"rows":8,"columns":3,"cells":[{"row":1,"column":1,"text":"x"}]}',
-        'payload', 'sheetInfo carries the grid size and the cells together');
+    t.equal(JSON.stringify(info),
+        '{"rows":8,"columns":3,"cells":[{"row":1,"column":1,"text":"x"}],'
+        + '"columnWidth":72,"rowHeight":22,"columnWidths":{},"rowHeights":{}}',
+        'payload', 'sheetInfo carries the grid size, the cells, and the track sizes the editor draws from');
 
     t.note('the module owns the model, so the panel cannot drift from it');
     t.ok(moduleSource.includes("from './xamlModel'"), 'wiring', 'sheetCells imports the model');
@@ -519,8 +521,63 @@ module.exports = async (t) => {
             'and none of the VB keywords is used as a member');
     }
 
-    t.note('the designer panel can set the new properties');
-    const catalog = read('src/propertyCatalog.ts');
+    // 8) the design-time sizing handles: a dragged header border in the Cells editor writes exactly what a
+    //    dragged header border in the running control writes — the sheet's own sparse ColumnWidths /
+    //    RowHeights — and refuses exactly what the control refuses (its 16px MinTrackSize). This is a twin
+    //    rule twice over: the text has to be the same dialect, and the floor has to be the same number.
+    t.note('a dragged border writes the control’s own sparse size text, in the designer and at run time');
+    t.equal(sheet.SHEET_COLUMN_WIDTHS_ATTR, 'ColumnWidths', 'tracks', 'columns are ColumnWidths');
+    t.equal(sheet.SHEET_ROW_HEIGHTS_ATTR, 'RowHeights', 'tracks', 'rows are RowHeights');
+    t.equal(sheet.SHEET_TRACK_MIN, 16, 'tracks', 'and the floor is the control’s MinTrackSize');
+    for (const [name, source] of twins) {
+        t.ok(/MinTrackSize\s*(As Double\s*)?=\s*16(\.0)?/.test(source), `tracks:${name}`,
+            'the control’s own floor is 16 — change one and this pair must change together');
+        t.ok(has(source, 'ColumnWidths') && has(source, 'RowHeights'), `tracks:${name}`,
+            'the control reads and writes both attributes');
+    }
+
+    // Junk is skipped rather than rejected, which is the rule the control applies to the same text (its own
+    // probe indexes "banana,2:100,99:50,3:" down to "2:100"), and a size below the floor is dropped so the
+    // editor never draws a column it cannot grab.
+    const junk = sheet.parseSheetTracks('banana,2:100,3:,4:8,5:120');
+    t.equal(JSON.stringify([...junk.entries()]), JSON.stringify([[2, 100], [5, 120]]), 'tracks',
+        'a size list is read tolerantly: junk and sub-minimum sizes are skipped');
+
+    // …and written back SORTED, so the same sizes always save as the same string.
+    t.equal(sheet.sheetTracksText(new Map([[7, 60], [3, 120]])), '3:120,7:60', 'tracks',
+        'sizes are written in index order, so an untouched sheet does not reshuffle');
+    t.equal(sheet.sheetTracksText(sheet.parseSheetTracks('3:120,7:60')), '3:120,7:60', 'tracks',
+        'and the text round-trips');
+
+    // The sheet's own sizes, and the payload the editor draws from.
+    const sizedModel = model('<spread:GrumpySheet x:Name="s1" ColumnWidth="90" RowHeight="24" ' +
+        'ColumnWidths="2:140" RowHeights="banana,1:40"/>');
+    const sizedEl = findSheet(sizedModel);
+    const trackSizes = sheet.sheetTrackSizesOf(sizedEl);
+    t.equal(trackSizes.columnWidth, 90, 'tracks', 'a track without a size of its own uses ColumnWidth');
+    t.equal(trackSizes.rowHeight, 24, 'tracks', 'and RowHeight');
+    t.equal(JSON.stringify([...trackSizes.columnWidths.entries()]), JSON.stringify([[2, 140]]), 'tracks',
+        'column 2 has its own width');
+    t.equal(JSON.stringify([...trackSizes.rowHeights.entries()]), JSON.stringify([[1, 40]]), 'tracks',
+        'row 1 has its own height, and the junk beside it is skipped');
+    const trackInfo = sheet.sheetInfoOf(sizedEl);
+    t.equal(JSON.stringify(trackInfo.columnWidths), JSON.stringify({ 2: 140 }), 'tracks',
+        'the editor’s payload carries the sizes as plain objects (a Map does not survive a message)');
+    t.equal(trackInfo.columnWidth, 90, 'tracks', 'with the sheet’s own width beside them');
+
+    // Writing them back: the sparse text, and REMOVING the attribute when nothing is left, which is how a
+    // track goes back to ColumnWidth / RowHeight again.
+    sheet.writeSheetTracks(sizedModel, sizedEl, { 1: 30, 3: 200 }, { 2: 34 });
+    t.equal(sizedEl.getAttribute('ColumnWidths'), '1:30,3:200', 'tracks',
+        'Save writes the sparse text the control expects');
+    t.equal(sizedEl.getAttribute('RowHeights'), '2:34', 'tracks', 'for both axes');
+    sheet.writeSheetTracks(sizedModel, sizedEl, {}, {});
+    // xmldom answers '' for an attribute that is not there, so hasAttribute is the honest check.
+    t.equal(sizedEl.hasAttribute('ColumnWidths'), false, 'tracks',
+        'and an empty list REMOVES the attribute, so the sheet follows its own size again');
+    t.equal(sizedEl.hasAttribute('RowHeights'), false, 'tracks', 'for the rows too');
+
+    t.note('the designer panel can set the new properties');    const catalog = read('src/propertyCatalog.ts');
     for (const key of ['ShowScrollBars', 'ColumnWidths', 'RowHeights']) {
         t.ok(catalog.includes(`key: '${key}'`), 'panel', `the GrumpySheet rows offer ${key}`);
     }

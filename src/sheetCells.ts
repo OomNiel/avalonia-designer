@@ -261,6 +261,93 @@ export function sheetSizeOf(el: Element): { rows: number; columns: number } {
     };
 }
 
+/** The attribute names a dragged header border writes — the control's own property names, so what the
+ *  editor saves is what the running sheet reads back. */
+export const SHEET_COLUMN_WIDTHS_ATTR = 'ColumnWidths';
+export const SHEET_ROW_HEIGHTS_ATTR = 'RowHeights';
+
+/** The control's floor for a dragged track (its MinTrackSize). A column you cannot see is worse than one
+ *  that is merely the wrong size, and the editor has to refuse the same sizes the control refuses — a
+ *  design-time drag that the running sheet then clamps is a lie. */
+export const SHEET_TRACK_MIN = 16;
+
+/**
+ * A sparse size list — "3:120,7:60" — as a map of index → px.
+ *
+ * Junk is SKIPPED rather than rejected, which is the rule the control applies when it reads the same text
+ * back (its own tests index "banana,2:100,99:50,3:" down to "2:100"). Sizes below the floor are dropped
+ * too, so a hand-written "2:4" does not make the editor draw a column it cannot grab.
+ */
+export function parseSheetTracks(text: unknown, min = SHEET_TRACK_MIN): Map<number, number> {
+    const out = new Map<number, number>();
+    for (const part of String(text ?? '').split(',')) {
+        const pair = part.split(':');
+        if (pair.length !== 2) continue;
+        const index = parseInt(pair[0].trim(), 10);
+        const size = Math.round(Number(pair[1].trim()));
+        if (!Number.isFinite(index) || index < 1) continue;
+        if (!Number.isFinite(size) || size < min) continue;
+        out.set(index, size);
+    }
+    return out;
+}
+
+/** A map of index → px as the attribute's own text ("3:120,7:60"), or '' when nothing is left — which is
+ *  how a size goes back to the sheet's own. Sorted, so the same sizes always save as the same string. */
+export function sheetTracksText(tracks: Map<number, number>, min = SHEET_TRACK_MIN): string {
+    const parts: string[] = [];
+    for (const index of [...tracks.keys()].sort((a, b) => a - b)) {
+        const size = Math.round(Number(tracks.get(index)));
+        if (!Number.isFinite(size) || size < min) continue;
+        parts.push(`${index}:${size}`);
+    }
+    return parts.join(',');
+}
+
+/** The sizes the editor draws its table from: the sheet's own ColumnWidth/RowHeight, plus every track that
+ *  has one of its own. */
+export function sheetTrackSizesOf(el: Element): {
+    columnWidth: number;
+    rowHeight: number;
+    columnWidths: Map<number, number>;
+    rowHeights: Map<number, number>;
+} {
+    const columnWidth = Math.max(SHEET_TRACK_MIN,
+        Number(readAttr(el, 'ColumnWidth', '')) || SHEET_DEFAULT_COLUMN_WIDTH);
+    const rowHeight = Math.max(SHEET_TRACK_MIN,
+        Number(readAttr(el, 'RowHeight', '')) || SHEET_DEFAULT_ROW_HEIGHT);
+    return {
+        columnWidth,
+        rowHeight,
+        columnWidths: parseSheetTracks(readAttr(el, SHEET_COLUMN_WIDTHS_ATTR, '')),
+        rowHeights: parseSheetTracks(readAttr(el, SHEET_ROW_HEIGHTS_ATTR, ''))
+    };
+}
+
+/**
+ * Writes a dragged border's sizes back into the form. An empty map REMOVES the attribute, so taking every
+ * size off in the editor leaves the sheet following ColumnWidth/RowHeight again — the same "the sheet's
+ * own" rule the formatting bar follows for a colour.
+ */
+export function writeSheetTracks(model: XamlModel, el: Element, columnWidths: unknown,
+    rowHeights: unknown): void {
+    const asMap = (value: unknown): Map<number, number> => {
+        const out = new Map<number, number>();
+        if (value && typeof value === 'object') {
+            for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+                const index = parseInt(key, 10);
+                const size = Math.round(Number(raw));
+                if (!Number.isFinite(index) || index < 1) continue;
+                if (!Number.isFinite(size) || size < SHEET_TRACK_MIN) continue;
+                out.set(index, size);
+            }
+        }
+        return out;
+    };
+    model.setProperty(el, SHEET_COLUMN_WIDTHS_ATTR, sheetTracksText(asMap(columnWidths)));
+    model.setProperty(el, SHEET_ROW_HEIGHTS_ATTR, sheetTracksText(asMap(rowHeights)));
+}
+
 /**
  * Every cell with something in it, sorted by row then column — the order the editor shows and the
  * order the writer lays them down in, so saving an untouched sheet does not shuffle its elements.
@@ -354,7 +441,30 @@ export function writeSheetCells(model: XamlModel, el: Element, cells: unknown[])
 }
 
 /** The whole payload the Cells editor needs: what to draw the grid from, and what is in it. */
-export function sheetInfoOf(el: Element): { rows: number; columns: number; cells: SheetCell[] } {
+export function sheetInfoOf(el: Element): {
+    rows: number;
+    columns: number;
+    cells: SheetCell[];
+    columnWidth: number;
+    rowHeight: number;
+    columnWidths: Record<string, number>;
+    rowHeights: Record<string, number>;
+} {
     const size = sheetSizeOf(el);
-    return { rows: size.rows, columns: size.columns, cells: sheetCellsOf(el) };
+    const tracks = sheetTrackSizesOf(el);
+    // Maps do not survive a message, so the sparse sizes travel as plain objects of index → px.
+    const asObject = (map: Map<number, number>): Record<string, number> => {
+        const out: Record<string, number> = {};
+        map.forEach((value, key) => { out[String(key)] = value; });
+        return out;
+    };
+    return {
+        rows: size.rows,
+        columns: size.columns,
+        cells: sheetCellsOf(el),
+        columnWidth: tracks.columnWidth,
+        rowHeight: tracks.rowHeight,
+        columnWidths: asObject(tracks.columnWidths),
+        rowHeights: asObject(tracks.rowHeights)
+    };
 }

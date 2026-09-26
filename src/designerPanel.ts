@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute, CHARTS_TAGS } from './xamlModel';
-import { isSheetTag, sheetInfoOf, writeSheetCells } from './sheetCells';
+import { isSheetTag, sheetInfoOf, writeSheetCells, writeSheetTracks } from './sheetCells';
 import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
     chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush, chartSlicesOf, writeChartSlices,
@@ -3400,12 +3400,18 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     // 'Edit cells…' on a GrumpySheet: the cells (child elements), plus how many rows
                     // and columns the sheet has. The cells are rewritten whole, exactly as the chart's
                     // series are, so a cell the editor dropped leaves the form with it.
+                    //
+                    // The sizes a header border was dragged to come along as the sheet's OWN sparse
+                    // attributes ("3:120", the same text its Drag-to-size writes at run time), so a track
+                    // the editor did not touch is not written at all and the sheet keeps following
+                    // ColumnWidth / RowHeight for it.
                     const el = msg.name ? doc.model.findByName(msg.name) : undefined;
                     if (!el || !isSheetTag(localName(el.tagName))) return;
                     const before = doc.model.serialize(true);
                     doc.model.setProperty(el, 'Rows', String(msg.rows ?? ''));
                     doc.model.setProperty(el, 'Columns', String(msg.columns ?? ''));
                     writeSheetCells(doc.model, el, Array.isArray(msg.cells) ? msg.cells : []);
+                    writeSheetTracks(doc.model, el, msg.columnWidths, msg.rowHeights);
                     // The <spread:SheetCell> elements need the project's bundled sheet to be current.
                     this.ensureSheetHelper(doc);
                     this.notifyEdit(doc, panel, before);
@@ -7912,8 +7918,12 @@ ${publishButtons}      <span class="sep"></span>
           a range, and drag the small square at the selection's bottom-right corner to <b>fill a
           series</b> (1, 2 becomes 3, 4, 5 …; 2, 4 becomes 6, 8 …; Item1, Item2 becomes Item3; anything
           else repeats). The active cell is typed in the box on the right of this row — the same habit
-          the sheet teaches at run time. A leading <code>=</code> is kept as written: the sheet stores a
-          formula as text for now.</p>
+          the sheet teaches at run time. <b>Drag a border between two column letters</b> — or between two
+          row numbers — to give that column or row a size of its own, exactly as you would in the running
+          app; the sizes are saved as the sheet's <code>ColumnWidths</code> / <code>RowHeights</code>, and
+          double-clicking that border puts the track back on the sheet's own size. A leading
+          <code>=</code> is kept as written and <b>worked out</b> in the app:
+          <code>=SUM(B2:B6)</code> draws its total while this editor keeps showing the formula.</p>
         <div class="sheet-bar">
           <label class="sheet-size">Rows <input id="sheetRows" type="number" min="1" max="500" step="1"></label>
           <label class="sheet-size">Columns <input id="sheetCols" type="number" min="1" max="100" step="1"></label>

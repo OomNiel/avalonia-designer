@@ -2580,13 +2580,15 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 .sheet-grid td {
     border: 1px solid var(--border, #3a3a3a);
     height: 22px;
-    min-width: 72px;
-    max-width: 72px;
     padding: 0 4px;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
 }
+
+/* NOTE: no min-width/max-width here. The column width comes from the <colgroup> the editor fills in from
+ * the sheet's own sizes and from the borders the user has dragged — a fixed max-width on every cell would
+ * overrule exactly that, which is what the sizing grips exist to set. */
 
 .sheet-grid th {
     position: sticky;
@@ -2603,15 +2605,41 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     top: auto;
     left: 0;
     z-index: 3;
-    min-width: 44px;
-    max-width: 44px;
 }
 
 .sheet-grid th.sheet-corner {
     left: 0;
     z-index: 4;
-    min-width: 44px;
-    max-width: 44px;
+}
+
+/* The design-time sizing grips: a strip inside a header's border. The running control sizes a track by
+ * dragging that same border, so the editor offers the same gesture where the border is drawn. It sits
+ * INSIDE the cell because a header clips its overflow, and 6px is wide enough to hit while still leaving
+ * the header itself clickable for a selection. */
+.sheet-grip {
+    position: absolute;
+    z-index: 6;
+    background: transparent;
+}
+
+.sheet-grip-col {
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+}
+
+.sheet-grip-row {
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 6px;
+    cursor: row-resize;
+}
+
+.sheet-grip:hover {
+    background: var(--vscode-focusBorder, #2d7dd2);
 }
 
 .sheet-grid td {

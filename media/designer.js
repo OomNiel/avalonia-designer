@@ -6247,6 +6247,20 @@
     // Item3; anything else repeats), so the designer previews what the app will fill.
     let sheetEdit = null;
 
+    /** The control's floor for a dragged track (its MinTrackSize), and the sizes its own properties default
+     *  to. The editor has to refuse what the control refuses, or a design-time drag would be a promise the
+     *  running sheet does not keep. */
+    const SHEET_TRACK_MIN = 16;
+    const SHEET_TRACK_DEFAULT_COLUMN = 72;
+    const SHEET_TRACK_DEFAULT_ROW = 22;
+
+    /** A Map of index → px as a plain object, so it survives the trip to the extension. */
+    function mapToObject(map) {
+        const out = {};
+        if (map) map.forEach((value, key) => { out[String(key)] = value; });
+        return out;
+    }
+
     // A cell is an OBJECT now that it can carry formatting, not just a string. These key names are the
     // model's own (src/sheetCells.ts) and reach the XAML as the twin's attribute names. A key that is
     // ABSENT means "the sheet's own setting", which is what keeps a plain cell's element short.
@@ -6517,6 +6531,99 @@
         renderSheet();
     }
 
+    /** The width a column is drawn at: its own if a border was dragged for it, else the sheet's own. */
+    function sheetColumnWidth(column) {
+        const own = sheetEdit && sheetEdit.colWidths.get(column);
+        return own || (sheetEdit ? sheetEdit.columnWidth : SHEET_TRACK_DEFAULT_COLUMN);
+    }
+
+    function sheetRowHeight(row) {
+        const own = sheetEdit && sheetEdit.rowHeights.get(row);
+        return own || (sheetEdit ? sheetEdit.rowHeight : SHEET_TRACK_DEFAULT_ROW);
+    }
+
+    /**
+     * The grip on a header's border — the design-time half of what a header border does in the running
+     * control (drag it and that column or row gets a size of its own; the sheet writes them to
+     * ColumnWidths / RowHeights).
+     *
+     * It is a child of the header, absolutely placed on the border, so a drag that starts on it belongs to
+     * the SIZING rather than to the column selection underneath: stopPropagation on the way down, or the
+     * header would also fire up a whole-column selection.
+     */
+    function sheetTrackGrip(kind, index) {
+        const grip = document.createElement('span');
+        grip.className = kind === 'column' ? 'sheet-grip sheet-grip-col' : 'sheet-grip sheet-grip-row';
+        grip.dataset.kind = kind;
+        grip.dataset.index = String(index);
+        grip.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sheetEdit.track = {
+                kind: kind,
+                index: index,
+                startX: e.clientX,
+                startY: e.clientY,
+                start: kind === 'column' ? sheetColumnWidth(index) : sheetRowHeight(index),
+                size: 0
+            };
+        });
+        grip.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sheetClearTrack(kind, index);
+        });
+        return grip;
+    }
+
+    /** Paints a track at a size WITHOUT rebuilding the table — rebuilding it mid-drag would throw away the
+     *  element the pointer is on. */
+    function sheetPaintTrack(kind, index, size) {
+        if (kind === 'column') {
+            const col = sheetEdit.trackCols ? sheetEdit.trackCols[index - 1] : null;
+            if (col) col.style.width = size + 'px';
+        } else {
+            const row = sheetEdit.trackRows ? sheetEdit.trackRows[index] : null;
+            if (row) row.style.height = size + 'px';
+        }
+    }
+
+    /** A drag on a header border: the size follows the pointer, floored at the control's own minimum. The
+     *  readout goes in the name box, which is where the eye already is while working in this dialog. */
+    function sheetTrackTo(clientX, clientY) {
+        const track = sheetEdit && sheetEdit.track;
+        if (!track) return false;
+        const delta = track.kind === 'column' ? clientX - track.startX : clientY - track.startY;
+        const size = Math.max(SHEET_TRACK_MIN, Math.round(track.start + delta));
+        track.size = size;
+        sheetPaintTrack(track.kind, track.index, size);
+        els.sheetAddress.textContent = (track.kind === 'column'
+            ? 'Column ' + sheetColumnName(track.index)
+            : 'Row ' + track.index) + '  ' + size + ' px';
+        return true;
+    }
+
+    /** The pointer came up: keep the size as a track of its own, or drop it when it never moved. */
+    function sheetEndTrack() {
+        const track = sheetEdit && sheetEdit.track;
+        if (!track) return false;
+        sheetEdit.track = null;
+        if (track.size > 0 && track.size !== track.start) {
+            if (track.kind === 'column') sheetEdit.colWidths.set(track.index, track.size);
+            else sheetEdit.rowHeights.set(track.index, track.size);
+        }
+        renderSheet();
+        return true;
+    }
+
+    /** Back to the sheet's own size for that track — the double-click on a grip. */
+    function sheetClearTrack(kind, index) {
+        if (!sheetEdit) return;
+        if (kind === 'column') sheetEdit.colWidths.delete(index);
+        else sheetEdit.rowHeights.delete(index);
+        renderSheet();
+    }
+
     function renderSheet() {
         if (!sheetEdit) return;
         const table = els.sheetGrid;
@@ -6525,6 +6632,25 @@
         const fill = sheetEdit.fill;
         const fillRow = fill && fill.row != null ? fill.row : null;
         const fillColumn = fill && fill.column != null ? fill.column : null;
+
+        // The tracks are sized HERE, not by the browser: a fixed layout with a <col> per column means the
+        // widths the user drags are the widths they get, and the grips (below) line up with the borders they
+        // move. Without it the table would re-flow every drag to fit its contents and the sizes would be a
+        // suggestion.
+        table.style.tableLayout = 'fixed';
+        const cols = document.createElement('colgroup');
+        const colEls = [];
+        const cornerCol = document.createElement('col');
+        cornerCol.style.width = '44px';
+        cols.appendChild(cornerCol);
+        for (let c = 1; c <= sheetEdit.columns; c++) {
+            const col = document.createElement('col');
+            col.style.width = sheetColumnWidth(c) + 'px';
+            cols.appendChild(col);
+            colEls.push(col);
+        }
+        table.appendChild(cols);
+        sheetEdit.trackCols = colEls;
 
         const head = document.createElement('tr');
         const corner = document.createElement('th');
@@ -6538,6 +6664,9 @@
         for (let c = 1; c <= sheetEdit.columns; c++) {
             const th = document.createElement('th');
             th.textContent = sheetColumnName(c);
+            th.classList.add('sheet-colhead');
+            th.title = 'Drag the right edge to size column ' + sheetColumnName(c) +
+                ' (double-click it to go back to the sheet\'s own)';
             th.addEventListener('mousedown', (e) => {
                 e.preventDefault();
                 const s = sheetEdit.sel;
@@ -6547,15 +6676,20 @@
                 renderSheet();
             });
             th.addEventListener('mouseover', () => sheetDragTo(1, c));
+            th.appendChild(sheetTrackGrip('column', c));
             head.appendChild(th);
         }
         table.appendChild(head);
 
         for (let r = 1; r <= sheetEdit.rows; r++) {
             const tr = document.createElement('tr');
+            tr.style.height = sheetRowHeight(r) + 'px';
+            sheetEdit.trackRows[r] = tr;
             const th = document.createElement('th');
             th.className = 'sheet-rowhead';
             th.textContent = String(r);
+            th.title = 'Drag the bottom edge to size row ' + r +
+                ' (double-click it to go back to the sheet\'s own)';
             th.addEventListener('mousedown', (e) => {
                 e.preventDefault();
                 const s = sheetEdit.sel;
@@ -6565,6 +6699,7 @@
                 renderSheet();
             });
             th.addEventListener('mouseover', () => sheetDragTo(r, 1));
+            th.appendChild(sheetTrackGrip('row', r));
             tr.appendChild(th);
             for (let c = 1; c <= sheetEdit.columns; c++) {
                 const td = document.createElement('td');
@@ -6651,6 +6786,20 @@
     function openSheetEditor(name, info) {
         const rows = Math.max(1, Math.min(500, Math.floor(Number(info.rows) || 50)));
         const columns = Math.max(1, Math.min(100, Math.floor(Number(info.columns) || 26)));
+        // The sizes: the sheet's own ColumnWidth/RowHeight for every track, plus the sparse overrides a
+        // dragged border (here or at run time) left on the control. Filled so the table can be drawn
+        // before anything is dragged.
+        const trackMap = (value) => {
+            const out = new Map();
+            if (value && typeof value === 'object') {
+                Object.keys(value).forEach((key) => {
+                    const index = parseInt(key, 10);
+                    const size = Math.round(Number(value[key]));
+                    if (index >= 1 && size >= SHEET_TRACK_MIN) out.set(index, size);
+                });
+            }
+            return out;
+        };
         sheetEdit = {
             name: name || null,
             rows: rows,
@@ -6658,7 +6807,14 @@
             cells: new Map(),
             sel: { r1: 1, c1: 1, r2: 1, c2: 1, wholeCol: false, wholeRow: false },
             dragging: false,
-            fill: null
+            fill: null,
+            columnWidth: Math.max(SHEET_TRACK_MIN, Math.round(Number(info.columnWidth)) || SHEET_TRACK_DEFAULT_COLUMN),
+            rowHeight: Math.max(SHEET_TRACK_MIN, Math.round(Number(info.rowHeight)) || SHEET_TRACK_DEFAULT_ROW),
+            colWidths: trackMap(info.columnWidths),
+            rowHeights: trackMap(info.rowHeights),
+            track: null,
+            trackCols: [],
+            trackRows: {}
         };
         (info.cells || []).forEach((cell) => {
             if (!cell) return;
@@ -6797,7 +6953,11 @@
             });
             post({
                 type: 'saveSheetCells', name: sheetEdit.name,
-                rows: sheetEdit.rows, columns: sheetEdit.columns, cells: cells
+                rows: sheetEdit.rows, columns: sheetEdit.columns, cells: cells,
+                // A dragged border's sizes travel as plain objects of index → px; the extension turns them
+                // back into the sparse "3:120" text, which is the control's own format.
+                columnWidths: mapToObject(sheetEdit.colWidths),
+                rowHeights: mapToObject(sheetEdit.rowHeights)
             });
         }
         closeSheetEditor();
@@ -6811,8 +6971,14 @@
         if (!td || !sheetEdit) return;
         sheetDragTo(Number(td.dataset.row), Number(td.dataset.col));
     });
+    // A header border being dragged: it owns the pointer until it is let go, so the move is watched here
+    // rather than on the grip (which is 7px wide and would be left behind by a fast drag).
+    document.addEventListener('mousemove', (e) => {
+        if (sheetEdit && sheetEdit.track) sheetTrackTo(e.clientX, e.clientY);
+    });
     document.addEventListener('mouseup', () => {
         if (!sheetEdit) return;
+        if (sheetEdit.track) { sheetEndTrack(); return; }
         if (sheetEdit.fill) { sheetApplyFill(); return; }
         sheetEdit.dragging = false;
     });
