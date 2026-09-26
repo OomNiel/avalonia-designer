@@ -284,6 +284,13 @@
         designH: 450,
         lastFitSize: null,
         pendingTag: null,
+        // A toolbox DRAG is in flight: the tag was armed by the drag-start hook, not by a click. Only such an
+        // arming may complete through the drop-free fallback below (a click-armed tool must wait for a click).
+        dragArmed: false,
+        // Where the drag was last seen over the canvas, and the timer that decides the drag has ended.
+        dragHover: null,
+        dragQuietTimer: null,
+        dragHoverLogged: false,
         showAdvanced: false,
         // Which Properties sections the user folded away, per control TYPE (e.g. { DataGrid: { data: true } }).
         // Remembered across designer reopens via the webview state (see loadCollapsed/persistCollapsed).
@@ -2133,20 +2140,39 @@
 
     els.canvas.addEventListener('dragover', (e) => {
         e.preventDefault();
+        // A native drag that reaches the canvas is the fact everything below rests on: the toolbox drag does
+        // arrive as dragover even where the DROP event is later swallowed. Say so once per drag in the log.
+        if (state.dragArmed && !state.dragHoverLogged) {
+            state.dragHoverLogged = true;
+            logToHost('dragover is arriving while a toolbox tool is armed');
+        }
+        state.dragHover = { x: e.clientX, y: e.clientY };
         const p = toDesign(e.clientX, e.clientY);
         highlightDrop(hitTest(p.x, p.y));
+        armDropQuietTimer();
     });
-    els.canvas.addEventListener('dragleave', () => highlightDrop(null));
+    els.canvas.addEventListener('dragleave', (e) => {
+        highlightDrop(null);
+        // The pointer left the canvas: whatever happens next is not a drop HERE, so the quiet-stream timer
+        // must not decide it was one. (The arming itself is kept: a drag that comes back still drops.)
+        const r = els.canvas.getBoundingClientRect();
+        const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+        if (!inside) cancelDropQuietTimer();
+    });
     els.canvas.addEventListener('drop', (e) => {
         e.preventDefault();
         highlightDrop(null);
+        cancelDropQuietTimer();
         // VS Code does not bridge the Toolbox TreeView's drag MIME types into a webview
         // ("Mime types added in handleDrag won't be available outside the application"), so
         // the tag is delivered through the `armTool` message fired on drag-start — the same
         // channel click-to-place uses. Read the armed tag first; only fall back to the
         // native dataTransfer for other (future) drop sources.
         const armedTag = state.pendingTag;
+        const wasDrag = state.dragArmed;
         state.pendingTag = null;
+        state.dragArmed = false;
+        state.dragHover = null;
         updatePendingTool();
         let tag = armedTag;
         if (!tag) {
@@ -2159,18 +2185,70 @@
             els.status.textContent = 'Drag a control from the Toolbox view.';
             return;
         }
+        if (wasDrag) logToHost('the drop event arrived — the native path works on this machine');
         const p = toDesign(e.clientX, e.clientY);
         const hit = hitTest(p.x, p.y);
         post({ type: 'drop', tag, parentName: hit ? hit.name : null, x: p.x, y: p.y });
     });
+
+    // ---- the drop event that never comes (Electron on Wayland) ------------------------------------
+    // A drag from a VS Code TreeView is started by Electron as a NATIVE drag. On Wayland the release can be
+    // swallowed on its way back into the webview: the highlight follows the pointer (dragover arrives), and
+    // then releasing does nothing at all. Chromium sends dragover continuously while the drag hovers, so the
+    // END of the drag can be detected instead of the drop itself: when the arming is still pending and the
+    // stream has been quiet for a moment, the release happened where the pointer was last seen — and that is
+    // where the control goes. Every path taken is logged, so a report can say which one fired.
+    //
+    // Deliberately NOT triggered by dragleave: a drag that leaves the canvas cancels the timer (above) and
+    // places nothing, and a real drop clears the arming before any timer could fire — so the fallback can
+    // never place a second control, and can never place one the user dragged away from.
+    const DROP_QUIET_MS = 180;
+
+    function armDropQuietTimer() {
+        if (!state.pendingTag || !state.dragArmed) return;
+        cancelDropQuietTimer();
+        state.dragQuietTimer = setTimeout(() => {
+            state.dragQuietTimer = null;
+            if (!state.dragHover) return;
+            placeFromQuietDrag(state.dragHover.x, state.dragHover.y);
+        }, DROP_QUIET_MS);
+    }
+
+    function cancelDropQuietTimer() {
+        if (state.dragQuietTimer) { clearTimeout(state.dragQuietTimer); state.dragQuietTimer = null; }
+    }
+
+    function placeFromQuietDrag(clientX, clientY) {
+        if (!state.pendingTag || !state.dragArmed) return;
+        const tag = state.pendingTag;
+        state.pendingTag = null;
+        state.dragArmed = false;
+        state.dragHover = null;
+        updatePendingTool();
+        logToHost('the drop event never arrived — placing ' + tag + ' at the last hovered point (native drop lost; Electron/Wayland)');
+        const p = toDesign(clientX, clientY);
+        const hit = hitTest(p.x, p.y);
+        post({ type: 'drop', tag, parentName: hit ? hit.name : null, x: p.x, y: p.y });
+    }
+
+    /** One line into the extension's Output channel — the only way a webview can be heard from a report. */
+    function logToHost(text) {
+        try { post({ type: 'webviewLog', text }); } catch (err) { /* a log must never break the designer */ }
+    }
 
     // ---------------- armed toolbox tool (click tool, then click canvas) ----------------
     function updatePendingTool() {
         // The custom crosshair overlay is always shown over the design surface, so no native
         // cursor is needed while a toolbox tool is armed (the crosshair overlay is the pointer).
         if (state.pendingTag) {
-            els.status.textContent = 'Click the canvas to place a ' + state.pendingTag + ' (Esc to cancel).';
+            els.status.textContent = state.dragArmed
+                ? 'Release the drag on the canvas to place a ' + state.pendingTag + ' (Esc cancels).'
+                : 'Click the canvas to place a ' + state.pendingTag + ' (Esc to cancel).';
+            return;
         }
+        // Unarmed: take the hint back instead of leaving a lie on screen — a drag that ends somewhere
+        // else used to keep "Click the canvas to place a Button" there with nothing armed.
+        if (/to place a /.test(els.status.textContent || '')) els.status.textContent = '';
     }
 
     // ---------------- delete & context menu (cut / copy / paste / move / delete) ----------------
@@ -3280,6 +3358,13 @@
             }
             case 'armTool': {
                 state.pendingTag = msg.tag;
+                // `from: 'drag'` is the toolbox's drag-start arm. It is what allows the drop-free fallback
+                // below to complete the placement if the native drop never reaches us; a click-armed tool
+                // waits for a click instead. Missing `from` = a click (the t3 tests and older hosts send none).
+                state.dragArmed = msg.from === 'drag';
+                state.dragHover = null;
+                state.dragHoverLogged = false;
+                cancelDropQuietTimer();
                 updatePendingTool();
                 break;
             }

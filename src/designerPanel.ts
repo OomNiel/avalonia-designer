@@ -38,7 +38,7 @@ import { printSupportStateFor, addPrintSupport, PrintLanguage } from './printSup
 import { statusLines, repairWithAI } from './assistantUi';
 import { hostGate, clearHostGate } from './hostCheck';
 import { learnConventions } from './conventionsUi';
-import { logError } from './logger';
+import { log, logError } from './logger';
 import {
     aiLog,
     attachPanel,
@@ -1877,6 +1877,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private async handleMessage(doc: DesignerDocument, panel: vscode.WebviewPanel, msg: any): Promise<void> {
         try {
             switch (msg.type) {
+                case 'webviewLog': {
+                    // A diagnostic line from the webview (the drag pipeline), so the Output channel holds the
+                    // whole story instead of only the half the extension can see.
+                    log('webview: ' + String(msg.text ?? ''));
+                    return;
+                }
                 case 'ready': {
                     this.ensureHistory(doc);
                     this.sendHistoryState(doc, panel);
@@ -7063,13 +7069,35 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         };
     }
 
-    /** Arms a toolbox tool in the most recently focused designer (click tool, then click the canvas to place). */
-    async armToolInActiveDesigner(tag: string): Promise<void> {
-        if (!this.lastActivePanel) {
+    /**
+     * Arms a toolbox tool in the most recently focused designer — the click-to-place path, and the drag
+     * path (`ToolboxProvider.handleDrag`, which cannot carry the tag in the drag's MIME data because VS
+     * Code does not bridge it into a webview).
+     *
+     * Every step is LOGGED, because a silent failure here looks exactly like a lost drop: the Output
+     * channel now says whether a designer was known at all and whether the message really went out. That
+     * is the difference between "the platform ate the drop" (drag works up to `dragover`) and "nothing
+     * was armed" (nothing can work).
+     */
+    async armToolInActiveDesigner(tag: string, from: 'click' | 'drag' = 'click'): Promise<void> {
+        const panel = this.lastActivePanel ?? this.anyDesignerPanel();
+        if (!panel) {
+            log(`toolbox ${from}: no designer panel is open — nothing armed (${tag})`);
             void vscode.window.showInformationMessage('Open an .axaml file in Grumpy\'s WYSIWYG Designer first.');
             return;
         }
-        await this.lastActivePanel.webview.postMessage({ type: 'armTool', tag });
+        if (panel !== this.lastActivePanel) {
+            log(`toolbox ${from}: no tab has reported itself focused — arming the open designer (${tag})`);
+        }
+        const posted = await panel.webview.postMessage({ type: 'armTool', tag, from });
+        log(`toolbox ${from}: armTool ${posted ? 'posted' : 'NOT delivered (webview not listening)'} — ${tag}`);
+    }
+
+    /** Any open designer panel. `lastActivePanel` is only set when a tab is ACTIVE, and a drag started in
+     *  the Toolbox sidebar can happen while no designer tab is the focused one — the drop should still land. */
+    private anyDesignerPanel(): vscode.WebviewPanel | undefined {
+        for (const panel of this.panels.values()) return panel;
+        return undefined;
     }
 
     /** The most recently focused designer tab and its document, if any. */

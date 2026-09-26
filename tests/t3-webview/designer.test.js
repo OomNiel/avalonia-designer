@@ -399,6 +399,42 @@ module.exports = async (t) => {
     t.equal(posted.some((m) => m.type === 'drop'), false, 'empty-drop', 'no drop posted when unarmed and empty');
     t.equal($('status').textContent, 'Drag a control from the Toolbox view.', 'empty-drop', 'status explains the empty drop');
 
+    // --- the drop that never comes (Electron on Wayland): the release is detected from the dragover stream ---
+    // Reported 2026-09-26 on a native-Wayland VS Code: the drag highlights the canvas and the release does
+    // nothing. dragover is proof the native drag reaches the webview, so the END of the drag is detected
+    // instead of the drop: arm from a drag, hover, and the quiet stream after the release places the control.
+    msg({ type: 'armTool', tag: 'Button', from: 'drag' });
+    t.ok(/Release the drag on the canvas to place a Button/.test($('status').textContent || ''), 'drop-lost',
+        'a DRAG-arm says so (a click-arm keeps the click wording)');
+    posted.length = 0;
+    const hover = new s.window.MouseEvent('dragover', { bubbles: true, cancelable: true, clientX: 300, clientY: 90 });
+    hover.dataTransfer = { getData: () => '', types: [] };
+    $('canvas').dispatchEvent(hover);
+    t.equal(posted.filter((m) => m.type === 'drop').length, 0, 'drop-lost',
+        'hovering posts nothing yet — the drag may still be cancelled');
+    await new Promise((r) => setTimeout(r, 300));   // longer than the quiet-stream window
+    const rescued = posted.filter((m) => m.type === 'drop');
+    t.equal(rescued.length, 1, 'drop-lost', 'the quiet stream after the release places the armed control once');
+    t.equal(rescued[0].tag, 'Button', 'drop-lost', 'with the armed tag');
+    t.equal(`${Math.round(rescued[0].x)},${Math.round(rescued[0].y)}`, '300,90', 'drop-lost',
+        'at the last point the drag was seen over the canvas');
+    t.ok(posted.some((m) => m.type === 'webviewLog' && /drop event never arrived/.test(m.text)), 'drop-lost',
+        'and says so in the log, so the platform is on record rather than guessed at');
+    t.ok(posted.some((m) => m.type === 'webviewLog' && /dragover is arriving/.test(m.text)), 'drop-lost',
+        'the log also records that dragover DID arrive — that is what rules a dead drag out');
+
+    // --- a CLICK-armed tool must never be placed by that path ---
+    msg({ type: 'armTool', tag: 'TextBox' });   // no `from`: the click-to-place arm
+    posted.length = 0;
+    const hover2 = new s.window.MouseEvent('dragover', { bubbles: true, cancelable: true, clientX: 120, clientY: 60 });
+    hover2.dataTransfer = { getData: () => '', types: [] };
+    $('canvas').dispatchEvent(hover2);
+    await new Promise((r) => setTimeout(r, 300));
+    t.equal(posted.filter((m) => m.type === 'drop').length, 0, 'drop-lost',
+        'a click-armed tool waits for the click (the fallback is drag-only)');
+    t.ok(/Click the canvas to place a TextBox/.test($('status').textContent || ''), 'drop-lost',
+        'and the status still invites the click');
+
     // --- locked Body: right-clicking the empty body selects Body + disables destructive actions ---
     dispatch('contextmenu', 'canvas', { clientX: 10, clientY: 10 }); // hits Body (0,0,800,450), not Root
     t.equal(posted[posted.length - 1].name, 'Body', 'locked-menu', 'right-click selects Body');
