@@ -293,6 +293,9 @@
         dragHoverLogged: false,
         // The watchdog that decides a drag arm will never be completed by a drop (nothing reached us).
         noDragTimer: null,
+        // Set when that watchdog has concluded the platform delivers no drag at all: the release is then
+        // detected from the mouse instead (the first mouse event after the drag is the one after the release).
+        releaseRescue: false,
         showAdvanced: false,
         // Which Properties sections the user folded away, per control TYPE (e.g. { DataGrid: { data: true } }).
         // Remembered across designer reopens via the webview state (see loadCollapsed/persistCollapsed).
@@ -2173,6 +2176,7 @@
         state.pendingTag = null;
         state.dragArmed = false;
         state.dragHover = null;
+        state.releaseRescue = false;
         cancelNoDragWatchdog();
         updatePendingTool();
         let tag = armedTag;
@@ -2230,14 +2234,53 @@
             state.noDragTimer = null;
             if (!state.pendingTag || !state.dragArmed || state.dragHoverLogged) return;
             logToHost('no drag event reached the webview within 500 ms of the toolbox arming it — this '
-                + 'platform does not deliver the drag here (Electron/Wayland). The tool stays armed: a CLICK '
-                + 'on the canvas places it.');
-            // Completing a drag is impossible, so stop pretending: the click path takes over, and the
-            // status line now invites exactly that.
-            state.dragArmed = false;
+                + 'platform does not deliver the drag here (Electron/Wayland). The control is placed from the '
+                + 'RELEASE instead: the first mouse event after the drag is the movement that follows it. A '
+                + 'click on the canvas places it too.');
+            // The drag is invisible to us, so the RELEASE is detected from the mouse (see maybeRescueRelease).
+            // `pendingTag` and `dragArmed` stay set: both the rescue and a plain click can complete the arm.
+            state.releaseRescue = true;
             updatePendingTool();
         }, 500);
     }
+
+    // ---- the release that has to be read off the mouse (measured 2026-09-26) -----------------------
+    // The unconditional probe proved the extent of the platform failure: after the toolbox armed this
+    // designer, NOT ONE drag event arrived — not even dragenter. Electron starts a native drag and never hands
+    // it to the webview's renderer, so nothing in this document can see the drag itself. What CAN be seen is
+    // the mouse: while a native drag is in flight Chromium sends no mouse events here either, which makes the
+    // FIRST mouse event after the arming the one that follows the release. If it lands on the canvas, that is
+    // where the user let go — so the control goes there, and the gesture they actually made (drag it onto the
+    // canvas) completes.
+    //
+    // Only armed by the watchdog above, so a platform that DOES deliver drags never takes this path.
+    function maybeRescueRelease(e) {
+        if (!state.releaseRescue || !state.pendingTag || !state.dragArmed) return;
+        state.releaseRescue = false;                 // the first one only: anything later is a real hover
+        const r = els.canvas.getBoundingClientRect();
+        const inside = e.clientX >= r.left && e.clientX <= r.right
+            && e.clientY >= r.top && e.clientY <= r.bottom;
+        if (!inside) {
+            // Let go somewhere else: place nothing, but keep the tool armed for the click path.
+            state.dragArmed = false;
+            updatePendingTool();
+            logToHost('the first mouse event after the release was outside the canvas — nothing placed '
+                + '(the drag was let go elsewhere); the tool stays armed for a click');
+            return;
+        }
+        const tag = state.pendingTag;
+        state.pendingTag = null;
+        state.dragArmed = false;
+        state.dragHover = null;
+        updatePendingTool();
+        logToHost('the release was read off the mouse (' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
+            + ') — placing ' + tag + ' there, because this platform never delivered the drag itself');
+        const p = toDesign(e.clientX, e.clientY);
+        const hit = hitTest(p.x, p.y);
+        post({ type: 'drop', tag, parentName: hit ? hit.name : null, x: p.x, y: p.y });
+    }
+    document.addEventListener('mousemove', maybeRescueRelease, true);
+    document.addEventListener('mouseup', maybeRescueRelease, true);
 
     function cancelNoDragWatchdog() {
         if (state.noDragTimer) { clearTimeout(state.noDragTimer); state.noDragTimer = null; }
@@ -2297,7 +2340,9 @@
         // cursor is needed while a toolbox tool is armed (the crosshair overlay is the pointer).
         if (state.pendingTag) {
             els.status.textContent = state.dragArmed
-                ? 'Release the drag on the canvas to place a ' + state.pendingTag + ' (Esc cancels).'
+                ? (state.releaseRescue
+                    ? 'Release on the canvas to place a ' + state.pendingTag + ' — or click it (Esc cancels).'
+                    : 'Release the drag on the canvas to place a ' + state.pendingTag + ' (Esc cancels).')
                 : 'Click the canvas to place a ' + state.pendingTag + ' (Esc to cancel).';
             return;
         }
@@ -2455,6 +2500,7 @@
         if (e.key === 'Escape' && state.pendingTag) {
             state.pendingTag = null;
             state.dragArmed = false;
+            state.releaseRescue = false;
             cancelDropQuietTimer();
             cancelNoDragWatchdog();
             updatePendingTool();
@@ -3422,6 +3468,7 @@
                 state.dragArmed = msg.from === 'drag';
                 state.dragHover = null;
                 state.dragHoverLogged = false;
+                state.releaseRescue = false;
                 cancelDropQuietTimer();
                 updatePendingTool();
                 // The arm is the ONE half of a toolbox drag that always arrives, so say so: from here on the

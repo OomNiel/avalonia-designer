@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.5
+// BUNDLED-COPY: 0.12.6
 using System;
 using System.Runtime.CompilerServices;
 using Avalonia;

@@ -438,10 +438,10 @@ module.exports = async (t) => {
         'and the status still invites the click');
 
     // --- a drag arm that NO drag event ever reaches ------------------------------------------------
-    // This is the report of 2026-09-26, exactly: the Output channel held one line ("armTool posted") and
-    // nothing else — no dragover, no drop — because the platform never handed the native drag to the
-    // webview. Recognising that is what turns a dead drag into an answer: the tool STAYS armed and the
-    // status switches to the click wording, so the drag still leads somewhere.
+    // Measured on the reporter's machine (2026-09-26): after the arm arrived, not ONE drag event showed up —
+    // dragenter included — because Electron starts the native drag and never hands it to the webview. Two
+    // things have to hold then: the log says so, and the gesture still works. The release is read off the
+    // mouse (the first mouse event after the drag is the movement that follows it), with a click as backstop.
     msg({ type: 'armTool', tag: 'TextBlock', from: 'drag' });
     t.ok(/Release the drag on the canvas to place a TextBlock/.test($('status').textContent || ''), 'no-drag',
         'the drag arm starts out expecting a release');
@@ -449,12 +449,38 @@ module.exports = async (t) => {
     await new Promise((r) => setTimeout(r, 600));   // past the 500 ms watchdog
     t.ok(posted.some((m) => m.type === 'webviewLog' && /no drag event reached the webview/.test(m.text)), 'no-drag',
         'the watchdog records that the platform delivered no drag event at all');
-    t.ok(/Click the canvas to place a TextBlock/.test($('status').textContent || ''), 'no-drag',
-        'and the status switches to the CLICK wording — the half that always works');
+    t.ok(/Release on the canvas to place a TextBlock — or click it/.test($('status').textContent || ''), 'no-drag',
+        'and the status offers both ways to finish the gesture');
+
+    const doc = $('canvas').ownerDocument;
+    doc.dispatchEvent(new s.window.MouseEvent('mousemove', { bubbles: true, clientX: 250, clientY: 150 }));
+    const fromMouse = posted.filter((m) => m.type === 'drop');
+    t.equal(fromMouse.length, 1, 'no-drag', 'the first mouse event after the release places the armed tool');
+    t.equal(fromMouse[0].tag, 'TextBlock', 'no-drag', 'the right one');
+    t.equal(`${Math.round(fromMouse[0].x)},${Math.round(fromMouse[0].y)}`, '250,150', 'no-drag',
+        'where the pointer was — that is where the user let go');
+    t.ok(posted.some((m) => m.type === 'webviewLog' && /release was read off the mouse/.test(m.text)), 'no-drag',
+        'and the log says the release came from the mouse, not from a drop event');
+    doc.dispatchEvent(new s.window.MouseEvent('mousemove', { bubbles: true, clientX: 260, clientY: 170 }));
+    t.equal(posted.filter((m) => m.type === 'drop').length, 1, 'no-drag',
+        'a later movement is an ordinary hover and places nothing');
+
+    // --- let go somewhere else: nothing is placed, and the click path stays available ---
+    msg({ type: 'armTool', tag: 'Button', from: 'drag' });
+    posted.length = 0;
+    await new Promise((r) => setTimeout(r, 600));
+    doc.dispatchEvent(new s.window.MouseEvent('mousemove', { bubbles: true, clientX: 900, clientY: 600 })); // outside the 800x450 canvas
+    t.equal(posted.filter((m) => m.type === 'drop').length, 0, 'no-drag',
+        'letting go off the canvas places nothing');
+    t.ok(posted.some((m) => m.type === 'webviewLog' && /was outside the canvas/.test(m.text)), 'no-drag',
+        'and the log says why nothing happened');
+    t.ok(/Click the canvas to place a Button/.test($('status').textContent || ''), 'no-drag',
+        'the tool stays armed, so a click still finishes it');
+    posted.length = 0;
     dispatch('click', 'canvas', { clientX: 210, clientY: 130 });
     const healed = posted.filter((m) => m.type === 'drop');
-    t.equal(healed.length, 1, 'no-drag', 'so a click on the canvas places the tool the drag armed');
-    t.equal(healed[0].tag, 'TextBlock', 'no-drag', 'the right one');
+    t.equal(healed.length, 1, 'no-drag', 'and that click places it');
+    t.equal(healed[0].tag, 'Button', 'no-drag', 'the right one');
     t.equal(`${Math.round(healed[0].x)},${Math.round(healed[0].y)}`, '210,130', 'no-drag', 'where it was clicked');
 
     // --- locked Body: right-clicking the empty body selects Body + disables destructive actions ---
