@@ -10,7 +10,7 @@ const {
     GRUMPY_ANCHOR_PROPS, CHROME_WINDOW_PROPS, hasCustomColors, THEME_COLOR_KEYS
 } = require('../../out/propertyCatalog.js');
 
-const NS = 'xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:chrome="using:AvaloniaChrome"';
+const NS = 'xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:chrome="using:AvaloniaChrome" xmlns:spread="using:AvaloniaSpreadsheet"';
 
 function elFrom(xml) {
     const doc = new DOMParser().parseFromString(`<root ${NS}>${xml}</root>`, 'text/xml');
@@ -40,7 +40,19 @@ module.exports = async (t) => {
     const onDock = elFrom('<DockPanel><Button x:Name="s1" Content="Ready"/></DockPanel>');
     const dockBtn = childEls(onDock)[0];
     t.ok(keyOf(propertyDefsFor(dockBtn), 'chrome:AnchorHelper.Anchor'), 'props', 'DockPanel child (Status Bar item) has Anchor');
-
+    // --- The spreadsheet is dockable: it is offered the same Dock row the charts get (2026-09-26) ---
+    // A sheet is usually ONE REGION of a form (a grid docked Bottom under a body, or Left beside it), so
+    // the row matters more here than for a control placed at an exact spot. The key is the ATTACHED
+    // DockPanel.Dock — Avalonia reads that from the sheet wherever it sits, so no property of its own is
+    // needed — and the designer wraps it in a DockPanel when it is not in one already.
+    const sheetEl = elFrom('<Canvas><spread:GrumpySheet x:Name="sh1"/></Canvas>');
+    const sheetChild = childEls(sheetEl)[0];
+    const sheetDock = keyOf(propertyDefsFor(sheetChild), 'DockPanel.Dock');
+    t.ok(!!sheetDock, 'props', 'the spreadsheet offers the Dock row');
+    t.equal(sheetDock && sheetDock.label, 'Dock', 'props', 'labelled Dock');
+    t.equal(JSON.stringify(sheetDock && sheetDock.options),
+        JSON.stringify(['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom']), 'props',
+        'with the same choices as every other dockable control');
     // --- A bare root Button (no element parent) gets no Anchor ---
     const rootBtn = elFrom('<Button x:Name="r1" Content="Root"/>');
     t.equal(!!keyOf(propertyDefsFor(rootBtn), 'chrome:AnchorHelper.Anchor'), false, 'props', 'root (parentless) Button has no Anchor');

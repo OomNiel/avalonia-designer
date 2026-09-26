@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.14
+// BUNDLED-COPY: 0.12.15
 // ColumnFollower.cs — BUNDLED RESOURCE (the VB twin is resources/ColumnFollower.vb). Copied into
 // every generated project, next to AnchorHelper.cs / ExifImageLoader.cs.
 //

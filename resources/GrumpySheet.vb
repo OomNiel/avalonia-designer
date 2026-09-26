@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.14
+' BUNDLED-COPY: 0.12.15
 ' GrumpySheet.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpySheet.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb / GrumpyCharts.vb.
 '
@@ -339,6 +339,15 @@ Namespace Global.AvaloniaSpreadsheet
 
         Private _scrollX As Double
         Private _scrollY As Double
+
+        ' ---- formulas ---------------------------------------------------------------------------
+        ' What each formula cell works out to, kept until any cell's text changes (see InvalidateValues).
+        ' Working it out on demand costs one pass per EDIT rather than one per repaint, and a chain of
+        ' formulas — B1=A1*2, C1=B1+1 — is walked once instead of once per cell drawn.
+        Private ReadOnly _values As New Dictionary(Of Long, String)()
+        ' The cells currently being worked out, so a formula that reaches itself is named (#CYCLE!) rather
+        ' than recursing until the stack runs out.
+        Private ReadOnly _evaluating As New HashSet(Of Long)()
 
         ' ---- per-column widths and per-row heights -----------------------------------------------
         ' Sparse on purpose: the sheet's ColumnWidth/RowHeight answer for every column and row, and these
@@ -851,6 +860,7 @@ Namespace Global.AvaloniaSpreadsheet
             End If
 
             OnCellChanged(row, column, value)
+            InvalidateValues()                 ' every formula that reads this cell has to be worked out again
             InvalidateVisual()
         End Sub
 
@@ -1302,6 +1312,7 @@ Namespace Global.AvaloniaSpreadsheet
 
         Private Sub OnCellsChanged(sender As Object, e As NotifyCollectionChangedEventArgs)
             RebuildLookup()
+            InvalidateValues()
             InvalidateVisual()
         End Sub
 
@@ -2267,7 +2278,9 @@ Namespace Global.AvaloniaSpreadsheet
                         ' typing looked invisible until the cell lost focus.
                         Dim inPlaceEdit As Boolean = _editing AndAlso Not _barFocused AndAlso
                             row = _activeRow AndAlso column = _activeColumn
-                        Dim text As String = If(inPlaceEdit, _editText, GetCell(row, column))
+                        ' A formula cell draws what it WORKED OUT TO; its own text (the formula) is what the fx
+                        ' box and the editor show, which is where it is read and written.
+                        Dim text As String = If(inPlaceEdit, _editText, ValueOf(row, column))
                         If text.Length = 0 AndAlso Not inPlaceEdit Then
                             Continue For
                         End If
@@ -3636,6 +3649,1032 @@ Namespace Global.AvaloniaSpreadsheet
             Return value.ToString("F" & decimals.ToString(CultureInfo.InvariantCulture),
                 CultureInfo.InvariantCulture)
         End Function
+
+        ' ---- formulas -----------------------------------------------------------------------------
+        '
+        ' A cell whose text starts with '=' is a FORMULA. The text is what the user typed and what the fx box
+        ' and the editor show; the GRID draws what it works out to (ValueOf), so a sheet reads as its results
+        ' while its formulas stay visible where they are edited — the way every spreadsheet behaves.
+        '
+        ' The dialect is the small, honest subset a result grid needs: the four operators, ^ and &,
+        ' comparisons, parentheses, A1 references, A1:B3 ranges, and the functions below. What cannot be
+        ' worked out has a NAME — #VALUE!, #NAME?, #REF!, #DIV/0!, #CYCLE! — rather than drawing blank or
+        ' throwing, because a form is not a place to crash.
+        '
+        ' VB traps this port had to respect: "Mod", "Not" and "Name" are all taken (an operator, an operator,
+        ' and a control's own property), IsNumeric is a built-in function, and a Structure cannot have a
+        ' member called Single — so the members are Modulo / LogicalNot / ReadName / IsNumericValue, and the
+        ' FormulaArg factories are OfSingle / OfRange.
+
+        Private Const DivisionByZero As String = "#DIV/0!"
+        Private Const ValueError As String = "#VALUE!"
+        Private Const NameError As String = "#NAME?"
+        Private Const RefError As String = "#REF!"
+        Private Const CycleError As String = "#CYCLE!"
+
+        ''' <summary>How deep a formula may nest before it is refused. A hand-typed monster
+        ''' (=((((… would otherwise recurse until the stack ran out, which takes the whole app down.</summary>
+        Private Const FormulaMaxDepth As Integer = 64
+
+        ''' <summary>A cell's identity as one number, for the two collections above.</summary>
+        Private Shared Function CellKey(row As Integer, column As Integer) As Long
+            Return (CLng(row) << 20) Or CUInt(column)
+        End Function
+
+        ''' <summary>Forgets what every formula worked out. Called whenever any cell's text changes, which
+        ''' is the only thing a formula result depends on.</summary>
+        Private Sub InvalidateValues()
+            _values.Clear()
+        End Sub
+
+        ''' <summary>
+        ''' What a cell SHOWS: its text, or — for a formula — what it works out to. <see cref="GetCell"/>
+        ''' still returns the formula itself, which is what the fx box reads and edits.
+        ''' </summary>
+        Public Function ValueOf(row As Integer, column As Integer) As String
+            Dim text As String = GetCell(row, column)
+            If text.Length < 2 OrElse text(0) <> "="c Then
+                Return text
+            End If
+
+            Dim key As Long = CellKey(row, column)
+            Dim cached As String = Nothing
+            If _values.TryGetValue(key, cached) Then
+                Return cached
+            End If
+
+            Dim result As String = EvaluateFormula(row, column, text.Substring(1))
+            _values(key) = result
+            Return result
+        End Function
+
+        Private Function EvaluateFormula(row As Integer, column As Integer, body As String) As String
+            Dim key As Long = CellKey(row, column)
+            If Not _evaluating.Add(key) Then
+                Return CycleError             ' already being worked out further up: this cell reaches itself
+            End If
+
+            Try
+                Return FormulaFormat(New FormulaParser(Me, row, column, body).Work())
+            Catch failure As FormulaError
+                Return failure.Code
+            Catch ex As Exception
+                Return ValueError            ' a formula must never be able to take the app down
+            Finally
+                _evaluating.Remove(key)
+            End Try
+        End Function
+
+        ''' <summary>What a formula is working with: a number, TRUE/FALSE, text, blank, or an error name.</summary>
+        Private Enum FormulaKind
+            Blank
+            Number
+            Bool
+            Text
+            [Error]
+        End Enum
+
+        Private Structure FormulaValue
+            Public Kind As FormulaKind
+            Public Number As Double
+            Public Text As String
+
+            Public Shared Function BlankValue() As FormulaValue
+                Dim value As FormulaValue
+                value.Kind = FormulaKind.Blank
+                value.Number = 0.0
+                value.Text = String.Empty
+                Return value
+            End Function
+
+            Public Shared Function OfNumber(number As Double) As FormulaValue
+                Dim value As FormulaValue
+                value.Kind = FormulaKind.Number
+                value.Number = number
+                value.Text = String.Empty
+                Return value
+            End Function
+
+            Public Shared Function OfBool(flag As Boolean) As FormulaValue
+                Dim value As FormulaValue
+                value.Kind = FormulaKind.Bool
+                value.Number = If(flag, 1.0, 0.0)
+                value.Text = String.Empty
+                Return value
+            End Function
+
+            Public Shared Function OfText(text As String) As FormulaValue
+                Dim value As FormulaValue
+                value.Kind = FormulaKind.Text
+                value.Number = 0.0
+                value.Text = If(text Is Nothing, String.Empty, text)
+                Return value
+            End Function
+
+            Public Shared Function Err(code As String) As FormulaValue
+                Dim value As FormulaValue
+                value.Kind = FormulaKind.Error
+                value.Number = 0.0
+                value.Text = code
+                Return value
+            End Function
+        End Structure
+
+        ''' <summary>A formula that cannot be worked out. The code is one of the #… names above.</summary>
+        Private NotInheritable Class FormulaError
+            Inherits Exception
+
+            Public Sub New(code As String)
+                MyBase.New(code)
+                Me.Code = code
+            End Sub
+
+            Public ReadOnly Property Code As String
+        End Class
+
+        ''' <summary>The text a result is drawn as: a whole number without a decimal point, a fraction with up
+        ''' to six places, TRUE/FALSE for a comparison, and an error as its own name.</summary>
+        Private Shared Function FormulaFormat(value As FormulaValue) As String
+            Select Case value.Kind
+                Case FormulaKind.Number
+                    If Double.IsNaN(value.Number) OrElse Double.IsInfinity(value.Number) Then
+                        Return ValueError
+                    End If
+
+                    Dim rounded As Double = Math.Round(value.Number, 6)
+                    If Math.Abs(rounded) < 0.000000001 Then
+                        Return "0"
+                    End If
+
+                    If Math.Abs(rounded - Math.Round(rounded)) < 0.000000001 Then
+                        Return Math.Round(rounded).ToString(CultureInfo.InvariantCulture)
+                    End If
+
+                    Return rounded.ToString("0.######", CultureInfo.InvariantCulture)
+                Case FormulaKind.Bool
+                    Return If(value.Number <> 0.0, "TRUE", "FALSE")
+                Case FormulaKind.Error
+                    Return value.Text
+                Case FormulaKind.Text
+                    Return value.Text
+                Case Else
+                    Return String.Empty
+            End Select
+        End Function
+
+        ''' <summary>True when a formatted result is one of the error names, so a formula that reads it
+        ''' hands the error on instead of treating "#DIV/0!" as a word.</summary>
+        Private Shared Function IsErrorName(text As String) As Boolean
+            Return text = DivisionByZero OrElse text = ValueError OrElse text = NameError OrElse
+                text = RefError OrElse text = CycleError
+        End Function
+
+        ''' <summary>True when a value takes part in arithmetic on its own (a number, TRUE/FALSE, a blank,
+        ''' or text that reads as a number).</summary>
+        Private Shared Function IsNumericValue(value As FormulaValue) As Boolean
+            If value.Kind = FormulaKind.Number OrElse value.Kind = FormulaKind.Bool OrElse
+                value.Kind = FormulaKind.Blank Then
+                Return True
+            End If
+
+            If value.Kind = FormulaKind.Error Then
+                Throw New FormulaError(value.Text)
+            End If
+
+            Dim parsed As Double = 0.0
+            Return Double.TryParse(value.Text, NumberStyles.Float, CultureInfo.InvariantCulture, parsed)
+        End Function
+
+        ''' <summary>A value as a number for arithmetic: blank counts as zero, text that reads as a number
+        ''' counts as one, and anything else is #VALUE!.</summary>
+        Private Shared Function Numeric(value As FormulaValue) As Double
+            If value.Kind = FormulaKind.Number OrElse value.Kind = FormulaKind.Bool Then
+                Return value.Number
+            End If
+
+            If value.Kind = FormulaKind.Blank Then
+                Return 0.0
+            End If
+
+            If value.Kind = FormulaKind.Error Then
+                Throw New FormulaError(value.Text)
+            End If
+
+            Dim parsed As Double = 0.0
+            If Double.TryParse(value.Text, NumberStyles.Float, CultureInfo.InvariantCulture, parsed) Then
+                Return parsed
+            End If
+
+            Throw New FormulaError(ValueError)
+        End Function
+
+        ''' <summary>True when a value is a number that is not zero, TRUE/FALSE as themselves, and the words
+        ''' TRUE/FALSE; anything else is #VALUE! — how IF, AND and OR read their condition.</summary>
+        Private Shared Function Truthy(value As FormulaValue) As Boolean
+            If value.Kind = FormulaKind.Number OrElse value.Kind = FormulaKind.Bool Then
+                Return value.Number <> 0.0
+            End If
+
+            If value.Kind = FormulaKind.Blank Then
+                Return False
+            End If
+
+            If value.Kind = FormulaKind.Error Then
+                Throw New FormulaError(value.Text)
+            End If
+
+            Dim text As String = value.Text.Trim()
+            If String.Equals(text, "TRUE", StringComparison.OrdinalIgnoreCase) Then
+                Return True
+            End If
+
+            If String.Equals(text, "FALSE", StringComparison.OrdinalIgnoreCase) Then
+                Return False
+            End If
+
+            Throw New FormulaError(ValueError)
+        End Function
+
+        ''' <summary>A referenced cell's value: blank for an empty cell, its TEXT for a literal one, and for a
+        ''' formula cell what it worked out to (handing on its error if it has one).</summary>
+        Private Function Reference(row As Integer, column As Integer) As FormulaValue
+            If row < 1 OrElse column < 1 OrElse row > RowCount OrElse column > ColumnCount Then
+                Throw New FormulaError(RefError)
+            End If
+
+            Dim text As String = GetCell(row, column)
+            If text.Length = 0 Then
+                Return FormulaValue.BlankValue()
+            End If
+
+            If text(0) = "="c Then
+                Dim shown As String = ValueOf(row, column)
+                Return If(IsErrorName(shown), FormulaValue.Err(shown), FormulaValue.OfText(shown))
+            End If
+
+            Return FormulaValue.OfText(text)
+        End Function
+
+        ''' <summary>
+        ''' Reads "A1" / "$A$1" AT AN OFFSET in a formula, reporting how many characters it used. This is not
+        ''' <see cref="ParseCellName"/>, which reads a whole string and knows nothing of "$": a formula is
+        ''' read left to right, so the address has to be found where it starts and the reader has to be told
+        ''' where it ended. Bounds are NOT checked here — the caller decides (a reference off the sheet is
+        ''' #REF!, a range is clipped to the sheet).
+        ''' </summary>
+        Private Shared Function TryReadAddress(text As String, at As Integer, ByRef row As Integer,
+            ByRef column As Integer, ByRef used As Integer) As Boolean
+            row = 0
+            column = 0
+            used = 0
+            Dim index As Integer = at
+            While index < text.Length AndAlso text(index) = "$"c
+                index += 1
+            End While
+
+            Dim letters As Integer = 0
+            Dim column1 As Integer = 0
+            While index < text.Length
+                Dim c As Char = text(index)
+                Dim upper As Char = If(c >= "a"c AndAlso c <= "z"c, ChrW(AscW(c) - 32), c)
+                If upper < "A"c OrElse upper > "Z"c Then
+                    Exit While
+                End If
+
+                column1 = column1 * 26 + (AscW(upper) - AscW("A"c) + 1)
+                letters += 1
+                index += 1
+            End While
+
+            While index < text.Length AndAlso text(index) = "$"c
+                index += 1
+            End While
+
+            Dim digits As Integer = 0
+            Dim row1 As Integer = 0
+            While index < text.Length AndAlso text(index) >= "0"c AndAlso text(index) <= "9"c
+                Dim digit As Integer = AscW(text(index)) - AscW("0"c)
+                If row1 > 10000000 Then
+                    Return False
+                End If
+
+                row1 = row1 * 10 + digit
+                digits += 1
+                index += 1
+            End While
+
+            If letters < 1 OrElse letters > 3 OrElse digits < 1 OrElse digits > 7 Then
+                Return False
+            End If
+
+            row = row1
+            column = column1
+            used = index - at
+            Return True
+        End Function
+
+        ''' <summary>
+        ''' Reads a formula: the four operators, ^ and &amp;, comparisons, parentheses, "text", A1 references,
+        ''' A1:B3 ranges and the function set. Left to right, one pass, throwing <see cref="FormulaError"/>
+        ''' with the name the cell should show.
+        ''' </summary>
+        Private NotInheritable Class FormulaParser
+            Private ReadOnly _sheet As GrumpySheet
+            Private ReadOnly _row As Integer
+            Private ReadOnly _column As Integer
+            Private ReadOnly _text As String
+            Private _at As Integer
+            Private _depth As Integer
+
+            Public Sub New(sheet As GrumpySheet, row As Integer, column As Integer, text As String)
+                _sheet = sheet
+                _row = row
+                _column = column
+                _text = text
+            End Sub
+
+            ''' <summary>Works the whole formula out. Anything left over at the end is a typo, not a value.</summary>
+            Public Function Work() As FormulaValue
+                Dim value As FormulaValue = Comparison()
+                SkipSpaces()
+                If _at <> _text.Length Then
+                    Throw New FormulaError(ValueError)
+                End If
+
+                Return value
+            End Function
+
+            ' ---- the expression ladder -------------------------------------------------------------
+
+            Private Function Comparison() As FormulaValue
+                Dim left As FormulaValue = Concat()
+                Dim op As String = ComparisonOperator()
+                If op.Length = 0 Then
+                    Return left
+                End If
+
+                Return FormulaValue.OfBool(Compare(left, Concat(), op))
+            End Function
+
+            Private Function ComparisonOperator() As String
+                SkipSpaces()
+                Dim c As Char = Peek()
+                If c = "="c Then
+                    _at += 1
+                    Return "="
+                End If
+
+                If c <> "<"c AndAlso c <> ">"c Then
+                    Return String.Empty
+                End If
+
+                _at += 1
+                Dim nextChar As Char = Peek()
+                If nextChar = "="c Then
+                    _at += 1
+                    Return If(c = "<"c, "<=", ">=")
+                End If
+
+                If c = "<"c AndAlso nextChar = ">"c Then
+                    _at += 1
+                    Return "<>"
+                End If
+
+                Return If(c = "<"c, "<", ">")
+            End Function
+
+            Private Shared Function Compare(left As FormulaValue, right As FormulaValue, op As String) As Boolean
+                Dim sign As Integer
+                If IsNumericValue(left) AndAlso IsNumericValue(right) Then
+                    sign = Numeric(left).CompareTo(Numeric(right))
+                Else
+                    Dim l As String = If(left.Kind = FormulaKind.Error, left.Text, AsText(left))
+                    Dim r As String = If(right.Kind = FormulaKind.Error, right.Text, AsText(right))
+                    sign = String.Compare(l, r, StringComparison.OrdinalIgnoreCase)
+                End If
+
+                Select Case op
+                    Case "="
+                        Return sign = 0
+                    Case "<>"
+                        Return sign <> 0
+                    Case "<"
+                        Return sign < 0
+                    Case ">"
+                        Return sign > 0
+                    Case "<="
+                        Return sign <= 0
+                    Case Else
+                        Return sign >= 0
+                End Select
+            End Function
+
+            ''' <summary>A value as the text a comparison and &amp; see.</summary>
+            Private Shared Function AsText(value As FormulaValue) As String
+                Return If(value.Kind = FormulaKind.Text, value.Text, FormulaFormat(value))
+            End Function
+
+            Private Function Concat() As FormulaValue
+                Dim value As FormulaValue = Additive()
+                Do
+                    SkipSpaces()
+                    If Peek() <> "&"c Then
+                        Return value
+                    End If
+
+                    _at += 1
+                    value = FormulaValue.OfText(AsText(value) & AsText(Additive()))
+                Loop
+            End Function
+
+            Private Function Additive() As FormulaValue
+                Dim value As FormulaValue = Multiplicative()
+                Do
+                    SkipSpaces()
+                    Dim c As Char = Peek()
+                    If c <> "+"c AndAlso c <> "-"c Then
+                        Return value
+                    End If
+
+                    _at += 1
+                    Dim right As FormulaValue = Multiplicative()
+                    value = FormulaValue.OfNumber(If(c = "+"c, Numeric(value) + Numeric(right),
+                        Numeric(value) - Numeric(right)))
+                Loop
+            End Function
+
+            Private Function Multiplicative() As FormulaValue
+                Dim value As FormulaValue = Power()
+                Do
+                    SkipSpaces()
+                    Dim c As Char = Peek()
+                    If c <> "*"c AndAlso c <> "/"c Then
+                        Return value
+                    End If
+
+                    _at += 1
+                    Dim right As FormulaValue = Power()
+                    Dim left As Double = Numeric(value)
+                    Dim divisor As Double = Numeric(right)
+                    If c = "/"c AndAlso Math.Abs(divisor) < Double.Epsilon Then
+                        Throw New FormulaError(DivisionByZero)
+                    End If
+
+                    value = FormulaValue.OfNumber(If(c = "*"c, left * divisor, left / divisor))
+                Loop
+            End Function
+
+            Private Function Power() As FormulaValue
+                Dim value As FormulaValue = Unary()
+                SkipSpaces()
+                If Peek() <> "^"c Then
+                    Return value
+                End If
+
+                _at += 1
+                Dim exponent As Double = Numeric(Power())     ' right-associative, as every spreadsheet has it
+                Dim baseValue As Double = Numeric(value)
+                If Math.Abs(baseValue) < Double.Epsilon AndAlso exponent < 0.0 Then
+                    Throw New FormulaError(DivisionByZero)    ' 0^-1 is a division by zero, not infinity
+                End If
+
+                Return FormulaValue.OfNumber(Math.Pow(baseValue, exponent))
+            End Function
+
+            Private Function Unary() As FormulaValue
+                Dim negative As Boolean = False
+                Do
+                    SkipSpaces()
+                    Dim c As Char = Peek()
+                    If c = "-"c Then
+                        negative = Not negative
+                        _at += 1
+                        Continue Do
+                    End If
+
+                    If c = "+"c Then
+                        _at += 1
+                        Continue Do
+                    End If
+
+                    Exit Do
+                Loop
+
+                Dim value As FormulaValue = Primary()
+                Return If(negative, FormulaValue.OfNumber(-Numeric(value)), value)
+            End Function
+
+            Private Function Primary() As FormulaValue
+                SkipSpaces()
+                Dim c As Char = Peek()
+                If c = "("c Then
+                    _at += 1
+                    Enter()
+                    Dim inner As FormulaValue = Comparison()
+                    Leave()
+                    SkipSpaces()
+                    If Peek() <> ")"c Then
+                        Throw New FormulaError(ValueError)
+                    End If
+
+                    _at += 1
+                    Return inner
+                End If
+
+                If c = """"c Then
+                    Return FormulaValue.OfText(ReadText())
+                End If
+
+                If (c >= "0"c AndAlso c <= "9"c) OrElse c = "."c Then
+                    Return FormulaValue.OfNumber(ReadNumber())
+                End If
+
+                If Char.IsLetter(c) OrElse c = "$"c OrElse c = "_"c Then
+                    Return ReadName()
+                End If
+
+                Throw New FormulaError(ValueError)
+            End Function
+
+            ''' <summary>A name is either a cell reference (A1) or a function call (SUM(…)), and nothing else
+            ''' has a value here — an unknown word is #NAME?, which is what a typo deserves.
+            ''' (Called "ReadName", not "Name": a control already HAS a Name property.)</summary>
+            Private Function ReadName() As FormulaValue
+                Dim start As Integer = _at
+                While _at < _text.Length
+                    Dim c As Char = _text(_at)
+                    If Char.IsLetterOrDigit(c) OrElse c = "$"c OrElse c = "_"c OrElse c = "."c Then
+                        _at += 1
+                        Continue While
+                    End If
+
+                    Exit While
+                End While
+
+                Dim name As String = _text.Substring(start, _at - start)
+                SkipSpaces()
+                If Peek() = "("c Then
+                    Return CallFunction(name.ToUpperInvariant())
+                End If
+
+                Dim row1 As Integer = 0
+                Dim column1 As Integer = 0
+                Dim used As Integer = 0
+                If TryReadAddress(_text, start, row1, column1, used) AndAlso used = name.Length Then
+                    ' $ on an address is accepted and ignored: the sheet has no copy/paste yet, so there is no
+                    ' relative/absolute distinction for it to carry.
+                    Return _sheet.Reference(row1, column1)
+                End If
+
+                Throw New FormulaError(NameError)
+            End Function
+
+            ' ---- the pieces ------------------------------------------------------------------------
+
+            Private Sub Enter()
+                _depth += 1
+                If _depth > FormulaMaxDepth Then
+                    Throw New FormulaError(ValueError)
+                End If
+            End Sub
+
+            Private Sub Leave()
+                _depth -= 1
+            End Sub
+
+            Private Function ReadText() As String
+                _at += 1                                ' the opening quote
+                Dim builder As New System.Text.StringBuilder()
+                Do
+                    If _at >= _text.Length Then
+                        Throw New FormulaError(ValueError)     ' unterminated
+                    End If
+
+                    Dim c As Char = _text(_at)
+                    _at += 1
+                    If c = """"c Then
+                        If _at < _text.Length AndAlso _text(_at) = """"c Then
+                            _at += 1                    ' "" is one quote, as in every dialect
+                            builder.Append(""""c)
+                            Continue Do
+                        End If
+
+                        Return builder.ToString()
+                    End If
+
+                    builder.Append(c)
+                Loop
+            End Function
+
+            Private Function ReadNumber() As Double
+                Dim start As Integer = _at
+                While _at < _text.Length
+                    Dim c As Char = _text(_at)
+                    If (c >= "0"c AndAlso c <= "9"c) OrElse c = "."c Then
+                        _at += 1
+                        Continue While
+                    End If
+
+                    Exit While
+                End While
+
+                Dim body As String = _text.Substring(start, _at - start)
+                Dim value As Double = 0.0
+                If Not Double.TryParse(body, NumberStyles.Float, CultureInfo.InvariantCulture, value) Then
+                    Throw New FormulaError(ValueError)
+                End If
+
+                Return value
+            End Function
+
+            Private Function Peek() As Char
+                Return If(_at < _text.Length, _text(_at), ChrW(0))
+            End Function
+
+            Private Sub SkipSpaces()
+                While _at < _text.Length AndAlso (_text(_at) = " "c OrElse _text(_at) = ChrW(9))
+                    _at += 1
+                End While
+            End Sub
+
+            Private Sub Expect(c As Char)
+                SkipSpaces()
+                If Peek() <> c Then
+                    Throw New FormulaError(ValueError)
+                End If
+
+                _at += 1
+            End Sub
+
+            ''' <summary>Walks over one argument without working it out — how IF finds both of its branches
+            ''' before deciding which one to evaluate.</summary>
+            Private Sub SkipArgument()
+                Dim depth As Integer = 0
+                While _at < _text.Length
+                    Dim c As Char = _text(_at)
+                    If c = """"c Then
+                        ReadText()
+                        Continue While
+                    End If
+
+                    If c = "("c Then
+                        depth += 1
+                    ElseIf c = ")"c Then
+                        If depth = 0 Then
+                            Return                      ' the call's own closing paren: the argument ended here
+                        End If
+
+                        depth -= 1
+                    ElseIf c = ","c AndAlso depth = 0 Then
+                        Return
+                    End If
+
+                    _at += 1
+                End While
+            End Sub
+
+            ' ---- functions -------------------------------------------------------------------------
+
+            ''' <summary>"CallFunction", not "Call": Call is a VB keyword and neither twin may use it.</summary>
+            Private Function CallFunction(name As String) As FormulaValue
+                If name = "IF" Then
+                    Return CallIf()
+                End If
+
+                Expect("("c)
+                Dim args As New List(Of FormulaArg)()
+                SkipSpaces()
+                If Peek() <> ")"c Then
+                    Do
+                        args.Add(Argument())
+                        SkipSpaces()
+                        If Peek() <> ","c Then
+                            Exit Do
+                        End If
+
+                        _at += 1
+                    Loop
+                End If
+
+                Expect(")"c)
+                Return Apply(name, args)
+            End Function
+
+            ''' <summary>
+            ''' IF is the one function that does not work out all of its arguments: =IF(A1=0,0,1/A1) is the
+            ''' usual way to guard a division, and that only works when the branch NOT taken is never
+            ''' evaluated. So its branches are skipped over and the one that is taken is parsed on its own.
+            ''' </summary>
+            Private Function CallIf() As FormulaValue
+                Expect("("c)
+                Dim condition As Boolean = Truthy(Comparison())
+                Expect(","c)
+                Dim thenStart As Integer = _at
+                SkipArgument()
+                Dim thenEnd As Integer = _at
+                Dim elseStart As Integer = thenEnd
+                Dim elseEnd As Integer = thenEnd
+                SkipSpaces()
+                If Peek() = ","c Then
+                    _at += 1
+                    elseStart = _at
+                    SkipArgument()
+                    elseEnd = _at
+                    SkipSpaces()
+                End If
+
+                If Peek() = ","c Then
+                    _at += 1
+                    SkipArgument()                  ' IF takes three arguments; anything beyond is ignored
+                End If
+
+                Expect(")"c)
+                Dim start As Integer = If(condition, thenStart, elseStart)
+                Dim [end] As Integer = If(condition, thenEnd, elseEnd)
+                If [end] <= start Then
+                    Return FormulaValue.BlankValue()     ' a branch that was left out is blank
+                End If
+
+                Return New FormulaParser(_sheet, _row, _column, _text.Substring(start, [end] - start)).Work()
+            End Function
+
+            ''' <summary>One argument: a range (A1:B3 — only meaningful as an argument) or an expression.</summary>
+            Private Function Argument() As FormulaArg
+                SkipSpaces()
+                Dim save As Integer = _at
+                Dim row1 As Integer = 0
+                Dim column1 As Integer = 0
+                Dim used As Integer = 0
+                If TryReadAddress(_text, _at, row1, column1, used) Then
+                    Dim probe As Integer = _at + used
+                    While probe < _text.Length AndAlso (_text(probe) = " "c OrElse _text(probe) = ChrW(9))
+                        probe += 1
+                    End While
+
+                    If probe < _text.Length AndAlso _text(probe) = ":"c Then
+                        probe += 1
+                        Dim row2 As Integer = 0
+                        Dim column2 As Integer = 0
+                        Dim used2 As Integer = 0
+                        If TryReadAddress(_text, probe, row2, column2, used2) Then
+                            _at = probe + used2
+                            ' A range is CLIPPED to the sheet: SUM(B2:B999) on a 50-row sheet is the whole
+                            ' column, which is what the author meant. A single reference off the sheet is
+                            ' still #REF!, because there is nothing there to read.
+                            Dim firstRow As Integer = Math.Max(1, Math.Min(row1, row2))
+                            Dim lastRow As Integer = Math.Min(_sheet.RowCount, Math.Max(row1, row2))
+                            Dim firstColumn As Integer = Math.Max(1, Math.Min(column1, column2))
+                            Dim lastColumn As Integer = Math.Min(_sheet.ColumnCount, Math.Max(column1, column2))
+                            Return FormulaArg.OfRange(firstRow, firstColumn, lastRow, lastColumn)
+                        End If
+
+                        Throw New FormulaError(RefError)
+                    End If
+                End If
+
+                _at = save
+                Return FormulaArg.OfSingle(Comparison())
+            End Function
+
+            Private Function Apply(name As String, args As List(Of FormulaArg)) As FormulaValue
+                Select Case name
+                    Case "SUM", "AVERAGE", "AVG", "MIN", "MAX", "COUNT", "COUNTA"
+                        Return Aggregate(name, args)
+                    Case "ABS"
+                        Return One(args, AddressOf Math.Abs)
+                    Case "SQRT"
+                        Return One(args, AddressOf Math.Sqrt)
+                    Case "INT"
+                        Return One(args, AddressOf Math.Floor)
+                    Case "ROUND"
+                        Return RoundArgs(args)
+                    Case "MOD"
+                        Return Modulo(args)
+                    Case "AND"
+                        Return Logic(args, True)
+                    Case "OR"
+                        Return Logic(args, False)
+                    Case "NOT"
+                        Return LogicalNot(args)
+                    Case "LEN"
+                        Return Text1(args, Function(s As String) CDbl(s.Length), Nothing)
+                    Case "UPPER"
+                        Return Text1(args, Nothing, Function(s As String) s.ToUpperInvariant())
+                    Case "LOWER"
+                        Return Text1(args, Nothing, Function(s As String) s.ToLowerInvariant())
+                    Case "TRIM"
+                        Return Text1(args, Nothing, Function(s As String) s.Trim())
+                    Case Else
+                        Throw New FormulaError(NameError)
+                End Select
+            End Function
+
+            ''' <summary>The values an argument list contributes, in order: a range gives every cell in it,
+            ''' a plain argument gives itself.</summary>
+            Private Iterator Function Values(args As List(Of FormulaArg)) As IEnumerable(Of FormulaValue)
+                For i As Integer = 0 To args.Count - 1
+                    Dim arg As FormulaArg = args(i)
+                    If arg.IsRange Then
+                        For row As Integer = arg.FirstRow To arg.LastRow
+                            For column As Integer = arg.FirstColumn To arg.LastColumn
+                                Yield _sheet.Reference(row, column)
+                            Next
+                        Next
+                    Else
+                        Yield arg.Value
+                    End If
+                Next
+            End Function
+
+            Private Function Aggregate(name As String, args As List(Of FormulaArg)) As FormulaValue
+                Dim numbers As New List(Of Double)()
+                Dim filled As Integer = 0
+                For Each value As FormulaValue In Values(args)
+                    If value.Kind = FormulaKind.Error Then
+                        Throw New FormulaError(value.Text)
+                    End If
+
+                    If value.Kind = FormulaKind.Blank Then
+                        Continue For                  ' a blank cell is not a zero for a sum, and not filled
+                    End If
+
+                    filled += 1                       ' COUNTA counts it — text and all
+                    If value.Kind = FormulaKind.Text AndAlso Not IsNumericValue(value) Then
+                        Continue For                  ' text is ignored by SUM/MIN/MAX, the way a label should be
+                    End If
+
+                    numbers.Add(Numeric(value))
+                Next
+
+                Select Case name
+                    Case "COUNTA"
+                        Return FormulaValue.OfNumber(CDbl(filled))
+                    Case "COUNT"
+                        Return FormulaValue.OfNumber(CDbl(numbers.Count))
+                    Case "SUM"
+                        Return FormulaValue.OfNumber(SumOf(numbers))
+                    Case "MIN"
+                        Return FormulaValue.OfNumber(If(numbers.Count = 0, 0.0, MinOf(numbers)))
+                    Case "MAX"
+                        Return FormulaValue.OfNumber(If(numbers.Count = 0, 0.0, MaxOf(numbers)))
+                    Case Else
+                        If numbers.Count = 0 Then
+                            Throw New FormulaError(DivisionByZero)     ' an average of nothing
+                        End If
+
+                        Return FormulaValue.OfNumber(SumOf(numbers) / numbers.Count)
+                End Select
+            End Function
+
+            Private Shared Function SumOf(numbers As List(Of Double)) As Double
+                Dim total As Double = 0.0
+                For i As Integer = 0 To numbers.Count - 1
+                    total += numbers(i)
+                Next
+
+                Return total
+            End Function
+
+            Private Shared Function MinOf(numbers As List(Of Double)) As Double
+                Dim value As Double = numbers(0)
+                For i As Integer = 1 To numbers.Count - 1
+                    If numbers(i) < value Then
+                        value = numbers(i)
+                    End If
+                Next
+
+                Return value
+            End Function
+
+            Private Shared Function MaxOf(numbers As List(Of Double)) As Double
+                Dim value As Double = numbers(0)
+                For i As Integer = 1 To numbers.Count - 1
+                    If numbers(i) > value Then
+                        value = numbers(i)
+                    End If
+                Next
+
+                Return value
+            End Function
+
+            Private Shared Function One(args As List(Of FormulaArg), work As Func(Of Double, Double)) As FormulaValue
+                If args.Count <> 1 Then
+                    Throw New FormulaError(ValueError)
+                End If
+
+                Return FormulaValue.OfNumber(work(Numeric(args(0).Value)))
+            End Function
+
+            Private Shared Function RoundArgs(args As List(Of FormulaArg)) As FormulaValue
+                If args.Count <> 2 Then
+                    Throw New FormulaError(ValueError)
+                End If
+
+                Dim digits As Integer = CInt(Math.Round(Numeric(args(1).Value)))
+                If digits < 0 Then
+                    digits = 0
+                End If
+
+                If digits > 15 Then
+                    digits = 15
+                End If
+
+                Return FormulaValue.OfNumber(Math.Round(Numeric(args(0).Value), digits))
+            End Function
+
+            ''' <summary>MOD — named "Modulo", because "Mod" is a VB operator and neither twin may use it.</summary>
+            Private Shared Function Modulo(args As List(Of FormulaArg)) As FormulaValue
+                If args.Count <> 2 Then
+                    Throw New FormulaError(ValueError)
+                End If
+
+                Dim divisor As Double = Numeric(args(1).Value)
+                If Math.Abs(divisor) < Double.Epsilon Then
+                    Throw New FormulaError(DivisionByZero)
+                End If
+
+                Return FormulaValue.OfNumber(Numeric(args(0).Value) Mod divisor)
+            End Function
+
+            Private Shared Function Logic(args As List(Of FormulaArg), all As Boolean) As FormulaValue
+                If args.Count = 0 Then
+                    Throw New FormulaError(ValueError)
+                End If
+
+                For i As Integer = 0 To args.Count - 1
+                    Dim truth As Boolean = Truthy(args(i).Value)
+                    If all AndAlso Not truth Then
+                        Return FormulaValue.OfBool(False)
+                    End If
+
+                    If Not all AndAlso truth Then
+                        Return FormulaValue.OfBool(True)
+                    End If
+                Next
+
+                Return FormulaValue.OfBool(all)
+            End Function
+
+            ''' <summary>NOT — named "LogicalNot", because "Not" is a VB operator.</summary>
+            Private Shared Function LogicalNot(args As List(Of FormulaArg)) As FormulaValue
+                If args.Count <> 1 Then
+                    Throw New FormulaError(ValueError)
+                End If
+
+                Return FormulaValue.OfBool(Not Truthy(args(0).Value))
+            End Function
+
+            ''' <summary>LEN / UPPER / LOWER / TRIM: one argument, read as text (a blank is empty text).
+            ''' One of the two callbacks is Nothing, which is what says whether this is a number or a string.</summary>
+            Private Shared Function Text1(args As List(Of FormulaArg), number As Func(Of String, Double),
+                text As Func(Of String, String)) As FormulaValue
+                If args.Count <> 1 Then
+                    Throw New FormulaError(ValueError)
+                End If
+
+                Dim value As FormulaValue = args(0).Value
+                If value.Kind = FormulaKind.Error Then
+                    Throw New FormulaError(value.Text)
+                End If
+
+                Dim body As String = AsText(value)
+                If text Is Nothing Then
+                    Return FormulaValue.OfNumber(number(body))
+                End If
+
+                Return FormulaValue.OfText(text(body))
+            End Function
+        End Class
+
+        ''' <summary>One argument of a function call: a range, or a single value. (The factories carry the
+        ''' Of- prefix because a Structure member cannot be named Single.)</summary>
+        Private Structure FormulaArg
+            Public IsRange As Boolean
+            Public Value As FormulaValue
+            Public FirstRow As Integer
+            Public FirstColumn As Integer
+            Public LastRow As Integer
+            Public LastColumn As Integer
+
+            Public Shared Function OfSingle(value As FormulaValue) As FormulaArg
+                Dim arg As FormulaArg
+                arg.IsRange = False
+                arg.Value = value
+                Return arg
+            End Function
+
+            Public Shared Function OfRange(firstRow As Integer, firstColumn As Integer, lastRow As Integer,
+                lastColumn As Integer) As FormulaArg
+                Dim arg As FormulaArg
+                arg.IsRange = True
+                arg.Value = FormulaValue.BlankValue()
+                arg.FirstRow = firstRow
+                arg.FirstColumn = firstColumn
+                arg.LastRow = lastRow
+                arg.LastColumn = lastColumn
+                Return arg
+            End Function
+        End Structure
 
         ''' <summary>
         ''' "Item1", "Item2" → prefix "Item", suffix "", first 1, step 1 — but only when every value has

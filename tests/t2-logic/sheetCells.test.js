@@ -333,9 +333,10 @@ module.exports = async (t) => {
     // 1) the in-place editor's text is drawn, with its caret, while typing.
     for (const [name, source] of twins) {
         t.ok(has(source, 'inPlaceEdit'), `fix:${name}`, 'the cell being edited is drawn in place');
-        // The editor's text comes from _editText, not from GetCell() — the cell still holds the old value.
-        t.ok(/_editText[\s\S]{0,30}?GetCell\(row, column\)/.test(source), `fix:${name}`,
-            'its text comes from the editor, not from the cell it has not written yet');
+        // The editor's text comes from _editText — the cell still holds the OLD value, and since phase 3 the
+        // cell's own text may be a FORMULA, so the cell being typed in must not draw either of them.
+        t.ok(/_editText[\s\S]{0,60}?ValueOf\(row, column\)/.test(source), `fix:${name}`,
+            'its text comes from the editor, and every other cell draws what it WORKS OUT TO');
         t.ok(/editingAlign[\s\S]{0,500}?_caret/.test(source), `fix:${name}`,
             'and it is drawn WITH the caret');
         // …and every typed character reaches it: the insert method has to be CALLED, not just present.
@@ -476,9 +477,63 @@ module.exports = async (t) => {
             'and it only takes the keyboard when nothing else has it');
     }
 
+    // 7) phase 3: formulas. A formula cell KEEPS its text and DRAWS its result, so the grid reads as results
+    //    while the fx box and the editor read as formulas. The behaviour is measured by the two probes
+    //    (/tmp/sheetformula and /tmp/sheetformulavb, 69 and 63 checks); what this pins is the SEAMS — the
+    //    things that would break one twin, or the pair, without failing to compile.
+    t.note('the formula engine is in BOTH twins, member for member');
+    for (const [name, source] of twins) {
+        for (const error of ['#DIV/0!', '#VALUE!', '#NAME?', '#REF!', '#CYCLE!']) {
+            t.ok(has(source, error), `formula:${name}`, `the ${error} name is declared`);
+        }
+        t.ok(/ValueOf\(/.test(source), `formula:${name}`, 'ValueOf is the one call that computes a value');
+        t.ok(/InvalidateValues\(\)/.test(source), `formula:${name}`, 'and its answers are dropped on a change');
+        // The cache must be dropped for a cell edit AND for the Cells collection (XAML content adds cells
+        // through the collection, not through SetCell).
+        t.ok(/OnCellChanged\(row, column, value\)[\s\S]{0,200}?InvalidateValues\(\)/.test(source),
+            `formula:${name}`, 'a cell edit forgets every result');
+        t.ok(/OnCellsChanged[\s\S]{0,300}?InvalidateValues\(\)/.test(source),
+            `formula:${name}`, 'and so does a change to the Cells collection');
+        // A formula that reaches itself is NAMED, not a stack overflow.
+        t.ok(/_evaluating[\s\S]{0,200}?CycleError/.test(source), `formula:${name}`,
+            'a cell that is already being worked out reports #CYCLE!');
+        t.ok(/_evaluating\.Remove\(key\)/.test(source), `formula:${name}`,
+            'and the guard is released again on the way out');
+        // IF does not evaluate the branch it does not take — the usual way to guard a division.
+        t.ok(has(source, 'CallIf') && has(source, 'SkipArgument'), `formula:${name}`,
+            'IF skips the branch it does not take');
+        // A range past the last row is clipped, so SUM(B2:B999) means the column the author meant.
+        t.ok(/Math\.Min\(_sheet\.RowCount, Math\.Max\(row1, row2\)\)/.test(source), `formula:${name}`,
+            'a range is clipped to the sheet');
+        // The engine is bounded, or a hand-typed monster takes the app down.
+        t.ok(has(source, 'FormulaMaxDepth'), `formula:${name}`, 'nesting is bounded');
+        // The address reader is NOT ParseCellName: a formula is read at an OFFSET, and "$A$1" is allowed.
+        t.ok(has(source, 'TryReadAddress'), `formula:${name}`, 'the formula reader finds an address at an offset');
+        t.ok(has(source, 'ParseCellName'), `formula:${name}`, 'and the public ParseCellName is left alone');
+        // Twin-safe member names: VB owns Mod, Not, Name, IsNumeric and Call, so the pair uses these —
+        // rename one in C# and the VB twin stops compiling, which is exactly what this catches early.
+        for (const member of ['Modulo', 'LogicalNot', 'ReadName', 'IsNumericValue', 'CallFunction']) {
+            t.ok(has(source, member), `formula:${name}`, `${member} is the shared name (a VB keyword otherwise)`);
+        }
+        t.ok(!/\bMod\(args\)|\bNot\(args\)|\.Call\(name/.test(source), `formula:${name}`,
+            'and none of the VB keywords is used as a member');
+    }
+
     t.note('the designer panel can set the new properties');
     const catalog = read('src/propertyCatalog.ts');
     for (const key of ['ShowScrollBars', 'ColumnWidths', 'RowHeights']) {
         t.ok(catalog.includes(`key: '${key}'`), 'panel', `the GrumpySheet rows offer ${key}`);
     }
+    // The sheet is dockable, like the charts and every other panel child: the 'Dock' row writes the
+    // ATTACHED DockPanel.Dock, which is what Avalonia's DockPanel reads — the control needs no property of
+    // its own for it (GrumpyPanel's header says the same thing: "It has a Dock property of its own
+    // (DockPanel.Dock)"). The designer then wraps the sheet in a DockPanel if it is not in one, and clears
+    // the free-axis size so it stretches to that edge.
+    const sheetRows = catalog.slice(catalog.indexOf('    GrumpySheet: ['),
+        catalog.indexOf('    GrumpyLinePlot: ['));
+    t.ok(sheetRows.includes("key: 'DockPanel.Dock'"), 'panel', 'the sheet offers the Dock row');
+    t.ok(sheetRows.includes("label: 'Dock'") && sheetRows.includes('DOCK_OPTIONS'), 'panel',
+        'labelled Dock, with the same dock list as every other control');
+    t.ok(/DockPanel\.Dock/.test(read('src/designerPanel.ts')), 'panel',
+        'and the designer handles DockPanel.Dock generically (wrapping the control in a DockPanel)');
 };

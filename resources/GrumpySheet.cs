@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.14
+// BUNDLED-COPY: 0.12.15
 // GrumpySheet.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpySheet.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs / GrumpyCharts.cs.
 //
@@ -320,6 +320,15 @@ namespace AvaloniaSpreadsheet
 
         private double _scrollX;
         private double _scrollY;
+
+        // ---- formulas ---------------------------------------------------------------------------
+        // What each formula cell works out to, kept until any cell's text changes (see InvalidateValues).
+        // Working it out on demand costs one pass per EDIT rather than one per repaint, and a chain of
+        // formulas — B1=A1*2, C1=B1+1 — is walked once instead of once per cell drawn.
+        private readonly Dictionary<long, string> _values = new Dictionary<long, string>();
+        // The cells currently being worked out, so a formula that reaches itself is named (#CYCLE!) rather
+        // than recursing until the stack runs out.
+        private readonly HashSet<long> _evaluating = new HashSet<long>();
 
         // ---- per-column widths and per-row heights ----------------------------------------------
         // Sparse on purpose: the sheet's ColumnWidth/RowHeight answer for every column and row, and these
@@ -778,6 +787,7 @@ namespace AvaloniaSpreadsheet
             }
 
             OnCellChanged(row, column, value);
+            InvalidateValues();                 // every formula that reads this cell has to be worked out again
             InvalidateVisual();
         }
 
@@ -1268,6 +1278,7 @@ namespace AvaloniaSpreadsheet
         private void OnCellsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
             RebuildLookup();
+            InvalidateValues();
             InvalidateVisual();
         }
 
@@ -2098,7 +2109,9 @@ namespace AvaloniaSpreadsheet
                         // typing looked invisible until the cell lost focus.
                         var inPlaceEdit = _editing && !_barFocused
                             && row == _activeRow && column == _activeColumn;
-                        var text = inPlaceEdit ? _editText : GetCell(row, column);
+                        // A formula cell draws what it WORKED OUT TO; its own text (the formula) is what the fx
+                        // box and the editor show, which is where it is read and written.
+                        var text = inPlaceEdit ? _editText : ValueOf(row, column);
                         if (text.Length == 0 && !inPlaceEdit)
                         {
                             continue;
@@ -4003,6 +4016,1177 @@ namespace AvaloniaSpreadsheet
 
             return value.ToString("F" + decimals.ToString(CultureInfo.InvariantCulture),
                 CultureInfo.InvariantCulture);
+        }
+
+        // ---- formulas -----------------------------------------------------------------------------
+        //
+        // A cell whose text starts with '=' is a FORMULA. The text is what the user typed and what the fx box
+        // and the editor show; the GRID draws what it works out to (ValueOf), so a sheet reads as its results
+        // while its formulas stay visible where they are edited — the way every spreadsheet behaves.
+        //
+        // The dialect is the small, honest subset a result grid needs: the four operators, ^ and &,
+        // comparisons, parentheses, A1 references, A1:B3 ranges, and the functions below. What cannot be
+        // worked out has a NAME — #VALUE!, #NAME?, #REF!, #DIV/0!, #CYCLE! — rather than drawing blank or
+        // throwing, because a form is not a place to crash.
+
+        private const string DivisionByZero = "#DIV/0!";
+        private const string ValueError = "#VALUE!";
+        private const string NameError = "#NAME?";
+        private const string RefError = "#REF!";
+        private const string CycleError = "#CYCLE!";
+
+        /// <summary>How deep a formula may nest before it is refused. A hand-typed monster
+        /// (=((((… would otherwise recurse until the stack ran out, which takes the whole app down.</summary>
+        private const int FormulaMaxDepth = 64;
+
+        /// <summary>A cell's identity as one number, for the two dictionaries above.</summary>
+        private static long CellKey(int row, int column)
+        {
+            return ((long)row << 20) | (uint)column;
+        }
+
+        /// <summary>Forgets what every formula worked out. Called whenever any cell's text changes, which
+        /// is the only thing a formula result depends on.</summary>
+        private void InvalidateValues()
+        {
+            _values.Clear();
+        }
+
+        /// <summary>
+        /// What a cell SHOWS: its text, or — for a formula — what it works out to. <see cref="GetCell"/>
+        /// still returns the formula itself, which is what the fx box reads and edits.
+        /// </summary>
+        public string ValueOf(int row, int column)
+        {
+            var text = GetCell(row, column);
+            if (text.Length < 2 || text[0] != '=')
+            {
+                return text;
+            }
+
+            var key = CellKey(row, column);
+            if (_values.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+
+            var result = EvaluateFormula(row, column, text.Substring(1));
+            _values[key] = result;
+            return result;
+        }
+
+        private string EvaluateFormula(int row, int column, string body)
+        {
+            var key = CellKey(row, column);
+            if (!_evaluating.Add(key))
+            {
+                return CycleError;              // already being worked out further up: this cell reaches itself
+            }
+
+            try
+            {
+                return FormulaFormat(new FormulaParser(this, row, column, body).Work());
+            }
+            catch (FormulaError error)
+            {
+                return error.Code;
+            }
+            catch (Exception)
+            {
+                return ValueError;              // a formula must never be able to take the app down
+            }
+            finally
+            {
+                _evaluating.Remove(key);
+            }
+        }
+
+        /// <summary>What a formula is working with: a number, TRUE/FALSE, text, blank, or an error name.</summary>
+        private enum FormulaKind { Blank, Number, Bool, Text, Error }
+
+        private readonly struct FormulaValue
+        {
+            public readonly FormulaKind Kind;
+            public readonly double Number;
+            public readonly string Text;
+
+            private FormulaValue(FormulaKind kind, double number, string text)
+            {
+                Kind = kind;
+                Number = number;
+                Text = text;
+            }
+
+            public static FormulaValue Blank
+            {
+                get { return new FormulaValue(FormulaKind.Blank, 0d, string.Empty); }
+            }
+
+            public static FormulaValue Of(double number)
+            {
+                return new FormulaValue(FormulaKind.Number, number, string.Empty);
+            }
+
+            public static FormulaValue Of(bool flag)
+            {
+                return new FormulaValue(FormulaKind.Bool, flag ? 1d : 0d, string.Empty);
+            }
+
+            public static FormulaValue Of(string? text)
+            {
+                return new FormulaValue(FormulaKind.Text, 0d, text == null ? string.Empty : text!);
+            }
+
+            public static FormulaValue Err(string code)
+            {
+                return new FormulaValue(FormulaKind.Error, 0d, code);
+            }
+        }
+
+        /// <summary>A formula that cannot be worked out. The code is one of the #… names above.</summary>
+        private sealed class FormulaError : Exception
+        {
+            public FormulaError(string code)
+                : base(code)
+            {
+                Code = code;
+            }
+
+            public string Code { get; private set; }
+        }
+
+        /// <summary>The text a result is drawn as: a whole number without a decimal point, a fraction with up
+        /// to six places, TRUE/FALSE for a comparison, and an error as its own name.</summary>
+        private static string FormulaFormat(FormulaValue value)
+        {
+            switch (value.Kind)
+            {
+                case FormulaKind.Number:
+                    if (double.IsNaN(value.Number) || double.IsInfinity(value.Number))
+                    {
+                        return ValueError;
+                    }
+
+                    var rounded = Math.Round(value.Number, 6);
+                    if (Math.Abs(rounded) < 1e-9)
+                    {
+                        return "0";
+                    }
+
+                    if (Math.Abs(rounded - Math.Round(rounded)) < 1e-9)
+                    {
+                        return Math.Round(rounded).ToString(CultureInfo.InvariantCulture);
+                    }
+
+                    return rounded.ToString("0.######", CultureInfo.InvariantCulture);
+                case FormulaKind.Bool:
+                    return value.Number != 0d ? "TRUE" : "FALSE";
+                case FormulaKind.Error:
+                    return value.Text;
+                case FormulaKind.Text:
+                    return value.Text;
+                default:
+                    return string.Empty;
+            }
+        }
+
+        /// <summary>True when a formatted result is one of the error names, so a formula that reads it
+        /// hands the error on instead of treating "#DIV/0!" as a word.</summary>
+        private static bool IsErrorName(string text)
+        {
+            return text == DivisionByZero || text == ValueError || text == NameError
+                || text == RefError || text == CycleError;
+        }
+
+        /// <summary>True when a value takes part in arithmetic on its own (a number, TRUE/FALSE, a blank,
+        /// or text that reads as a number). ("IsNumericValue", not "IsNumeric": VB has a built-in of the
+        /// latter name, and the twins keep the same member names wherever the language allows it.)</summary>
+        private static bool IsNumericValue(FormulaValue value)
+        {
+            if (value.Kind == FormulaKind.Number || value.Kind == FormulaKind.Bool
+                || value.Kind == FormulaKind.Blank)
+            {
+                return true;
+            }
+
+            if (value.Kind == FormulaKind.Error)
+            {
+                throw new FormulaError(value.Text);
+            }
+
+            return double.TryParse(value.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out _);
+        }
+
+        /// <summary>A value as a number for arithmetic: blank counts as zero, text that reads as a number
+        /// counts as one, and anything else is #VALUE!.</summary>
+        private static double Numeric(FormulaValue value)
+        {
+            if (value.Kind == FormulaKind.Number || value.Kind == FormulaKind.Bool)
+            {
+                return value.Number;
+            }
+
+            if (value.Kind == FormulaKind.Blank)
+            {
+                return 0d;
+            }
+
+            if (value.Kind == FormulaKind.Error)
+            {
+                throw new FormulaError(value.Text);
+            }
+
+            if (double.TryParse(value.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+            {
+                return parsed;
+            }
+
+            throw new FormulaError(ValueError);
+        }
+
+        /// <summary>True when a value is a number that is not zero, TRUE/FALSE as themselves, and the words
+        /// TRUE/FALSE; anything else is #VALUE! — how IF, AND and OR read their condition.</summary>
+        private static bool Truthy(FormulaValue value)
+        {
+            if (value.Kind == FormulaKind.Number || value.Kind == FormulaKind.Bool)
+            {
+                return value.Number != 0d;
+            }
+
+            if (value.Kind == FormulaKind.Blank)
+            {
+                return false;
+            }
+
+            if (value.Kind == FormulaKind.Error)
+            {
+                throw new FormulaError(value.Text);
+            }
+
+            var text = value.Text.Trim();
+            if (string.Equals(text, "TRUE", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (string.Equals(text, "FALSE", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            throw new FormulaError(ValueError);
+        }
+
+        /// <summary>A referenced cell's value: blank for an empty cell, its TEXT for a literal one, and for a
+        /// formula cell what it worked out to (handing on its error if it has one).</summary>
+        private FormulaValue Reference(int row, int column)
+        {
+            if (row < 1 || column < 1 || row > RowCount || column > ColumnCount)
+            {
+                throw new FormulaError(RefError);
+            }
+
+            var text = GetCell(row, column);
+            if (text.Length == 0)
+            {
+                return FormulaValue.Blank;
+            }
+
+            if (text[0] == '=')
+            {
+                var shown = ValueOf(row, column);
+                return IsErrorName(shown) ? FormulaValue.Err(shown) : FormulaValue.Of(shown);
+            }
+
+            return FormulaValue.Of(text);
+        }
+
+        /// <summary>Reads "A1" / "$A$1" at an offset in a formula. Bounds are NOT checked here — the caller
+        /// decides (a reference off the sheet is #REF!, a range is clipped to the sheet).</summary>
+        internal static bool TryReadAddress(string text, int at, out int row, out int column, out int used)
+        {
+            row = 0;
+            column = 0;
+            used = 0;
+            var index = at;
+            while (index < text.Length && text[index] == '$')
+            {
+                index++;
+            }
+
+            var letters = 0;
+            var column1 = 0;
+            while (index < text.Length)
+            {
+                var c = text[index];
+                var upper = c >= 'a' && c <= 'z' ? (char)(c - 32) : c;
+                if (upper < 'A' || upper > 'Z')
+                {
+                    break;
+                }
+
+                column1 = column1 * 26 + (upper - 'A' + 1);
+                letters++;
+                index++;
+            }
+
+            var dollars = 0;
+            while (index < text.Length && text[index] == '$')
+            {
+                dollars++;
+                index++;
+            }
+
+            var digits = 0;
+            var row1 = 0;
+            while (index < text.Length && text[index] >= '0' && text[index] <= '9')
+            {
+                var digit = text[index] - '0';
+                if (row1 > 10000000)
+                {
+                    return false;
+                }
+
+                row1 = row1 * 10 + digit;
+                digits++;
+                index++;
+            }
+
+            if (letters < 1 || letters > 3 || digits < 1 || digits > 7)
+            {
+                return false;
+            }
+
+            row = row1;
+            column = column1;
+            used = index - at;
+            return true;
+        }
+
+        /// <summary>
+        /// Reads a formula: the four operators, ^ and &amp;, comparisons, parentheses, "text", A1 references,
+        /// A1:B3 ranges and the function set. Left to right, one pass, throwing <see cref="FormulaError"/>
+        /// with the name the cell should show.
+        /// </summary>
+        private sealed class FormulaParser
+        {
+            private readonly GrumpySheet _sheet;
+            private readonly int _row;
+            private readonly int _column;
+            private readonly string _text;
+            private int _at;
+            private int _depth;
+
+            public FormulaParser(GrumpySheet sheet, int row, int column, string text)
+            {
+                _sheet = sheet;
+                _row = row;
+                _column = column;
+                _text = text;
+            }
+
+            /// <summary>Works the whole formula out. Anything left over at the end is a typo, not a value.</summary>
+            public FormulaValue Work()
+            {
+                var value = Comparison();
+                SkipSpaces();
+                if (_at != _text.Length)
+                {
+                    throw new FormulaError(ValueError);
+                }
+
+                return value;
+            }
+
+            // ---- the expression ladder -------------------------------------------------------------
+
+            private FormulaValue Comparison()
+            {
+                var left = Concat();
+                var op = ComparisonOperator();
+                if (op.Length == 0)
+                {
+                    return left;
+                }
+
+                return FormulaValue.Of(Compare(left, Concat(), op));
+            }
+
+            private string ComparisonOperator()
+            {
+                SkipSpaces();
+                var c = Peek();
+                if (c == '=')
+                {
+                    _at++;
+                    return "=";
+                }
+
+                if (c != '<' && c != '>')
+                {
+                    return string.Empty;
+                }
+
+                _at++;
+                var next = Peek();
+                if (next == '=')
+                {
+                    _at++;
+                    return c == '<' ? "<=" : ">=";
+                }
+
+                if (c == '<' && next == '>')
+                {
+                    _at++;
+                    return "<>";
+                }
+
+                return c == '<' ? "<" : ">";
+            }
+
+            private static bool Compare(FormulaValue left, FormulaValue right, string op)
+            {
+                int sign;
+                if (IsNumericValue(left) && IsNumericValue(right))
+                {
+                    sign = Numeric(left).CompareTo(Numeric(right));
+                }
+                else
+                {
+                    var l = left.Kind == FormulaKind.Error ? left.Text : AsText(left);
+                    var r = right.Kind == FormulaKind.Error ? right.Text : AsText(right);
+                    sign = string.Compare(l, r, StringComparison.OrdinalIgnoreCase);
+                }
+
+                switch (op)
+                {
+                    case "=":
+                        return sign == 0;
+                    case "<>":
+                        return sign != 0;
+                    case "<":
+                        return sign < 0;
+                    case ">":
+                        return sign > 0;
+                    case "<=":
+                        return sign <= 0;
+                    default:
+                        return sign >= 0;
+                }
+            }
+
+            /// <summary>A value as the text a comparison and &amp; see.</summary>
+            private static string AsText(FormulaValue value)
+            {
+                return value.Kind == FormulaKind.Text ? value.Text : FormulaFormat(value);
+            }
+
+            private FormulaValue Concat()
+            {
+                var value = Additive();
+                while (true)
+                {
+                    SkipSpaces();
+                    if (Peek() != '&')
+                    {
+                        return value;
+                    }
+
+                    _at++;
+                    value = FormulaValue.Of(AsText(value) + AsText(Additive()));
+                }
+            }
+
+            private FormulaValue Additive()
+            {
+                var value = Multiplicative();
+                while (true)
+                {
+                    SkipSpaces();
+                    var c = Peek();
+                    if (c != '+' && c != '-')
+                    {
+                        return value;
+                    }
+
+                    _at++;
+                    var right = Multiplicative();
+                    value = FormulaValue.Of(c == '+' ? Numeric(value) + Numeric(right)
+                        : Numeric(value) - Numeric(right));
+                }
+            }
+
+            private FormulaValue Multiplicative()
+            {
+                var value = Power();
+                while (true)
+                {
+                    SkipSpaces();
+                    var c = Peek();
+                    if (c != '*' && c != '/')
+                    {
+                        return value;
+                    }
+
+                    _at++;
+                    var right = Power();
+                    var left = Numeric(value);
+                    var divisor = Numeric(right);
+                    if (c == '/' && Math.Abs(divisor) < double.Epsilon)
+                    {
+                        throw new FormulaError(DivisionByZero);
+                    }
+
+                    value = FormulaValue.Of(c == '*' ? left * divisor : left / divisor);
+                }
+            }
+
+            private FormulaValue Power()
+            {
+                var value = Unary();
+                SkipSpaces();
+                if (Peek() != '^')
+                {
+                    return value;
+                }
+
+                _at++;
+                var exponent = Numeric(Power());        // right-associative, as every spreadsheet has it
+                var baseValue = Numeric(value);
+                if (Math.Abs(baseValue) < double.Epsilon && exponent < 0d)
+                {
+                    throw new FormulaError(DivisionByZero);     // 0^-1 is a division by zero, not infinity
+                }
+
+                return FormulaValue.Of(Math.Pow(baseValue, exponent));
+            }
+
+            private FormulaValue Unary()
+            {
+                var negative = false;
+                while (true)
+                {
+                    SkipSpaces();
+                    var c = Peek();
+                    if (c == '-')
+                    {
+                        negative = !negative;
+                        _at++;
+                        continue;
+                    }
+
+                    if (c == '+')
+                    {
+                        _at++;
+                        continue;
+                    }
+
+                    break;
+                }
+
+                var value = Primary();
+                return negative ? FormulaValue.Of(-Numeric(value)) : value;
+            }
+
+            private FormulaValue Primary()
+            {
+                SkipSpaces();
+                var c = Peek();
+                if (c == '(')
+                {
+                    _at++;
+                    Enter();
+                    var inner = Comparison();
+                    Leave();
+                    SkipSpaces();
+                    if (Peek() != ')')
+                    {
+                        throw new FormulaError(ValueError);
+                    }
+
+                    _at++;
+                    return inner;
+                }
+
+                if (c == '"')
+                {
+                    return FormulaValue.Of(ReadText());
+                }
+
+                if ((c >= '0' && c <= '9') || c == '.')
+                {
+                    return FormulaValue.Of(ReadNumber());
+                }
+
+                if (char.IsLetter(c) || c == '$' || c == '_')
+                {
+                    return ReadName();
+                }
+
+                throw new FormulaError(ValueError);
+            }
+
+            /// <summary>A name is either a cell reference (A1) or a function call (SUM(…)), and nothing else
+            /// has a value here — an unknown word is #NAME?, which is what a typo deserves.
+            /// (Called "ReadName", not "Name": a control already HAS a Name property.)</summary>
+            private FormulaValue ReadName()
+            {
+                var start = _at;
+                while (_at < _text.Length)
+                {
+                    var c = _text[_at];
+                    if (char.IsLetterOrDigit(c) || c == '$' || c == '_' || c == '.')
+                    {
+                        _at++;
+                        continue;
+                    }
+
+                    break;
+                }
+
+                var name = _text.Substring(start, _at - start);
+                SkipSpaces();
+                if (Peek() == '(')
+                {
+                    return CallFunction(name.ToUpperInvariant());
+                }
+
+                if (TryReadAddress(_text, start, out var row1, out var column1, out var used) && used == name.Length)
+                {
+                    // A reference is measured from THIS cell unless it is written with $ on it: the sheet has no
+                    // copy/paste yet, so $ is accepted and ignored rather than rejected.
+                    return _sheet.Reference(row1, column1);
+                }
+
+                throw new FormulaError(NameError);
+            }
+            // ---- the pieces ------------------------------------------------------------------------
+
+            private void Enter()
+            {
+                _depth++;
+                if (_depth > FormulaMaxDepth)
+                {
+                    throw new FormulaError(ValueError);
+                }
+            }
+
+            private void Leave()
+            {
+                _depth--;
+            }
+
+            private string ReadText()
+            {
+                _at++;                                  // the opening quote
+                var builder = new System.Text.StringBuilder();
+                while (true)
+                {
+                    if (_at >= _text.Length)
+                    {
+                        throw new FormulaError(ValueError);     // unterminated
+                    }
+
+                    var c = _text[_at];
+                    _at++;
+                    if (c == '"')
+                    {
+                        if (_at < _text.Length && _text[_at] == '"')
+                        {
+                            _at++;                      // "" is one quote, as in every dialect
+                            builder.Append('"');
+                            continue;
+                        }
+
+                        return builder.ToString();
+                    }
+
+                    builder.Append(c);
+                }
+            }
+
+            private double ReadNumber()
+            {
+                var start = _at;
+                while (_at < _text.Length)
+                {
+                    var c = _text[_at];
+                    if ((c >= '0' && c <= '9') || c == '.')
+                    {
+                        _at++;
+                        continue;
+                    }
+
+                    break;
+                }
+
+                var body = _text.Substring(start, _at - start);
+                if (!double.TryParse(body, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+                {
+                    throw new FormulaError(ValueError);
+                }
+
+                return value;
+            }
+
+            private char Peek()
+            {
+                return _at < _text.Length ? _text[_at] : '\0';
+            }
+
+            private void SkipSpaces()
+            {
+                while (_at < _text.Length && (_text[_at] == ' ' || _text[_at] == '\t'))
+                {
+                    _at++;
+                }
+            }
+
+            private void Expect(char c)
+            {
+                SkipSpaces();
+                if (Peek() != c)
+                {
+                    throw new FormulaError(ValueError);
+                }
+
+                _at++;
+            }
+
+            /// <summary>Walks over one argument without working it out — how IF finds both of its branches
+            /// before deciding which one to evaluate.</summary>
+            private void SkipArgument()
+            {
+                var depth = 0;
+                while (_at < _text.Length)
+                {
+                    var c = _text[_at];
+                    if (c == '"')
+                    {
+                        ReadText();
+                        continue;
+                    }
+
+                    if (c == '(')
+                    {
+                        depth++;
+                    }
+                    else if (c == ')')
+                    {
+                        if (depth == 0)
+                        {
+                            return;                 // the call's own closing paren: the argument ended here
+                        }
+
+                        depth--;
+                    }
+                    else if (c == ',' && depth == 0)
+                    {
+                        return;
+                    }
+
+                    _at++;
+                }
+            }
+
+            // ---- functions -------------------------------------------------------------------------
+
+            /// <summary>"CallFunction", not "Call": Call is a VB keyword and neither twin may use it.</summary>
+            private FormulaValue CallFunction(string name)
+            {
+                if (name == "IF")
+                {
+                    return CallIf();
+                }
+
+                Expect('(');
+                var args = new List<FormulaArg>();
+                SkipSpaces();
+                if (Peek() != ')')
+                {
+                    while (true)
+                    {
+                        args.Add(Argument());
+                        SkipSpaces();
+                        if (Peek() != ',')
+                        {
+                            break;
+                        }
+
+                        _at++;
+                    }
+                }
+
+                Expect(')');
+                return Apply(name, args);
+            }
+
+            /// <summary>
+            /// IF is the one function that does not work out all of its arguments: =IF(A1=0,0,1/A1) is the
+            /// usual way to guard a division, and that only works when the branch NOT taken is never
+            /// evaluated. So its branches are skipped over and the one that is taken is parsed on its own.
+            /// </summary>
+            private FormulaValue CallIf()
+            {
+                Expect('(');
+                var condition = Truthy(Comparison());
+                Expect(',');
+                var thenStart = _at;
+                SkipArgument();
+                var thenEnd = _at;
+                var elseStart = thenEnd;
+                var elseEnd = thenEnd;
+                SkipSpaces();
+                if (Peek() == ',')
+                {
+                    _at++;
+                    elseStart = _at;
+                    SkipArgument();
+                    elseEnd = _at;
+                    SkipSpaces();
+                }
+
+                if (Peek() == ',')
+                {
+                    _at++;
+                    SkipArgument();                 // IF takes three arguments; anything beyond is ignored
+                }
+
+                Expect(')');
+                var start = condition ? thenStart : elseStart;
+                var end = condition ? thenEnd : elseEnd;
+                if (end <= start)
+                {
+                    return FormulaValue.Blank;      // a branch that was left out is blank
+                }
+
+                return new FormulaParser(_sheet, _row, _column, _text.Substring(start, end - start)).Work();
+            }
+
+            /// <summary>One argument: a range (A1:B3 — only meaningful as an argument) or an expression.</summary>
+            private FormulaArg Argument()
+            {
+                SkipSpaces();
+                var save = _at;
+                if (TryReadAddress(_text, _at, out var row1, out var column1, out var used))
+                {
+                    var afterFirst = _at + used;
+                    var probe = afterFirst;
+                    while (probe < _text.Length && (_text[probe] == ' ' || _text[probe] == '\t'))
+                    {
+                        probe++;
+                    }
+
+                    if (probe < _text.Length && _text[probe] == ':')
+                    {
+                        probe++;
+                        if (TryReadAddress(_text, probe, out var row2, out var column2, out var used2))
+                        {
+                            _at = probe + used2;
+                            // A range is CLIPPED to the sheet: SUM(B2:B999) on a 50-row sheet is the whole
+                            // column, which is what the author meant. A single reference off the sheet is
+                            // still #REF!, because there is nothing there to read.
+                            var firstRow = Math.Max(1, Math.Min(row1, row2));
+                            var lastRow = Math.Min(_sheet.RowCount, Math.Max(row1, row2));
+                            var firstColumn = Math.Max(1, Math.Min(column1, column2));
+                            var lastColumn = Math.Min(_sheet.ColumnCount, Math.Max(column1, column2));
+                            return FormulaArg.Range(firstRow, firstColumn, lastRow, lastColumn);
+                        }
+
+                        throw new FormulaError(RefError);
+                    }
+                }
+
+                _at = save;
+                return FormulaArg.Single(Comparison());
+            }
+
+            private FormulaValue Apply(string name, List<FormulaArg> args)
+            {
+                switch (name)
+                {
+                    case "SUM":
+                    case "AVERAGE":
+                    case "AVG":
+                    case "MIN":
+                    case "MAX":
+                    case "COUNT":
+                    case "COUNTA":
+                        return Aggregate(name, args);
+                    case "ABS":
+                        return One(name, args, Math.Abs);
+                    case "SQRT":
+                        return One(name, args, Math.Sqrt);
+                    case "INT":
+                        return One(name, args, Math.Floor);
+                    case "ROUND":
+                        return Round(args);
+                    case "MOD":
+                        return Modulo(args);
+                    case "AND":
+                        return Logic(args, true);
+                    case "OR":
+                        return Logic(args, false);
+                    case "NOT":
+                        return LogicalNot(args);
+                    case "LEN":
+                        return Text1(name, args, (s) => (double)s.Length);
+                    case "UPPER":
+                        return Text1(name, args, (s) => double.NaN, (s) => s.ToUpperInvariant());
+                    case "LOWER":
+                        return Text1(name, args, (s) => double.NaN, (s) => s.ToLowerInvariant());
+                    case "TRIM":
+                        return Text1(name, args, (s) => double.NaN, (s) => s.Trim());
+                    default:
+                        throw new FormulaError(NameError);
+                }
+            }
+
+            /// <summary>The values an argument list contributes, in order: a range gives every cell in it,
+            /// a plain argument gives itself.</summary>
+            private IEnumerable<FormulaValue> Values(List<FormulaArg> args)
+            {
+                for (var i = 0; i < args.Count; i++)
+                {
+                    var arg = args[i];
+                    if (arg.IsRange)
+                    {
+                        for (var row = arg.FirstRow; row <= arg.LastRow; row++)
+                        {
+                            for (var column = arg.FirstColumn; column <= arg.LastColumn; column++)
+                            {
+                                yield return _sheet.Reference(row, column);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        yield return arg.Value;
+                    }
+                }
+            }
+
+            private FormulaValue Aggregate(string name, List<FormulaArg> args)
+            {
+                var numbers = new List<double>();
+                var nonBlank = 0;
+                foreach (var value in Values(args))
+                {
+                    if (value.Kind == FormulaKind.Error)
+                    {
+                        throw new FormulaError(value.Text);
+                    }
+
+                    if (value.Kind == FormulaKind.Blank)
+                    {
+                        continue;                   // a blank cell is not a zero for a sum, and not filled
+                    }
+
+                    nonBlank++;                     // COUNTA counts it — text and all
+                    if (value.Kind == FormulaKind.Text && !IsNumericValue(value))
+                    {
+                        continue;                   // text is ignored by SUM/MIN/MAX, the way a label should be
+                    }
+
+                    numbers.Add(Numeric(value));
+                }
+
+                switch (name)
+                {
+                    case "COUNTA":
+                        return FormulaValue.Of((double)nonBlank);
+                    case "COUNT":
+                        return FormulaValue.Of((double)numbers.Count);
+                    case "SUM":
+                        return FormulaValue.Of(Sum(numbers));
+                    case "MIN":
+                        return FormulaValue.Of(numbers.Count == 0 ? 0d : Min(numbers));
+                    case "MAX":
+                        return FormulaValue.Of(numbers.Count == 0 ? 0d : Max(numbers));
+                    default:
+                        if (numbers.Count == 0)
+                        {
+                            throw new FormulaError(DivisionByZero);     // an average of nothing
+                        }
+
+                        return FormulaValue.Of(Sum(numbers) / numbers.Count);
+                }
+            }
+
+            private static double Sum(List<double> numbers)
+            {
+                var total = 0d;
+                for (var i = 0; i < numbers.Count; i++)
+                {
+                    total += numbers[i];
+                }
+
+                return total;
+            }
+
+            private static double Min(List<double> numbers)
+            {
+                var value = numbers[0];
+                for (var i = 1; i < numbers.Count; i++)
+                {
+                    if (numbers[i] < value)
+                    {
+                        value = numbers[i];
+                    }
+                }
+
+                return value;
+            }
+
+            private static double Max(List<double> numbers)
+            {
+                var value = numbers[0];
+                for (var i = 1; i < numbers.Count; i++)
+                {
+                    if (numbers[i] > value)
+                    {
+                        value = numbers[i];
+                    }
+                }
+
+                return value;
+            }
+
+            private FormulaValue One(string name, List<FormulaArg> args, Func<double, double> work)
+            {
+                if (args.Count != 1)
+                {
+                    throw new FormulaError(ValueError);
+                }
+
+                return FormulaValue.Of(work(Numeric(args[0].Value)));
+            }
+
+            private FormulaValue Round(List<FormulaArg> args)
+            {
+                if (args.Count != 2)
+                {
+                    throw new FormulaError(ValueError);
+                }
+
+                var digits = (int)Math.Round(Numeric(args[1].Value));
+                if (digits < 0)
+                {
+                    digits = 0;
+                }
+
+                if (digits > 15)
+                {
+                    digits = 15;
+                }
+
+                return FormulaValue.Of(Math.Round(Numeric(args[0].Value), digits));
+            }
+
+            /// <summary>MOD — named "Modulo", because "Mod" is a VB operator and neither twin may use it.</summary>
+            private FormulaValue Modulo(List<FormulaArg> args)
+            {
+                if (args.Count != 2)
+                {
+                    throw new FormulaError(ValueError);
+                }
+
+                var divisor = Numeric(args[1].Value);
+                if (Math.Abs(divisor) < double.Epsilon)
+                {
+                    throw new FormulaError(DivisionByZero);
+                }
+
+                return FormulaValue.Of(Numeric(args[0].Value) % divisor);
+            }
+
+            private FormulaValue Logic(List<FormulaArg> args, bool all)
+            {
+                if (args.Count == 0)
+                {
+                    throw new FormulaError(ValueError);
+                }
+
+                for (var i = 0; i < args.Count; i++)
+                {
+                    var truth = Truthy(args[i].Value);
+                    if (all && !truth)
+                    {
+                        return FormulaValue.Of(false);
+                    }
+
+                    if (!all && truth)
+                    {
+                        return FormulaValue.Of(true);
+                    }
+                }
+
+                return FormulaValue.Of(all);
+            }
+
+            /// <summary>NOT — named "LogicalNot", because "Not" is a VB operator.</summary>
+            private FormulaValue LogicalNot(List<FormulaArg> args)
+            {
+                if (args.Count != 1)
+                {
+                    throw new FormulaError(ValueError);
+                }
+
+                return FormulaValue.Of(!Truthy(args[0].Value));
+            }
+
+            /// <summary>LEN / UPPER / LOWER / TRIM: one argument, read as text (a blank is empty text).</summary>
+            private FormulaValue Text1(string name, List<FormulaArg> args,
+                Func<string, double> number, Func<string, string>? text = null)
+            {
+                if (args.Count != 1)
+                {
+                    throw new FormulaError(ValueError);
+                }
+
+                var value = args[0].Value;
+                if (value.Kind == FormulaKind.Error)
+                {
+                    throw new FormulaError(value.Text);
+                }
+
+                var body = AsText(value);
+                if (text == null)
+                {
+                    return FormulaValue.Of(number(body));
+                }
+
+                return FormulaValue.Of(text(body));
+            }
+        }
+
+        /// <summary>One argument of a function call: a range, or a single value.</summary>
+        private struct FormulaArg
+        {
+            public bool IsRange;
+            public FormulaValue Value;
+            public int FirstRow;
+            public int FirstColumn;
+            public int LastRow;
+            public int LastColumn;
+
+            public static FormulaArg Single(FormulaValue value)
+            {
+                return new FormulaArg { IsRange = false, Value = value };
+            }
+
+            public static FormulaArg Range(int firstRow, int firstColumn, int lastRow, int lastColumn)
+            {
+                return new FormulaArg
+                {
+                    IsRange = true,
+                    Value = FormulaValue.Blank,
+                    FirstRow = firstRow,
+                    FirstColumn = firstColumn,
+                    LastRow = lastRow,
+                    LastColumn = lastColumn
+                };
+            }
         }
 
         /// <summary>
