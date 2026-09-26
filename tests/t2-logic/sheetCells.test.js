@@ -371,7 +371,7 @@ module.exports = async (t) => {
         t.ok(has(source, 'class SheetMenuItem') || has(source, 'Class SheetMenuItem'), `fix:${name}`,
             'a menu line is a plain class the control owns');
         for (const [needle, what] of [['Label', 'a label'], ['IsSeparator', 'a separator'], ['Ticked', 'a tick'],
-            ['Run', 'and a command']]) {
+        ['Run', 'and a command']]) {
             t.ok(new RegExp(`\\b${needle}\\b[\\s\\S]{0,120}?[=;]`).test(source), `fix:${name}`,
                 `a menu line carries ${what}`);
         }

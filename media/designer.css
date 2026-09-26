@@ -874,9 +874,9 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     white-space: nowrap;
 }
 
-/* A colour swatch. A BUTTON, not an <input type="color">: the browser draws the native picker itself and
- * cannot be clamped, which put the whole palette off the side of the panel (see colorSwatchButton in
- * designer.js). Its colour lives in `dataset.color` and its background, so it reads as a swatch either way. */
+/* A colour swatch: the SYSTEM one, an ordinary <input type="color">. It never exceeds its cell (a 30px
+ * box, `min-width: 0` on the flex parents), so the control itself is always inside the panel — the picker
+ * it opens is drawn by the browser and placed where the browser decides. */
 .color-swatch {
     flex: 0 0 30px !important;
     width: 30px;
@@ -925,12 +925,64 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     display: none;
 }
 
-/* The custom-colour row at the top of the palette: a text field and a Use button, so a value that is not in
- * the preset list is still possible now the native picker is gone. */
+/* The picker at the top of the palette popup. It is drawn HERE, not by the browser, which is the whole
+ * point: a system picker's frame is placed by the platform, while this one cannot leave the panel. */
+.cp-pick {
+    position: relative;
+    height: 84px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: crosshair;
+    background-image: linear-gradient(to top, #000, rgba(0, 0, 0, 0)),
+        linear-gradient(to right, #fff, rgba(255, 255, 255, 0));
+}
+
+.cp-pick-dot {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    margin: -5px 0 0 -5px;
+    border: 1px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+}
+
+.cp-hue {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 12px;
+    margin: 5px 0 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    background: linear-gradient(to right, #f00, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00);
+}
+
+.cp-hue::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 16px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--panel);
+}
+
+/* The presets scroll on their own, so the picker above them can never scroll out of reach. */
+.cp-rows {
+    max-height: 110px;
+    overflow-y: auto;
+}
+
+/* The custom-colour row: a text field and a Use button, for a value the picker cannot express — a colour
+ * NAME ("Teal", "Transparent") or an exact hex typed by hand. */
 #colorPalette .cp-custom {
     display: flex;
     gap: 4px;
-    padding: 0 2px 4px;
+    padding: 4px 2px;
     border-bottom: 1px solid var(--border);
     margin-bottom: 4px;
 }
@@ -2662,18 +2714,17 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     height: 24px;
 }
 
-.sheet-color .sheet-well {
+.sheet-color input[type="color"] {
     width: 34px;
     height: 22px;
     padding: 0;
     border: 1px solid var(--border, #444);
-    border-radius: 3px;
-    background: #000000;
+    background: none;
     cursor: pointer;
 }
 
 /* On the sheet's own colour: the swatch is dimmed, and the × is what puts it back there. */
-.sheet-color .sheet-well.on-sheet {
+.sheet-color input[type="color"].on-sheet {
     opacity: 0.35;
 }
 
