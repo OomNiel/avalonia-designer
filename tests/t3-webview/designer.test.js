@@ -406,6 +406,8 @@ module.exports = async (t) => {
     msg({ type: 'armTool', tag: 'Button', from: 'drag' });
     t.ok(/Release the drag on the canvas to place a Button/.test($('status').textContent || ''), 'drop-lost',
         'a DRAG-arm says so (a click-arm keeps the click wording)');
+    t.ok(posted.some((m) => m.type === 'webviewLog' && /armTool arrived \(drag\)/.test(m.text)), 'drop-lost',
+        'the log records the arm ARRIVING — the one half of a toolbox drag that always works');
     posted.length = 0;
     const hover = new s.window.MouseEvent('dragover', { bubbles: true, cancelable: true, clientX: 300, clientY: 90 });
     hover.dataTransfer = { getData: () => '', types: [] };
@@ -420,8 +422,8 @@ module.exports = async (t) => {
         'at the last point the drag was seen over the canvas');
     t.ok(posted.some((m) => m.type === 'webviewLog' && /drop event never arrived/.test(m.text)), 'drop-lost',
         'and says so in the log, so the platform is on record rather than guessed at');
-    t.ok(posted.some((m) => m.type === 'webviewLog' && /dragover is arriving/.test(m.text)), 'drop-lost',
-        'the log also records that dragover DID arrive — that is what rules a dead drag out');
+    t.ok(posted.some((m) => m.type === 'webviewLog' && /dragover reached the webview/.test(m.text)), 'drop-lost',
+        'and that dragover reached the webview — which is what rules a dead drag out');
 
     // --- a CLICK-armed tool must never be placed by that path ---
     msg({ type: 'armTool', tag: 'TextBox' });   // no `from`: the click-to-place arm
@@ -434,6 +436,26 @@ module.exports = async (t) => {
         'a click-armed tool waits for the click (the fallback is drag-only)');
     t.ok(/Click the canvas to place a TextBox/.test($('status').textContent || ''), 'drop-lost',
         'and the status still invites the click');
+
+    // --- a drag arm that NO drag event ever reaches ------------------------------------------------
+    // This is the report of 2026-09-26, exactly: the Output channel held one line ("armTool posted") and
+    // nothing else — no dragover, no drop — because the platform never handed the native drag to the
+    // webview. Recognising that is what turns a dead drag into an answer: the tool STAYS armed and the
+    // status switches to the click wording, so the drag still leads somewhere.
+    msg({ type: 'armTool', tag: 'TextBlock', from: 'drag' });
+    t.ok(/Release the drag on the canvas to place a TextBlock/.test($('status').textContent || ''), 'no-drag',
+        'the drag arm starts out expecting a release');
+    posted.length = 0;
+    await new Promise((r) => setTimeout(r, 600));   // past the 500 ms watchdog
+    t.ok(posted.some((m) => m.type === 'webviewLog' && /no drag event reached the webview/.test(m.text)), 'no-drag',
+        'the watchdog records that the platform delivered no drag event at all');
+    t.ok(/Click the canvas to place a TextBlock/.test($('status').textContent || ''), 'no-drag',
+        'and the status switches to the CLICK wording — the half that always works');
+    dispatch('click', 'canvas', { clientX: 210, clientY: 130 });
+    const healed = posted.filter((m) => m.type === 'drop');
+    t.equal(healed.length, 1, 'no-drag', 'so a click on the canvas places the tool the drag armed');
+    t.equal(healed[0].tag, 'TextBlock', 'no-drag', 'the right one');
+    t.equal(`${Math.round(healed[0].x)},${Math.round(healed[0].y)}`, '210,130', 'no-drag', 'where it was clicked');
 
     // --- locked Body: right-clicking the empty body selects Body + disables destructive actions ---
     dispatch('contextmenu', 'canvas', { clientX: 10, clientY: 10 }); // hits Body (0,0,800,450), not Root

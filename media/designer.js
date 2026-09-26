@@ -291,6 +291,8 @@
         dragHover: null,
         dragQuietTimer: null,
         dragHoverLogged: false,
+        // The watchdog that decides a drag arm will never be completed by a drop (nothing reached us).
+        noDragTimer: null,
         showAdvanced: false,
         // Which Properties sections the user folded away, per control TYPE (e.g. { DataGrid: { data: true } }).
         // Remembered across designer reopens via the webview state (see loadCollapsed/persistCollapsed).
@@ -2140,12 +2142,10 @@
 
     els.canvas.addEventListener('dragover', (e) => {
         e.preventDefault();
-        // A native drag that reaches the canvas is the fact everything below rests on: the toolbox drag does
-        // arrive as dragover even where the DROP event is later swallowed. Say so once per drag in the log.
-        if (state.dragArmed && !state.dragHoverLogged) {
-            state.dragHoverLogged = true;
-            logToHost('dragover is arriving while a toolbox tool is armed');
-        }
+        // The drag reached the canvas: the watchdog can stand down (the document-level probe in the log
+        // already recorded this dragover, so nothing is logged here unless the fallback later needs it).
+        state.dragHoverLogged = true;
+        cancelNoDragWatchdog();
         state.dragHover = { x: e.clientX, y: e.clientY };
         const p = toDesign(e.clientX, e.clientY);
         highlightDrop(hitTest(p.x, p.y));
@@ -2173,6 +2173,7 @@
         state.pendingTag = null;
         state.dragArmed = false;
         state.dragHover = null;
+        cancelNoDragWatchdog();
         updatePendingTool();
         let tag = armedTag;
         if (!tag) {
@@ -2218,6 +2219,30 @@
         if (state.dragQuietTimer) { clearTimeout(state.dragQuietTimer); state.dragQuietTimer = null; }
     }
 
+    // ---- the drag that never arrives at all (Electron on Wayland) ----------------------------------
+    // If the platform does not hand the native drag to the webview, NOTHING in here can see it: no
+    // dragover, no drop, and no pointer position (a native drag owns the pointer). The one thing that still
+    // works is the ARMING — it travels on the webview message channel — so the tool is left armed and the
+    // user is told what does work: a click on the canvas. That is a real answer rather than a dead drag.
+    function armNoDragWatchdog() {
+        cancelNoDragWatchdog();
+        state.noDragTimer = setTimeout(() => {
+            state.noDragTimer = null;
+            if (!state.pendingTag || !state.dragArmed || state.dragHoverLogged) return;
+            logToHost('no drag event reached the webview within 500 ms of the toolbox arming it — this '
+                + 'platform does not deliver the drag here (Electron/Wayland). The tool stays armed: a CLICK '
+                + 'on the canvas places it.');
+            // Completing a drag is impossible, so stop pretending: the click path takes over, and the
+            // status line now invites exactly that.
+            state.dragArmed = false;
+            updatePendingTool();
+        }, 500);
+    }
+
+    function cancelNoDragWatchdog() {
+        if (state.noDragTimer) { clearTimeout(state.noDragTimer); state.noDragTimer = null; }
+    }
+
     function placeFromQuietDrag(clientX, clientY) {
         if (!state.pendingTag || !state.dragArmed) return;
         const tag = state.pendingTag;
@@ -2234,6 +2259,36 @@
     /** One line into the extension's Output channel — the only way a webview can be heard from a report. */
     function logToHost(text) {
         try { post({ type: 'webviewLog', text }); } catch (err) { /* a log must never break the designer */ }
+    }
+
+    // ---- what a native drag actually does HERE (unconditional diagnostics) --------------------------
+    // One drag has to produce a readable story, so these listeners sit on the DOCUMENT and fire whether or
+    // not a tool is armed — and they fire for drags that have nothing to do with the toolbox as well. That
+    // is the point: dragging a FILE from the file manager onto the canvas gives the control experiment. If
+    // not even that logs a dragover, then no drag reaches a webview on this machine at all, which is a
+    // platform fact (Electron's native drag on Wayland) and not something this code can fix.
+    //
+    // `dragend` is deliberately absent: it is fired on the DRAG SOURCE (the toolbox tree), never here.
+    const dragSeen = { dragenter: false, dragover: false, dragleave: false, drop: false };
+    function probeDrag(kind, e) {
+        if (kind === 'dragenter' && dragSeen.dragenter) {
+            // A second drag has started: start the story over.
+            for (const k in dragSeen) dragSeen[k] = false;
+        }
+        if (dragSeen[kind]) return;
+        dragSeen[kind] = true;
+        let types = '';
+        try {
+            types = Array.from((e.dataTransfer && e.dataTransfer.types) || []).join(',');
+        } catch (err) { types = '<unreadable>'; }
+        logToHost(kind + ' reached the webview'
+            + (types ? ' (dataTransfer.types: ' + types + ')' : ' (no dataTransfer types)')
+            + (state.pendingTag
+                ? ' [armed: ' + state.pendingTag + (state.dragArmed ? ', from a drag' : ', from a click') + ']'
+                : ' [nothing armed]'));
+    }
+    for (const kind of ['dragenter', 'dragover', 'dragleave', 'drop']) {
+        document.addEventListener(kind, (e) => probeDrag(kind, e), true);
     }
 
     // ---------------- armed toolbox tool (click tool, then click canvas) ----------------
@@ -2399,6 +2454,9 @@
         }
         if (e.key === 'Escape' && state.pendingTag) {
             state.pendingTag = null;
+            state.dragArmed = false;
+            cancelDropQuietTimer();
+            cancelNoDragWatchdog();
             updatePendingTool();
             e.preventDefault();
             return;
@@ -3366,6 +3424,11 @@
                 state.dragHoverLogged = false;
                 cancelDropQuietTimer();
                 updatePendingTool();
+                // The arm is the ONE half of a toolbox drag that always arrives, so say so: from here on the
+                // log can distinguish "the arm never got here" from "the drag never got here".
+                logToHost('armTool arrived (' + (state.dragArmed ? 'drag' : 'click') + ') — ' + msg.tag
+                    + '; waiting for ' + (state.dragArmed ? 'a drop, or a click on the canvas' : 'a click on the canvas'));
+                if (state.dragArmed) armNoDragWatchdog();
                 break;
             }
             case 'clipboard': {

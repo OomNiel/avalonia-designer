@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.4
+// BUNDLED-COPY: 0.12.5
 #nullable disable
 using System;
 using System.IO;
