@@ -1,7 +1,28 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-25 · Status: **full suite green on this machine — 8,495 passed / 0 failed / 0 skipped (67 s)**
+Date: 2026-09-26 · Status: **full suite green on this machine — 8,630 passed / 0 failed / 0 skipped (68 s)**
 
+> 2026-09-26: **`0.12.3` … `0.12.8`** — six releases in one day, and the suite grew **8,495 → 8,630** with
+> them. `0.12.3` (**8,531**) made the toolbox drag work at all: VS Code never bridges a TreeView's drag MIME
+> types into a webview, so the tag now travels on the `armTool` message — the channel click-to-place already
+> uses; the same release put `H. Align` / `V. Align` behind **Show advanced** and fixed a brand-new C#
+> project that would not build (`CS0103`: the creator never passed the `GrumpyPrint` helper — now held down
+> by a test asserting the creator passes **every** file in `resources/`). `0.12.4` (**8,556**) added
+> `t2-logic/toolboxDrag` (16) — the **extension** half of that feature had no coverage at all — and made the
+> pipeline log where it stops. `0.12.5` (**8,563**) turned the probes unconditional, after a user report of a
+> single log line proved the gated probe could not say *which* half was missing, and added the 500 ms
+> watchdog that keeps the tool usable on a machine that delivers no drag. `0.12.6` (**8,571**) completed the
+> drag from the **mouse**, because the probe had answered the diagnosis: on a native-Wayland VS Code **not
+> one drag event reaches the webview**, so the first mouse event after the arming is the one that follows
+> the release. `0.12.7` (**8,632**) added **Print Ink** (colour / mono) and measured it rather than trusting
+> it — 71,033 px of the plate colour on a colour page against 38 on a mono one, asserted as coverage. `0.12.8`
+> (**8,630**) moved the chart's **Data Selector** row into the **Data** section, which needed a key of its own
+> (`DataSelector`) because the shape controls' path-geometry row is keyed `Data` too.
+>
+> **A total can go *down* between two green runs** (8,632 → 8,630): the T5 property audit skips controls whose
+> property list its compliance cache has already verified, so a run that re-checks the charts counts more
+> assertions than the next one that does not. `AVALONIA_COMPLIANCE_RESET=1` forces the full audit.
+>
 > 2026-09-25, later still: **`0.12.2`** made the charts print on a **Linux desktop** and put the legend on the
 > paper under the user's control. `Avae.Printables` ships a real service only for the platforms it targets — a
 > plain Linux build gets an **API-only** asset, so `UsePrintables()` registered nothing and **Print…** stayed

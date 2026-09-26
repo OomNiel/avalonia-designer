@@ -233,8 +233,50 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.12.2` (2026-09-25) — packaged, committed, tagged and released; **THIS is the file to upload to the
-> Marketplace.** It is the Linux-printing follow-up to `0.12.1`, and it carries everything `0.12.1` itself
+> **`0.12.8` (2026-09-26) — packaged, committed, documented; **THIS is the file to upload to the
+> Marketplace.** It carries everything since `0.11.0` — the whole chart line, the hardcopy work, Linux/CUPS
+> printing, the print rows, the toolbox drag fix — so one upload brings the listing from `0.11.0` up to date.
+>
+> **Baseline, read back from the gallery on 2026-09-26:** the stable listing still carries **`0.11.0`**
+> (`lastUpdated` 2026-09-20T15:42Z, `VsixSha256`
+> `3d913e3df7c97fd2970320fbbbab2579865344b44807fb46d139e77f95ab517c`) — so **none** of `0.12.0`…`0.12.2` was
+> ever uploaded, and this single upload spans all nine versions from `0.12.0` to `0.12.8`.
+>
+> **Artefact:** `avalonia-designer-0.12.8.vsix`, **1,284,554 bytes**, sha256
+> **`304eb6b82290206f5078154e37e66eff994724b7b9f97b47cfba89271c6e31a3`**, **121 files** (0 source maps;
+> the same count as `0.12.6`, which is how the stray-file problem below was caught), manifest
+> `Version="0.12.8"` and **no `PreRelease` attribute** (a plain, stable upload). **Verified:** local
+> `sha256sum`; the packaged `resources/*.{cs,vb}` all open with `BUNDLED-COPY: 0.12.8` (16 stamps); the
+> packaged `out/propertyCatalog.js` **and** `media/designer.js` carry the new `DataSelector` key;
+> `out/propertyCatalog.js` carries the `PrintInk` row and `out/bundledComponents.js` the `GrumpyPrint`
+> spec; the packaged `host/PreviewerHost.csproj` links `../resources/{GrumpyCharts,GrumpyPrint}.cs`; and
+> `extension/Consumer.cs` is **absent**. Suite **8,630 passed / 0 failed**.
+>
+> **What it changes** (all of it in `CHANGELOG.md` `[0.12.3]`…`[0.12.8]`, `NOTES.md` §154–§157): the
+> **toolbox drag** works on every platform (`0.12.3` carries the tag over the `armTool` message, because VS
+> Code never bridges a TreeView's drag MIME types into a webview, and `0.12.6` finishes the drag from the
+> **mouse** on a native-Wayland VS Code, where the probe proved **no drag event reaches the webview at
+> all**); **`H. Align` / `V. Align`** are advanced rows; a **brand-new C# project builds** (the creator had
+> never passed the `GrumpyPrint` helper — `CS0103`); **`Print Ink`** (colour / mono) joins the four hardcopy
+> rows; and the chart's **`Data Selector`** row moved into the **Data** section. **Nothing was tagged for
+> `0.12.3`…`0.12.7`** — they are commits on `main`, and this is the first release that carries them.
+>
+> > ⚠️ **`0.12.7`'s `.vsix` is contaminated — never upload it.** `npm run package` packages the **working
+> > tree**, and a stray probe file (`Consumer.cs`, 555 B) was sitting in the repository root when `0.12.7`
+> > was packaged: it is inside that VSIX at `extension/Consumer.cs`. The file is gone and `0.12.8` is clean.
+> > **Before packaging: `git status --short` must be clean, and compare the file count with the previous
+> > release.**
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.12.8.vsix` → leave **Pre-release
+> unchecked** → then confirm with the gallery query below that the version is `0.12.8` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
+> the user's.**
+
+> **`0.12.2` (2026-09-25, and `0.12.3`–`0.12.7` after it) — **SUPERSEDED by `0.12.8` — do not upload this
+> file.** It was packaged, committed, tagged and released on GitHub (`v0.12.2`, the `Latest` release) **but it
+> was never uploaded to the Marketplace**, and `0.12.8` carries all of it plus the drag fix, the alignment
+> rows, the first-build fix, `Print Ink` and the Data Selector move. It is the Linux-printing follow-up to
+> `0.12.1`, and it carries everything `0.12.1` itself
 > carries — the whole `0.11` chart line, the hardcopy rework and the install size — so one upload brings the
 > listing from `0.11.0` up to date.
 >
@@ -262,7 +304,7 @@ listing when that release is uploaded — a repo-only README edit does not.
 > **Upload:** publisher portal → *Update* → `avalonia-designer-0.12.2.vsix` → leave **Pre-release
 > unchecked** → then confirm with the gallery query below that the version is `0.12.2` and
 > `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
-> the user's.**
+> the user's.** *(Superseded: `0.12.8` above is the file to upload, and it contains this one.)*
 
 > **`0.12.1` (2026-09-25) — **SUPERSEDED by `0.12.2` — do not upload this file.** It was packaged and
 > verified but never published, and `0.12.2` carries all of it plus Linux printing and the legend row. It is

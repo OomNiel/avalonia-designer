@@ -66,7 +66,7 @@
     - [The Data Selector editor — which file, and which page (since 0.11.7)](#1911-the-data-selector-editor--which-file-and-which-page-since-0117)
     - [The waterfall chart (since 0.11.12)](#1912-the-waterfall-chart-since-01112)
     - [The surface chart 3D (since 0.11.14)](#1913-the-surface-chart-3d-since-01114)
-    - [Printing a chart — hardcopy and PDF (since 0.12.0; page, PNG and Ctrl+P since 0.12.1; Linux printing and Print Legend since 0.12.2)](#1914-printing-a-chart--hardcopy-and-pdf-since-0120)
+    - [Printing a chart — hardcopy and PDF (since 0.12.0; page, PNG and Ctrl+P since 0.12.1; Linux printing and Print Legend since 0.12.2; Print Ink since 0.12.7)](#1914-printing-a-chart--hardcopy-and-pdf-since-0120)
 
 ---
 
@@ -479,8 +479,13 @@ that control (a ⚠ marks one whose handler has been deleted — recreate it fro
 **Add event…**. Pick one and the code-behind opens with the cursor inside the method. See
 [Section 12](#12-code-behind-events-made-easy).
 
-> Drag-and-drop from the toolbox also works, but on Linux/Xorg it can be unreliable — the
-> **click-then-click** method always works.
+> **Drag-and-drop from the toolbox** (since 0.12.3, and finished from the mouse since 0.12.6): drag a tool
+> out of the Toolbox and let go **over the canvas**, and the control is placed where you released it. On a
+> VS Code running native **Wayland** the desktop never hands the drag to the editor's canvas, so the
+> extension reads the **release itself** instead — the first mouse movement after you let go places the
+> tool, if it lands on the canvas. Let go somewhere else and the tool stays armed: the status bar says
+> *"Release on the canvas to place a Button, or click it (Esc cancels)."* — **click the canvas** to place
+> it, or `Esc` to drop it. **Click-then-click** always works, on every desktop.
 
 ---
 
@@ -2391,6 +2396,13 @@ Four things are worth knowing before you go looking for them:
   the legend took given back to the plot, which is what a hardcopy usually wants — and **On**, which draws it
   on the page even while it is switched off on screen (the right-click **Legend** entry is the on-screen one).
   The row steers the **output** only: the chart on screen keeps its own setting, before and after.
+- **Colour or mono ink (since 0.12.7).** **Print Ink** is the fifth row: **Colour** (the default) or **Mono**,
+  which leaves the **plot's background** off the page — on paper that plate is the one thing on a chart that
+  turns into a solid block of ink, while the data lines are what you came for. Your own colours stay on the
+  lines: a mono printer maps those to greys itself, and the row does not try to out-guess it. Both halves of
+  the background are removed for the job — the plot's own backcolour *and* a background brush the form set —
+  and **both are put back when the job ends**, so a print that fails cannot leave your form changed. Like
+  **Print Legend**, the row is about the **paper** only: what is on screen never changes.
 - **A failure can never take your form down — and it does not disappear either.** Every path checks what it
   needs first (a window, a printing service, a file the user really picked, a folder that can be written),
   and a second menu click while one export is in flight is ignored instead of opening a second dialog.

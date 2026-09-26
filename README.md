@@ -197,7 +197,9 @@ The workbook is chosen from the chart's **right-click menu** (*Choose spreadshee
 the hardcopy output: **Print…** (the platform's own print dialog), **Print to PDF…** (pick a file, get a PDF
 — on every platform) and **Save as picture…** (a PNG), on every chart type including the pie and the bar;
 **Ctrl+P** does the same from the keyboard. **Print Paper** (*As drawn*, the default, or A4 / US Letter),
-**Print Margin**, **Print on White** and **Print Legend** (*As drawn*, **Off** for the graph alone, or *On*)
+**Print Margin**, **Print on White**, **Print Legend** (*As drawn*, **Off** for the graph alone, or *On*)
+and **Print Ink** (**Colour** — the default — or **Mono**, which leaves the plot's background plate off the
+page so it cannot print as a solid block of ink, restoring it afterwards)
 are rows in the Properties panel, and they describe a real page — the chart is painted onto it rather than
 rasterised into it, so the PDF stays **vector**. The two packages behind the print entries
 (`Avae.Printables` + `AvaloniaUI.PrintToPDF`) arrive with a **newly generated** project, and an older one is

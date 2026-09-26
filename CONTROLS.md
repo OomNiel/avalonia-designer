@@ -172,7 +172,9 @@ See **USER_MANUAL §19, "The charting tools"** for the full walkthrough.
   `LiveUpdate` re-reads the file on save. The **Data Selector** button (`Data — Select data…`) picks the
   **source** (`Spreadsheet` or, not read yet, `Data Files`), the **workbook** and — new in 0.11.7 — **which
   PAGE** of it to read, by the workbook's own sheet names (`SourceKind`, `SourceFile`, `SourceSheet`,
-  `DataFile`). `ShowBrowse` and its surface button were retired in 0.11.2 and the property is now a no-op
+  `DataFile`). Since **0.12.8** the row is the **first row of the Data section** in the Properties panel (it
+  used to appear under *Appearance*, because it shared the key `Data` with the shape controls' geometry row;
+  the chart row is keyed `DataSelector` now). `ShowBrowse` and its surface button were retired in 0.11.2 and the property is now a no-op
   kept only so older forms still compile.
 - **Series** (`Series — Edit series…`): one line per series, each with its own columns, colour, thickness,
   line style, markers, `AxisMode` (Common / Per series) and `Visible` switch. Order in the list = draw
@@ -239,6 +241,14 @@ See **USER_MANUAL §19, "The charting tools"** for the full walkthrough.
   because the legend's room is baked into the laid-out positions and a merely invalidated chart would draw
   the gap with nothing in it — so a print never changes what is on screen. Outside the symbol, like the three
   rows above.
+- **The ink on the paper** (0.12.7): **`PrintInk`** (**`ChartInkMode`**: `Colour` — the default, what you see
+  is what prints — or `Mono`, which leaves the **plot background** off the page, since that plate is the one
+  thing on a chart that can turn into a solid block of ink; the traces keep their own colours). Both halves
+  of the background go — the `PlotBackOpacity` plate and a form-set `PlotBackBrush` — and both are put back
+  when the job ends (from a `using`, so a failed print cannot leave the form changed), through the same
+  scoped machinery as the legend row, now general: **`ApplyPrintTweaks`** / **`WithPrintTweaksAsync`** /
+  **`PrintTweaksRestore`**. A `Mono` print renders the page itself and prints that **file**, exactly like a
+  legend override — a backend must never be handed the live chart in a changed state.
 - **Printing on Linux** (0.12.2): `Avae.Printables` publishes a real service only for the platforms it targets,
   and a plain Linux desktop gets its **API-only** asset — `UsePrintables()` compiles, runs and registers
   nothing, so `Printable.Default` stays null. The bundled **`GrumpyPrint`** helper fills exactly that gap:
@@ -250,7 +260,8 @@ See **USER_MANUAL §19, "The charting tools"** for the full walkthrough.
   all (BC30390) and C# only explicitly — and the two twins stay twins.
 - **The API behind the menu** (0.12.1): `PrintAsync(options)` returns `Task<bool>`, `PrintToPdfAsync(options)`
   (picker) and `ExportPdfAsync(path|stream, options)`, `ExportPng(path, scale)`, `SaveAsPictureAsync()` — the
-  picker-free ones are what an app or a test drives. **`CanPrint`** is a static test on `Printable.Default`:
+  picker-free ones are what an app or a test drives. **`CanPrint`** means *this machine can put a page on
+  paper*: the platform service (`Printable.Default`) **or** the CUPS helper, its tooltip naming both routes.
   the menu **disables** `Print…` (tooltip: which call is missing) instead of offering a click that does
   nothing. Failures go to a **`PrintFailed`** event (plus `Trace`), never thrown, and `_printBusy`/`IsPrinting`
   stop a second dialog while one export runs. When a platform prints a *file* but not a *Visual*, the chart

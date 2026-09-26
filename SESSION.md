@@ -17,7 +17,55 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-25, twelfth session — 0.12.2 packaged, tagged and released)
+## Where the last session left off (2026-09-26, thirteenth session — 0.12.8, docs done, release pending)
+
+**The toolbox drag works on native Wayland, and the panel got two small rows moved.** The session began as a
+verification of printing, then the user refactored the drag path and reported it *still* dead — which turned
+into a four-release diagnosis (`0.12.3`…`0.12.6`), then two small requests (`0.12.7` Print Ink, `0.12.8` the
+Data Selector row), and finally *"commit etc, do all docs, I want to publish to the Marketplace"* — so every
+doc is in line and the tag/release/upload are the remaining steps.
+
+**What 0.12.3 … 0.12.8 did** (full detail in `CHANGELOG.md`, `NOTES.md` §154–§157):
+
+- **The drag, in four steps, each one answering the question the last one could not.** VS Code does not bridge
+  a TreeView's drag MIME types into a webview, so the canvas's `drop` saw an **empty** `dataTransfer` and
+  bailed (`0.12.3`: the tag now rides the `armTool` message — the click-to-place channel). Then the user's
+  machine showed *"armTool posted"* and nothing else (`0.12.4`: instrumentation — the arm logs its own
+  arrival, the webview logs every drag event it sees, and a swallowed drop is completed from the `dragover`
+  stream going quiet). Then a single log line proved the gated probe could not tell *"the arm never arrived"*
+  from *"the drag never arrived"* (`0.12.5`: probes unconditionally on the document, plus a 500 ms watchdog
+  that hands the tool back to the click path). Then the answer: on that machine **not one drag event reaches
+  the webview — not even `dragenter`** — so Electron starts a native drag and never hands it over (`0.12.6`:
+  the **release rescue** — Chromium sends no mouse events during a native drag, so the first `mousemove` /
+  `mouseup` after the arming *is* the release, and it places the tool where the user let go). The user
+  confirmed: **"The workaround works."**
+- **`H. Align` / `V. Align` are advanced rows** (`0.12.3`) — hidden until **Show advanced**, on every control
+  and on the multi-selection panel.
+- **A brand-new C# project built with `CS0103: The name 'GrumpyPrint' does not exist`** (`0.12.3`):
+  `projectCreator.ts` never passed the helper that `GrumpyCharts` calls. Fixed, and a test now asserts the
+  creator passes **every** file in `resources/` — the scaffold treats an option as optional, which is why
+  nothing else caught it.
+- **`Print Ink`** (`0.12.7`, asked for in these words: *"I want the option to print 'Colour' or 'Mono'. If mono
+  is selected the plot background colour must be temporarily set to transparent and after the print restored
+  to what it was before printing."*): all seven charts, **both** halves of the plot background removed for the
+  job (the `PlotBackOpacity` plate and a form-set `PlotBackBrush`) and both put back from a `using`, so a
+  failed print cannot leave the form changed. The scoped-override machinery became general
+  (`ApplyPrintTweaks` / `WithPrintTweaksAsync` / `PrintTweaksRestore`) and the PNG and both PDF paths honour
+  it.
+- **The `Data Selector` row now sits in the Data section** (`0.12.8`): it had been keyed `Data`, which is also
+  the shape controls' path-geometry row (`Path Data`), and the section map takes the first listing — so it was
+  filed under *Appearance*. It has a key of its own now and is listed first in **Data**.
+
+**Two facts to carry forward.** The `0.12.7` `.vsix` is **contaminated** — packaged while a stray probe file
+(`Consumer.cs`) sat in the repository root, and it rode into the package — so `0.12.8` is the file to upload,
+and it contains all of `0.12.7`. And the suite total **drifts** between runs (8,632 → 8,630) because the T5
+property audit skips controls its compliance cache has already verified.
+
+**Still open for the user:** the GitHub tag/release for `v0.12.8`, and the Marketplace upload itself (the
+listing still carries **0.11.0**, so this one upload spans the whole chart line, the print work and these six
+releases).
+
+## The session before that (2026-09-25, twelfth session — 0.12.2 packaged, tagged and released)
 
 **Charts print on a Linux desktop now, and the paper can leave the legend off.** The user reported **Print…**
 greyed out on a project that was wired correctly, picked the **"PDF + CUPS service"** route out of the options

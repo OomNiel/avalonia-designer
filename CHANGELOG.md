@@ -6,11 +6,179 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.12.2` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.12.8` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.12.8] - 2026-09-26 · *the Data Selector row moves to where the data is*
+
+### Changed
+
+- **The chart's `Data Selector` row now sits in the Data section, not in *Appearance*.** That is where
+  it always belonged: the row answers *"where does this chart's data come from"*, and the rows the section
+  puts under it — the inline array, the workbook columns — are what it points at. It sat in *Appearance* for
+  a dull reason worth writing down: the row was **keyed `Data`**, which is *also* the shape controls'
+  path-geometry row (**Path Data**, a text box that does belong in Appearance), the section map takes the
+  **first** listing, and `Data` has been listed under Appearance since `0.11.11`. Moving the shared key
+  would have dragged every `Path` and `Polygon`'s geometry row along with it, so the chart's row has a key
+  of its own (`DataSelector`) and is listed **first** in **Data** — left *unlisted* it would have been filed
+  under *Editors*, which is where `groupPropertyRows` sends an editor button that no section claims.
+  Nothing else moved: the label is still *Data Selector*, the button still reads *Select data…*, and the
+  shape controls keep their `Data` row where they always had it.
+
+### Notes
+
+- The webview's opener follows the key, and the tests that looked the chart's row up by `Data` were updated.
+  The data-selector test no longer merely asserts the row exists — it pins **`sectionId === 'data'`** for
+  every chart type, which is the thing that was wrong.
+- Suite **8,630 passed / 0 failed**. Version `0.12.8` with all 16 bundled stamps.
+
+## [0.12.7] - 2026-09-26 · *print a chart in colour, or leave the plate off in mono*
+
+### Added
+
+- **`Print Ink`** — a fifth hardcopy row on all seven charts: **Colour** (the default: what you see is what
+  prints) or **Mono**, which leaves the **plot background** off the page. That plate is the one thing on a
+  chart that can turn into a solid block of ink on paper; the traces keep their own colours and a mono
+  printer maps them to greys itself. Both halves of the background go — the `PlotBackOpacity` plate *and* a
+  `PlotBackBrush` the form may have set — and **both are put back when the job ends**, from a `using`, so a
+  failed print cannot leave the form changed. The row honours the same guarantee as `Print Legend`: what is
+  on screen is never touched.
+- **`ChartInkMode`** / **`ChartPrintOptions.Ink`**. The scoped-override machinery is general now
+  (**`ApplyPrintTweaks`** / **`WithPrintTweaksAsync`** / **`PrintTweaksRestore`**) instead of legend-only,
+  so the PNG export and both PDF paths honour the row as well.
+
+### Changed
+
+- **A mono print renders the page itself and prints that file**, exactly like a legend override — and for
+  the same reason: a printer backend must never be handed the **live** chart in a changed state.
+
+### Notes
+
+- **Measured, not assumed.** The T4 harness sets a plot background of a colour the chart draws nowhere else
+  (`#123456`), exports the same page in colour and in mono, and counts it: **71,033 px (89 % of the page) in
+  colour, 38 in mono**. Those 38 are a sparse scatter across the whole chart — anti-aliased gridlines and
+  traces that happen to mix into a similar colour — so the assertion is stated as **coverage** (> 50 % vs
+  < 0.5 %) rather than equality, with the measurement written down beside it. The harness also asserts the
+  brush identity and the opacity are back to what the form had.
+- The drag rescue's log now names the event that completed it (*"from a mouseup"* or *"from a mousemove"*).
+  Both were already handled; this says which one a given platform actually sends.
+- **Artefact note.** The `0.12.7` `.vsix` is **not** the file to upload: it was packaged while a stray probe
+  file (`Consumer.cs`) sat in the repository root, and it rode into the package. The file is gone and
+  `0.12.8` is the clean build (121 files) — `0.12.7`'s code is all in it.
+
+## [0.12.6] - 2026-09-26 · *the drag is finished from the mouse, because the platform never delivers it*
+
+### Fixed — the toolbox drag on a VS Code running native Wayland
+
+- **Nothing in the document can see the drag, so the release is read off the mouse.** The `0.12.5` probe
+  answered it on the reporting machine: after *"armTool arrived (drag)"* **not one drag event reached the
+  webview** — not even `dragenter` — which means Electron starts a native drag and never hands it to the
+  webview's renderer. That is why the drop-free fallback (`0.12.4`, which needs a stream of `dragover`) could
+  not help either. What *can* be seen is the mouse: while a native drag is in flight Chromium sends the
+  webview **no mouse events at all**, which makes the **first** mouse event after the drag-arming the one
+  that follows the release.
+- The 500 ms watchdog — still only for a drag arm that saw *no* drag event at all — now arms a **release
+  rescue** instead of giving up: the first `mousemove`/`mouseup` after it, **if it lands on the canvas**,
+  places the armed control there, which is where the user let go. A movement outside the canvas places
+  nothing and leaves the tool armed for a click, and only the first movement counts (later ones are ordinary
+  hovers). Platforms that *do* deliver drags never take this path, so X11, macOS and Windows are unchanged.
+- The status line offers both finishes — *"Release on the canvas to place a Button, or click it (Esc
+  cancels)."* — and every step is logged, so **View → Output → "Avalonia Designer"** now reads as one story:
+  the arm, the fact that no drag event arrived, and then either *"the release was read off the mouse (x,y) —
+  placing Button there"* or *"the first mouse event after the release was outside the canvas"*.
+
+### Notes
+
+- Suite **8,571 passed / 0 failed**. Version `0.12.6` with all 16 bundled stamps. The user confirmed on the
+  machine that could never drag before: *"The workaround works."*
+
+## [0.12.5] - 2026-09-26 · *log every drag event, and keep the tool usable when none arrives*
+
+### Fixed — the drag still could not be told apart from the drag that never came
+
+- **The probe is now arm-independent.** `0.12.4`'s extra log line was gated on the arm arriving, so a report
+  of *"armTool posted"* and nothing else could not say *which* half was missing: an arm that never reached
+  the webview, or a drag that never reached the webview. The webview now logs **every** drag event
+  **unconditionally** on the document (capture), once per kind per drag, with `dataTransfer.types` and
+  whether anything is armed — `dragenter`, `dragover`, `dragleave`, `drop`. One drag now tells the whole
+  story, and dragging a **file** from the file manager onto the canvas becomes a control experiment: if even
+  that logs no `dragover`, then no drag reaches a webview on that machine at all, which is a platform fact
+  rather than a bug here.
+- **The arm announces its own arrival** (*"armTool arrived (drag) — Button; waiting for …"*), so *"the arm
+  never got here"* and *"the drag never got here"* can never be confused again.
+- **A 500 ms watchdog** recognises the platform case: a drag arm that sees no drag event at all. It says so
+  in the log and puts the tool back on the path that **does** work — the tool stays armed and the status
+  switches to *"Click the canvas to place a TextBlock"* — so a drag still leads somewhere on a machine that
+  cannot deliver it: drag, then click. **Esc** cancels the arm and both timers, so a cancelled drag leaves
+  nothing behind.
+
+## [0.12.4] - 2026-09-26 · *make the toolbox drag diagnosable, and finish a drop the platform swallows*
+
+### Added
+
+- **`armToolInActiveDesigner(tag, 'click' | 'drag')` now says what it did.** It logs whether a designer was
+  known and whether `postMessage` really delivered — it used to return **silently** when no tab was *active*
+  (`lastActivePanel` is only set for an active tab), so it now falls back to **any open designer panel**
+  instead of arming nothing.
+- **The webview logs into the same channel** (the new `webviewLog` message) and says what it sees:
+  *"dragover is arriving while a toolbox tool is armed"*, *"the drop event arrived — the native path works
+  on this machine"*, or *"the drop event never arrived — placing <tag> at the last hovered point (native drop
+  lost; Electron/Wayland)"*.
+
+### Fixed — a drag that is swallowed can still be completed
+
+- **A drag-armed tool can complete without a `drop` event.** Chromium sends `dragover` continuously while
+  the drag hovers, so the **end** of the drag is detected from that stream going quiet (180 ms) and the
+  control is placed at the last hovered point. Gated to **drag** arms only (a click-armed tool still waits
+  for a click), cancelled by a real drop (so it can never place twice) and by leaving the canvas (so a drag
+  dragged away places nothing).
+- The status line tells the two apart at a glance — *"Release the drag on the canvas to place a Button"*
+  (the arm arrived) versus the click wording — and it **takes the armed hint back** when nothing is armed
+  instead of leaving it on screen.
+
+### Notes
+
+- **`tests/t2-logic/toolboxDrag.test.js` is new (16)** and pins the wiring — `handleDrag` calls
+  `armDesignerTool`, `extension.ts` chains it with `'drag'`, the postMessage carries `from`, and the
+  fallback keeps its gates — because nothing covered the **extension** half of this feature. T3 gained 9
+  assertions for the drag wording and the drop-free completion, including that a click-armed tool is never
+  placed by it.
+- Suite **8,556 passed / 0 failed**. Version `0.12.4` with all 16 bundled stamps.
+
+## [0.12.3] - 2026-09-26 · *toolbox drag works, alignment behind Show advanced, and a first-build fix*
+
+### Fixed — the toolbox drag never had a tag to place
+
+- **VS Code does not bridge a TreeView's drag MIME types into a webview**, so the canvas's `drop` event
+  always saw an **empty** `dataTransfer` and bailed to *"Drag a control from the Toolbox view."* — the tag
+  now travels on the **`armTool` message** fired at drag-start, the channel click-to-place already uses:
+  `ToolboxProvider.handleDrag` calls `armDesignerTool`, `extension.ts` wires it to
+  `armToolInActiveDesigner`, and the webview's `drop` handler reads the armed tag **first**, falling back to
+  `dataTransfer` for other (future) drop sources. It works on Linux too, where the native bridge is
+  flakiest — and it explains the old *"drag is unreliable on Linux/Xorg"* note: the tag was never bridged
+  on **any** platform.
+
+### Changed
+
+- **`H. Align` and `V. Align` are *advanced* rows** (hidden until **Show advanced** is ticked), on every
+  control — both are `COMMON_PROPS` rows — and on the multi-selection panel, which derives from the same
+  `propertyDefsFor`. The rows stay in the catalog and keep their *Layout & size* section; the tests pin the
+  flag and the webview's filter.
+
+### Fixed — a brand-new C# project did not build
+
+- **`CS0103: The name 'GrumpyPrint' does not exist in the current context`, on the first build of a newly
+  created project.** `projectCreator.ts` never passed the bundled `GrumpyPrint` helper, so a new project
+  received a `GrumpyCharts.cs` that calls `GrumpyPrint` and **no helper**. Both files are passed now, and a
+  test asserts the creator passes **every** file in `resources/` — the scaffold treats an option as
+  optional, which is why nothing else had caught it.
+
+### Notes
+
+- Suite **8,531 passed / 0 failed** (from 8,495). Version `0.12.3` with all 16 bundled stamps.
 
 ## [0.12.2] - 2026-09-25 · *printing on Linux, and the legend on the paper*
 

@@ -4216,4 +4216,135 @@ and works on Linux as well.
 no armed tool posts nothing and shows the explanation. Both fail on the old code (`TypeError` reading
 `.type` off the missing message) and pass with the fix. T2/T3 remain green (**5,242 + 857**).
 
+---
+
+### §155 — the drag a native-Wayland VS Code never delivers, and how the mouse finished it (2026-09-26, 0.12.3–0.12.6)
+
+**The report was four words — "Drag-and-drop still not working" — and it took four releases to answer,
+because four different faults look identical.** *No arm*, *an arm that never arrived*, *a dragover that
+never became a drop* and *a drop with no tag* all leave the same two symptoms: the status text, and
+nothing placed. The path from §154's fix to a working drag was therefore mostly about making the
+pipeline **say which one it was**, and only then about the fix.
+
+**Step 1 (0.12.3) — the tag had nowhere to travel.** VS Code's own API says it: *"Mime types added in
+`handleDrag` won't be available outside the application."* A TreeView and a **webview** are two different
+processes, so the custom MIME never crossed, the canvas's `drop` saw an **empty** `dataTransfer`, and the
+handler bailed with the explanation. The tag now rides the **`armTool` message**, fired at drag-start —
+the channel click-to-place already used. This also retires the old *"drag is unreliable on Linux/Xorg"*
+note: on **no** platform was the tag ever bridged.
+
+**Step 2 (0.12.4) — instrumentation, and a fallback keyed on a signal that did exist (on most machines).**
+The pipeline logs end to end now: the arm says whether a designer panel was found and whether `postMessage`
+really delivered (it had been returning **silently** when no tab was *active* — `lastActivePanel` is only
+set for an active tab, so it now falls back to any open designer panel), and the webview logs what it sees
+over the same channel (a new `webviewLog` message). A swallowed drop is completed from the `dragover`
+stream going **quiet** (180 ms) — gated to drag arms, cancelled by a real drop (so it can never place
+twice) and by leaving the canvas.
+
+**Step 3 (0.12.5) — the probe that could not answer its own question.** The user's report was a single
+Output line: *"toolbox drag: armTool posted — Button"*. That proved the first hop and said nothing about
+the second, because 0.12.4's only other line was **gated on the arm arriving**. That was the
+instrumentation's fault, not the platform's. The webview now logs **every** drag event
+**unconditionally** on the document (capture), once per kind per drag, with `dataTransfer.types` and
+whether anything is armed — which makes dragging a **file** from the file manager onto the canvas a
+*control experiment*: if even that logs no `dragover`, no drag reaches a webview on that machine at all.
+A 500 ms watchdog catches that case and hands the tool back to the path that works (stays armed, status
+switches to *"Click the canvas to place a TextBlock"*).
+
+**Step 4 (0.12.6) — the answer, and the fix that follows from it.** The probe settled it: on a VS Code
+running `--ozone-platform=wayland`, after *"armTool arrived (drag)"*, **not one drag event reached the
+webview — not even `dragenter`**. Electron starts a native drag and never hands it to the webview's
+renderer. So the 0.12.4 fallback could never work either: **it was keyed on a signal the platform never
+sends.** What *can* be seen is the mouse. Chromium sends the webview **no mouse events at all** while a
+native drag is in flight, so the **first** mouse event after the drag-arming **is** the movement that
+follows the release. The watchdog now arms a **release rescue** instead of giving up: the first
+`mousemove` / `mouseup` after it, **if it lands on the canvas**, places the armed control there — which is
+where the user let go. A movement outside the canvas places nothing and leaves the tool armed for a click;
+only the **first** movement counts (later ones are ordinary hovers). Platforms that do deliver drags never
+take this path, so X11, macOS and Windows are untouched. The user, on the machine that could never drag:
+*"The workaround works."*
+
+**Three lessons worth keeping.**
+
+1. **A log line that proves the first hop is not a log line that proves the second.** The instrumentation
+   has to be **independent of the thing it is measuring** — gating the "did the drag arrive?" line on "did
+   the arm arrive?" made the one report the user had worthless.
+2. **A fallback keyed on a signal the platform does not send is not a fallback.** 0.12.4's quiet-`dragover`
+   completion is sound on a machine where drags arrive at all, and dead weight on one where they do not —
+   so the rescue had to be keyed on something *always* sent, which is why it is the mouse.
+3. **"Unreliable on Linux" was a description of a symptom, not a diagnosis.** It survived in the docs for
+   months because it was true-looking: the symptom was indeed intermittent-looking on Linux, and the
+   actual fault (an unbridged MIME type) was on every platform. §147's pattern again — a note that
+   explains *when* something fails is worth nothing until it names *why*.
+
+**Tests:** `tests/t2-logic/toolboxDrag.test.js` is **new (16)** and covers the half that had no coverage at
+all — the extension side: `handleDrag` calls `armDesignerTool`, `extension.ts` chains it with `'drag'`, the
+postMessage carries `from`, and the fallback keeps its gates. T3 gained the drag wording, the drop-free
+completion (**a click-armed tool is never placed by it**), the watchdog, both rescues and *only the first
+movement counts* (`tests/t3-webview/designer.test.js`). Suite **8,495 → 8,571** across the four releases,
+0 failed.
+
+### §156 — the plot background is the ink, and how a mono page was measured (2026-09-26, 0.12.7)
+
+**The request, verbatim:** *"When I print a chart directly to the printer, I want the option to print
+'Colour' or 'Mono'. If mono is selected the plot background colour must be temporarily set to transparent
+and after the print restored to what it was before printing."* — which is exactly the right instinct: on a
+chart the **plot background** is the only element that can become a solid block of ink, and the data lines
+are what the page is for.
+
+**What shipped.** `ChartInkMode` (`Colour` / `Mono`), `ChartPrintOptions.Ink`, and a **Print Ink** row on
+all seven charts. **Both halves** of the background are removed for the job — the `PlotBackOpacity` plate
+*and* a `PlotBackBrush` a form may have set — and both are put back when the job ends, **from a `using`**,
+so a print that fails or throws cannot leave the form changed. The scoped-override machinery stopped being
+legend-only and became general: **`ApplyPrintTweaks` / `WithPrintTweaksAsync<T>` / `PrintTweaksRestore`**,
+which the PNG export and **both** PDF paths now honour as well. The rule from §153 holds: a printer
+backend must never be handed the **live** chart in a changed state, so a `Mono` print renders the page
+itself and prints that **file**.
+
+**Measured, not assumed — and the measurement surprised me.** The T4 harness sets a plot background to a
+colour the chart draws **nowhere else** (`#123456`), exports the same page twice, and counts the pixels
+with the suite's own PNG reader: **71,033 px in colour (89 % of the page), 38 in mono.** A pass/fail
+assertion on "zero pixels" would have failed on those 38 — so before changing anything I looked at *where*
+they were, and they are a **sparse scatter across the whole chart**: anti-aliased gridlines and traces that
+blend into a similar colour. The honest assertion is therefore **coverage** (> 50 % vs < 0.5 %), with the
+numbers written down next to it. The same harness asserts the brush identity **and** the opacity are back
+to what the form had, which is the half of the request that is easy to get wrong.
+
+**Also in this release:** the drag rescue's log now names the event that completed it (*"from a mouseup"*
+or *"from a mousemove"*) — both were already handled, and this says which one a given platform sends.
+Suite **8,571 → 8,632**, 0 failed.
+
+### §157 — a key two controls shared, and a package that carried a stray file (2026-09-26, 0.12.8)
+
+**The request:** *"Move the 'Data Selector' property in the charting tools Properties rows to the Data
+section."* — a one-line request that turned out to be a naming collision.
+
+**Why it was in the wrong section.** The chart's editor row was keyed **`Data`** — which is *also* the
+shape controls' path-geometry row (**Path Data**, a text box that belongs in *Appearance*). The section map
+takes the **first** listing, `Data` has been listed under Appearance since `0.11.11`, and so the chart's
+Data Selector was filed under Appearance; the row's own comment (*"Shown at the TOP"*) predated sections
+and had never been revisited. Moving the shared key would have dragged every `Path` and `Polygon`'s
+geometry row into Data, so the chart row got a key of its own — **`DataSelector`** — and is listed **first
+in the Data section**, which is where it belongs: it answers *"where does this chart's data come from"*,
+and the rows under it (the inline array, the workbook columns) are what it points at.
+
+**The trap worth remembering:** `groupPropertyRows` files an editor **button** that no section claims under
+***Editors*** — so "just remove it from Appearance" would have parked the row somewhere new and equally
+wrong. A section list is not a decoration here; **the listing is the mechanism**. The new test pins the
+outcome rather than the existence: every chart's row must report **`sectionId === 'data'`**.
+
+**And a packaging lesson, learned the expensive way.** `npm run package` packages the **working tree**, so a
+stray probe file left in the repository root **ships**: the `0.12.7` `.vsix` contains
+`extension/Consumer.cs` (555 bytes). The file is gone, `0.12.8` is clean (121 files — the same count as
+`0.12.6`, which is how it was caught), and **`0.12.7` is not a file to upload**. Check before packaging:
+`git status --short` clean, and `unzip -l <vsix> | grep -v '^ *[0-9]' `-style spot checks — or simply count
+the files and compare with the previous release.
+
+**Docs (this pass, at the user's request — "commit etc, do all docs, I want to publish to the
+Marketplace"):** CHANGELOG `[0.12.3]`…`[0.12.8]`, TEST_PLAN's status and the 0.12.3–0.12.8 log (including
+why the total can *go down* between two green runs), SESSION hand-off, USER_MANUAL §19.14 (the Print Ink
+row) plus the toolbox drag note, CONTROLS (the ink bullet, the Data Selector's section, and the stale
+`CanPrint` sentence), README §7, and PUBLISHING's record. Version **0.12.8** with all 16 bundled stamps;
+suite **8,630 passed / 0 failed**.
+
 
