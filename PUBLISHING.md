@@ -233,9 +233,45 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.12.8` (2026-09-26) — packaged, committed, documented; **THIS is the file to upload to the
-> Marketplace.** It carries everything since `0.11.0` — the whole chart line, the hardcopy work, Linux/CUPS
-> printing, the print rows, the toolbox drag fix — so one upload brings the listing from `0.11.0` up to date.
+> **`0.12.15` (2026-09-26) — packaged, committed, documented, tagged and released on GitHub; **THIS is the
+> file to upload to the Marketplace.**
+>
+> **Baseline, read back from the gallery on 2026-09-26:** the stable listing still carries **`0.11.0`**
+> (`lastUpdated` 2026-09-20T15:42Z, `VsixSha256`
+> `3d913e3df7c97fd2970320fbbbab2579865344b44807fb46d139e77f95ab517c`). If that is still true when you upload,
+> this single upload spans **`0.12.0` … `0.12.15`** and brings the listing fully up to date.
+>
+> **Artefact:** `avalonia-designer-0.12.15.vsix`, **1,395,803 bytes**, sha256
+> **`03493ad5a44d1ce606e9d960827701469a15374e2372b16794f986e041f659f8`**, **124 files** (0 source maps),
+> manifest `Version="0.12.15"` and **no `PreRelease` attribute** (a plain, stable upload). **Verified:** local
+> `sha256sum`; the packaged `resources/*.{cs,vb}` all open with `BUNDLED-COPY: 0.12.15` (**18 stamps**); the
+> packaged `media/designer.js` carries the sizing grips and **zero** native colour inputs; `media/designer.css`
+> carries `.cp-pick` / `.cp-hue` (the popup's own picker) and the `sheet-grip` rules;
+> `out/sheetCells.js` carries `parseSheetTracks` / `sheetTracksText` / `writeSheetTracks` and
+> `out/designerPanel.js` writes the track sizes on save; and **both twins** carry the formula engine
+> (`ValueOf`, all five error names). `extension/Consumer.cs` is **absent**. Suite **9,148 passed / 0 failed**.
+>
+> **What it changes** (all of it in `CHANGELOG.md` `[0.12.9]`…`[0.12.15]`, `NOTES.md` §158–§161): the whole
+> **spreadsheet control line** — the control itself in both twins plus the designer's Cells editor
+> (`0.12.9`), per-cell formatting (`0.12.10`), the five things reported from running it plus Ctrl+Arrow
+> navigation and focus-on-load (`0.12.11`), the **self-drawn right-click menu** (`0.12.12`), the colour
+> control settled as **one swatch that is the dropdown** (`0.12.13` → `0.12.14`), and **formulas, `Dock` and
+> the design-time sizing handles** (`0.12.15`). **Nothing was tagged for `0.12.3`…`0.12.14`** — they are
+> commits on `main`, and this release carries them.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.12.15.vsix` → leave **Pre-release
+> unchecked** → then confirm with the gallery query below that the version is `0.12.15` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above. **The upload is the last step and it is
+> the user's** — the publisher `grumpy` has no `vsce` login/PAT on this machine.
+
+> **`0.12.8` (2026-09-26) — **SUPERSEDED by `0.12.15` — do not upload this file.** It was packaged,
+> committed and documented on the day, and `0.12.15` carries all of it plus the whole spreadsheet line. Kept
+> here because its record is the one that documents the upload path, the baseline and the stray-file trap
+> below.
+>
+> It carries everything since `0.11.0` — the whole chart line, the
+> hardcopy work, Linux/CUPS printing, the print rows, the toolbox drag fix — so one upload brings the listing
+> from `0.11.0` up to date.
 >
 > **Baseline, read back from the gallery on 2026-09-26:** the stable listing still carries **`0.11.0`**
 > (`lastUpdated` 2026-09-20T15:42Z, `VsixSha256`

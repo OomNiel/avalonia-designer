@@ -47,7 +47,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.12.2`**, so the command above installs it (add `-force` to reinstall, or to
+The current version is **`0.12.15`**, so the command above installs it (add `-force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -56,11 +56,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.12.2.vsix --force
+code --install-extension avalonia-designer-0.12.15.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.12.2` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.12.15` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -209,6 +209,22 @@ bundled **`GrumpyPrint`** helper driving **CUPS** (`lp`), which is why it is no 
 without either it comes up disabled with the reason in its tooltip, while the PDF and PNG paths keep working.
 The previewer deliberately has neither package, so the design canvas stays printer-free. The whole
 walkthrough is **USER_MANUAL §19** (§19.14 for hardcopy).
+
+**A spreadsheet of our own** joins them in the same style (`GrumpySheet.cs` / `.vb`): **26 columns (A…Z)
+and 50 rows** out of the box, both settable, frozen lettered and numbered headers, its own scrolling, and no
+package, template or asset behind it — it draws itself, so it previews in the headless host exactly as it
+runs. In the designer, the **Cells** row opens a real grid: type in the cells, drag a range, drag the
+selection's bottom-right handle to **continue a series** (`1, 2` → `3, 4, 5 …`, `2, 4` → `6, 8 …`, `Item1,
+Item2` → `Item3`), set Rows and Columns, style the selection from the formatting bar (bold, italics, size,
+font, text colour, highlight, alignment) and **drag a header border** to give a column or row a size of its
+own. The cells are child elements — `<spread:SheetCell Row="1" Column="1" Text="x"/>` — so what you type
+is what the form carries. At run time it is live: typing, ranges, whole-line selection, autofill, Ctrl+Arrow
+navigation, Ctrl+B/Ctrl+I, a right-click menu the control draws itself (align, bold, italics, clear), and
+**formulas** — a cell starting with `=` is worked out (`SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`,
+`ABS`, `ROUND`, `INT`, `SQRT`, `MOD`, `IF`, `AND`, `OR`, `NOT`, `LEN`, `UPPER`, `LOWER`, `TRIM`, ranges, and
+comparisons), with the text kept in the fx box and the **result drawn in the grid**; what cannot be worked out
+is named (`#DIV/0!`, `#VALUE!`, `#NAME?`, `#REF!`, `#CYCLE!`) rather than drawn blank. It is **dockable** like
+any panel child, so a sheet can be one region of a form. The walkthrough is **USER_MANUAL §20**.
 
 ## 8. A property grid that behaves like a real one
 
@@ -410,12 +426,12 @@ just what the settings point at, so "did my load take?" is answerable from the p
 
 ## 11. Engineering discipline
 
-- **~6,946 automated assertions across 5 layers**, including a layer that drives the real headless
+- **~9,148 automated assertions across 5 layers**, including a layer that drives the real headless
   renderer over WebSocket and asserts pixels/bounds, a layer that runs the webview in **jsdom**, and a
   matrix that `dotnet build`s generated C# **and** VB projects for every control.
 - **CI on every push** (compile, fast layers, and a real `vsce package`), plus a dry-run-first release
   workflow.
-- **~10,500 lines of documentation**: a 2,000-line beginner `USER_MANUAL.md`, a per-control
+- **~15,000 lines of documentation**: a 2,400-line beginner `USER_MANUAL.md`, a per-control
   `CONTROLS.md`, the generated `Events per Control.md`, a real `CHANGELOG.md`, a maintainer
   `PUBLISHING.md` and a developer `NOTES.md` with the gotchas written down.
 - A **generated** catalog rather than hand-maintained lists, so the code, the signatures and the

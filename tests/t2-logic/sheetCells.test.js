@@ -577,7 +577,7 @@ module.exports = async (t) => {
         'and an empty list REMOVES the attribute, so the sheet follows its own size again');
     t.equal(sizedEl.hasAttribute('RowHeights'), false, 'tracks', 'for the rows too');
 
-    t.note('the designer panel can set the new properties');    const catalog = read('src/propertyCatalog.ts');
+    t.note('the designer panel can set the new properties'); const catalog = read('src/propertyCatalog.ts');
     for (const key of ['ShowScrollBars', 'ColumnWidths', 'RowHeights']) {
         t.ok(catalog.includes(`key: '${key}'`), 'panel', `the GrumpySheet rows offer ${key}`);
     }

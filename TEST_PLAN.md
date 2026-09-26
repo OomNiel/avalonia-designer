@@ -1,6 +1,28 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-26 · Status: **full suite green on this machine — 8,630 passed / 0 failed / 0 skipped (68 s)**
+Date: 2026-09-26 · Status: **full suite green on this machine — 9,148 passed / 0 failed / 0 skipped (69 s)**
+
+> 2026-09-26, later: **`0.12.9` … `0.12.15`** — the spreadsheet control, in seven releases, and the suite grew
+> **8,630 → 9,148** with them. `0.12.9` added the control itself (both twins) with the designer's Cells editor;
+> `0.12.10` per-cell formatting; `0.12.11` (**8,932**) the five things reported from running it — invisible
+> typing (two bugs), the swapped selection flags, the right-click menu, border-drag sizing and the scrollbars —
+> plus Ctrl+Arrow navigation and focus-on-load; `0.12.12` (**9,027**) the self-drawn right-click menu (an
+> Avalonia `ContextMenu` never opened for a real right-click) and the VB twin's port of the navigation; `0.12.13`
+> (**9,048**) put the **system colour swatches back** and gave the `▾` popup a real picker; `0.12.14` (**9,058**)
+> made **one colour control** of every spot (a swatch that *is* the dropdown); `0.12.15` (**9,148**) added
+> **formulas**, the **`Dock`** row and the editor's **drag handles**.
+>
+> **Two throwaway probes carry the behaviour nothing else can reach.** `/tmp/sheetformula` (C#, 69 checks) and
+> `/tmp/sheetformulavb` (VB, 63) run the **same battery** of formulas and both end `RESULT PASS` — including
+> that `=40+2` puts **exactly the same ink on the canvas** as the literal `42` (51 px), which is what proves the
+> grid draws the result and not the formula. The C# probe found two real bugs (`COUNTA` ignored text;
+> `=IF(A1,1)` was `#VALUE!` instead of blank) before the release did. The pixel probes for the menu and the
+> sizing handles are `/tmp/sheetkeys` (45) and `/tmp/sheetvbfix` (56, which also covers navigation and
+> focus-on-load).
+>
+> **T5 grew by one for a real reason:** the VB matrix sets every property a control declares to a real value,
+> so adding the sheet's **Dock** row made it generate a form with `DockPanel.Dock="Left"` on a spreadsheet and
+> **compile** it — 1,903 → **1,904** checks. That is the end-to-end proof that a docked sheet builds.
 
 > 2026-09-26: **`0.12.3` … `0.12.8`** — six releases in one day, and the suite grew **8,495 → 8,630** with
 > them. `0.12.3` (**8,531**) made the toolbox drag work at all: VS Code never bridges a TreeView's drag MIME

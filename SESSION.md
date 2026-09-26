@@ -17,6 +17,57 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-09-26, fourteenth session — 0.12.15 released, docs done)
+
+**The spreadsheet control was built, run, corrected and finished — and it took seven releases.**
+The session began with *"I want to create a 'Grumpy's SpreadSheet' control for the toolbox … Columns named A to
+Z, rows named 1 to 50"* (answered with seven questions before any code), then a stream of reports from the user
+*running* it, then two more requests (*"the control must be dockable"*, *"add the drag handles for design
+time"*), and finally *"update all docs, tag and release please"* — so every doc is in line and `v0.12.15` is
+tagged and released on GitHub.
+
+**What 0.12.9 … 0.12.15 did** (full detail in `CHANGELOG.md`, `NOTES.md` §158–§161):
+
+- **`0.12.9` — the control, both twins, and its designer editor.** 26 × 50, frozen headers, its own scrolling,
+  its own drawing (no NuGet, no template, no assets — so the headless preview *is* the running sheet). Selection
+  by drag / header / corner / keyboard, in-place typing with a **drawn** caret and fx box, autofill that
+  predicts a series, a form API (`SetCell`/`GetCell`, `CellName`, `CellChanged`, `AllowEditing=False`), cells
+  as **child elements** (`<spread:SheetCell …/>` — verified against the real XAML compiler), and the dozen
+  lists a new control has to be added to. The **Cells editor** is a real HTML table in a modal.
+- **`0.12.10` — per-cell formatting**: bold, italics, size, family, text colour, fill and alignment, plus a
+  formatting bar in the editor. Two twin traps: the enum had to be `Auto` (`Default` is a VB keyword) and
+  `Typeface` is a struct in Avalonia 12, so VB cannot null-coalesce it.
+- **`0.12.11` — the five things reported from running it.** "Invisible typing" was **two** bugs (the renderer
+  skipped the cell being edited; and `InsertIntoEdit` was written, correct, and **never called** — so only the
+  first character of a word arrived). The selection corner flags were **swapped**, so clicking column C
+  selected A:C. Plus the right-click menu, border-drag sizing, and scrollbars with a wheel fallback that
+  reaches the columns; and Ctrl+Arrow / Ctrl+End / focus-on-load.
+- **`0.12.12` — the menu that never opened** (an Avalonia `ContextMenu` whose `ContextRequested` never reached
+  the control) replaced by a menu the sheet **draws itself**, in both twins, plus the VB port of the navigation.
+- **`0.12.13` → `0.12.14` — the colour control, which went round twice.** `0.12.12` removed every native
+  `<input type="color">`; the user's *"you have corrected this issue in earlier versions"* proved the offscreen
+  popup was the extension's **own** palette (fixed back in `0.11.18`), so the system swatches came back with a
+  real picker in the popup, and `0.12.14` then made **one colour control of every spot** — a swatch that *is*
+  the dropdown — because the user asked for exactly that.
+- **`0.12.15` — formulas, `Dock`, and the design-time sizing handles.** `=SUM(B2:B6)` and friends now work out
+  (24 functions, ranges, comparisons, lazy `IF`, clipped ranges, five named errors, cycle detection, a cache
+  dropped per edit), with the **text** kept and the **result drawn** (`ValueOf`); the sheet gained the attached
+  **`DockPanel.Dock`** row so it can be one region of a form; and the Cells editor can **drag a header border**
+  to size a column or row, floor 16 px, double-click to clear, saved as sparse `ColumnWidths`/`RowHeights`.
+
+**Two facts to carry forward.** (1) **Search `CHANGELOG.md` before "fixing" a complaint again** — the colour
+saga cost two releases because I diagnosed by elimination instead of reading the earlier fix, and the user had
+to point it out. When a change spans several places, **ask** (the three scoping questions settled it in one
+turn). (2) The probes are the behaviour proof: `/tmp/sheetformula` (C#, 69) and `/tmp/sheetformulavb` (VB, 63)
+run the same battery, both `RESULT PASS`, and the assertion that matters is the pixel one — `=40+2` puts the
+**same ink** on the canvas as the literal `42`.
+
+**Still open for the user:** the **Marketplace upload** of `avalonia-designer-0.12.15.vsix` (1,395,803 bytes,
+sha256 `03493ad5a44d1ce606e9d960827701469a15374e2372b16794f986e041f659f8`) — the listing still carries
+**0.11.0**, so this one upload spans `0.12.0`…`0.12.15`. The publisher `grumpy` has no `vsce` login/PAT on this
+machine, so the upload is the user's step; PUBLISHING.md has the portal path and the gallery query that
+confirms it.
+
 ## Where the last session left off (2026-09-26, thirteenth session — 0.12.8, docs done, release pending)
 
 **The toolbox drag works on native Wayland, and the panel got two small rows moved.** The session began as a

@@ -6,11 +6,298 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.12.8` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.12.15` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.12.15] - 2026-09-26 · *the spreadsheet works itself out, and it docks*
+
+Asked for as *"continue with the final phases of the spreadsheet control"* and *"the control must be dockable —
+add the Dock property"*, then *"add the drag handles for design time"*. Three features, one release.
+
+### Added — formulas (phase 3, the last one the roadmap listed)
+
+- **A cell whose text starts with `=` now works itself out.** The text is what the form keeps, what the **fx
+  box** shows and what the **Cells editor** shows; the **grid draws the result**. That split is the whole
+  design: the editing surface stays a spreadsheet's text, the display stays a spreadsheet's numbers.
+  `GetCell(row, column)` returns the formula, and the new **`ValueOf(row, column)`** returns what it works out
+  to — which is also what a literal cell returns, unchanged.
+- **The dialect** is the honest subset a result grid needs: `+ - * / ^ &`, comparisons (`= <> < > <= >=`,
+  drawn as TRUE / FALSE), brackets, `"text"` with `""` for a quote, `A1` references, `A1:B3` ranges, and
+  **SUM, AVERAGE (AVG), MIN, MAX, COUNT, COUNTA, ABS, ROUND, INT, SQRT, MOD, IF, AND, OR, NOT, LEN, UPPER,
+  LOWER, TRIM**. `$` on an address is accepted and ignored — the sheet has no copy/paste yet, so there is no
+  relative/absolute distinction for it to carry.
+- **IF evaluates only the branch it takes.** `=IF(A1=0,0,1/A1)` is the usual way to guard a division, and it
+  only works when the branch **not** taken is never evaluated — so the two branches are scanned for their text
+  and the taken one is parsed on its own. Everything else evaluates its arguments eagerly, which is what every
+  other function wants.
+- **A range is clipped to the sheet** (`SUM(B2:B999)` on a 50-row sheet means that column, which is what the
+  author meant), while a **single** reference off the sheet is `#REF!` — there is nothing there to read.
+- **Nothing fails silently or badly.** `#VALUE!`, `#NAME?`, `#REF!`, `#DIV/0!` (also `0^-1`, and an average of
+  nothing) and `#CYCLE!` for a cell that reaches itself — found with a set of the cells currently being worked
+  out, not by recursing until the stack runs out. A formula can never throw out of the control, nesting is
+  bounded at 64, an error is handed on by whoever reads it, and results are cached until any cell's text
+  changes, so a chain of formulas costs one pass per **edit** rather than one per repaint.
+- The engine is in **both twins, member for member**. VB owns `Mod`, `Not`, `Name`, `IsNumeric` and `Call`, so
+  the pair uses `Modulo`, `LogicalNot`, `ReadName`, `IsNumericValue` and `CallFunction`, and the T2 suite now
+  fails if either twin renames one of them.
+
+### Added — the sheet is dockable
+
+- **`Dock`** (the attached `DockPanel.Dock`, `None` / `Fill` / `Left` / `Top` / `Right` / `Bottom`) is the
+  first row of the sheet's Properties, so a sheet can be one *region* of a form — a grid docked Bottom under a
+  body, or Left beside it — which is how a spreadsheet is usually used. Choosing a real dock makes the
+  designer wrap the sheet in a `DockPanel` when it is not already in one and clear the free-axis size so it
+  stretches to that edge. **The control itself needs no property for this**: `DockPanel.Dock` is attached and
+  every `Control` carries it, which is what `GrumpyPanel`'s own header has said all along.
+
+### Added — the Cells editor sizes a track by dragging (design time)
+
+- **A grip on the right edge of every column letter and the bottom edge of every row number**, with the
+  `col-resize` / `row-resize` cursor: the same gesture, in the same place, as the control's own header border.
+  The size **reads out in the name box** while dragging (*Column C  120 px*), a **double-click** on the grip
+  puts that track back on `ColumnWidth` / `RowHeight`, and a header click still selects the whole column
+  because the grip stops propagation.
+- The table is now a **fixed layout with a `<col>` per column**, filled from the sheet's `ColumnWidth` and
+  from the sizes already dragged, and each row carries its own height. The old stylesheet pinned every cell to
+  a 72×22 min/max — which would have overruled exactly what these handles set.
+- The size is floored at the control's own **`MinTrackSize` (16px)**, because a design-time drag the running
+  sheet then clamps would be a lie, and Save writes the sparse **`ColumnWidths` / `RowHeights`** (`3:120`) —
+  an empty list **removes** the attributes, so a size can always be undone.
+
+### Changed
+
+- The Cells editor's hint now describes the sizing drag and says a leading `=` is evaluated in the app rather
+  than stored as text; the control's toolbox description lists the function set, the error names and the Dock
+  behaviour.
+
+### Notes
+
+- Checked by two throwaway probes rather than by eye: `/tmp/sheetformula` (C#, 69 checks) and
+  `/tmp/sheetformulavb` (VB, 63) run the **same battery** and both end `RESULT PASS` — including that the
+  formula `=40+2` puts **exactly the same ink on the canvas** as the literal `42` does (51 px), which is the
+  assertion that proves the grid draws the value and not the formula. The probes found two real bugs before
+  the release did: `COUNTA` did not count text, and `=IF(A1,1)` (a branch left out) was `#VALUE!` instead of
+  blank.
+- Probes have their own trap worth writing down: a probe that calls its helper **twice** per check (once to
+  compare, once to print what it got) walks a row further each time, so after twenty checks it is writing
+  cells past the end of a 20-row sheet and every result reads as `""` — which looks exactly like an engine
+  that returns nothing. Put the formula under test in **one** cell.
+- The design-time handles were verified in a real browser (the webview harness): the grips sit exactly on the
+  header borders, a drag resizes, a header click still selects, a double-click clears. A probe that measured a
+  grip *after* a rebuild was measuring a **detached** element — `getComputedStyle` returns nothing and the
+  rect is zero, which made a working feature look broken for one round trip.
+- Suite **9,148 passed / 0 failed**; the T5 VB matrix (1,904 checks) now generates a form with
+  `DockPanel.Dock="Left"` on a sheet and **compiles** it. Version `0.12.15` with all 18 bundled stamps.
+
+## [0.12.14] - 2026-09-26 · *one colour control, and it is the swatch*
+
+*"Your new dropdown picker with the embedded swatch works well. You can now remove the original swatch and
+keep the dropdown version."* — answered with three questions first, because there are **eight** colour spots
+in the panel and only **one** of them ever had a dropdown.
+
+### Changed
+
+- **Every colour spot is now one control**: a swatch that shows the colour and opens the picker popup when
+  clicked. The property rows, the splitter cell, the DataGrid row background, the chart series colour, the Dot
+  Grid dialog, the Crosshair dialog and the sheet's Text / Fill wells all work the same way.
+- **The separate `▾` button is gone.** In the property rows the swatch replaces both it and the
+  `<input type="color">`, so a row carries one colour control again; the `▾`'s stylesheet rules went with it,
+  and a test now fails if a `.color-drop` comes back.
+- **The hex/name box beside it stays** and remains the authoritative field: `Teal`, `Transparent` and a pasted
+  `#RRGGBB` all survive without opening anything. The swatch carries that **same** value rather than a hex
+  derived from it, so a named colour reaches the popup *as the name* and is listed on top of the row's own
+  presets instead of appearing as a colour the row does not offer.
+- The popup keeps the picker it gained in `0.12.13` — saturation/value square, hue strip, hex/name box, and the
+  row's presets — and still only commits on **Use**, Enter or a preset click, so a drag cannot close it.
+
+### Notes
+
+- Verified in a real browser at 240 / 300 / 380 / 600 / 900 / 1440 px: six swatches, all inside the panel,
+  zero native colour inputs, no leftover `▾`, one click opens the popup (which stays inside the window), and
+  the `Teal` swatch paints `rgb(0,128,128)` while carrying `dataset.color = "Teal"`.
+- Suite **9,058 passed / 0 failed**.
+
+## [0.12.13] - 2026-09-26 · *put the system swatch back — and the popup learned to pick any colour*
+
+*"I dont like the new colour picker — it limits me to the existing collection of colours. Bring back the system
+swatch and make sure it renders inside the ide borders"*, followed by the sharpest sentence of the day:
+***"You have corrected this issue in earlier versions."*** They were right, and `0.12.12` had been wrong.
+
+### Fixed — a diagnosis by elimination, corrected
+
+- `0.12.12` removed every `<input type="color">` because a native picker near the right edge had drawn off the
+  side of the panel. **The offscreen popup was the panel's own palette**, and that was fixed in **`0.11.18`**
+  — see *the colour palette opened half off the screen* below: it caps its own width to the window (both
+  bounds, because `min-width` outranks `max-width`) and flips to its trigger's right edge. The native swatch
+  was never the culprit, and removing it also removed every colour that is not in a preset list.
+- **The system swatches are back** at all eight spots; each posts on `change` — never on `input`, which fires
+  while the picker is still open and would re-render the panel out from under the user's hand.
+- **The lesson, written into the notes rather than the code:** search `CHANGELOG.md` for an earlier fix before
+  "fixing" the same complaint again. And when a change spans eight places, **ask** — scope, merge, keep the
+  text box — instead of choosing for the user.
+
+### Added
+
+- **The `▾` popup carries a picker of its own**: a saturation/value square, a hue strip, the hex/name box and
+  the row's presets. Seeded from the current value *including a named one* (`Teal` starts it at hue 180, via
+  the browser's own CSS parser), and it only commits on **Use** / Enter / a preset click — dragging updates
+  the box, nothing more.
+
+### Notes
+
+- Measured in a real browser: every swatch's own box is inside the panel at 1440 / 900 / 600 / 380 / 300 /
+  240 px, and the page never scrolls horizontally — which is the one thing that can drag a browser-placed
+  popup out of the panel. A picker's *frame* is the platform's to place; the swatch is ours, and the popup is
+  ours and clamps.
+- Suite **9,048 passed / 0 failed**.
+
+## [0.12.12] - 2026-09-26 · *a menu that draws itself, and the colour pickers that drew offscreen*
+
+Two reports from using the app, both reproduced before anything was changed.
+
+### Fixed — right-clicking the sheet opened nothing
+
+- The Avalonia `ContextMenu` existed and its commands worked when raised by hand, but **`ContextRequested`
+  never reached the control**, so the gesture itself did nothing at all — and a popup cannot be rendered
+  headless either, which is how it shipped unverified.
+- **The sheet now draws the menu itself**: same colours as the sheet, clamped inside the control near an edge,
+  opened from the right button, closed by a press outside / the wheel / losing the keyboard, and it owns the
+  keyboard while open (Escape, the arrows past the separators, Enter). Because it is the control's own drawing
+  it became checkable in **pixels** — the probes now right-click for real and find the panel on the canvas.
+
+### Added — the VB twin caught up
+
+- `GrumpySheet.vb` gets the self-drawn menu, `MoveWithControl` / `LastUsedCell` (Ctrl+Arrow runs to the end of
+  a filled block, skips a gap to the next value; Ctrl+End is the bottom-right of what is in the sheet) and the
+  focus-on-load deferral (`Loaded` then one step through the dispatcher — asking inside `Loaded` itself is
+  refused). VB traps hit here: `step` is a keyword, and `Byte + Byte + Byte` overflows.
+
+### Changed — every native colour picker replaced (reverted in 0.12.13)
+
+- All six `<input type="color">` sites became swatch buttons opening the `▾` palette, on a diagnosis by
+  elimination that `0.12.13` corrected. Kept from the change: the popup learned to take a **typed** value, so
+  a named colour and an exact hex were still possible once the native picker was gone.
+
+### Notes
+
+- Probes: `/tmp/sheetkeys` (C#, 45 checks) and `/tmp/sheetvbfix` (VB, 56) both end `RESULT PASS`, right-clicking
+  for real. Suite **9,027 passed / 0 failed**.
+
+## [0.12.11] - 2026-09-26 · *five things from running the sheet*
+
+All five reported from the app. Two of them were the interesting kind.
+
+### Fixed
+
+- **Typing was invisible, and it was TWO bugs.** (a) The renderer **skipped** the cell being edited in place
+  (*"the editor draws it"*) and nothing else ever drew it, so typing looked invisible until the cell lost
+  focus — it is now drawn from `_editText` with the caret, left-aligned while typing, because a number should
+  not jump about as it becomes numeric. (b) **`InsertIntoEdit` was written for exactly this and never
+  called**, so `OnTextInput` dropped every character after the first: typing *Item* kept only *I*. A private
+  method with no caller is a smoking gun — grep for callers, not only definitions.
+- **A column header selected every column to its left.** `SelectionFirstRow` tested `_wholeRows` and
+  `SelectionFirstColumn` tested `_wholeColumns` — the flags were **swapped**, and Clear, align, fill and the
+  header highlights all inherited it. A whole-column selection spans every row; its columns come from the
+  anchor. New public `SelectedFirst/LastRow`, `SelectedFirst/LastColumn` and `SelectColumn` / `SelectRow` make
+  the rule checkable from outside.
+- **No way to size a column or row:** dragging a header border now gives that track its own size (see
+  `0.12.15` for the design-time half), with `MinTrackSize`, the sparse `ColumnWidths` / `RowHeights` text and a
+  `SheetSizeChanged` event announced once per drag, on release.
+- **No way to reach the columns off to the right:** slim scrollbars (draggable thumb, clickable track,
+  `ShowScrollBars`) appear when there is something to scroll to, and a plain wheel falls back to the columns
+  when every row already fits — before this, only Shift+wheel reached them and nothing said so.
+
+### Added
+
+- **A right-click menu** that lines the selection up (left, centre, right, automatically), bolds or italicises
+  it, and clears its contents or its formatting. It acts on the **selection**, so a whole column lines up in
+  one gesture; `AlignSelection` only touches the cells that already exist for a whole column or row, because
+  creating one per empty row would write fifty elements into the form. A bounded selection *does* create them,
+  which is what makes "select A1, right-click, centre, then type" do the obvious thing.
+- **Ctrl+Arrow and Ctrl+End**, in both twins: the far end of the block of filled cells in that direction, a
+  skip over a gap to the next value, and the bottom-right corner of what is in the sheet.
+- **Focus on load** — an arrow works without clicking first. The work happens on `Loaded`, not on attach (there
+  is no `TopLevel` yet), and the request is posted one step through the dispatcher because asking inside the
+  `Loaded` handler itself is simply refused. Deliberately conditional: a form that puts the caret in a `TextBox`
+  keeps it.
+
+### Notes
+
+- Suite **8,932 passed / 0 failed** (from 8,630 at `0.12.8`).
+
+## [0.12.10] - 2026-09-26 · *the spreadsheet, phase 2: a cell can be styled*
+
+Feature 3 of the spreadsheet: centring, fonts, highlight colours and Clear, for the selected cells — in the
+control, in the twin, and in the designer's Cells editor.
+
+### Added
+
+- **`SheetCell` carries `Bold`, `Italic`, `FontSize` (0 = the sheet's own), `FontFamily` (`''` = the sheet's
+  own), `TextColor`, `Fill` and `TextAlign`.** The enum is **`SheetAlign { Auto, Left, Center, Right }`** — and
+  it is `Auto` rather than `Default` because `Default` is a **VB keyword**: as an enum member it is BC30185
+  where the C# twin compiles happily, and a twin that only compiles in one language is not a twin. The T2 suite
+  refuses the name outright.
+- Fills draw **under** the wash and under the grid lines, so a highlighted cell still reads as selected; `Auto`
+  keeps numbers right and text left, and a chosen alignment overrides it.
+- **A blank cell that carries formatting is kept** rather than dropped — an empty highlighted box is a real
+  thing to want, and it is written into the form as a `<spread:SheetCell>` with no `Text`.
+- API: `CellAt` / `EnsureCell` / `Refresh`, the `Set…` methods per field, `ClearFormatting`,
+  `ClearSelectionFormatting`, and `ToggleBoldSelection` / `ToggleItalicSelection` — Ctrl+B / Ctrl+I act on the
+  selection and are **ON when any selected cell is not**, OFF when they all already are.
+- **A formatting bar in the Cells editor**: bold, italics, size, font, text colour, highlight (with a `×` back
+  to the sheet's own) and alignment, acting on everything selected while showing the active cell's own settings.
+  A setting left on the sheet's own is not written to the form at all.
+- VB trap the compiler found: **`Typeface` is a struct in Avalonia 12**, so VB cannot null-coalesce it — the
+  optional parameter is nullable and the twin asks `HasValue`.
+
+### Notes
+
+- Suite green at **0 failed**; the `0.12.9`…`0.12.11` counts were not recorded at the time (see
+  TEST_PLAN.md for the ones that were).
+
+## [0.12.9] - 2026-09-26 · *the spreadsheet control — both twins, and its designer editor*
+
+*"I want to create a 'Grumpy's SpreadSheet' control for the toolbox … Columns named A to Z, rows named 1 to
+50"*, with five features — and seven questions answered before any code was written. This is **phase 1**:
+grid, selection, data entry, autofill, formula bar.
+
+### Added
+
+- **A self-drawing control** (`resources/GrumpySheet.cs` and `.vb`, twins line for line): 26 columns (A…Z), 50
+  rows, both settable, frozen lettered / numbered headers, its own scrolling, no NuGet package, no template, no
+  assets — so it previews in the headless host exactly as it runs.
+- **Selection**: click, drag a range, a whole column or row from its header, the corner for everything, Ctrl+A,
+  Shift+click and Shift+arrows to extend, PageUp / PageDown, Home, Tab and Enter.
+- **Data entry**: type to replace, F2 or a double click to edit what is there, Enter / Tab commits and moves, Esc
+  abandons, Delete clears. **The caret, the text and the fx box are drawn** — no `TextBox`, no `TopLevel` — so
+  the sheet renders identically where nothing can be focused.
+- **Autofill**: drag the handle and the pattern is predicted — `1, 2` becomes `3, 4, 5 …`, `2, 4` becomes
+  `6, 8 …`, a single number counts up by one, `Item1, Item2` becomes `Item3`, anything else repeats.
+- **The form's API**: `SetCell` / `GetCell` (both 1-based), `ClearRange`, `ClearSelection`, `FillSelection`,
+  `SelectCell` / `SelectRange` / `SelectAll`, `BeginEdit` / `CommitEditNow` / `CancelEditNow`, the statics
+  `CellName` / `ColumnName` / `ParseCellName`, the `CellChanged` and `SelectionChanged` events, and
+  **`AllowEditing = False`** for a read-only results grid.
+- **The cells are child elements, not properties**: `[Content] AvaloniaList<SheetCell>` means a form carries
+  `<spread:SheetCell Row="1" Column="1" Text="x"/>` directly — verified against the **real XAML compiler**.
+- **The designer half**: the five touchpoints and the dozen lists that have to keep up — the Toolbox category,
+  `controlInfo`, the host's snippet table *and* `TypeMap` (the one that fails silently), the property catalog
+  (geometry, colours, three switches, and the **Cells editor** row), `xamlModel`'s `xmlns:spread`, the scaffold
+  and creator plus the test builder, `bundledComponents` (a new kind, with the pinned file-name arrays
+  updated), `codeBehind`'s VB import rule and `codeBehindCheck`.
+- **The Cells editor** — a real HTML table in a modal, not a canvas: cells are `<td>`, the headers are sticky
+  `<th>`, clicking a letter or a number selects that line, dragging across cells selects a range, and the
+  selection's bottom-right handle continues a series with the **same prediction** the control applies at run
+  time. Rows and Columns are set in the same dialog, because it is the thing that draws the grid those two
+  numbers describe.
+- Cell text is stored **verbatim**, so a formula is kept and shown; evaluating it was left as phase 3 and does
+  not change the format — which is why `0.12.15` could add the engine without touching a single form.
+
+### Notes
+
+- Suite green at **0 failed**.
 
 ## [0.12.8] - 2026-09-26 · *the Data Selector row moves to where the data is*
 

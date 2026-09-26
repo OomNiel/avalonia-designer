@@ -277,6 +277,52 @@ See **USER_MANUAL §19, "The charting tools"** for the full walkthrough.
 
 ---
 
+## Spreadsheet (bundled)
+
+**`spread:GrumpySheet`** — a **spreadsheet** (26 columns A…Z, 50 rows by default, both settable) that draws
+itself: no NuGet package, no template, no assets. It arrived in **0.12.9** (grid, selection, data entry,
+autofill, fx box), gained per-cell formatting in **0.12.10**, the reported fixes plus Ctrl+Arrow navigation in
+**0.12.11**, a right-click menu the control draws itself in **0.12.12**, **formulas** and **`Dock`** in
+**0.12.15**, and the designer's Cells editor can size a column or row by dragging a header border since the
+same release.
+
+- **Cells are child elements, not properties**: `<spread:GrumpySheet>` takes
+  `<spread:SheetCell Row="1" Column="1" Text="x"/>` directly, and a cell may also carry `Bold`, `Italic`,
+  `FontSize`, `FontFamily`, `TextColor`, `Fill` and `TextAlign`. A blank cell *with* formatting is written too
+  — an empty highlighted box is a real thing to want.
+- **Where the cells are edited:** the **Cells** row in the Properties panel opens a real grid (an HTML table,
+  not a canvas). Rows and Columns are set there as well, because it is the thing that draws the grid they
+  describe. Type in a cell, drag across cells for a range, click a letter or a number to select that line, drag
+  the selection's bottom-right handle to continue a series, and **drag a header border** to give a column or
+  row its own size (double-click that border to put it back on `ColumnWidth` / `RowHeight`).
+- **At run time:** type to replace, F2 or a double click to edit, Enter / Tab commits and moves, Esc abandons,
+  Delete clears, Ctrl+A selects everything, Shift+arrows extend, Ctrl+Arrow runs to the end of the block of
+  filled cells in that direction, Ctrl+End goes to the bottom-right of what is in the sheet, Ctrl+B / Ctrl+I
+  style the selection, and a right-click opens the menu (align, bold, italics, clear formatting, clear cells).
+- **Formulas (0.12.15):** a cell whose text starts with `=` is worked out — `+ - * / ^ &`, comparisons,
+  brackets, `A1` references, `A1:B3` ranges, and **SUM / AVERAGE (AVG) / MIN / MAX / COUNT / COUNTA / ABS /
+  ROUND / INT / SQRT / MOD / IF / AND / OR / NOT / LEN / UPPER / LOWER / TRIM**. The **text** is kept and shown
+  in the fx box and the editor; the **grid draws the result** — read it with `ValueOf(row, column)`, while
+  `GetCell` still returns the formula. `IF` evaluates only the branch it takes, so `=IF(A1=0,0,1/A1)` is safe;
+  a range past the last row is clipped to the sheet; and what cannot be worked out is **named** — `#VALUE!`,
+  `#NAME?`, `#REF!`, `#DIV/0!` and `#CYCLE!` for a cell that reaches itself — never a blank and never a crash.
+- **Dock (0.12.15):** the row is the attached **`DockPanel.Dock`** (`None` / `Fill` / `Left` / `Top` /
+  `Right` / `Bottom`), so a sheet can be one region of a form — docked Bottom under a body, or Left beside it.
+  The designer wraps the sheet in a `DockPanel` when it is not already in one and clears the free-axis size so
+  it stretches to that edge; the control needs no property of its own for this.
+- **Sizes:** `ColumnWidth` / `RowHeight` for every track, and **`ColumnWidths` / `RowHeights`** for the ones
+  that have their own — sparse `Column:Width` pairs like `"3:120,7:60"`, which is exactly what a dragged
+  border writes (in the running app **and** in the editor). `SheetSizeChanged` fires once per drag, on release,
+  and `MinTrackSize` (16 px) is the floor the editor applies too.
+- **Switches:** `ShowHeaders`, `ShowFormulaBar`, `ShowScrollBars` and `AllowEditing` (False makes it a
+  read-only results grid). Scrollbars appear only when there is something to scroll to, and a plain wheel moves
+  the columns when every row already fits.
+- **API for the form:** `SetCell` / `GetCell` / `ValueOf` (all 1-based), `ClearRange`, `ClearSelection`,
+  `FillSelection`, `SetColumnWidth` / `SetRowHeight` / `ClearColumnWidth` / `ClearRowHeight` / `ClearSizes`,
+  `SelectCell` / `SelectRange` / `SelectAll` / `SelectColumn` / `SelectRow`, `BeginEdit` / `CommitEditNow` /
+  `CancelEditNow`, `SelectedFirst/LastRow`, `SelectedFirst/LastColumn`, the statics `CellName` / `ColumnName` /
+  `ParseCellName`, and the `CellChanged`, `SelectionChanged` and `SheetSizeChanged` events.
+
 ## Layout panels
 
 | Control | XAML tag | What it does | Designer |

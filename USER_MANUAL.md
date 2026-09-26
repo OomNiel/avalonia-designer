@@ -12,7 +12,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-21)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-26)
 
 ---
 
@@ -67,6 +67,14 @@
     - [The waterfall chart (since 0.11.12)](#1912-the-waterfall-chart-since-01112)
     - [The surface chart 3D (since 0.11.14)](#1913-the-surface-chart-3d-since-01114)
     - [Printing a chart — hardcopy and PDF (since 0.12.0; page, PNG and Ctrl+P since 0.12.1; Linux printing and Print Legend since 0.12.2; Print Ink since 0.12.7)](#1914-printing-a-chart--hardcopy-and-pdf-since-0120)
+20. [The spreadsheet (GrumpySheet)](#20-the-spreadsheet-grumpysheet) (since 0.12.9; formatting 0.12.10; fixes + Ctrl+Arrow 0.12.11; right-click menu 0.12.12; formulas, Dock and the sizing handles 0.12.15)
+    - [Placing a sheet](#201-placing-a-sheet)
+    - [Typing the cells in: the Cells editor](#202-typing-the-cells-in-the-cells-editor)
+    - [What the cells look like in the form](#203-what-the-cells-look-like-in-the-form)
+    - [Formulas](#204-formulas)
+    - [Using the sheet at run time](#205-using-the-sheet-at-run-time)
+    - [The properties you set](#206-the-properties-you-set)
+    - [Tips and limits](#207-tips-and-limits)
 
 ---
 
@@ -2446,6 +2454,146 @@ entries, and the designer's offer above is the shortcut.
 > and the `#If PRINT_SUPPORT Then` block is compiled out *while the build stays green*. The `DefineConstants`
 > line above is the one that reaches the compiler — checked 2026-09-25 on the .NET 10 SDK, where the switch
 > vbc receives ends in `…,PLATFORM="AnyCPU",,PRINT_SUPPORT,_MyType="Empty"`.
+
+---
+
+## 20. The spreadsheet (GrumpySheet)
+
+> New in **0.12.9** (the grid), **0.12.10** (per-cell formatting), **0.12.11** (the fixes from running it, plus
+> Ctrl+Arrow navigation), **0.12.12** (the right-click menu), **0.12.15** (formulas, docking and the sizing
+> handles).
+
+A **spreadsheet control of our own** — 26 columns (A…Z) and 50 rows out of the box, both settable — that
+draws itself: no NuGet package, no template, no assets. It is on the Toolbox under **Spreadsheet**, and it is
+handy whenever a form needs a grid of numbers the user can edit *or* just read.
+
+### 20.1 Placing a sheet
+
+Drag **Spreadsheet** onto the canvas. It arrives at its natural size (about 26 columns wide by 50 rows tall,
+which is bigger than most forms on purpose — a spreadsheet is usually a *region* of a form).
+
+**A sheet is dockable.** The **Dock** row in the Properties panel pins it to an edge of a `DockPanel`: *Left*
+or *Right* give it a column of its own (the **Width** is that column's thickness), *Top* or *Bottom* a band
+(the **Height** is the band's), and *Fill* takes what is left. If the sheet is not already inside a
+`DockPanel`, the designer **wraps it in one** for you, so docking works instead of silently doing nothing.
+*None* removes the docking and leaves the sheet where you placed it.
+
+### 20.2 Typing the cells in: the Cells editor
+
+The **Cells** row opens a real grid — an HTML table, so every cell is a normal browser cell — and it is where
+a form's contents are written:
+
+- **Type in a cell** and it is stored. The cell you are working in is shown in the **fx box** at the right of
+  the Rows/Columns line, and typing there writes the active cell (the same habit the running sheet teaches).
+- **Drag across cells** to select a range, **click a column letter or a row number** to select that whole
+  line, click the top-left corner for the whole sheet.
+- **Drag the small square** at the selection's bottom-right corner to **continue a series**: `1, 2` becomes
+  `3, 4, 5 …`, `2, 4` becomes `6, 8 …`, `Item1, Item2` becomes `Item3`, and anything else repeats.
+- **Rows** and **Columns** set how big the sheet is. They live here because this dialog is the thing that draws
+  the grid those two numbers describe.
+- The **formatting bar** applies bold, italics, size, font, text colour, highlight and alignment to everything
+  selected. It shows the **active cell's own** settings, and a setting left on the sheet's own is not written
+  into the form at all — *Clear formatting* drops the lot.
+- **Drag a border between two column letters** — or between two row numbers — to give that column or row a
+  size of its own, exactly as you would in the running app. The size is shown in the name box while you drag
+  (*Column C  120 px*), and **double-clicking** that border puts the track back on the sheet's own size. Sizes
+  are saved as the sheet's `ColumnWidths` / `RowHeights` (sparse pairs like `3:120,7:60`), which you can also
+  type by hand in the Properties panel.
+
+A blank cell that carries a highlight is genuinely useful, so **an empty highlighted box is saved** — it is a
+cell with no `Text` but a `Fill`.
+
+### 20.3 What the cells look like in the form
+
+Every non-empty cell is written into your XAML as a child element of the sheet:
+
+```xml
+<spread:GrumpySheet x:Name="Sheet1" Rows="6" Columns="4" DockPanel.Dock="Bottom">
+  <spread:SheetCell Row="1" Column="1" Text="Item" Bold="True" Fill="#FFE9A8"/>
+  <spread:SheetCell Row="2" Column="1" Text="1"/>
+</spread:GrumpySheet>
+```
+
+`Row` and `Column` are **1-based**. A cell may also carry `Italic`, `FontSize`, `FontFamily`, `TextColor`,
+`Fill` and `TextAlign` (`Auto` / `Left` / `Center` / `Right`), and anything you leave out means *the sheet's
+own* setting.
+
+### 20.4 Formulas
+
+**A cell whose text starts with `=` is worked out.** The *text* is what the form keeps and what you see in the
+fx box and in the Cells editor; the **grid draws the result**. So `=SUM(B2:B6)` is typed once and shows a total
+everywhere the form runs.
+
+- **Operators:** `+`, `-`, `*`, `/`, `^` (power), `&` (join text), and comparisons `=`, `<>`, `<`, `>`, `<=`,
+  `>=` — which draw as `TRUE` / `FALSE`. Brackets work as you would expect.
+- **References:** `B2`, `$B$2` (the `$` is accepted and ignored — there is no copy/paste yet), and ranges like
+  `B2:B6`.
+- **Functions:** `SUM`, `AVERAGE` (or `AVG`), `MIN`, `MAX`, `COUNT`, `COUNTA`, `ABS`, `ROUND`, `INT`, `SQRT`,
+  `MOD`, `IF`, `AND`, `OR`, `NOT`, `LEN`, `UPPER`, `LOWER`, `TRIM`. Names are not case-sensitive, so `=sum(…)`
+  is fine.
+- **`IF` only works out the branch it takes**, which is what makes the classic guard work:
+  `=IF(A1=0, 0, 1/A1)` does *not* divide by zero on the path it never takes.
+- **A range is clipped to the sheet**: `=SUM(B2:B999)` on a 50-row sheet means that column. A *single*
+  reference off the sheet is `#REF!`, because there is nothing there to read.
+- **When it cannot be worked out you are told why**, in the cell:
+  `#DIV/0!` (a division by zero, `0^-1`, or an average of nothing), `#VALUE!` (text where a number belongs, a
+  formula that stops mid-way, an unclosed bracket), `#NAME?` (an unknown function or a typo), `#REF!` (an
+  address off the sheet) and `#CYCLE!` (a cell that reaches itself, directly or through a chain). A formula can
+  never crash the form.
+- Reading a value from code: **`ValueOf(row, column)`** gives what a cell shows (a literal cell gives its own
+  text), while **`GetCell(row, column)`** still gives the formula — which is what the fx box shows and edits.
+
+### 20.5 Using the sheet at run time
+
+| Gesture | What it does |
+|---|---|
+| Type | Replaces the active cell; the editor appears in the cell itself |
+| `F2` or double-click | Edits what is there |
+| `Enter` / `Tab` | Commits and moves down / right (`Shift` for the other way) |
+| `Esc` | Abandons the edit |
+| `Delete` / `Backspace` | Clears the selection |
+| Arrows, `PageUp`/`PageDown`, `Home` | Move; `Shift`+arrow extends the selection |
+| `Ctrl`+arrow | Runs to the end of the block of filled cells in that direction, or skips a gap to the next value |
+| `Ctrl`+`End` / `Ctrl`+`Home` | The bottom-right of what is in the sheet / back to `A1` |
+| `Ctrl`+`A` | Selects everything |
+| `Ctrl`+`B` / `Ctrl`+`I` | Bolds / italicises the selection (on when *any* selected cell is not) |
+| `Ctrl`+`U` or clicking the fx box | Puts the caret in the fx box |
+| Right-click | The menu: align left / centre / right / automatically, bold, italics, clear formatting, clear cells |
+| Click a letter or number | Selects that whole column or row |
+| Drag a header border | Gives that column or row its own size (`SheetSizeChanged` fires once, on release) |
+| Wheel / `Shift`+wheel | Scrolls the rows / the columns; over a sheet too short to scroll, the wheel moves the columns |
+
+The right-click menu acts on the **selection**, which is the point of it: select a column letter and the whole
+column lines up in one gesture. For a whole column or row it only touches the cells that **already exist** (so
+a fifty-row column does not turn into fifty elements); a small selected block *does* get cells created, which is
+what makes "select A1, right-click, centre, then type" do the obvious thing.
+
+### 20.6 The properties you set
+
+| Row | What it does |
+|---|---|
+| **Dock** | Pins the sheet to a `DockPanel` edge (see §20.1) |
+| **Edit cells…** | Opens the Cells editor (§20.2) |
+| **Column Width** / **Row Height** | The size of every column / row that has none of its own (72 / 22 by default) |
+| **Own Column Widths** / **Own Row Heights** | The tracks that *do* have their own, as `3:120,7:60` — what a dragged border writes, and what you can type |
+| **Header Width** / **Header Height** | The letter/number strips |
+| **Font Family** / **Font Size** | The cell text's own font |
+| **Grid Colour**, **Cell Back**, **Text Colour**, **Header Back**, **Header Text**, **Selection**, **Selection Fill** | The sheet's palette |
+| **Show Headers** / **Formula Bar** / **Scrollbars** | The three switches for what it offers |
+| **Allow Editing** | *False* makes it a read-only results grid — good for showing numbers a formula worked out |
+
+### 20.7 Tips and limits
+
+- **Saving a form re-reads the sheet as it is**, so if you edit the XAML by hand keep the `Row` / `Column`
+  values 1-based and inside `Rows` / `Columns` — a cell outside the sheet is ignored by the control, and the
+  editor will not show it.
+- **Formulas are not a calculator language.** There are no lookup functions (`VLOOKUP`, `INDEX`), no dates, no
+  text-to-number coercion beyond what a plain reference gives, and no `$` relative/absolute behaviour yet —
+  the sheet stores and evaluates the text it is given.
+- **The preview shows what the app shows**: formulas are evaluated in the design preview too, because the
+  preview renders the real control.
+- Numbers are drawn right-aligned while text is left-aligned, unless the cell's own alignment says otherwise;
+  a computed number needs no formatting row of its own.
 
 ---
 
