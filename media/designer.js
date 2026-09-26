@@ -2140,13 +2140,21 @@
     els.canvas.addEventListener('drop', (e) => {
         e.preventDefault();
         highlightDrop(null);
+        // VS Code does not bridge the Toolbox TreeView's drag MIME types into a webview
+        // ("Mime types added in handleDrag won't be available outside the application"), so
+        // the tag is delivered through the `armTool` message fired on drag-start — the same
+        // channel click-to-place uses. Read the armed tag first; only fall back to the
+        // native dataTransfer for other (future) drop sources.
+        const armedTag = state.pendingTag;
         state.pendingTag = null;
         updatePendingTool();
-        let tag = null;
-        try {
-            tag = e.dataTransfer.getData('application/x-avalonia-control') ||
-                e.dataTransfer.getData('application/vnd.code.tree.avaloniaDesigner.toolbox');
-        } catch (err) { /* ignore */ }
+        let tag = armedTag;
+        if (!tag) {
+            try {
+                tag = e.dataTransfer.getData('application/x-avalonia-control') ||
+                    e.dataTransfer.getData('application/vnd.code.tree.avaloniaDesigner.toolbox');
+            } catch (err) { /* ignore */ }
+        }
         if (!tag) {
             els.status.textContent = 'Drag a control from the Toolbox view.';
             return;

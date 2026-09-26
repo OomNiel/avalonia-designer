@@ -1486,6 +1486,12 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
  */
 const ADVANCED_KEYS = new Set([
     'MinWidth', 'MinHeight', 'MaxWidth', 'MaxHeight',
+    // H. Align / V. Align: alignment is a form-layout habit rather than a first-day decision — every
+    // new control starts at Avalonia's Stretch, and a beginner meets the row after placing the
+    // control, not while choosing one. They are per-control COMMON_PROPS rows, so listing the two keys
+    // here hides them on every control at once (and on the multi-selection panel, which derives from
+    // the same `propertyDefsFor`).
+    'HorizontalAlignment', 'VerticalAlignment',
     'Canvas.Left', 'Canvas.Top', 'ZIndex', 'TabIndex',
     'IsHitTestVisible', 'IsTabStop', 'Focusable',
     'IsThreeState', 'IsDefault', 'IsCancel', 'ClickMode', 'AcceptsTab', 'IsUndoEnabled',

@@ -2,7 +2,7 @@
     "name": "avalonia-designer",
     "displayName": "Grumpy's WYSIWYG Designer for VS Code",
     "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox — with an optional local AI assist that writes handlers and repairs code from a sentence, on your own machine.",
-    "version": "0.12.2",
+    "version": "0.12.3",
     "publisher": "grumpy",
     "license": "MIT",
     "icon": "Grumpy.png",

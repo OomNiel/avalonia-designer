@@ -260,6 +260,34 @@ module.exports = async (t) => {
         t.ok(layout.indexOf('chrome:AnchorHelper.Anchor') < layout.indexOf('HorizontalAlignment'), 'sections', 'Anchor before the alignments');
     }
 
+    // --- H. Align / V. Align are ADVANCED rows (2026-09-26) ---
+    // They stay in the catalog and keep their section, but the webview skips `advanced` rows until
+    // "Show advanced" is ticked — on every control that has them (both are COMMON_PROPS rows) and on the
+    // multi-selection panel, which is built from the same propertyDefsFor. Without this test the rows can
+    // quietly reappear in beginner mode and nothing notices.
+    {
+        const probes = [
+            ['Button', elFrom('<Canvas><Button x:Name="b3" Content="Go"/></Canvas>')],
+            ['TextBlock', elFrom('<Canvas><TextBlock x:Name="t3" Text="hi"/></Canvas>')],
+            ['DataGrid', elFrom('<Canvas><DataGrid x:Name="d3"/></Canvas>')]
+        ];
+        for (const [name, holder] of probes) {
+            const p = propertyDefsFor(childEls(holder)[0]);
+            for (const k of ['HorizontalAlignment', 'VerticalAlignment']) {
+                const row = keyOf(p, k);
+                t.ok(row, 'advanced', `${name} still OFFERS ${k} (hidden is not removed)`);
+                t.equal(row && !!row.advanced, true, 'advanced',
+                    `${name}.${k} needs "Show advanced" — the row is only revealed by it`);
+            }
+        }
+        // …and the webview's filter is the single gate both the single-selection and the multi-selection
+        // panels go through, so "tick Show advanced" really is what brings them back.
+        const webview = require('fs')
+            .readFileSync(require('path').join(__dirname, '..', '..', 'media', 'designer.js'), 'utf8');
+        t.ok(/if \(p\.advanced && !state\.showAdvanced\) continue;/.test(webview), 'advanced',
+            'the webview hides advanced rows until Show advanced is ticked');
+    }
+
     // --- Designer editor buttons are ALWAYS in the first section ('Editors') ---
     {
         const p = propertyDefsFor(elFrom('<DataGrid x:Name="d1"/>'));

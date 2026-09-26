@@ -205,6 +205,12 @@ function generateProject(opts: GenerateOptions): void {
         pathPickerVb: readResource(context, 'resources/PathPicker.vb'),
         chartsCs: readResource(context, 'resources/GrumpyCharts.cs'),
         chartsVb: readResource(context, 'resources/GrumpyCharts.vb'),
+        // …and the helper the chart calls on Linux (0.12.2). One without the other does not compile:
+        // a project holding the new GrumpyCharts.cs and no GrumpyPrint.cs fails its FIRST build with
+        // `CS0103: The name 'GrumpyPrint' does not exist in the current context` — which is why this list
+        // has to keep up with `resources/`, and why tests/t2-logic/projectScaffold.test.js now checks it.
+        grumpyPrintCs: readResource(context, 'resources/GrumpyPrint.cs'),
+        grumpyPrintVb: readResource(context, 'resources/GrumpyPrint.vb'),
         followerCs: readResource(context, 'resources/ColumnFollower.cs'),
         followerVb: readResource(context, 'resources/ColumnFollower.vb'),
         vbBridgeDll: vbBridgeDllPath()

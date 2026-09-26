@@ -151,7 +151,7 @@ export class ControlItem extends vscode.TreeItem {
             this.contextValue = 'dataSetTool';
         } else {
             const info = controlInfoFor(def.tag);
-            this.tooltip = `${info.label} — ${info.desc} ${info.use}\nClick the tool, then click the canvas to place it.`;
+            this.tooltip = `${info.label} — ${info.desc} ${info.use}\nDrag onto the canvas to place it, or click the tool then click the canvas.`;
             this.command = {
                 command: 'avaloniaDesigner.addFromToolbox',
                 title: 'Add to Designer',
@@ -180,8 +180,7 @@ type ToolboxItem = ControlItem | CategoryItem;
 
 /**
  * Sidebar toolbox. Supports drag (via TreeDragAndDropController) into the
- * designer webview, and double-click / click-to-arm to add to the active
- * designer.
+ * designer webview, and click-to-arm to add to the active designer.
  *
  * The Toolbox controls are divided into collapsible category sections that
  * mirror the ## sections of CONTROLS.md (Window roots, Buttons & command
@@ -195,6 +194,21 @@ export class ToolboxProvider implements vscode.TreeDataProvider<ToolboxItem>, vs
 
     readonly dropMimeTypes: string[] = [];
     readonly dragMimeTypes: string[] = ['application/x-avalonia-control'];
+
+    /**
+     * Called when a control is lifted out of the toolbox, so the active
+     * designer webview can be armed with it.
+     *
+     * VS Code deliberately does NOT bridge the MIME types added in `handleDrag`
+     * into a webview ("Mime types added in handleDrag won't be available
+     * outside the application"), so the native `drop` event in the canvas cannot
+     * read the control's tag from `event.dataTransfer`. The tag is delivered to
+     * the webview the same way click-to-place does — via an `armTool` message —
+     * so a webview drop can place the armed control even though its dataTransfer
+     * is empty (this is what makes dragging work on Linux/Xorg, where the native
+     * bridge is the unreliable path). Wired by extension.ts.
+     */
+    armDesignerTool: ((tag: string) => void) | undefined;
 
     getTreeItem(element: ToolboxItem): vscode.TreeItem {
         return element;
@@ -218,6 +232,10 @@ export class ToolboxProvider implements vscode.TreeDataProvider<ToolboxItem>, vs
         const first = source[0];
         if (first instanceof ControlItem && first.def.tag && first.def.tag !== 'DataSet') {
             dataTransfer.set('application/x-avalonia-control', new vscode.DataTransferItem(first.def.tag));
+            // Arm the active designer with this control: the webview cannot read the
+            // drag's MIME data (see armDesignerTool's docs), so it carries the tag on
+            // the arm message instead and reads it back on drop.
+            this.armDesignerTool?.(first.def.tag);
         }
     }
 

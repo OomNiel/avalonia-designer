@@ -376,6 +376,29 @@ module.exports = async (t) => {
     t.equal(Math.round(drop.x), 200, 'arm-tool', 'x mapped to design coords');
     t.equal(Math.round(drop.y), 120, 'arm-tool', 'y mapped to design coords');
 
+    // --- toolbox drag: a webview drop with an EMPTY dataTransfer still places the armed tool ---
+    // VS Code does not bridge the Toolbox TreeView's drag MIME types into a webview, so the
+    // tag travels on the armTool message (fired on drag-start) and the drop handler falls back
+    // to the armed tag when event.dataTransfer is empty — the path that makes drag work.
+    msg({ type: 'armTool', tag: 'Button' });
+    posted.length = 0;
+    const dragEv = new s.window.MouseEvent('drop', { bubbles: true, cancelable: true, clientX: 300, clientY: 90 });
+    dragEv.dataTransfer = { getData: () => '' }; // the real (empty) webview dataTransfer
+    $('canvas').dispatchEvent(dragEv);
+    const dragDrop = posted[posted.length - 1];
+    t.equal(dragDrop.type, 'drop', 'toolbox-drag', 'posts drop from drag with empty dataTransfer');
+    t.equal(dragDrop.tag, 'Button', 'toolbox-drag', 'armed tag used (VS Code did not bridge the MIME)');
+    t.equal(Math.round(dragDrop.x), 300, 'toolbox-drag', 'x mapped to design coords');
+    t.equal(Math.round(dragDrop.y), 90, 'toolbox-drag', 'y mapped to design coords');
+
+    // --- an empty drop with no armed tool places nothing and tells the user ---
+    posted.length = 0;
+    const empty = new s.window.MouseEvent('drop', { bubbles: true, cancelable: true, clientX: 150, clientY: 80 });
+    empty.dataTransfer = { getData: () => '' };
+    $('canvas').dispatchEvent(empty);
+    t.equal(posted.some((m) => m.type === 'drop'), false, 'empty-drop', 'no drop posted when unarmed and empty');
+    t.equal($('status').textContent, 'Drag a control from the Toolbox view.', 'empty-drop', 'status explains the empty drop');
+
     // --- locked Body: right-clicking the empty body selects Body + disables destructive actions ---
     dispatch('contextmenu', 'canvas', { clientX: 10, clientY: 10 }); // hits Body (0,0,800,450), not Root
     t.equal(posted[posted.length - 1].name, 'Body', 'locked-menu', 'right-click selects Body');

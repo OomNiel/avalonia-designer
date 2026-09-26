@@ -94,6 +94,10 @@ export function activate(context: vscode.ExtensionContext): void {
                 supportsMultipleEditorsPerDocument: true
             })
         );
+        // Let the Toolbox drag arm a tool in the active designer: VS Code does not bridge a
+        // TreeView's drag MIME types into a webview, so the tag must travel on the webview
+        // message channel (the same one click-to-place uses) for a drop to place anything.
+        toolbox.armDesignerTool = (tag: string) => provider.armToolInActiveDesigner(tag);
 
         // Custom editor provider: opens .adset files in the DataSet schema designer.
         const dsProvider = new DataSetEditorProvider(context);

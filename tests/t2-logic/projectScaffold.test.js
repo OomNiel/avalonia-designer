@@ -29,6 +29,24 @@ function makeProject(language, vbBridgeDll) {
 module.exports = async (t) => {
     t.section('T2: scaffold .vscode (Linux-safe launch + default build task)');
 
+    // ---------------------------------------------------------------- the CREATOR keeps up with resources/
+    // A bundled file the extension's project creator does not pass is a project that cannot build. 0.12.2
+    // shipped a `GrumpyCharts.cs` that calls `GrumpyPrint.Available` and left the helper out of
+    // `projectCreator.ts`, so a brand-new C# project failed its FIRST build with
+    // `CS0103: The name 'GrumpyPrint' does not exist in the current context`. The scaffold options are
+    // optional and a missing file is therefore tolerated silently — but "resources/ holds a file the creator
+    // never sends" IS the bug, and it is checkable here, with no VS Code host.
+    const creator = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'projectCreator.ts'), 'utf8');
+    const bundled = fs.readdirSync(path.join(__dirname, '..', '..', 'resources'))
+        .filter((f) => /\.(cs|vb)$/.test(f))
+        .sort();
+    t.ok(bundled.length >= 16, 'creator',
+        `resources/ holds the bundled file set (found ${bundled.length})`);
+    for (const file of bundled) {
+        t.ok(creator.includes(`'resources/${file}'`), 'creator',
+            `the project creator passes resources/${file} — a bundled file it forgets is a project that does not build`);
+    }
+
     for (const language of ['cs', 'vb']) {
         const dir = makeProject(language);
         // Every new project ships the bundled EXIF-aware image loader (used by Data-Image binds).
