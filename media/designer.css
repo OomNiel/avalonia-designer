@@ -874,9 +874,9 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     white-space: nowrap;
 }
 
-/* A colour swatch: the SYSTEM one, an ordinary <input type="color">. It never exceeds its cell (a 30px
- * box, `min-width: 0` on the flex parents), so the control itself is always inside the panel — the picker
- * it opens is drawn by the browser and placed where the browser decides. */
+/* A colour swatch: a BUTTON that IS the dropdown — it shows the colour and clicking it opens the picker
+ * popup. One colour control per row (no native <input type="color">, whose frame the platform places, and
+ * no separate ▾ either). Its colour lives in `dataset.color` and its own background. */
 .color-swatch {
     flex: 0 0 30px !important;
     width: 30px;
@@ -888,24 +888,8 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     background: var(--panel-2);
 }
 
-.color-drop {
-    flex: 0 0 auto;
-    width: 26px;
-    height: 22px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    background: var(--panel-2);
-    color: var(--fg);
-    font-size: 11px;
-    line-height: 1;
-    cursor: pointer;
-}
-
-.color-drop:hover {
-    background: var(--accent-2);
-    color: #ffffff;
-}
+/* (The ▾ `colour-drop` button was removed 2026-09-26: the swatch itself opens the picker, so a colour row
+ * carries ONE control — `button.color-swatch`, styled above.) */
 
 /* Colour palette popup — fixed-position, ~5 rows visible then scroll. */
 #colorPalette {
@@ -2320,7 +2304,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     font-size: 12px;
 }
 
-.splitter-field input[type='color'] {
+.splitter-field button.color-swatch {
     width: 26px;
     height: 20px;
     padding: 0;
@@ -2433,7 +2417,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     font-size: 12px;
 }
 
-.series-field input[type='color'] {
+.series-field button.color-swatch {
     flex: 0 0 auto;
     width: 26px;
     height: 20px;
@@ -2529,7 +2513,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     gap: 6px;
 }
 
-.dg-color input[type='color'] {
+.dg-color button.color-swatch {
     width: 26px;
     height: 20px;
     padding: 0;
@@ -2714,17 +2698,18 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     height: 24px;
 }
 
-.sheet-color input[type="color"] {
+.sheet-color .sheet-well {
     width: 34px;
     height: 22px;
     padding: 0;
     border: 1px solid var(--border, #444);
-    background: none;
+    border-radius: 3px;
+    background: #000000;
     cursor: pointer;
 }
 
 /* On the sheet's own colour: the swatch is dimmed, and the × is what puts it back there. */
-.sheet-color input[type="color"].on-sheet {
+.sheet-color .sheet-well.on-sheet {
     opacity: 0.35;
 }
 

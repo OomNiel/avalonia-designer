@@ -7928,9 +7928,9 @@ ${publishButtons}      <span class="sep"></span>
           <label class="sheet-tool-field" title="The selection's font family — empty means the sheet's own">Font
             <input id="sheetFamily" type="text" maxlength="60" placeholder="sheet"></label>
           <label class="sheet-tool-field sheet-color" title="The selection's text colour — the × puts it back on the sheet's own">Text
-            <input id="sheetTextColor" type="color" value="#000000"><button id="sheetTextColorNone" type="button" class="sheet-none" title="Use the sheet's own text colour">&times;</button></label>
+            <button id="sheetTextColor" type="button" class="sheet-well" title="Pick any colour…"></button><button id="sheetTextColorNone" type="button" class="sheet-none" title="Use the sheet's own text colour">&times;</button></label>
           <label class="sheet-tool-field sheet-color" title="The selection's highlight — the × takes it away">Fill
-            <input id="sheetFill" type="color" value="#FFCC00"><button id="sheetFillNone" type="button" class="sheet-none" title="No highlight — the sheet's own paper colour">&times;</button></label>
+            <button id="sheetFill" type="button" class="sheet-well" title="Pick any colour…"></button><button id="sheetFillNone" type="button" class="sheet-none" title="No highlight — the sheet's own paper colour">&times;</button></label>
           <label class="sheet-tool-field" title="How the selection's text is lined up">Align
             <select id="sheetAlign">
               <option value="Auto">Auto</option>
@@ -8110,7 +8110,7 @@ ${publishButtons}      <span class="sep"></span>
         <div class="grid-settings">
           <label>Spacing X (px) <input id="dotGridSpacingX" type="number" min="4" step="1"/></label>
           <label>Spacing Y (px) <input id="dotGridSpacingY" type="number" min="4" step="1"/></label>
-          <label>Color <input id="dotGridColor" type="color"/></label>
+          <label>Color <button id="dotGridColor" type="button" class="color-swatch" title="Pick any colour…"></button></label>
           <label>Dot size (px) <input id="dotGridDotSize" type="number" min="0.5" step="0.5"/></label>
         </div>
         <div class="modal-buttons">
@@ -8133,7 +8133,7 @@ ${publishButtons}      <span class="sep"></span>
           <label>Short length (px) <input id="chShortLength" type="number" min="6" step="1"/></label>
           <label>Thickness (px) <input id="chThickness" type="number" min="1" max="12" step="1"/></label>
           <label>Opacity (%) <input id="chOpacity" type="number" min="0" max="100" step="1"/></label>
-          <label>Colour <input id="chColor" type="color"/></label>
+          <label>Colour <button id="chColor" type="button" class="color-swatch" title="Pick any colour…"></button></label>
         </div>
         <div class="modal-buttons">
           <button id="crosshairCancel" type="button" class="modal-btn">Cancel</button>

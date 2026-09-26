@@ -110,7 +110,10 @@ function setup(omit = []) {
         if (id === 'aiLlamaStart' || id === 'aiLlamaStop') return 'button';
         if (id === 'aiLlamaOwner') return 'p';
         if (id === 'aiLoad' || id === 'aiUnload' || id === 'aiRemove' || id === 'aiStatus' || id === 'aiRefresh' || id === 'aiScan' || id === 'aiLearnConventions') return 'button';
-        if (id.startsWith('dotGridSpacing') || id === 'dotGridColor' || id === 'dotGridDotSize') return 'input';
+        if (id.startsWith('dotGridSpacing') || id === 'dotGridDotSize') return 'input';
+        // One colour control everywhere: a swatch BUTTON that shows the colour and opens the picker popup.
+        // No native <input type="color"> (the platform places that picker's frame, not us).
+        if (id === 'dotGridColor' || id === 'chColor' || id === 'sheetTextColor' || id === 'sheetFill') return 'button';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
             || id === 'dotGridSave' || id === 'dotGridCancel'
             || id === 'chModeShort' || id === 'chModeLong'
@@ -130,9 +133,9 @@ function setup(omit = []) {
         if (id === 'sheetGrid') return 'table';
         if (id === 'sheetAddress') return 'span';
         if (id === 'sheetBold' || id === 'sheetItalic' || id === 'sheetTextColorNone' || id === 'sheetFillNone' || id === 'sheetClearFormat') return 'button';
-        if (id === 'sheetSize' || id === 'sheetFamily' || id === 'sheetTextColor' || id === 'sheetFill') return 'input';
+        if (id === 'sheetSize' || id === 'sheetFamily') return 'input';
         if (id === 'sheetAlign') return 'select';
-        if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
+        if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
     };
@@ -1336,8 +1339,10 @@ module.exports = async (t) => {
         info: null, tabItems: [], listItems: []
     });
     const colRow = [...$('propsBody').children].find((r) => r.textContent.includes('Backcolor'));
-    const dropBtn = colRow.querySelector('.color-drop');
-    t.ok(!!dropBtn, 'palette', 'colour row has a palette button');
+    const dropBtn = colRow.querySelector('.color-swatch');
+    t.ok(!!dropBtn, 'palette', 'colour row has the swatch that IS the dropdown');
+    t.equal(colRow.querySelectorAll('.color-swatch').length, 1, 'palette',
+        'and only ONE colour control — the separate ▾ is gone');
     t.ok(!colRow.querySelector('input[list]'), 'palette', 'colour text field no longer uses a <datalist>');
     posted.length = 0;
     dropBtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
@@ -1361,7 +1366,7 @@ module.exports = async (t) => {
         info: null, tabItems: [], listItems: []
     });
     const colRow2 = [...$('propsBody').children].find((r) => r.textContent.includes('Backcolor'));
-    colRow2.querySelector('.color-drop').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    colRow2.querySelector('.color-swatch').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
     palette = $('colorPalette');
     t.equal(palette.querySelectorAll('.cp-row').length, 3, 'palette', 'custom current colour added on top of the presets');
     t.ok(palette.querySelectorAll('.cp-row')[0].textContent.includes('#336699'), 'palette', 'custom colour listed first');
@@ -1372,7 +1377,7 @@ module.exports = async (t) => {
     // Scrolling INSIDE the popup's own list is allowed (that's how you reach colour #31); a scroll
     // anywhere else (e.g. the properties list) still closes it.
     const backRow = () => [...$('propsBody').children].find((r) => r.textContent.includes('Backcolor'));
-    backRow().querySelector('.color-drop').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    backRow().querySelector('.color-swatch').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
     palette = $('colorPalette');
     t.equal(palette.hidden, false, 'palette', 'reopened for the scroll test');
     palette.dispatchEvent(new s.window.Event('scroll', { bubbles: true }));
@@ -1381,7 +1386,7 @@ module.exports = async (t) => {
     t.equal(palette.hidden, true, 'palette', 'scrolling the properties list closes the popup');
     // When the property sits BELOW the vertical middle of the window the popup opens UPWARDS
     // (above the property) so it never runs off the bottom of the screen.
-    const lowBtn = backRow().querySelector('.color-drop');
+    const lowBtn = backRow().querySelector('.color-swatch');
     lowBtn.getBoundingClientRect = () => ({ left: 100, top: 600, right: 126, bottom: 622, width: 26, height: 22, x: 100, y: 600 });
     const vh = s.window.innerHeight || 768;
     t.ok(600 > vh / 2, 'palette', 'stubbed trigger is below the vertical middle');
@@ -1399,7 +1404,7 @@ module.exports = async (t) => {
     // clamped into the window in BOTH directions, and has its width capped to the window so that even a panel
     // narrower than the list cannot overflow.
     {
-        const rightBtn = backRow().querySelector('.color-drop');
+        const rightBtn = backRow().querySelector('.color-swatch');
         rightBtn.getBoundingClientRect = () => ({ left: 900, top: 200, right: 926, bottom: 222, width: 26, height: 22, x: 900, y: 200 });
         rightBtn.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         palette = $('colorPalette');
@@ -1431,36 +1436,63 @@ module.exports = async (t) => {
         Object.defineProperty(s.window, 'innerWidth', { value: iw, configurable: true });
     }
 
-    // --- the swatches are the SYSTEM ones, and the popup takes any colour ---
-    // Reported 2026-09-26: *"Bring back the system swatch and make sure it renders inside the ide borders."*
-    // The 0.12.12 build had replaced every <input type="color"> with a button that opened the preset list,
-    // which also removed any colour not in that list. The inputs are back; the list is a shortcut, and the
-    // popup itself now carries a picker so an in-panel route to ANY colour exists too.
+    // --- ONE colour control everywhere: a swatch that IS the dropdown ---
+    // Decided 2026-09-26 after seeing the picker work: *"your new dropdown with embedded swatch everywhere"*,
+    // *"one colour rectangle that opens the picker"*. So no native <input type="color"> (the platform places
+    // that picker's frame, not us) and no separate ▾ — the swatch shows the colour and opens the popup, which
+    // carries the picker, the hex/name box and the presets. The authoritative text box beside it stays, so a
+    // NAMED colour ("Teal") and a pasted #RRGGBB still work without opening anything.
     {
         const js = fs.readFileSync(DESIGNER_JS, 'utf8');
         const panelSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'designerPanel.ts'), 'utf8');
         const css = fs.readFileSync(DESIGNER_CSS, 'utf8');
-        // The four swatches that live in the markup are colour inputs again, not buttons.
+        // The four swatches in the markup are buttons now, not colour inputs.
         for (const id of ['dotGridColor', 'chColor', 'sheetTextColor', 'sheetFill']) {
-            t.ok(panelSrc.includes(`<input id="${id}" type="color"`), 'swatch',
-                `${id} is an <input type="color"> in the panel markup`);
-            t.ok(!new RegExp(`<button id="${id}"`).test(panelSrc), 'swatch',
-                `${id} is not a button`);
+            t.ok(panelSrc.includes(`<button id="${id}"`), 'swatch',
+                `${id} is a button in the panel markup`);
+            t.ok(!panelSrc.includes(`<input id="${id}"`), 'swatch', `${id} is not a colour input`);
         }
-        // …and the four the script builds are colour inputs as well.
-        t.ok(/swatch\.type = 'color'/.test(js), 'swatch', 'the property row builds a colour input');
-        t.ok(/colSw\.type = 'color'/.test(js), 'swatch', 'so does the splitter editor');
-        t.equal((js.match(/sw\.type = 'color'/g) || []).length, 2, 'swatch',
-            'and the DataGrid editor and the series colour cell');
-        // A pick from the system picker is posted on `change` (OK/Enter), never on `input`: posting while the
-        // picker is still open re-renders this panel and closes the picker under the user's hand.
-        t.ok(/swatch\.addEventListener\('change',[\s\S]{0,200}?postSet\(/.test(js), 'swatch',
-            'and its value is posted when the system picker confirms the colour');
-        t.ok(!/swatch\.addEventListener\('input',[\s\S]{0,300}?postSet\(/.test(js), 'swatch',
-            'never while the picker is still being dragged');
-        // The popup draws its own picker, so the fixed list is not the limit.
+        t.equal((panelSrc.match(/type="color"/g) || []).length, 0, 'swatch',
+            'no native colour input is left in the markup at all');
+        t.equal((js.match(/\.type = 'color'/g) || []).length, 0, 'swatch',
+            'and none is built by the script either');
+        // The three built ones go through the one helper, and the property row uses it without a ▾ beside it.
+        t.equal((js.match(/colorSwatchButton\(/g) || []).length, 5, 'swatch',
+            'the swatch helper builds every script-made colour control (4 sites + its own definition)');
+        t.ok(!/className = 'color-drop'/.test(js) && !/\.color-drop/.test(css), 'swatch',
+            'the separate ▾ button is gone — the swatch IS the dropdown');
+        // A pick from the popup commits the value; a click on it must not be swallowed, or the document's
+        // click-outside handler closes the popup on the very click that opened it.
+        t.ok(/colorSwatchButton[\s\S]{0,900}?stopPropagation/.test(js), 'swatch',
+            'a swatch click cannot be taken for a click outside the popup');
+        // The popup draws its own picker: that is the whole reason the fixed list is not a limit.
         t.ok(/\.cp-pick \{/.test(css) && /\.cp-hue \{/.test(css), 'swatch',
             'the popup has a saturation/value square and a hue strip of its own');
+        // The sheet bar's wells are buttons that dim when the cell is on the sheet's own colour.
+        t.ok(/\.sheet-color \.sheet-well \{/.test(css) && /\.sheet-well\.on-sheet \{/.test(css), 'swatch',
+            'the sheet bar styles its wells as buttons, dimmed when the colour is the sheet\'s own');
+        // The hex box beside the swatch is still the authoritative field, so a NAME survives.
+        msg({
+            type: 'properties', name: 'r8',
+            properties: [{ key: 'Fill', label: 'Backcolor', kind: 'color', value: 'Teal', options: ['Red'] }],
+            info: null, tabItems: [], listItems: []
+        });
+        const row = [...$('propsBody').children].find((r) => r.textContent.includes('Backcolor'));
+        const textBox = row.querySelector('input[data-prop-key="Fill"]');
+        t.equal(textBox.value, 'Teal', 'swatch', 'the text box keeps the NAME, not a hex it looks like');
+        // The swatch carries the field's own value, so a name reaches the popup AS the name and the row shows
+        // it on top of its list instead of as a colour the row does not offer.
+        t.equal(row.querySelector('.color-swatch').dataset.color, 'Teal', 'swatch',
+            'and the swatch carries that name');
+        row.querySelector('.color-swatch').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+        const tealPal = $('colorPalette');
+        t.equal(tealPal.querySelectorAll('.cp-row')[0].textContent.trim(), 'Teal', 'swatch',
+            'which the popup lists first, above the row\'s own presets');
+        s.window.document.dispatchEvent(new s.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    }
+
+    // --- the popup takes any colour ---
+    {
         msg({
             type: 'properties', name: 'r9',
             properties: [{ key: 'Fill', label: 'Backcolor', kind: 'color', value: '#336699', options: ['Red', 'Green'] }],
@@ -1468,7 +1500,7 @@ module.exports = async (t) => {
         });
         const palette = $('colorPalette');
         [...$('propsBody').children].find((r) => r.textContent.includes('Backcolor'))
-            .querySelector('.color-drop')
+            .querySelector('.color-swatch')
             .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         const pick = palette.querySelector('.cp-pick');
         const hue = palette.querySelector('.cp-hue');
@@ -1509,7 +1541,7 @@ module.exports = async (t) => {
             info: null, tabItems: [], listItems: []
         });
         [...$('propsBody').children].find((r) => r.textContent.includes('Backcolor'))
-            .querySelector('.color-drop')
+            .querySelector('.color-swatch')
             .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal(palette.querySelector('.cp-hue').value, '180', 'swatch',
             '"Teal" seeds the picker at its own hue, so a name is a starting point and not a dead end',
@@ -1772,7 +1804,7 @@ module.exports = async (t) => {
         t.equal($('chThickness').value, '1', 'ch', 'thickness prefilled');
         t.equal($('chShortLength').value, '50', 'ch', 'short length prefilled');
         t.equal($('chOpacity').value, '100', 'ch', 'opacity prefilled');
-        t.equal($('chColor').value, '#000000', 'ch', 'colour prefilled');
+        t.equal($('chColor').dataset.color, '#000000', 'ch', 'colour prefilled');
         // Toggle Long + edit the fields, then Save.
         $('chModeLong').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal($('chModeLong').classList.contains('active'), true, 'ch', 'Long toggled on');
@@ -1781,6 +1813,15 @@ module.exports = async (t) => {
         $('chThickness').value = '2';
         $('chOpacity').value = '60';
         $('chColor').value = '#00ff88';
+        // The colour is chosen from the swatch's popup now: one click, then a value in the box (a name would
+        // do just as well — that is what the box is for).
+        $('chColor').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const chPal = $('colorPalette');
+        t.equal(chPal && chPal.hidden === false, true, 'ch', 'clicking the colour swatch opens the picker');
+        chPal.querySelector('.cp-custom input').value = '#00ff88';
+        chPal.querySelector('.cp-custom button')
+            .dispatchEvent(new s.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal($('chColor').dataset.color, '#00ff88', 'ch', 'and the pick lands on the swatch');
         posted.length = 0;
         $('crosshairSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal($('crosshairModal').hidden, true, 'ch', 'popup closes on save');
@@ -2613,8 +2654,12 @@ module.exports = async (t) => {
         t.equal($('dgTitle').textContent, 'Rows', 'dg-editor', 'title Rows');
         const rowEls = $('dgBody').querySelectorAll('.splitter-row');
         t.equal(rowEls.length, 8, 'dg-editor', 'eight row fields');
-        const colors = rowEls[0].querySelectorAll('input');
-        t.ok(colors.length >= 2, 'dg-editor', 'row background has a colour field');
+        const colors = rowEls[0].querySelectorAll('.dg-color');
+        t.equal(colors.length, 1, 'dg-editor', 'row background has a colour field');
+        t.ok(!!rowEls[0].querySelector('.dg-color button.color-swatch'), 'dg-editor',
+            'drawn as one swatch button that opens the picker');
+        t.ok(!!rowEls[0].querySelector('.dg-color input'), 'dg-editor',
+            'with the authoritative text field beside it');
         const rowHeightInput = rowEls[2].querySelector('input');
         rowHeightInput.value = '28';
         rowHeightInput.dispatchEvent(new s.window.Event('input', { bubbles: true }));
@@ -2872,8 +2917,8 @@ module.exports = async (t) => {
         // NAME like "White" survives). The text field is the one the editor reads and writes.
         const aColour = (caption) => {
             const row = aFields().find((f) => f.querySelector('span') && f.querySelector('span').textContent === caption);
-            // [0] is the system swatch, [1] is the authoritative text field this returns.
-            return row ? row.querySelectorAll('input')[1] : null;
+            // The swatch is a BUTTON, so the only INPUT in the row is the authoritative text field.
+            return row ? row.querySelectorAll('input')[0] : null;
         };
         // common Y, common X, series 1 X, series 1 Y, and an information row for series 2
         t.equal(aItems().length, 5, 'axes', 'both common axes and the per-series axes are listed');
@@ -3577,6 +3622,17 @@ module.exports = async (t) => {
             new sh.window.MouseEvent(type, { bubbles: true, cancelable: true, ...opts }));
         const change = (el) => el.dispatchEvent(new sh.window.Event('change', { bubbles: true }));
         const typeIn = (el) => el.dispatchEvent(new sh.window.Event('input', { bubbles: true }));
+        // Choosing a colour is one click on the swatch, then a pick in the popup.
+        const pickWell = (id, value) => {
+            sh.$(id).dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+            const pal = sh.window.document.getElementById('colorPalette');
+            if (!pal || pal.hidden) return false;
+            const input = pal.querySelector('.cp-custom input');
+            input.value = value;
+            pal.querySelector('.cp-custom button')
+                .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+            return true;
+        };
         const cell = (r, c) => sh.$('sheetGrid').querySelector(`td[data-row="${r}"][data-col="${c}"]`);
         const save = () => {
             fire(sh.$('sheetSave'), 'click');
@@ -3619,11 +3675,10 @@ module.exports = async (t) => {
         sh.$('sheetFamily').value = 'Consolas';
         change(sh.$('sheetFamily'));
         t.equal(cell(2, 1).style.fontFamily, 'Consolas', 'sheet-format', 'so does a font family');
-        sh.$('sheetTextColor').value = '#cc0000';
-        typeIn(sh.$('sheetTextColor'));
+        t.ok(pickWell('sheetTextColor', '#cc0000'), 'sheet-format',
+            'clicking the Text swatch opens the picker');
         t.ok(cell(2, 1).style.color.length > 0, 'sheet-format', 'and a text colour', cell(2, 1).style.color);
-        sh.$('sheetFill').value = '#22AA55';
-        typeIn(sh.$('sheetFill'));
+        pickWell('sheetFill', '#22AA55');
         t.ok(cell(2, 1).style.backgroundColor.toUpperCase().indexOf('34, 170, 85') >= 0 ||
             cell(2, 1).style.backgroundColor.toUpperCase().indexOf('#22AA55') >= 0, 'sheet-format',
             'and a highlight', cell(2, 1).style.backgroundColor);
@@ -3655,7 +3710,7 @@ module.exports = async (t) => {
             .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
         t.equal(sh.$('sheetSize').value, '18', 'sheet-format', 'the size the cells were given is shown again');
         t.equal(sh.$('sheetAlign').value, 'Center', 'sheet-format', 'as is the alignment');
-        t.equal(String(sh.$('sheetFill').value).toUpperCase(), '#22AA55', 'sheet-format',
+        t.equal(String(sh.$('sheetFill').dataset.color).toUpperCase(), '#22AA55', 'sheet-format',
             'and the fill swatch shows the highlight colour it was given');
         t.ok(!sh.$('sheetFill').classList.contains('on-sheet'), 'sheet-format',
             'and the fill well no longer reads as the sheet’s own');
