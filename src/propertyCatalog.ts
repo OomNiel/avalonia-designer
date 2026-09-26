@@ -1920,12 +1920,16 @@ const CHART_PRINT_PAPERS = ['AsDrawn', 'A4', 'Letter'];
 // given back to the plot — the usual hardcopy — and On forces it on. The override is scoped to the job
 // in the bundled file: the chart on screen keeps its own ShowLegend whatever this says.
 const CHART_PRINT_LEGENDS = ['AsDrawn', 'Off', 'On'];
+// Colour or mono. Mono takes the PLOT BACKGROUND off the page — the one thing on a chart that turns into a
+// solid block of ink — and puts it back when the job finishes, so the form on screen never changes.
+const CHART_PRINT_INKS = ['Colour', 'Mono'];
 
 const CHART_PRINT_ROWS: PropTemplate[] = [
     { key: 'PrintPaper', label: 'Print Paper', kind: 'dropdown', options: CHART_PRINT_PAPERS },
     { key: 'PrintMargin', label: 'Print Margin', kind: 'number' },
     { key: 'PrintLightBackground', label: 'Print on White', kind: 'dropdown', options: BOOL },
-    { key: 'PrintLegend', label: 'Print Legend', kind: 'dropdown', options: CHART_PRINT_LEGENDS }
+    { key: 'PrintLegend', label: 'Print Legend', kind: 'dropdown', options: CHART_PRINT_LEGENDS },
+    { key: 'PrintInk', label: 'Print Ink', kind: 'dropdown', options: CHART_PRINT_INKS }
 ];
 
 for (const tag of ['GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAreaPlot',
@@ -2081,10 +2085,11 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // GrumpyCharts: join the X,Y points with a line, and re-read the spreadsheet on change
             'Connected', 'LiveUpdate',
             // GrumpyCharts hardcopy (2026-09-25): the page a chart prints or exports onto — which
-            // paper, the margin inside it, whether the page is painted white first, and whether the
-            // LEGEND goes on the paper at all. AsDrawn (the default) keeps the chart's own size and
-            // prints the legend as drawn, which is what the rows did nothing about before.
-            'PrintPaper', 'PrintMargin', 'PrintLightBackground', 'PrintLegend'
+            // paper, the margin inside it, whether the page is painted white first, whether the LEGEND
+            // goes on the paper at all, and colour or mono (mono hides the plot background for the job).
+            // AsDrawn (the default) keeps the chart's own size and prints the legend as drawn, which is
+            // what the rows did nothing about before.
+            'PrintPaper', 'PrintMargin', 'PrintLightBackground', 'PrintLegend', 'PrintInk'
         ]
     }
 ];

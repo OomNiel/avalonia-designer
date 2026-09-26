@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.6
+// BUNDLED-COPY: 0.12.7
 // GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs.
 //
@@ -1094,6 +1094,20 @@ public enum ChartLegendMode
     On
 }
 
+/// <summary>Whether the page is printed in colour or in mono — the chart's <c>PrintInk</c> row picks one.
+/// It steers the OUTPUT only: on screen the chart keeps its own colours, and they are put back once the job
+/// is done.</summary>
+public enum ChartInkMode
+{
+    /// <summary>Colour, exactly as drawn. Default.</summary>
+    Colour,
+
+    /// <summary>Mono: the PLOT BACKGROUND is left off the page (it is made transparent for the job), because
+    /// that plate is the one thing on a chart that can turn into a solid block of ink. The traces keep their
+    /// own colours — a mono printer maps them to greys itself — and nothing else on the page changes.</summary>
+    Mono
+}
+
 /// <summary>
 /// Where a chart sits on the page for the print / PDF / PNG output: a paper size in PDF points
 /// (1/72 inch), the margin inside it, and whether the page is painted white first.
@@ -1123,6 +1137,11 @@ public sealed class ChartPrintOptions
     /// what you see is what prints — so a form that never mentions the row is unaffected. Anything else is
     /// applied around the render and then PUT BACK, so the chart on screen is never left changed.</summary>
     public ChartLegendMode Legend { get; set; }
+
+    /// <summary>Colour or mono for the page. <see cref="ChartInkMode.Colour"/> by default, so a form that
+    /// never mentions the row prints exactly what it shows. Mono is applied around the render and then PUT
+    /// BACK — the plot background is the chart's own property, and the form must not be left changed.</summary>
+    public ChartInkMode Ink { get; set; }
 
     /// <summary>True when real paper was asked for, rather than the chart's own size.</summary>
     public bool HasPage => PageWidth > 0 && PageHeight > 0;
@@ -2274,6 +2293,20 @@ public abstract class ChartBase : Control
         set => SetValue(PrintLegendProperty, value);
     }
 
+    /// <summary>Colour or mono for the printed / exported page. <see cref="ChartInkMode.Mono"/> takes the
+    /// PLOT BACKGROUND off the page — the colour plate AND a background brush the form may have set — because
+    /// that plate is what turns into a solid block of ink on paper; the traces keep their own colours and a
+    /// mono printer greys them itself. The original background is put back when the job finishes, so the
+    /// screen never changes, and the PNG export and the PDF paths honour the row too.</summary>
+    public static readonly StyledProperty<ChartInkMode> PrintInkProperty =
+        AvaloniaProperty.Register<ChartBase, ChartInkMode>(nameof(PrintInk));
+
+    public ChartInkMode PrintInk
+    {
+        get => GetValue(PrintInkProperty);
+        set => SetValue(PrintInkProperty, value);
+    }
+
     /// <summary>
     /// Raised when a print or an export fails — no printing service, a printer that refuses the job, an
     /// unwritable folder, a cancelled dialog that got as far as the file system. The chart never throws
@@ -2308,6 +2341,7 @@ public abstract class ChartBase : Control
         options.Margin = PrintMargin;
         options.LightBackground = PrintLightBackground;
         options.Legend = PrintLegend;
+        options.Ink = PrintInk;
         return options;
     }
 
@@ -2329,21 +2363,44 @@ public abstract class ChartBase : Control
     }
 
     /// <summary>
-    /// Applies the legend the print options ask for and answers the undo: <c>null</c> when the options say
-    /// "as drawn" (nothing is touched), otherwise a handle that puts the chart's own <see cref="ShowLegend"/>
-    /// back. The page is re-laid-out on every render (<see cref="PageVisuals"/> does that), which is what
-    /// makes the override visible at all: the legend takes its room out of the plot, so the two pictures
-    /// really differ.
+    /// Applies what the print options ask for to the LIVE chart and answers the undo: <c>null</c> when there
+    /// is nothing to do, otherwise a handle that puts every touched property back. Two settings are scoped this
+    /// way — the legend of the page (<see cref="PrintLegend"/>) and mono printing, which hides the plot
+    /// background (<see cref="PrintInk"/>) — because both belong to the chart itself while the printer
+    /// backends are handed that live chart: leaving either applied would change the form on screen.
+    /// <para>
+    /// The page is re-laid-out on every render (<see cref="PageVisuals"/> does that), which is what makes the
+    /// legend override visible at all: the legend takes its room out of the plot, so the two pictures really
+    /// differ. The plot background changes no geometry, only the paint, so it needs an invalidate.
+    /// </para>
     /// </summary>
-    private IDisposable? ApplyPrintLegend(ChartPrintOptions options)
+    private IDisposable? ApplyPrintTweaks(ChartPrintOptions options)
     {
-        if (options.Legend == ChartLegendMode.AsDrawn) return null;
-        var wanted = options.Legend == ChartLegendMode.On;
-        var saved = ShowLegend;
-        if (saved == wanted) return null;
-        ShowLegend = wanted;
-        RelayoutForLegend();
-        return new LegendRestore(this, saved);
+        var wantedLegend = options.Legend == ChartLegendMode.AsDrawn
+            ? (bool?)null
+            : options.Legend == ChartLegendMode.On;
+        var savedLegend = ShowLegend;
+        var changeLegend = wantedLegend is { } legend && legend != savedLegend;
+
+        // Mono: the plot background is the ink hog, so both halves of it go — the colour plate (its opacity)
+        // and a brush the form may have set. Hiding only one of them would leave the other on the paper.
+        var savedOpacity = PlotBackOpacity;
+        var savedBrush = PlotBackBrush;
+        var changePlot = options.Ink == ChartInkMode.Mono && (savedOpacity > 0 || savedBrush is not null);
+
+        if (!changeLegend && !changePlot) return null;
+        if (changeLegend)
+        {
+            ShowLegend = wantedLegend!.Value;
+            RelayoutForLegend();
+        }
+        if (changePlot)
+        {
+            PlotBackBrush = null;
+            PlotBackOpacity = 0;
+            InvalidateVisual();
+        }
+        return new PrintTweaksRestore(this, changeLegend, savedLegend, changePlot, savedOpacity, savedBrush);
     }
 
     /// <summary>
@@ -2366,33 +2423,49 @@ public abstract class ChartBase : Control
         InvalidateVisual();
     }
 
-    /// <summary>The async form of <see cref="ApplyPrintLegend"/>, for the render paths: the chart's own
-    /// legend setting is put back when the render returns — or when it throws, because the handle is held
-    /// in a <c>using</c>.</summary>
-    private async Task<T> WithPrintLegendAsync<T>(ChartPrintOptions options, Func<Task<T>> render)
+    /// <summary>The async form of <see cref="ApplyPrintTweaks"/>, for the render paths: every touched property
+    /// is put back when the render returns — or when it throws, because the handle is held in a
+    /// <c>using</c>.</summary>
+    private async Task<T> WithPrintTweaksAsync<T>(ChartPrintOptions options, Func<Task<T>> render)
     {
-        using var restore = ApplyPrintLegend(options);
+        using var restore = ApplyPrintTweaks(options);
         return await render();
     }
 
-    /// <summary>Puts the chart's own legend setting back when the job is done — even when it failed, since
-    /// the caller holds this in a <c>using</c>.</summary>
-    private sealed class LegendRestore : IDisposable
+    /// <summary>Puts everything one print job changed back — the legend's own setting (with the re-layout that
+    /// needs) and the plot background (paint only) — even when the job failed, since the caller holds this in
+    /// a <c>using</c>.</summary>
+    private sealed class PrintTweaksRestore : IDisposable
     {
         private readonly ChartBase _chart;
-        private readonly bool _saved;
+        private readonly bool _legend;
+        private readonly bool _savedLegend;
+        private readonly bool _plot;
+        private readonly double _savedOpacity;
+        private readonly Brush? _savedBrush;
 
-        internal LegendRestore(ChartBase chart, bool saved)
+        internal PrintTweaksRestore(ChartBase chart, bool legend, bool savedLegend, bool plot,
+            double savedOpacity, Brush? savedBrush)
         {
             _chart = chart;
-            _saved = saved;
+            _legend = legend;
+            _savedLegend = savedLegend;
+            _plot = plot;
+            _savedOpacity = savedOpacity;
+            _savedBrush = savedBrush;
         }
 
         public void Dispose()
         {
-            if (_chart.ShowLegend == _saved) return;
-            _chart.ShowLegend = _saved;
-            _chart.RelayoutForLegend();
+            if (_legend && _chart.ShowLegend != _savedLegend)
+            {
+                _chart.ShowLegend = _savedLegend;
+                _chart.RelayoutForLegend();
+            }
+            if (!_plot) return;
+            _chart.PlotBackBrush = _savedBrush;
+            _chart.PlotBackOpacity = _savedOpacity;
+            _chart.InvalidateVisual();
         }
     }
 
@@ -2424,7 +2497,7 @@ public abstract class ChartBase : Control
         try
         {
             var options = CurrentPrintOptions();
-            using var legend = ApplyPrintLegend(options);
+            using var tweaks = ApplyPrintTweaks(options);
             var visual = PageVisuals(options)[0];
             var width = options.HasPage ? options.PageWidth : Bounds.Width;
             var height = options.HasPage ? options.PageHeight : Bounds.Height;
@@ -2529,15 +2602,15 @@ public abstract class ChartBase : Control
         {
             var title = JobTitle();
             var wanted = options ?? CurrentPrintOptions();
-            // A LEGEND override is about the PAGE, and the printer backends are handed the LIVE chart —
-            // which the chart owns and must not be left changed (Avae renders it when it likes). So this one
-            // case renders the page itself — the same vector PDF the export writes — and prints that FILE,
-            // which both backends accept. Everything else stays exactly as it was.
-            if (wanted.Legend != ChartLegendMode.AsDrawn)
+            // A LEGEND override or MONO printing is about the PAGE, and the printer backends are handed the
+            // LIVE chart — which the chart owns and must not be left changed (Avae renders it when it likes).
+            // So this one case renders the page itself — the same vector PDF the export writes — and prints
+            // that FILE, which both backends accept. Everything else stays exactly as it was.
+            if (wanted.Legend != ChartLegendMode.AsDrawn || wanted.Ink == ChartInkMode.Mono)
             {
                 var pdf = Path.Combine(Path.GetTempPath(),
                     "grumpychart-" + Guid.NewGuid().ToString("N") + ".pdf");
-                await WithPrintLegendAsync(wanted, async () =>
+                await WithPrintTweaksAsync(wanted, async () =>
                 {
                     await Print.ToFileAsync(pdf, PageVisuals(wanted));
                     return true;
@@ -2649,7 +2722,7 @@ public abstract class ChartBase : Control
         try
         {
             var wanted = options ?? CurrentPrintOptions();
-            await WithPrintLegendAsync(wanted, async () =>
+            await WithPrintTweaksAsync(wanted, async () =>
             {
                 await Print.ToFileAsync(path, PageVisuals(wanted));
                 return true;
@@ -2676,7 +2749,7 @@ public abstract class ChartBase : Control
         try
         {
             var wanted = options ?? CurrentPrintOptions();
-            await WithPrintLegendAsync(wanted, async () =>
+            await WithPrintTweaksAsync(wanted, async () =>
             {
                 await Print.ToStreamAsync(stream, PageVisuals(wanted));
                 return true;

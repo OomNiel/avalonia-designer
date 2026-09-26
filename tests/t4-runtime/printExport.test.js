@@ -57,6 +57,8 @@ const CHECKS_CUPS = [
     'no-avae-service', 'cups-available-with-lp-on-path', 'canprint-true-with-cups',
     'exportpng-legend-drawn-true', 'exportpng-legend-off-true', 'exportpng-legend-forced-true',
     'legend-off-leaves-the-screen-alone', 'legend-on-leaves-the-screen-alone',
+    'exportpng-ink-colour-true', 'exportpng-ink-mono-true',
+    'ink-mono-leaves-the-brush-alone', 'ink-mono-leaves-the-opacity-alone',
     'exportpdf-asdrawn-true', 'exportpdf-a4-true', 'pdf-files-exist', 'pdf-not-empty', 'pdf-header',
     'exportpng-asdrawn-true',
     'properties-roundtrip-paper', 'properties-roundtrip-margin', 'properties-roundtrip-light',
@@ -243,6 +245,35 @@ module.exports = async (t) => {
         t.ok(forcedDiff > 500, 'legend',
             'and On draws it even while the chart itself is hiding it (the harness switched ShowLegend off)',
             `differing pixels=${forcedDiff}`);
+    }
+
+    // ---------- the Print Ink row: mono takes the plot background off the page ----------
+    const inkColour = path.join(OUT_DIR, 'ink-colour.png');
+    const inkMono = path.join(OUT_DIR, 'ink-mono.png');
+    for (const [label, file] of [['colour', inkColour], ['mono', inkMono]]) {
+        t.ok(fs.existsSync(file), 'ink', `${label}: the export wrote a file`);
+    }
+    if (fs.existsSync(inkColour) && fs.existsSync(inkMono)) {
+        // #123456 is the plate the harness set, and the chart draws it nowhere else.
+        const plate = (r, g, b) => Math.abs(r - 0x12) <= 12 && Math.abs(g - 0x34) <= 12 && Math.abs(b - 0x56) <= 12;
+        const colourImg = decodePng(fs.readFileSync(inkColour));
+        const monoImg = decodePng(fs.readFileSync(inkMono));
+        const colourPlate = countIn(colourImg, 0, colourImg.width, 0, colourImg.height, plate);
+        const monoPlate = countIn(monoImg, 0, monoImg.width, 0, monoImg.height, plate);
+        t.ok(colourPlate > colourImg.width * colourImg.height * 0.5, 'ink',
+            'the colour page is covered by the plot background the form set',
+            `plate pixels=${colourPlate} of ${colourImg.width * colourImg.height}`);
+        // A stray pixel can match the plate by accident — an anti-aliased gridline or trace over a dark chart
+        // mixes into roughly the same colour — so the claim is COVERAGE, not equality: the plate filled the
+        // plot area on the colour page and is gone from the mono one. (Measured: 71,033 px vs 38 px, and the
+        // 38 are a sparse scatter across the chart, which is exactly what an accident looks like.)
+        t.ok(monoPlate < colourImg.width * colourImg.height * 0.005, 'ink',
+            'and the MONO page has none of it — the plate is off the paper',
+            `plate pixels=${monoPlate} of ${colourImg.width * colourImg.height}`);
+        t.ok(countIn(monoImg, 0, monoImg.width, 0, monoImg.height, near(40)) > 0, 'ink',
+            'while the graph itself is still there (its series colour rasterises out of the mono page)');
+        t.equal(`${monoImg.width}x${monoImg.height}`, `${colourImg.width}x${colourImg.height}`, 'ink',
+            'and the page is otherwise unchanged');
     }
 
     // ---------- the PDFs: header, then the page geometry ----------

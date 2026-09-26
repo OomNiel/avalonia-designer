@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.6
+' BUNDLED-COPY: 0.12.7
 ' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb.
 '
@@ -1067,6 +1067,11 @@ Namespace Global.AvaloniaCharts
         ''' around the render and then PUT BACK, so the chart on screen is never left changed.</summary>
         Public Property Legend As ChartLegendMode
 
+        ''' <summary>Colour or mono for the page. ChartInkMode.Colour by default, so a form that never mentions
+        ''' the row prints exactly what it shows. Mono is applied around the render and then PUT BACK — the plot
+        ''' background is the chart's own property, and the form must not be left changed.</summary>
+        Public Property Ink As ChartInkMode
+
         ''' <summary>True when real paper was asked for, rather than the chart's own size.</summary>
         Public ReadOnly Property HasPage As Boolean
             Get
@@ -1115,6 +1120,20 @@ Namespace Global.AvaloniaCharts
         ''' <remarks>[On] is bracketed because On is a VB keyword — the MEMBER (and the XAML value the
         ''' designer writes) is still plain "On" in both languages.</remarks>
         [On]
+    End Enum
+
+    ''' <summary>Whether the page is printed in colour or in mono — the chart's PrintInk row picks one. It
+    ''' steers the OUTPUT only: on screen the chart keeps its own colours, and they are put back once the job
+    ''' is done.</summary>
+    Public Enum ChartInkMode
+
+        ''' <summary>Colour, exactly as drawn. Default.</summary>
+        Colour
+
+        ''' <summary>Mono: the PLOT BACKGROUND is left off the page (it is made transparent for the job),
+        ''' because that plate is the one thing on a chart that can turn into a solid block of ink. The traces
+        ''' keep their own colours — a mono printer maps them to greys itself — and nothing else changes.</summary>
+        Mono
     End Enum
 
     ''' <summary>
@@ -2641,6 +2660,23 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
+        ''' <summary>Colour or mono for the printed / exported page. ChartInkMode.Mono takes the PLOT
+        ''' BACKGROUND off the page — the colour plate AND a background brush the form may have set — because
+        ''' that plate is what turns into a solid block of ink on paper; the traces keep their own colours and a
+        ''' mono printer greys them itself. The original background is put back when the job finishes, so the
+        ''' screen never changes, and the PNG export and the PDF paths honour the row too.</summary>
+        Public Shared ReadOnly PrintInkProperty As StyledProperty(Of ChartInkMode) =
+            AvaloniaProperty.Register(Of ChartBase, ChartInkMode)(NameOf(PrintInk))
+
+        Public Property PrintInk As ChartInkMode
+            Get
+                Return GetValue(PrintInkProperty)
+            End Get
+            Set(value As ChartInkMode)
+                SetValue(PrintInkProperty, value)
+            End Set
+        End Property
+
         ''' <summary>
         ''' Raised when a print or an export fails — no printing service, a printer that refuses the job,
         ''' an unwritable folder, a cancelled dialog that got as far as the file system. The chart never
@@ -2688,6 +2724,7 @@ Namespace Global.AvaloniaCharts
             options.Margin = PrintMargin
             options.LightBackground = PrintLightBackground
             options.Legend = PrintLegend
+            options.Ink = PrintInk
             Return options
         End Function
 
@@ -2705,19 +2742,37 @@ Namespace Global.AvaloniaCharts
         End Function
 
         ''' <summary>
-        ''' Applies the legend the print options ask for and answers the undo: Nothing when the options say
-        ''' "as drawn" (nothing is touched), otherwise a handle that puts the chart's own ShowLegend back. The
-        ''' page is re-laid-out on every render (PageVisuals does that), which is what makes the override
-        ''' visible at all: the legend takes its room out of the plot, so the two pictures really differ.
+        ''' Applies what the print options ask for to the LIVE chart and answers the undo: Nothing when there is
+        ''' nothing to do, otherwise a handle that puts every touched property back. Two settings are scoped this
+        ''' way — the legend of the page (PrintLegend) and mono printing, which hides the plot background
+        ''' (PrintInk) — because both belong to the chart itself while the printer backends are handed that live
+        ''' chart: leaving either applied would change the form on screen.
+        ''' The page is re-laid-out on every render (PageVisuals does that), which is what makes the legend
+        ''' override visible at all: the legend takes its room out of the plot, so the two pictures really
+        ''' differ. The plot background changes no geometry, only the paint, so it needs an invalidate.
         ''' </summary>
-        Private Function ApplyPrintLegend(options As ChartPrintOptions) As IDisposable
-            If options.Legend = ChartLegendMode.AsDrawn Then Return Nothing
-            Dim wanted As Boolean = (options.Legend = ChartLegendMode.[On])
-            Dim saved As Boolean = ShowLegend
-            If saved = wanted Then Return Nothing
-            ShowLegend = wanted
-            RelayoutForLegend()
-            Return New LegendRestore(Me, saved)
+        Private Function ApplyPrintTweaks(options As ChartPrintOptions) As IDisposable
+            Dim wantedLegend As Boolean? = If(options.Legend = ChartLegendMode.AsDrawn, CType(Nothing, Boolean?), (options.Legend = ChartLegendMode.[On]))
+            Dim savedLegend As Boolean = ShowLegend
+            Dim changeLegend As Boolean = wantedLegend.HasValue AndAlso wantedLegend.Value <> savedLegend
+
+            ' Mono: the plot background is the ink hog, so both halves of it go — the colour plate (its opacity)
+            ' and a brush the form may have set. Hiding only one of them would leave the other on the paper.
+            Dim savedOpacity As Double = PlotBackOpacity
+            Dim savedBrush As Brush = PlotBackBrush
+            Dim changePlot As Boolean = options.Ink = ChartInkMode.Mono AndAlso (savedOpacity > 0 OrElse savedBrush IsNot Nothing)
+
+            If Not changeLegend AndAlso Not changePlot Then Return Nothing
+            If changeLegend Then
+                ShowLegend = wantedLegend.Value
+                RelayoutForLegend()
+            End If
+            If changePlot Then
+                PlotBackBrush = Nothing
+                PlotBackOpacity = 0
+                InvalidateVisual()
+            End If
+            Return New PrintTweaksRestore(Me, changeLegend, savedLegend, changePlot, savedOpacity, savedBrush)
         End Function
 
         ''' <summary>
@@ -2737,32 +2792,45 @@ Namespace Global.AvaloniaCharts
             InvalidateVisual()
         End Sub
 
-        ''' <summary>The async form of ApplyPrintLegend, for the render paths: the chart's own legend setting
-        ''' is put back when the render returns — or when it throws, because the handle is held in a Using.
-        ''' </summary>
-        Private Async Function WithPrintLegendAsync(Of T)(options As ChartPrintOptions, render As Func(Of Task(Of T))) As Task(Of T)
-            Using restore = ApplyPrintLegend(options)
+        ''' <summary>The async form of ApplyPrintTweaks, for the render paths: every touched property is put
+        ''' back when the render returns — or when it throws, because the handle is held in a Using.</summary>
+        Private Async Function WithPrintTweaksAsync(Of T)(options As ChartPrintOptions, render As Func(Of Task(Of T))) As Task(Of T)
+            Using restore = ApplyPrintTweaks(options)
                 Return Await render()
             End Using
         End Function
 
-        ''' <summary>Puts the chart's own legend setting back when the job is done — even when it failed, since
-        ''' the caller holds this in a Using.</summary>
-        Private NotInheritable Class LegendRestore
+        ''' <summary>Puts everything one print job changed back — the legend's own setting (with the re-layout
+        ''' that needs) and the plot background (paint only) — even when the job failed, since the caller holds
+        ''' this in a Using.</summary>
+        Private NotInheritable Class PrintTweaksRestore
             Implements IDisposable
 
             Private ReadOnly _chart As ChartBase
-            Private ReadOnly _saved As Boolean
+            Private ReadOnly _legend As Boolean
+            Private ReadOnly _savedLegend As Boolean
+            Private ReadOnly _plot As Boolean
+            Private ReadOnly _savedOpacity As Double
+            Private ReadOnly _savedBrush As Brush
 
-            Friend Sub New(chart As ChartBase, saved As Boolean)
+            Friend Sub New(chart As ChartBase, legend As Boolean, savedLegend As Boolean, plot As Boolean, savedOpacity As Double, savedBrush As Brush)
                 _chart = chart
-                _saved = saved
+                _legend = legend
+                _savedLegend = savedLegend
+                _plot = plot
+                _savedOpacity = savedOpacity
+                _savedBrush = savedBrush
             End Sub
 
             Public Sub Dispose() Implements IDisposable.Dispose
-                If _chart.ShowLegend = _saved Then Return
-                _chart.ShowLegend = _saved
-                _chart.RelayoutForLegend()
+                If _legend AndAlso _chart.ShowLegend <> _savedLegend Then
+                    _chart.ShowLegend = _savedLegend
+                    _chart.RelayoutForLegend()
+                End If
+                If Not _plot Then Return
+                _chart.PlotBackBrush = _savedBrush
+                _chart.PlotBackOpacity = _savedOpacity
+                _chart.InvalidateVisual()
             End Sub
         End Class
 
@@ -2799,7 +2867,7 @@ Namespace Global.AvaloniaCharts
             _printBusy = True
             Try
                 Dim options = CurrentPrintOptions()
-                Using legend = ApplyPrintLegend(options)
+                Using tweaks = ApplyPrintTweaks(options)
                     Dim visual = PageVisuals(options)(0)
                     Dim width = If(options.HasPage, options.PageWidth, Bounds.Width)
                     Dim height = If(options.HasPage, options.PageHeight, Bounds.Height)
@@ -2892,13 +2960,13 @@ Namespace Global.AvaloniaCharts
             Try
                 Dim title = JobTitle()
                 Dim wanted = If(options, CurrentPrintOptions())
-                ' A LEGEND override is about the PAGE, and the printer backends are handed the LIVE chart —
-                ' which the chart owns and must not be left changed (Avae renders it when it likes). So this one
-                ' case renders the page itself — the same vector PDF the export writes — and prints that FILE,
-                ' which both backends accept. Everything else stays exactly as it was.
-                If wanted.Legend <> ChartLegendMode.AsDrawn Then
+                ' A LEGEND override or MONO printing is about the PAGE, and the printer backends are handed the
+                ' LIVE chart — which the chart owns and must not be left changed (Avae renders it when it likes).
+                ' So this one case renders the page itself — the same vector PDF the export writes — and prints
+                ' that FILE, which both backends accept. Everything else stays exactly as it was.
+                If wanted.Legend <> ChartLegendMode.AsDrawn OrElse wanted.Ink = ChartInkMode.Mono Then
                     Dim pdf As String = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "grumpychart-" & Guid.NewGuid().ToString("N") & ".pdf")
-                    Await WithPrintLegendAsync(wanted, Async Function()
+                    Await WithPrintTweaksAsync(wanted, Async Function()
                                                                Await Print.ToFileAsync(pdf, PageVisuals(wanted))
                                                                Return True
                                                            End Function)
@@ -2999,7 +3067,7 @@ Namespace Global.AvaloniaCharts
             _printBusy = True
             Try
                 Dim wanted = If(options, CurrentPrintOptions())
-                Await WithPrintLegendAsync(wanted, Async Function()
+                Await WithPrintTweaksAsync(wanted, Async Function()
                                                        Await Print.ToFileAsync(path, PageVisuals(wanted))
                                                        Return True
                                                    End Function)
@@ -3019,7 +3087,7 @@ Namespace Global.AvaloniaCharts
             _printBusy = True
             Try
                 Dim wanted = If(options, CurrentPrintOptions())
-                Await WithPrintLegendAsync(wanted, Async Function()
+                Await WithPrintTweaksAsync(wanted, Async Function()
                                                        Await Print.ToStreamAsync(stream, PageVisuals(wanted))
                                                        Return True
                                                    End Function)

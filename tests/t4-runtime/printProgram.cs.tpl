@@ -152,6 +152,25 @@ internal static class Program
         chart.PrintLegend = ChartLegendMode.AsDrawn;
         chart.ShowLegend = true;
 
+        // ---------- the PRINT INK row: Mono takes the PLOT BACKGROUND off the page — and puts it back ----------
+        // The plate is a colour the chart draws nowhere else, so the node side can count it: it must be all
+        // over the colour page and absent from the mono one, while the graph itself stays in both.
+        var inkPlate = new SolidColorBrush(Color.Parse("#123456"));
+        chart.PlotBackBrush = inkPlate;
+        chart.PlotBackOpacity = 100;
+        var inkColour = Path.Combine(dir, "ink-colour.png");
+        var inkMono = Path.Combine(dir, "ink-mono.png");
+        Check(chart.ExportPng(inkColour, 1), "exportpng-ink-colour-true");
+        chart.PrintInk = ChartInkMode.Mono;
+        Check(chart.ExportPng(inkMono, 1), "exportpng-ink-mono-true");
+        Check(ReferenceEquals(chart.PlotBackBrush, inkPlate), "ink-mono-leaves-the-brush-alone",
+            "the plot background brush is the form's own again after the job");
+        Check(Math.Abs(chart.PlotBackOpacity - 100) < 0.001, "ink-mono-leaves-the-opacity-alone",
+            $"PlotBackOpacity={chart.PlotBackOpacity}");
+        chart.PrintInk = ChartInkMode.Colour;
+        chart.PlotBackBrush = null;
+        chart.PlotBackOpacity = 100;
+
         // ---------- PDF: the chart's own page, and A4 ----------
         var pdfDrawn = Path.Combine(dir, "asdrawn.pdf");
         var pdfA4 = Path.Combine(dir, "a4.pdf");

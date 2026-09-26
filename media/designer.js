@@ -2235,8 +2235,8 @@
             if (!state.pendingTag || !state.dragArmed || state.dragHoverLogged) return;
             logToHost('no drag event reached the webview within 500 ms of the toolbox arming it — this '
                 + 'platform does not deliver the drag here (Electron/Wayland). The control is placed from the '
-                + 'RELEASE instead: the first mouse event after the drag is the movement that follows it. A '
-                + 'click on the canvas places it too.');
+                + 'RELEASE instead: a mouseup AT the release if the platform sends one, otherwise the first '
+                + 'movement after it. A click on the canvas places it too.');
             // The drag is invisible to us, so the RELEASE is detected from the mouse (see maybeRescueRelease).
             // `pendingTag` and `dragArmed` stay set: both the rescue and a plain click can complete the arm.
             state.releaseRescue = true;
@@ -2274,7 +2274,8 @@
         state.dragHover = null;
         updatePendingTool();
         logToHost('the release was read off the mouse (' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
-            + ') — placing ' + tag + ' there, because this platform never delivered the drag itself');
+            + ') from a ' + e.type + ' — placing ' + tag + ' there, because this platform never delivered the '
+            + 'drag itself');
         const p = toDesign(e.clientX, e.clientY);
         const hit = hitTest(p.x, p.y);
         post({ type: 'drop', tag, parentName: hit ? hit.name : null, x: p.x, y: p.y });

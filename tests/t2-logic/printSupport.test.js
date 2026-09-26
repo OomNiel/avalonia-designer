@@ -46,9 +46,13 @@ const UNCONDITIONAL = [
     ['LastExportFolder', 'the export folder memory'],
     ['ChartLegendMode', 'the legend-on-the-page choice (As drawn / Off / On)'],
     ['PrintLegendProperty', 'the Print Legend row'],
-    ['ApplyPrintLegend', 'the override is scoped to one job'],
-    ['WithPrintLegendAsync', 'and applied on the render paths'],
-    ['LegendRestore', 'which puts the chart\'s own ShowLegend back (even when the job failed)']
+    ['ApplyPrintTweaks', 'the overrides are scoped to one job'],
+    ['WithPrintTweaksAsync', 'and applied on the render paths'],
+    ['PrintTweaksRestore', 'which puts the chart\'s own settings back (even when the job failed)'],
+    ['ChartInkMode', 'the colour / mono choice'],
+    ['PrintInkProperty', 'the Print Ink row'],
+    ['PlotBackOpacity', 'what mono hides for the job (the colour plate)'],
+    ['PlotBackBrush', 'and a background brush the form may have set']
 ];
 
 const GATED = [
@@ -387,12 +391,20 @@ module.exports = async (t) => {
                 ? 'bracketed, because On is a VB keyword (the member and the XAML value stay "On")'
                 : 'plain, as in the other twin'}`);
         t.ok(text.includes('ShowLegend'), where, `${lang}: the override acts on the chart's own ShowLegend`);
-        t.ok(text.includes('LegendRestore'), where, `${lang}: and keeps the old setting, to put it back`);
+        t.ok(text.includes('PrintTweaksRestore'), where, `${lang}: and keeps the old setting, to put it back`);
+        t.ok(text.includes('options.Ink = PrintInk'), where, `${lang}: and the Print Ink row feeds CurrentPrintOptions`);
+        t.ok(/PlotBackBrush = (null|Nothing)/.test(text), where,
+            `${lang}: mono takes BOTH halves of the plot background off the page (a brush the form set would otherwise stay on the paper)`);
+        t.ok(text.includes('PlotBackOpacity = 0'), where, `${lang}: and the colour plate with it`);
+        t.ok(/_chart\.PlotBackBrush = _savedBrush|_chart\.PlotBackOpacity = _savedOpacity/.test(text), where,
+            `${lang}: both are restored when the job ends`);
         t.ok(text.includes('PrintFileAsync'), where,
             `${lang}: a legend override prints a rendered FILE (the live chart must not be handed over changed)`);
         t.ok(text.includes('options.Legend = PrintLegend'), where, `${lang}: the row feeds CurrentPrintOptions`);
         t.ok(text.includes('Legend != ChartLegendMode.AsDrawn') || text.includes('Legend <> ChartLegendMode.AsDrawn'),
             where, `${lang}: and the printer path branches on it (an override needs its own page)`);
+        t.ok(text.includes('Ink == ChartInkMode.Mono') || text.includes('Ink = ChartInkMode.Mono'), where,
+            `${lang}: as does mono — the live chart must not be handed to a printer backend changed`);
     }
 
     // Every chart offers the row, with As drawn first — the default the catalog hands the panel.
@@ -403,9 +415,14 @@ module.exports = async (t) => {
         t.ok(row, 'legend-catalog', `${tag} offers the Print Legend row`);
         t.equal(row ? row.options.join(',') : '', 'AsDrawn,Off,On', 'legend-catalog',
             `${tag}: the three choices, with As drawn first (the default)`);
+        const ink = (CONTROL_PROPS[tag] || []).find((r) => r.key === 'PrintInk');
+        t.ok(ink, 'legend-catalog', `${tag} offers the Print Ink row`);
+        t.equal(ink ? ink.options.join(',') : '', 'Colour,Mono', 'legend-catalog',
+            `${tag}: Colour first (the default), Mono second`);
     }
     // The section the panel files it under has to know the key, or the row would be dropped silently.
     const catalogSource = fs.readFileSync(path.join(ROOT, 'src', 'propertyCatalog.ts'), 'utf8');
     t.ok(catalogSource.includes("'PrintLegend'"), 'legend-catalog',
         'and the behavior section lists the key (an unmapped key has no section to live in)');
+    t.ok(catalogSource.includes("'PrintInk'"), 'legend-catalog', 'and the Print Ink key with it');
 };

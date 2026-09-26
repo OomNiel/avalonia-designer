@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.6
+' BUNDLED-COPY: 0.12.7
 Imports System
 Imports System.IO
 Imports Avalonia
