@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.10
+' BUNDLED-COPY: 0.12.11
 ' GrumpySheet.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpySheet.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb / GrumpyCharts.vb.
 '
@@ -169,6 +169,35 @@ Namespace Global.AvaloniaSpreadsheet
 
     End Class
 
+    ''' <summary>A column or a row that was given its own size (a dragged border, or the API).</summary>
+    Public NotInheritable Class SheetSizeChangedEventArgs
+        Inherits EventArgs
+
+        ''' <summary>Creates the event data for one resized column or row.</summary>
+        Public Sub New(column As Integer, row As Integer, size As Double)
+            Me.Column = column
+            Me.Row = row
+            Me.Size = size
+        End Sub
+
+        ''' <summary>The column that was resized, 1-based — 0 when a ROW was resized instead.</summary>
+        Public ReadOnly Property Column As Integer
+
+        ''' <summary>The row that was resized, 1-based — 0 when a COLUMN was resized instead.</summary>
+        Public ReadOnly Property Row As Integer
+
+        ''' <summary>The track's new size in pixels.</summary>
+        Public ReadOnly Property Size As Double
+
+        ''' <summary>True when this was a column.</summary>
+        Public ReadOnly Property IsColumn As Boolean
+            Get
+                Return Column > 0
+            End Get
+        End Property
+
+    End Class
+
     ''' <summary>
     ''' A spreadsheet grid: selectable cells, in-place editing, autofill and a formula bar, drawn by
     ''' the control itself. See the file header for the XAML and the whole feature list.
@@ -207,6 +236,12 @@ Namespace Global.AvaloniaSpreadsheet
         ''' <summary>Draw the formula bar (the cell address and the fx box) above the grid.</summary>
         Public Shared ReadOnly ShowFormulaBarProperty As StyledProperty(Of Boolean) =
             AvaloniaProperty.Register(Of GrumpySheet, Boolean)(NameOf(ShowFormulaBar), True)
+
+        ''' <summary>Draw slim scrollbars when the sheet is bigger than the space it has. They appear by
+        ''' themselves when there is something to scroll to, which is the only cue that the columns off to
+        ''' the right are reachable at all.</summary>
+        Public Shared ReadOnly ShowScrollBarsProperty As StyledProperty(Of Boolean) =
+            AvaloniaProperty.Register(Of GrumpySheet, Boolean)(NameOf(ShowScrollBars), True)
 
         ''' <summary>False makes the sheet read-only: selection still works, editing does not.</summary>
         Public Shared ReadOnly AllowEditingProperty As StyledProperty(Of Boolean) =
@@ -255,6 +290,23 @@ Namespace Global.AvaloniaSpreadsheet
         ''' <summary>The size of the autofill square, in pixels.</summary>
         Private Const HandleSize As Double = 7.0
 
+        ''' <summary>The narrowest a column or a row can be dragged to. Any less and its border cannot be
+        ''' grabbed again — a mis-drag there would be one you cannot drag back.</summary>
+        Private Const MinTrackSize As Double = 16.0
+
+        ''' <summary>How near a header border the pointer has to be to resize it. Three pixels is what a
+        ''' desktop toolkit uses; below two, hitting a border becomes a precision exercise.</summary>
+        Private Const ResizeGrip As Double = 3.0
+
+        ''' <summary>The thickness of a scrollbar, in pixels. Slim, and drawn OVER the grid rather than
+        ''' taking room from it: a sheet whose grid shifted every time the bars appeared would be worse
+        ''' than one whose last column is partly covered by a bar.</summary>
+        Private Const ScrollBarSize As Double = 12.0
+
+        ''' <summary>The shortest a scrollbar's thumb may get, so a very long sheet still leaves something
+        ''' to grab.</summary>
+        Private Const MinThumbSize As Double = 24.0
+
         Private ReadOnly _lookup As New List(Of SheetCell)()
 
         ' What is selected. The ANCHOR is where the selection started (the cell Shift extends from) and
@@ -288,9 +340,44 @@ Namespace Global.AvaloniaSpreadsheet
         Private _scrollX As Double
         Private _scrollY As Double
 
+        ' ---- per-column widths and per-row heights -----------------------------------------------
+        ' Sparse on purpose: the sheet's ColumnWidth/RowHeight answer for every column and row, and these
+        ' dictionaries answer only for the ones a border was dragged on. The offset tables are their
+        ' prefix sums, rebuilt on demand — without them every part of the geometry would have to assume
+        ' all the columns are the same width, which is what it did until 2026-09-26.
+        Private ReadOnly _columnWidths As New Dictionary(Of Integer, Double)()
+        Private ReadOnly _rowHeights As New Dictionary(Of Integer, Double)()
+        Private _columnOffsets As Double()
+        Private _rowOffsets As Double()
+
+        ' Dragging a border. Only one track is ever being resized, so a pair of fields per axis is enough
+        ' and 0 means "not resizing".
+        Private _resizeColumn As Integer
+        Private _resizeRow As Integer
+        Private _resizeStartSize As Double
+        Private _resizeStartX As Double
+        Private _resizeStartY As Double
+
+        ' Whether the pointer is being shown the resize cursor, so it is only set when it changes.
+        Private _cursor As StandardCursorType = StandardCursorType.Arrow
+
+        ' Dragging a scrollbar's thumb, and where inside it the drag started (so the thumb does not jump
+        ' under the pointer on the first move).
+        Private _scrollDragging As Boolean
+        Private _scrollDragVertical As Boolean
+        Private _scrollDragStart As Double
+        Private _scrollDragStartOffset As Double
+
+        ' The right-click menu, built once in the constructor. The alignment items and the two toggles are
+        ' kept so their ticks can be refreshed from the selection each time the menu opens.
+        Private ReadOnly _alignItems As New Dictionary(Of SheetAlign, MenuItem)()
+        Private _boldItem As MenuItem
+        Private _italicItem As MenuItem
+
         Shared Sub New()
             AffectsRender(Of GrumpySheet)(RowsProperty, ColumnsProperty, ColumnWidthProperty, RowHeightProperty,
                 HeaderWidthProperty, HeaderHeightProperty, ShowHeadersProperty, ShowFormulaBarProperty,
+                ShowScrollBarsProperty,
                 FontFamilyNameProperty, FontSizeProperty, GridColorProperty, HeaderBackColorProperty,
                 HeaderTextColorProperty, CellBackColorProperty, TextColorProperty, SelectionColorProperty,
                 SelectionFillColorProperty)
@@ -304,6 +391,21 @@ Namespace Global.AvaloniaSpreadsheet
             ClipToBounds = True
             AddHandler Cells.CollectionChanged, AddressOf OnCellsChanged
             AddHandler LostFocus, AddressOf OnSheetLostFocus
+            BuildContextMenu()
+        End Sub
+
+        ''' <summary>
+        ''' The offset tables are prefix sums of the sizes, so anything that changes a size invalidates
+        ''' them — and the scroll limits change with them, or a sheet that just got narrower stays
+        ''' scrolled past its own right edge.
+        ''' </summary>
+        Protected Overrides Sub OnPropertyChanged(change As AvaloniaPropertyChangedEventArgs)
+            MyBase.OnPropertyChanged(change)
+            If change.Property Is RowsProperty OrElse change.Property Is ColumnsProperty OrElse
+                change.Property Is ColumnWidthProperty OrElse change.Property Is RowHeightProperty Then
+                InvalidateTrackOffsets()
+                ClampScroll(Bounds.Size)
+            End If
         End Sub
 
         Private ReadOnly _cells As New AvaloniaList(Of SheetCell)()
@@ -394,6 +496,16 @@ Namespace Global.AvaloniaSpreadsheet
             End Get
             Set(value As Boolean)
                 SetValue(ShowFormulaBarProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Draw scrollbars when the sheet is bigger than its space.</summary>
+        Public Property ShowScrollBars As Boolean
+            Get
+                Return GetValue(ShowScrollBarsProperty)
+            End Get
+            Set(value As Boolean)
+                SetValue(ShowScrollBarsProperty, value)
             End Set
         End Property
 
@@ -503,10 +615,65 @@ Namespace Global.AvaloniaSpreadsheet
         ''' <summary>Raised when the selection moves, so a form can show where the user is.</summary>
         Public Event SelectionChanged As EventHandler
 
+        ''' <summary>Raised when a column or a row is given its own size by a drag, or from code — so a
+        ''' form can save ColumnWidths/RowHeights and get it back next run.
+        '''
+        ''' Named SheetSizeChanged and not SizeChanged because Control.SizeChanged already exists on every
+        ''' control, and hiding it would make sheet.SizeChanged mean two different things depending on the
+        ''' static type of the variable in hand.</summary>
+        Public Event SheetSizeChanged As EventHandler(Of SheetSizeChangedEventArgs)
+
         ''' <summary>The active cell's address, e.g. "B7".</summary>
         Public ReadOnly Property ActiveCellName As String
             Get
                 Return CellName(_activeRow, _activeColumn)
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' The four corners of what is selected, 1-based — what a form needs to know what its user has
+        ''' picked. A whole-COLUMN selection spans every row, and a whole-ROW one every column; only the
+        ''' axis that was actually clicked narrows.
+        ''' </summary>
+        Public ReadOnly Property SelectedFirstRow As Integer
+            Get
+                Return SelectionFirstRow()
+            End Get
+        End Property
+
+        ''' <summary>The last row of the selection — see SelectedFirstRow.</summary>
+        Public ReadOnly Property SelectedLastRow As Integer
+            Get
+                Return SelectionLastRow()
+            End Get
+        End Property
+
+        ''' <summary>The first column of the selection — see SelectedFirstRow.</summary>
+        Public ReadOnly Property SelectedFirstColumn As Integer
+            Get
+                Return SelectionFirstColumn()
+            End Get
+        End Property
+
+        ''' <summary>The last column of the selection — see SelectedFirstRow.</summary>
+        Public ReadOnly Property SelectedLastColumn As Integer
+            Get
+                Return SelectionLastColumn()
+            End Get
+        End Property
+
+        ''' <summary>True when every cell in the selection is bold, false when none is, Nothing when they
+        ''' disagree or there is nothing in it — what the right-click menu ticks.</summary>
+        Public ReadOnly Property SelectionAllBold As Nullable(Of Boolean)
+            Get
+                Return SelectionFlag(True)
+            End Get
+        End Property
+
+        ''' <summary>The same for italics — see SelectionAllBold.</summary>
+        Public ReadOnly Property SelectionAllItalic As Nullable(Of Boolean)
+            Get
+                Return SelectionFlag(False)
             End Get
         End Property
 
@@ -716,6 +883,17 @@ Namespace Global.AvaloniaSpreadsheet
             InvalidateVisual()
         End Sub
 
+        ''' <summary>Selects one whole column, exactly as clicking its letter in the header does — every
+        ''' row of it, and only that column.</summary>
+        Public Sub SelectColumn(column As Integer)
+            SelectColumns(column, False)
+        End Sub
+
+        ''' <summary>Selects one whole row, as clicking its number in the header does.</summary>
+        Public Sub SelectRow(row As Integer)
+            SelectRows(row, False)
+        End Sub
+
         ''' <summary>True when a cell is being edited right now (in the cell, or in the fx box).</summary>
         Public ReadOnly Property IsEditing As Boolean
             Get
@@ -903,42 +1081,122 @@ Namespace Global.AvaloniaSpreadsheet
             Next
         End Sub
 
-        ''' <summary>Bold for the whole selection — bold when any selected cell is not, plain when they
-        ''' all already are, which is what Ctrl+B does in every spreadsheet.</summary>
-        Public Sub ToggleBoldSelection()
-            Dim turnOn As Boolean = False
+        ''' <summary>
+        ''' Lines the whole selection up. What the right-click menu's alignment items call.
+        '''
+        ''' A bounded selection — a block of cells — has each cell CREATED if it was blank, which is what
+        ''' makes "select A1, right-click, centre, then type" do the obvious thing. A whole column or row
+        ''' is not bounded (all fifty of its rows), so only the cells that already exist are touched:
+        ''' creating them would write an empty element per row into the form for a line-up with no text in
+        ''' it, and nothing to see.
+        ''' </summary>
+        Public Sub AlignSelection(align As SheetAlign)
+            Dim bounded As Boolean = Not _wholeColumns AndAlso Not _wholeRows AndAlso Not _selectAll
             Dim first As Integer = SelectionFirstRow()
             Dim last As Integer = SelectionLastRow()
             Dim left As Integer = SelectionFirstColumn()
             Dim right As Integer = SelectionLastColumn()
             For row As Integer = first To last
-                If turnOn Then
-                    Exit For
-                End If
+                For column As Integer = left To right
+                    Dim cell As SheetCell = If(bounded, EnsureCell(row, column), FindCell(row, column))
+                    If cell Is Nothing OrElse cell.TextAlign = align Then
+                        Continue For
+                    End If
 
+                    cell.TextAlign = align
+                Next
+            Next
+
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>
+        ''' The alignment the whole selection already agrees on, or Nothing when it does not — what the
+        ''' menu ticks. Cells that do not exist are IGNORED rather than counted as Auto: right-clicking a
+        ''' whole column and centring it lines up the cells that are in it, and the tick has to say so —
+        ''' with the empty rows counted as Auto, nothing could ever be ticked on a column that is mostly
+        ''' empty. Nothing also means "no cells in the selection yet".
+        ''' </summary>
+        Public Function SelectionTextAlign() As Nullable(Of SheetAlign)
+            Dim first As Integer = SelectionFirstRow()
+            Dim last As Integer = SelectionLastRow()
+            Dim left As Integer = SelectionFirstColumn()
+            Dim right As Integer = SelectionLastColumn()
+            Dim agreed As Nullable(Of SheetAlign) = Nothing
+            For row As Integer = first To last
                 For column As Integer = left To right
                     Dim cell As SheetCell = FindCell(row, column)
-                    If cell Is Nothing OrElse Not cell.Bold Then
-                        turnOn = True
-                        Exit For
+                    If cell Is Nothing Then
+                        Continue For
+                    End If
+
+                    If Not agreed.HasValue Then
+                        agreed = cell.TextAlign
+                    ElseIf agreed.Value <> cell.TextAlign Then
+                        Return Nothing
                     End If
                 Next
             Next
 
+            Return agreed
+        End Function
+
+        ''' <summary>True when every cell in the selection is bold (or italic), false when none is, Nothing
+        ''' when they disagree or the selection holds no cells at all. Cells that do not exist are ignored,
+        ''' for the reason in SelectionTextAlign.</summary>
+        Private Function SelectionFlag(bold As Boolean) As Nullable(Of Boolean)
+            Dim first As Integer = SelectionFirstRow()
+            Dim last As Integer = SelectionLastRow()
+            Dim left As Integer = SelectionFirstColumn()
+            Dim right As Integer = SelectionLastColumn()
+            Dim all As Nullable(Of Boolean) = Nothing
             For row As Integer = first To last
                 For column As Integer = left To right
-                    SetBold(row, column, turnOn)
+                    Dim cell As SheetCell = FindCell(row, column)
+                    If cell Is Nothing Then
+                        Continue For
+                    End If
+
+                    Dim isOn As Boolean = If(bold, cell.Bold, cell.Italic)
+                    If Not all.HasValue Then
+                        all = isOn
+                    ElseIf all.Value <> isOn Then
+                        Return Nothing
+                    End If
                 Next
             Next
+
+            Return all
+        End Function
+
+        ''' <summary>Bold for the whole selection — bold when any selected cell is not, plain when they
+        ''' all already are, which is what Ctrl+B does in every spreadsheet.</summary>
+        Public Sub ToggleBoldSelection()
+            ToggleSelectionFlag(True)
         End Sub
 
         ''' <summary>Italics for the whole selection, by the same rule as <see cref="ToggleBoldSelection"/>.</summary>
         Public Sub ToggleItalicSelection()
-            Dim turnOn As Boolean = False
+            ToggleSelectionFlag(False)
+        End Sub
+
+        ''' <summary>
+        ''' Turns bold (or italics) on for the whole selection, or off when every cell in it already has
+        ''' it — Ctrl+B's rule.
+        '''
+        ''' Which cells it touches depends on the shape of the selection, exactly as AlignSelection
+        ''' does: a bounded block gets cells CREATED where it has none, so Ctrl+B before typing does
+        ''' something; a whole column or row only gets the cells that already exist, or a whole column
+        ''' would put fifty empty elements into the form. A selected cell that is blank counts as "not
+        ''' bold", which is what makes a second Ctrl+B turn the first one back off.
+        ''' </summary>
+        Private Sub ToggleSelectionFlag(bold As Boolean)
+            Dim bounded As Boolean = Not _wholeColumns AndAlso Not _wholeRows AndAlso Not _selectAll
             Dim first As Integer = SelectionFirstRow()
             Dim last As Integer = SelectionLastRow()
             Dim left As Integer = SelectionFirstColumn()
             Dim right As Integer = SelectionLastColumn()
+            Dim turnOn As Boolean = False
             For row As Integer = first To last
                 If turnOn Then
                     Exit For
@@ -946,7 +1204,18 @@ Namespace Global.AvaloniaSpreadsheet
 
                 For column As Integer = left To right
                     Dim cell As SheetCell = FindCell(row, column)
-                    If cell Is Nothing OrElse Not cell.Italic Then
+                    If cell Is Nothing Then
+                        ' A cell that is not there is not bold — but only a bounded selection may create
+                        ' one, so an unbounded one ignores the gap and looks at the cells it has.
+                        turnOn = bounded
+                        If turnOn Then
+                            Exit For
+                        End If
+
+                        Continue For
+                    End If
+
+                    If Not If(bold, cell.Bold, cell.Italic) Then
                         turnOn = True
                         Exit For
                     End If
@@ -955,9 +1224,20 @@ Namespace Global.AvaloniaSpreadsheet
 
             For row As Integer = first To last
                 For column As Integer = left To right
-                    SetItalic(row, column, turnOn)
+                    Dim cell As SheetCell = If(bounded, EnsureCell(row, column), FindCell(row, column))
+                    If cell Is Nothing Then
+                        Continue For
+                    End If
+
+                    If bold Then
+                        cell.Bold = turnOn
+                    Else
+                        cell.Italic = turnOn
+                    End If
                 Next
             Next
+
+            InvalidateVisual()
         End Sub
 
         ''' <summary>Finds the cell holding an address, or null. Uses the index, so it is not a scan.</summary>
@@ -1015,7 +1295,11 @@ Namespace Global.AvaloniaSpreadsheet
         ' ---- what is selected -------------------------------------------------------------------
 
         Private Function SelectionFirstRow() As Integer
-            If _wholeRows OrElse _selectAll Then
+            ' A whole-COLUMN selection spans every row, so its first row is always 1; it is a whole-ROW
+            ' selection whose rows come from the anchor. The two flags were SWAPPED here until
+            ' 2026-09-26, so clicking column C selected A:C and clicking row 5 selected rows 1:5 — and
+            ' every caller of these corners inherited it (Clear, align, fill, the header highlights).
+            If _wholeColumns OrElse _selectAll Then
                 Return 1
             End If
 
@@ -1027,7 +1311,7 @@ Namespace Global.AvaloniaSpreadsheet
         End Function
 
         Private Function SelectionFirstColumn() As Integer
-            If _wholeColumns OrElse _selectAll Then
+            If _wholeRows OrElse _selectAll Then
                 Return 1
             End If
 
@@ -1063,10 +1347,572 @@ Namespace Global.AvaloniaSpreadsheet
 
         Private Function CellRect(row As Integer, column As Integer) As Rect
             Dim origin As Point = GridOrigin
-            Return New Rect(origin.X + (column - 1) * ColumnWidth - _scrollX,
-                            origin.Y + (row - 1) * RowHeight - _scrollY,
-                            ColumnWidth, RowHeight)
+            Return New Rect(origin.X + ColumnOffset(column) - _scrollX,
+                            origin.Y + RowOffset(row) - _scrollY,
+                            ColumnWidthOf(column), RowHeightOf(row))
         End Function
+
+        ''' <summary>Column's width: its own after a border was dragged, else the sheet's own ColumnWidth.</summary>
+        Public Function ColumnWidthOf(column As Integer) As Double
+            Dim width As Double = 0.0
+            If _columnWidths.TryGetValue(column, width) AndAlso width > 0 Then
+                Return width
+            End If
+
+            Return ColumnWidth
+        End Function
+
+        ''' <summary>Row's height: its own after a border was dragged, else the sheet's own RowHeight.</summary>
+        Public Function RowHeightOf(row As Integer) As Double
+            Dim height As Double = 0.0
+            If _rowHeights.TryGetValue(row, height) AndAlso height > 0 Then
+                Return height
+            End If
+
+            Return RowHeight
+        End Function
+
+        ''' <summary>The whole grid's width, and its height — what scrolling and measuring need.</summary>
+        Private Function ContentWidth() As Double
+            Return ColumnOffsets()(ColumnCount)
+        End Function
+
+        Private Function ContentHeight() As Double
+            Return RowOffsets()(RowCount)
+        End Function
+
+        ''' <summary>
+        ''' The left edge of every column measured from the left edge of column 1: entry
+        ''' Column - 1 holds where that column starts, and the last entry holds the total width. This is
+        ''' what makes a sheet with two resized columns work at all — drawing, hit testing, the scroll
+        ''' limits and the visible range all read these tables instead of multiplying by a width.
+        ''' </summary>
+        Private Function ColumnOffsets() As Double()
+            If _columnOffsets Is Nothing OrElse _columnOffsets.Length <> ColumnCount + 1 Then
+                Dim offsets(ColumnCount) As Double
+                Dim at As Double = 0.0
+                For i As Integer = 0 To ColumnCount - 1
+                    offsets(i) = at
+                    at += ColumnWidthOf(i + 1)
+                Next
+
+                offsets(ColumnCount) = at
+                _columnOffsets = offsets
+            End If
+
+            Return _columnOffsets
+        End Function
+
+        Private Function RowOffsets() As Double()
+            If _rowOffsets Is Nothing OrElse _rowOffsets.Length <> RowCount + 1 Then
+                Dim offsets(RowCount) As Double
+                Dim at As Double = 0.0
+                For i As Integer = 0 To RowCount - 1
+                    offsets(i) = at
+                    at += RowHeightOf(i + 1)
+                Next
+
+                offsets(RowCount) = at
+                _rowOffsets = offsets
+            End If
+
+            Return _rowOffsets
+        End Function
+
+        ''' <summary>How far a column's left edge is from column 1's left edge. One past the last column
+        ''' is allowed — that is the sheet's right edge, which the grid lines need.</summary>
+        Private Function ColumnOffset(column As Integer) As Double
+            Dim offsets As Double() = ColumnOffsets()
+            If column < 1 Then
+                column = 1
+            ElseIf column > ColumnCount + 1 Then
+                column = ColumnCount + 1
+            End If
+
+            Return offsets(column - 1)
+        End Function
+
+        Private Function RowOffset(row As Integer) As Double
+            Dim offsets As Double() = RowOffsets()
+            If row < 1 Then
+                row = 1
+            ElseIf row > RowCount + 1 Then
+                row = RowCount + 1
+            End If
+
+            Return offsets(row - 1)
+        End Function
+
+        ''' <summary>Which column a distance from the grid's left edge falls in, and which row a distance
+        ''' from its top falls in. A walk rather than a division, because the columns are not all the same
+        ''' width once one has been dragged — and the tables are at most a few hundred entries.</summary>
+        Private Function ColumnAtOffset(x As Double) As Integer
+            Dim offsets As Double() = ColumnOffsets()
+            Dim column As Integer = 1
+            For i As Integer = 0 To ColumnCount - 1
+                If x < offsets(i) Then
+                    Exit For
+                End If
+
+                column = i + 1
+            Next
+
+            Return ClampColumn(column)
+        End Function
+
+        Private Function RowAtOffset(y As Double) As Integer
+            Dim offsets As Double() = RowOffsets()
+            Dim row As Integer = 1
+            For i As Integer = 0 To RowCount - 1
+                If y < offsets(i) Then
+                    Exit For
+                End If
+
+                row = i + 1
+            Next
+
+            Return ClampRow(row)
+        End Function
+
+        ''' <summary>Drops the offset tables. Anything that changes a size, or how many there are, has to
+        ''' do this — otherwise the sheet keeps drawing and hit testing at the OLD widths, which looks
+        ''' like a resize that quietly did nothing.</summary>
+        Private Sub InvalidateTrackOffsets()
+            _columnOffsets = Nothing
+            _rowOffsets = Nothing
+        End Sub
+
+        ''' <summary>Rebuilds everything that depended on the sizes: the offset tables, the scroll limits,
+        ''' the picture. Called after any size change, by a drag or from code.</summary>
+        Private Sub RefreshGeometry()
+            InvalidateTrackOffsets()
+            ClampScroll(Bounds.Size)
+            InvalidateVisual()
+        End Sub
+
+        Private Sub RaiseSizeChanged(column As Integer, row As Integer, size As Double)
+            RaiseEvent SheetSizeChanged(Me, New SheetSizeChangedEventArgs(column, row, size))
+        End Sub
+
+        ' ---- the scrollbars -----------------------------------------------------------------------
+        ' Drawn OVER the grid, slim, and only when there is something to scroll to. Without them a sheet
+        ' wider than its space gave no sign at all that the columns on the right existed (the wheel
+        ' scrolls rows, and Shift+wheel scrolls columns — nobody guesses that).
+
+        ''' <summary>The vertical scrollbar's track, along the right edge of the grid — or an empty rect
+        ''' when the rows all fit.</summary>
+        Private Function VScrollRect(size As Size) As Rect
+            Dim grid As Rect = GridRect(size)
+            If Not ShowScrollBars OrElse grid.Width <= 0 OrElse grid.Height <= 0 OrElse
+                ContentHeight() <= grid.Height + 0.5 Then
+                Return New Rect(0, 0, 0, 0)
+            End If
+
+            Return New Rect(grid.Right - ScrollBarSize, grid.Y, ScrollBarSize, grid.Height)
+        End Function
+
+        ''' <summary>The horizontal scrollbar's track, along the bottom edge of the grid.</summary>
+        Private Function HScrollRect(size As Size) As Rect
+            Dim grid As Rect = GridRect(size)
+            If Not ShowScrollBars OrElse grid.Width <= 0 OrElse grid.Height <= 0 OrElse
+                ContentWidth() <= grid.Width + 0.5 Then
+                Return New Rect(0, 0, 0, 0)
+            End If
+
+            Return New Rect(grid.X, grid.Bottom - ScrollBarSize, grid.Width, ScrollBarSize)
+        End Function
+
+        ''' <summary>The grabbable thumb inside a track: its length is the visible fraction of the
+        ''' content, and where it sits is where the sheet is scrolled to. The geometry here is exact — the
+        ''' thumb a drag computes from is the thumb that is drawn, or it would creep away from the
+        ''' pointer.</summary>
+        Private Shared Function ThumbIn(track As Rect, content As Double, viewport As Double,
+            offset As Double, vertical As Boolean) As Rect
+            If track.Width <= 0 OrElse track.Height <= 0 Then
+                Return New Rect(0, 0, 0, 0)
+            End If
+
+            Dim span As Double = If(vertical, track.Height, track.Width)
+            Dim thumb As Double = ThumbSpan(span, content, viewport)
+            Dim travel As Double = span - thumb
+            Dim maxOffset As Double = Math.Max(0.0001, content - viewport)
+            Dim at As Double = travel * Math.Min(1.0, Math.Max(0.0, offset / maxOffset))
+            Return If(vertical,
+                New Rect(track.X, track.Y + at, track.Width, thumb),
+                New Rect(track.X + at, track.Y, thumb, track.Height))
+        End Function
+
+        ''' <summary>How long a thumb is: the visible fraction of the content, never shorter than
+        ''' MinThumbSize so a very long sheet still leaves something to grab.</summary>
+        Private Shared Function ThumbSpan(span As Double, content As Double, viewport As Double) As Double
+            Return Math.Max(MinThumbSize, span * Math.Min(1.0, viewport / content))
+        End Function
+
+        Private Function VScrollThumb(size As Size) As Rect
+            Dim grid As Rect = GridRect(size)
+            Return ThumbIn(VScrollRect(size), ContentHeight(), grid.Height, _scrollY, True)
+        End Function
+
+        Private Function HScrollThumb(size As Size) As Rect
+            Dim grid As Rect = GridRect(size)
+            Return ThumbIn(HScrollRect(size), ContentWidth(), grid.Width, _scrollX, False)
+        End Function
+
+        ''' <summary>The travel a thumb has, in pixels — and the offset range it stands for.</summary>
+        Private Sub TrackSpan(size As Size, vertical As Boolean, ByRef travel As Double, ByRef maxOffset As Double)
+            Dim grid As Rect = GridRect(size)
+            Dim track As Rect = If(vertical, VScrollRect(size), HScrollRect(size))
+            Dim span As Double = If(vertical, track.Height, track.Width)
+            Dim content As Double = If(vertical, ContentHeight(), ContentWidth())
+            Dim viewport As Double = If(vertical, grid.Height, grid.Width)
+            travel = Math.Max(0.0001, span - ThumbSpan(span, content, viewport))
+            maxOffset = Math.Max(0.0, content - viewport)
+        End Sub
+
+        ''' <summary>Puts the sheet where a drag of a thumb has taken it: the distance the pointer moved,
+        ''' scaled from thumb travel to scroll range.</summary>
+        Private Sub ScrollThumbTo(size As Size, vertical As Boolean, offset As Double)
+            If vertical Then
+                _scrollY = offset
+            Else
+                _scrollX = offset
+            End If
+
+            ClampScroll(size)
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Scrolls so a point in the track becomes the MIDDLE of the view — what clicking the
+        ''' track itself does, the way every scrollbar in every toolkit behaves.</summary>
+        Private Sub ScrollTrackTo(size As Size, vertical As Boolean, position As Double)
+            Dim grid As Rect = GridRect(size)
+            Dim track As Rect = If(vertical, VScrollRect(size), HScrollRect(size))
+            Dim span As Double = If(vertical, track.Height, track.Width)
+            Dim content As Double = If(vertical, ContentHeight(), ContentWidth())
+            Dim viewport As Double = If(vertical, grid.Height, grid.Width)
+            Dim travel As Double = 0.0
+            Dim maxOffset As Double = 0.0
+            TrackSpan(size, vertical, travel, maxOffset)
+            Dim thumb As Double = ThumbSpan(span, content, viewport)
+            Dim at As Double = (If(vertical, position - track.Y, position - track.X)) - thumb / 2
+            ScrollThumbTo(size, vertical, at / travel * maxOffset)
+        End Sub
+
+        ''' <summary>Paints both scrollbars, when they apply.</summary>
+        Private Sub DrawScrollBars(context As DrawingContext, size As Size)
+            Dim grid As Rect = GridRect(size)
+            Using context.PushClip(grid)
+                Dim back As New SolidColorBrush(Color.Parse("#EFF1F4"))
+                Dim edge As New SolidColorBrush(GridColor)
+                Dim thumb As New SolidColorBrush(Color.Parse("#B7BEC8"))
+                Dim vTrack As Rect = VScrollRect(size)
+                If vTrack.Width > 0 Then
+                    context.FillRectangle(back, vTrack)
+                    context.DrawLine(New Pen(edge, 1.0), New Point(vTrack.X + 0.5, vTrack.Y),
+                        New Point(vTrack.X + 0.5, vTrack.Bottom))
+                    context.FillRectangle(thumb, VScrollThumb(size))
+                End If
+
+                Dim hTrack As Rect = HScrollRect(size)
+                If hTrack.Height > 0 Then
+                    context.FillRectangle(back, hTrack)
+                    context.DrawLine(New Pen(edge, 1.0), New Point(hTrack.X, hTrack.Y + 0.5),
+                        New Point(hTrack.Right, hTrack.Y + 0.5))
+                    context.FillRectangle(thumb, HScrollThumb(size))
+                End If
+            End Using
+        End Sub
+
+        ' ---- the right-click menu ------------------------------------------------------------------
+
+        ''' <summary>
+        ''' Right-click: line the selection up, bold it, or clear it. An ordinary Avalonia ContextMenu, so
+        ''' it opens on right-click, closes on Escape and draws outside the control's own bounds — the
+        ''' control's own drawing stops at its edges, a popup does not.
+        '''
+        ''' The alignment items are what a spreadsheet needs most often, and the reason this exists: a whole
+        ''' COLUMN can be lined up in one gesture, which the Ctrl+B/I keys and the toolbar could not do
+        ''' without selecting all fifty rows of it by hand.
+        ''' </summary>
+        Private Sub BuildContextMenu()
+            Dim menu As New ContextMenu()
+            AddAlignItem(menu, "Align left", SheetAlign.Left)
+            AddAlignItem(menu, "Align centre", SheetAlign.Center)
+            AddAlignItem(menu, "Align right", SheetAlign.Right)
+            AddAlignItem(menu, "Align automatically", SheetAlign.Auto)
+            menu.Items.Add(New Separator())
+            _boldItem = AddToggleItem(menu, "Bold", AddressOf ToggleBoldSelection)
+            _italicItem = AddToggleItem(menu, "Italics", AddressOf ToggleItalicSelection)
+            menu.Items.Add(New Separator())
+            AddItem(menu, "Clear formatting", AddressOf ClearSelectionFormatting)
+            AddItem(menu, "Clear cells", AddressOf ClearSelection)
+
+            ' The menu is about the SELECTION, so it is off entirely when the sheet is read-only.
+            AddHandler menu.Opening, Sub(sender As Object, args As System.ComponentModel.CancelEventArgs)
+                                         If Not AllowEditing Then
+                                             args.Cancel = True
+                                             Return
+                                         End If
+
+                                         UpdateMenuTicks()
+                                     End Sub
+
+            ContextMenu = menu
+            AddHandler ContextRequested, AddressOf OnSheetContextRequested
+        End Sub
+
+        Private Sub AddAlignItem(menu As ContextMenu, title As String, align As SheetAlign)
+            Dim item As New MenuItem() With {.Header = title, .ToggleType = MenuItemToggleType.Radio}
+            AddHandler item.Click, Sub(sender As Object, args As Avalonia.Interactivity.RoutedEventArgs)
+                                       AlignSelection(align)
+                                       UpdateMenuTicks()
+                                   End Sub
+            _alignItems(align) = item
+            menu.Items.Add(item)
+        End Sub
+
+        Private Function AddItem(menu As ContextMenu, title As String, action As Action) As MenuItem
+            Dim item As New MenuItem() With {.Header = title}
+            AddHandler item.Click, Sub(sender As Object, args As Avalonia.Interactivity.RoutedEventArgs)
+                                       action()
+                                   End Sub
+            menu.Items.Add(item)
+            Return item
+        End Function
+
+        Private Function AddToggleItem(menu As ContextMenu, title As String, action As Action) As MenuItem
+            Dim item As New MenuItem() With {.Header = title, .ToggleType = MenuItemToggleType.CheckBox}
+            AddHandler item.Click, Sub(sender As Object, args As Avalonia.Interactivity.RoutedEventArgs)
+                                       action()
+                                       UpdateMenuTicks()
+                                   End Sub
+            menu.Items.Add(item)
+            Return item
+        End Function
+
+        ''' <summary>Ticks what the whole selection currently is, so the menu reads as a state as well as a
+        ''' set of commands. Nothing is ticked when the selection disagrees with itself.</summary>
+        Private Sub UpdateMenuTicks()
+            Dim agreed As Nullable(Of SheetAlign) = SelectionTextAlign()
+            For Each pair As KeyValuePair(Of SheetAlign, MenuItem) In _alignItems
+                pair.Value.IsChecked = agreed.HasValue AndAlso agreed.Value = pair.Key
+            Next
+
+            If _boldItem IsNot Nothing Then
+                _boldItem.IsChecked = SelectionFlag(True) = True
+            End If
+
+            If _italicItem IsNot Nothing Then
+                _italicItem.IsChecked = SelectionFlag(False) = True
+            End If
+        End Sub
+
+        ''' <summary>
+        ''' Moves the selection onto what was right-clicked — unless the cell is already inside the
+        ''' selection, in which case the menu is about the whole block, which is what the user aimed at.
+        ''' This is every spreadsheet's rule, and the reason the hook is on ContextRequested: it is the one
+        ''' event that still knows where the pointer was.
+        ''' </summary>
+        Private Sub OnSheetContextRequested(sender As Object, e As ContextRequestedEventArgs)
+            Dim point As Point = Nothing
+            If Not e.TryGetPosition(Me, point) Then
+                Return
+            End If
+
+            Dim row As Integer = 0
+            Dim column As Integer = 0
+            Dim hit As Integer = HitTest(point, row, column)
+            If hit = HitColumnHeader Then
+                SelectColumns(column, False)
+                Return
+            End If
+
+            If hit = HitRowHeader Then
+                SelectRows(row, False)
+                Return
+            End If
+
+            If hit <> HitCell Then
+                Return
+            End If
+
+            If row >= SelectionFirstRow() AndAlso row <= SelectionLastRow() AndAlso
+                column >= SelectionFirstColumn() AndAlso column <= SelectionLastColumn() Then
+                Return
+            End If
+
+            SelectCell(row, column)
+        End Sub
+
+        ' ---- sizing a column or a row ------------------------------------------------------------
+        ' What dragging a header border calls. The sizes are per track and SPARSE: every column and row
+        ' without an entry is still the sheet's own ColumnWidth/RowHeight, so the common case stays a
+        ' single number and the form stays short.
+
+        ''' <summary>Gives one column its own width. Clamped to MinTrackSize so its border stays grabbable,
+        ''' and rounded to whole pixels — a fractional width is impossible to drag back. A width that comes
+        ''' out exactly the sheet's own ColumnWidth CLEARS the override, so the column goes back to
+        ''' following the sheet.</summary>
+        Public Sub SetColumnWidth(column As Integer, width As Double)
+            If ApplyColumnWidth(column, width) Then
+                RaiseSizeChanged(column, 0, ColumnWidthOf(column))
+            End If
+        End Sub
+
+        ''' <summary>Gives one row its own height, by the same rules as SetColumnWidth.</summary>
+        Public Sub SetRowHeight(row As Integer, height As Double)
+            If ApplyRowHeight(row, height) Then
+                RaiseSizeChanged(0, row, RowHeightOf(row))
+            End If
+        End Sub
+
+        ''' <summary>
+        ''' Sets one column's width without announcing it: the drag applies a new width per pixel of
+        ''' movement, and an app that saves the form on SheetSizeChanged should not be asked to write the
+        ''' file sixty times a second. The drag announces once, on release.
+        ''' </summary>
+        Private Function ApplyColumnWidth(column As Integer, width As Double) As Boolean
+            If column < 1 OrElse column > ColumnCount Then
+                Return False
+            End If
+
+            Dim size As Double = Math.Max(MinTrackSize, Math.Round(width))
+            If Math.Abs(ColumnWidthOf(column) - size) < 0.01 Then
+                Return False
+            End If
+
+            If Math.Abs(ColumnWidth - size) < 0.01 Then
+                _columnWidths.Remove(column)
+            Else
+                _columnWidths(column) = size
+            End If
+
+            RefreshGeometry()
+            Return True
+        End Function
+
+        Private Function ApplyRowHeight(row As Integer, height As Double) As Boolean
+            If row < 1 OrElse row > RowCount Then
+                Return False
+            End If
+
+            Dim size As Double = Math.Max(MinTrackSize, Math.Round(height))
+            If Math.Abs(RowHeightOf(row) - size) < 0.01 Then
+                Return False
+            End If
+
+            If Math.Abs(RowHeight - size) < 0.01 Then
+                _rowHeights.Remove(row)
+            Else
+                _rowHeights(row) = size
+            End If
+
+            RefreshGeometry()
+            Return True
+        End Function
+
+        ''' <summary>Puts one column back on the sheet's own ColumnWidth.</summary>
+        Public Sub ClearColumnWidth(column As Integer)
+            If _columnWidths.Remove(column) Then
+                RefreshGeometry()
+                RaiseSizeChanged(column, 0, ColumnWidth)
+            End If
+        End Sub
+
+        ''' <summary>Puts one row back on the sheet's own RowHeight.</summary>
+        Public Sub ClearRowHeight(row As Integer)
+            If _rowHeights.Remove(row) Then
+                RefreshGeometry()
+                RaiseSizeChanged(0, row, RowHeight)
+            End If
+        End Sub
+
+        ''' <summary>Puts every column and row back on the sheet's own sizes.</summary>
+        Public Sub ClearSizes()
+            If _columnWidths.Count = 0 AndAlso _rowHeights.Count = 0 Then
+                Return
+            End If
+
+            _columnWidths.Clear()
+            _rowHeights.Clear()
+            RefreshGeometry()
+        End Sub
+
+        ''' <summary>
+        ''' The columns that have a width of their own, as "3:120,7:60" — sparse, so a sheet whose
+        ''' columns are all the same writes nothing at all. Also the XAML form: ColumnWidths="3:120".
+        ''' </summary>
+        Public Property ColumnWidths As String
+            Get
+                Return TrackText(_columnWidths)
+            End Get
+            Set(value As String)
+                ReadTrackText(value, _columnWidths, True)
+            End Set
+        End Property
+
+        ''' <summary>The rows that have a height of their own — see ColumnWidths.</summary>
+        Public Property RowHeights As String
+            Get
+                Return TrackText(_rowHeights)
+            End Get
+            Set(value As String)
+                ReadTrackText(value, _rowHeights, False)
+            End Set
+        End Property
+
+        Private Shared Function TrackText(sizes As Dictionary(Of Integer, Double)) As String
+            If sizes.Count = 0 Then
+                Return String.Empty
+            End If
+
+            Dim keys As New List(Of Integer)(sizes.Keys)
+            keys.Sort()
+            Dim parts As New List(Of String)(keys.Count)
+            For i As Integer = 0 To keys.Count - 1
+                parts.Add(keys(i).ToString(CultureInfo.InvariantCulture) & ":" &
+                    sizes(keys(i)).ToString(CultureInfo.InvariantCulture))
+            Next
+
+            Return String.Join(",", parts)
+        End Function
+
+        ''' <summary>
+        ''' Reads "3:120,7:60". Junk is SKIPPED rather than thrown on: this comes from an attribute in a
+        ''' form, and one bad pair there must not take the window down. Off-the-sheet indexes are ignored
+        ''' and tiny sizes are clamped exactly as a drag would clamp them.
+        ''' </summary>
+        Private Sub ReadTrackText(text As String, sizes As Dictionary(Of Integer, Double), columns As Boolean)
+            sizes.Clear()
+            If Not String.IsNullOrEmpty(text) Then
+                Dim parts As String() = text.Split(","c)
+                Dim limit As Integer = If(columns, ColumnCount, RowCount)
+                For i As Integer = 0 To parts.Length - 1
+                    Dim pair As String() = parts(i).Split(":"c)
+                    If pair.Length <> 2 Then
+                        Continue For
+                    End If
+
+                    Dim index As Integer = 0
+                    Dim size As Double = 0.0
+                    If Not Integer.TryParse(pair(0).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, index) Then
+                        Continue For
+                    End If
+
+                    If Not Double.TryParse(pair(1).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, size) Then
+                        Continue For
+                    End If
+
+                    If index < 1 OrElse index > limit Then
+                        Continue For
+                    End If
+
+                    sizes(index) = Math.Max(MinTrackSize, Math.Round(size))
+                Next
+            End If
+
+            RefreshGeometry()
+        End Sub
 
         Private Function SelectionRect() As Rect
             Dim first As Rect = CellRect(SelectionFirstRow(), SelectionFirstColumn())
@@ -1114,10 +1960,13 @@ Namespace Global.AvaloniaSpreadsheet
                 Return
             End If
 
-            Dim contentWidth As Double = ColumnCount * ColumnWidth
-            Dim contentHeight As Double = RowCount * RowHeight
-            Dim maxX As Double = contentWidth - grid.Width
-            Dim maxY As Double = contentHeight - grid.Height
+            ' VB is case-INsensitive, so a local called contentWidth would shadow the ContentWidth()
+            ' function and this would read as indexing a Double. The C# twin can afford that name; this
+            ' one cannot.
+            Dim fullWidth As Double = ContentWidth()
+            Dim fullHeight As Double = ContentHeight()
+            Dim maxX As Double = fullWidth - grid.Width
+            Dim maxY As Double = fullHeight - grid.Height
             _scrollX = If(maxX <= 0, 0.0, Math.Min(_scrollX, maxX))
             _scrollY = If(maxY <= 0, 0.0, Math.Min(_scrollY, maxY))
             If _scrollX < 0 Then
@@ -1158,8 +2007,10 @@ Namespace Global.AvaloniaSpreadsheet
         ''' <summary>The sheet's natural size: the headers plus the whole grid.</summary>
         Protected Overrides Function MeasureOverride(availableSize As Size) As Size
             Dim origin As Point = GridOrigin
-            Dim width As Double = origin.X + ColumnCount * ColumnWidth
-            Dim height As Double = origin.Y + RowCount * RowHeight
+            ' ContentWidth/ContentHeight, not Columns * ColumnWidth: a widened column makes the sheet wider,
+            ' and measuring it as though it were not would leave the last columns clipped for good.
+            Dim width As Double = origin.X + ContentWidth()
+            Dim height As Double = origin.Y + ContentHeight()
             If Not Double.IsInfinity(availableSize.Width) AndAlso width > availableSize.Width Then
                 width = availableSize.Width
             End If
@@ -1243,20 +2094,31 @@ Namespace Global.AvaloniaSpreadsheet
 
                 For row As Integer = firstRow To lastRow
                     For column As Integer = firstColumn To lastColumn
-                        Dim text As String = GetCell(row, column)
-                        If text.Length = 0 Then
-                            Continue For
-                        End If
-
-                        Dim isEditingThis As Boolean = _editing AndAlso Not _barFocused AndAlso
+                        ' The cell being edited IN PLACE, if this is it. Its text lives in _editText until
+                        ' the edit is committed, so drawing GetCell() here would show the old value — and
+                        ' SKIPPING it (which is what this did until 2026-09-26) drew nothing at all, so
+                        ' typing looked invisible until the cell lost focus.
+                        Dim inPlaceEdit As Boolean = _editing AndAlso Not _barFocused AndAlso
                             row = _activeRow AndAlso column = _activeColumn
-                        If isEditingThis Then
-                            Continue For                 ' the editor draws it, with its caret
+                        Dim text As String = If(inPlaceEdit, _editText, GetCell(row, column))
+                        If text.Length = 0 AndAlso Not inPlaceEdit Then
+                            Continue For
                         End If
 
                         ' This cell's own formatting, all of it "unset means the sheet's own".
                         Dim cell As SheetCell = FindCell(row, column)
                         Dim align As SheetAlign = AlignOf(cell)
+                        If inPlaceEdit Then
+                            ' Left while typing, the way every spreadsheet does it — a number should not
+                            ' jump about as it becomes numeric — but a column the user aligned by hand
+                            ' stays where they put it.
+                            Dim editingAlign As TextAlignment = If(align = SheetAlign.Auto,
+                                TextAlignment.Left, ToTextAlignment(align))
+                            DrawCellText(context, text, CellRect(row, column), TextBrushOf(cell, textBrush),
+                                False, editingAlign, _caret, TypefaceFor(cell), SizeOf(cell))
+                            Continue For
+                        End If
+
                         Dim numeric As Boolean = LooksNumeric(text) AndAlso align = SheetAlign.Auto
                         DrawCellText(context, text, CellRect(row, column), TextBrushOf(cell, textBrush),
                             numeric, ToTextAlignment(align), -1, TypefaceFor(cell), SizeOf(cell))
@@ -1268,6 +2130,7 @@ Namespace Global.AvaloniaSpreadsheet
             DrawSelectionOutline(context, selectionBrush, grid)
             DrawFormulaBar(context, size, headerBrush, headerTextBrush, textBrush, selectionBrush)
             If Not AllowEditing Then
+                DrawScrollBars(context, size)
                 Return
             End If
 
@@ -1278,6 +2141,9 @@ Namespace Global.AvaloniaSpreadsheet
                     context.FillRectangle(selectionBrush, handle)
                 End If
             End If
+
+            ' Last, so nothing is drawn over a bar the user is trying to grab.
+            DrawScrollBars(context, size)
         End Sub
 
         ''' <summary>Draws the frozen headers, with the selected rows/columns lit up.</summary>
@@ -1296,7 +2162,9 @@ Namespace Global.AvaloniaSpreadsheet
                 Dim highlighted As Rect = ColumnHighlight(selection)
                 context.FillRectangle(New SolidColorBrush(SelectionFillColor), highlighted)
                 For column As Integer = VisibleFirstColumn(grid) To VisibleLastColumn(grid)
-                    Dim rect As New Rect(CellRect(1, column).X, columnHeader.Y, ColumnWidth, HeaderHeight)
+                    ' Each letter is centred in ITS OWN column, which is not the sheet's ColumnWidth once
+                    ' one has been dragged.
+                    Dim rect As New Rect(CellRect(1, column).X, columnHeader.Y, ColumnWidthOf(column), HeaderHeight)
                     DrawCellText(context, ColumnName(column), rect, text, False, TextAlignment.Center)
                 Next
             End Using
@@ -1309,7 +2177,7 @@ Namespace Global.AvaloniaSpreadsheet
                 Dim highlighted As Rect = RowHighlight(selection)
                 context.FillRectangle(New SolidColorBrush(SelectionFillColor), highlighted)
                 For row As Integer = VisibleFirstRow(grid) To VisibleLastRow(grid)
-                    Dim rect As New Rect(0, CellRect(row, 1).Y, HeaderWidth, RowHeight)
+                    Dim rect As New Rect(0, CellRect(row, 1).Y, HeaderWidth, RowHeightOf(row))
                     DrawCellText(context, row.ToString(CultureInfo.InvariantCulture), rect, text, False,
                         TextAlignment.Center)
                 Next
@@ -1528,23 +2396,19 @@ Namespace Global.AvaloniaSpreadsheet
         ' ---- which rows and columns are on screen ----------------------------------------------
 
         Private Function VisibleFirstRow(grid As Rect) As Integer
-            Dim row As Integer = CInt(Math.Floor((grid.Y - GridOrigin.Y + _scrollY) / RowHeight)) + 1
-            Return If(row < 1, 1, row)
+            Return RowAt(grid.Y)
         End Function
 
         Private Function VisibleLastRow(grid As Rect) As Integer
-            Dim row As Integer = CInt(Math.Ceiling((grid.Bottom - GridOrigin.Y + _scrollY) / RowHeight))
-            Return If(row > RowCount, RowCount, row)
+            Return RowAt(grid.Bottom)
         End Function
 
         Private Function VisibleFirstColumn(grid As Rect) As Integer
-            Dim column As Integer = CInt(Math.Floor((grid.X - GridOrigin.X + _scrollX) / ColumnWidth)) + 1
-            Return If(column < 1, 1, column)
+            Return ColumnAt(grid.X)
         End Function
 
         Private Function VisibleLastColumn(grid As Rect) As Integer
-            Dim column As Integer = CInt(Math.Ceiling((grid.Right - GridOrigin.X + _scrollX) / ColumnWidth))
-            Return If(column > ColumnCount, ColumnCount, column)
+            Return ColumnAt(grid.Right)
         End Function
 
         ' ---- the mouse --------------------------------------------------------------------------
@@ -1556,6 +2420,12 @@ Namespace Global.AvaloniaSpreadsheet
         Private Const HitCorner As Integer = 4
         Private Const HitHandle As Integer = 5
         Private Const HitBar As Integer = 6
+        Private Const HitColumnResize As Integer = 7
+        Private Const HitRowResize As Integer = 8
+        Private Const HitVScrollThumb As Integer = 9
+        Private Const HitVScrollTrack As Integer = 10
+        Private Const HitHScrollThumb As Integer = 11
+        Private Const HitHScrollTrack As Integer = 12
 
         ''' <summary>What is under a point, and which cell it belongs to.</summary>
         Private Function HitTest(point As Point, ByRef row As Integer, ByRef column As Integer) As Integer
@@ -1578,12 +2448,26 @@ Namespace Global.AvaloniaSpreadsheet
                         Return HitCorner
                     End If
 
-                    column = ColumnAt(point.X, grid)
+                    ' A border between two columns — checked BEFORE the header itself, so a press on the
+                    ' edge resizes instead of selecting the column the edge belongs to.
+                    Dim resizing As Integer = ColumnBorderAt(point.X)
+                    If resizing > 0 Then
+                        column = resizing
+                        Return HitColumnResize
+                    End If
+
+                    column = ColumnAt(point.X)
                     Return HitColumnHeader
                 End If
 
                 If point.X < HeaderWidth Then
-                    row = RowAt(point.Y, grid)
+                    Dim resizingRow As Integer = RowBorderAt(point.Y)
+                    If resizingRow > 0 Then
+                        row = resizingRow
+                        Return HitRowResize
+                    End If
+
+                    row = RowAt(point.Y)
                     Return HitRowHeader
                 End If
             End If
@@ -1592,8 +2476,20 @@ Namespace Global.AvaloniaSpreadsheet
                 Return HitNothing
             End If
 
-            row = RowAt(point.Y, grid)
-            column = ColumnAt(point.X, grid)
+            ' The scrollbars are drawn over the grid, so they are hit first — otherwise the last column's
+            ' cells would be under an unreachable bar.
+            Dim vTrack As Rect = VScrollRect(size)
+            If vTrack.Contains(point) Then
+                Return If(VScrollThumb(size).Contains(point), HitVScrollThumb, HitVScrollTrack)
+            End If
+
+            Dim hTrack As Rect = HScrollRect(size)
+            If hTrack.Contains(point) Then
+                Return If(HScrollThumb(size).Contains(point), HitHScrollThumb, HitHScrollTrack)
+            End If
+
+            row = RowAt(point.Y)
+            column = ColumnAt(point.X)
             If Not _selectAll AndAlso Math.Abs(point.X - HandleRect().Center.X) <= HandleSize AndAlso
                 Math.Abs(point.Y - HandleRect().Center.Y) <= HandleSize Then
                 Return HitHandle
@@ -1602,13 +2498,65 @@ Namespace Global.AvaloniaSpreadsheet
             Return HitCell
         End Function
 
-        Private Function RowAt(y As Double, grid As Rect) As Integer
-            Return ClampRow(CInt(Math.Floor((y - GridOrigin.Y + _scrollY) / RowHeight)) + 1)
+        Private Function RowAt(y As Double) As Integer
+            Return RowAtOffset(y - GridOrigin.Y + _scrollY)
         End Function
 
-        Private Function ColumnAt(x As Double, grid As Rect) As Integer
-            Return ClampColumn(CInt(Math.Floor((x - GridOrigin.X + _scrollX) / ColumnWidth)) + 1)
+        Private Function ColumnAt(x As Double) As Integer
+            Return ColumnAtOffset(x - GridOrigin.X + _scrollX)
         End Function
+
+        ''' <summary>
+        ''' The column whose RIGHT border the pointer is within ResizeGrip of, or 0. The border belongs to
+        ''' the column on its left, which is the one a drag resizes — and the last column's right edge
+        ''' counts too, that being how you widen the last one.
+        ''' </summary>
+        Private Function ColumnBorderAt(x As Double) As Integer
+            Dim origin As Double = GridOrigin.X - _scrollX
+            For column As Integer = 1 To ColumnCount
+                If Math.Abs(x - (origin + ColumnOffset(column + 1))) <= ResizeGrip Then
+                    Return column
+                End If
+            Next
+
+            Return 0
+        End Function
+
+        ''' <summary>The row whose BOTTOM border the pointer is on, or 0 — see ColumnBorderAt.</summary>
+        Private Function RowBorderAt(y As Double) As Integer
+            Dim origin As Double = GridOrigin.Y - _scrollY
+            For row As Integer = 1 To RowCount
+                If Math.Abs(y - (origin + RowOffset(row + 1))) <= ResizeGrip Then
+                    Return row
+                End If
+            Next
+
+            Return 0
+        End Function
+
+        ''' <summary>The cursor a hit calls for: the only sign that a header edge can be dragged at all.</summary>
+        Private Shared Function CursorFor(hit As Integer) As StandardCursorType
+            If hit = HitColumnResize Then
+                Return StandardCursorType.SizeWestEast
+            End If
+
+            Return If(hit = HitRowResize, StandardCursorType.SizeNorthSouth, StandardCursorType.Arrow)
+        End Function
+
+        Private Sub SetCursor(wanted As StandardCursorType)
+            If _cursor = wanted Then
+                Return
+            End If
+
+            _cursor = wanted
+            Cursor = New Cursor(wanted)
+        End Sub
+
+        ''' <summary>Back to the arrow when the pointer leaves, whatever it was showing.</summary>
+        Protected Overrides Sub OnPointerExited(e As PointerEventArgs)
+            SetCursor(StandardCursorType.Arrow)
+            MyBase.OnPointerExited(e)
+        End Sub
 
         ''' <summary>Starts a selection, a fill, or an edit.</summary>
         Protected Overrides Sub OnPointerPressed(e As PointerPressedEventArgs)
@@ -1637,6 +2585,54 @@ Namespace Global.AvaloniaSpreadsheet
 
             e.Pointer.Capture(Me)
             Dim extend As Boolean = e.KeyModifiers.HasFlag(KeyModifiers.Shift)
+
+            ' Dragging a scrollbar's thumb, or jumping when its track is clicked.
+            If hit = HitVScrollThumb OrElse hit = HitHScrollThumb Then
+                _scrollDragging = True
+                _scrollDragVertical = hit = HitVScrollThumb
+                _scrollDragStart = If(_scrollDragVertical, point.Position.Y, point.Position.X)
+                _scrollDragStartOffset = If(_scrollDragVertical, _scrollY, _scrollX)
+                e.Handled = True
+                Return
+            End If
+
+            If hit = HitVScrollTrack Then
+                ScrollTrackTo(Bounds.Size, True, point.Position.Y)
+                _scrollDragging = True
+                _scrollDragVertical = True
+                _scrollDragStart = point.Position.Y
+                _scrollDragStartOffset = _scrollY
+                e.Handled = True
+                Return
+            End If
+
+            If hit = HitHScrollTrack Then
+                ScrollTrackTo(Bounds.Size, False, point.Position.X)
+                _scrollDragging = True
+                _scrollDragVertical = False
+                _scrollDragStart = point.Position.X
+                _scrollDragStartOffset = _scrollX
+                e.Handled = True
+                Return
+            End If
+
+            ' Dragging a header border to size a column or a row. This comes before everything the headers
+            ' normally do, because the press is ON the header strip.
+            If hit = HitColumnResize Then
+                _resizeColumn = column
+                _resizeStartSize = ColumnWidthOf(column)
+                _resizeStartX = point.Position.X
+                e.Handled = True
+                Return
+            End If
+
+            If hit = HitRowResize Then
+                _resizeRow = row
+                _resizeStartSize = RowHeightOf(row)
+                _resizeStartY = point.Position.Y
+                e.Handled = True
+                Return
+            End If
 
             If hit = HitCorner Then
                 SelectAll()
@@ -1688,16 +2684,46 @@ Namespace Global.AvaloniaSpreadsheet
             e.Handled = True
         End Sub
 
-        ''' <summary>Extends the selection, or moves the fill preview.</summary>
+        ''' <summary>Extends the selection, moves a border, drags a scrollbar, or moves the fill preview.</summary>
         Protected Overrides Sub OnPointerMoved(e As PointerEventArgs)
             Dim point As Point = e.GetCurrentPoint(Me).Position
-            If Not _draggingSelection AndAlso Not _draggingFill Then
-                Return
-            End If
-
             Dim row As Integer
             Dim column As Integer
             Dim hit As Integer = HitTest(point, row, column)
+
+            ' Dragging a scrollbar: the pointer's travel along the track, scaled to the scroll range.
+            If _scrollDragging Then
+                Dim size As Size = Bounds.Size
+                Dim travel As Double = 0.0
+                Dim maxOffset As Double = 0.0
+                TrackSpan(size, _scrollDragVertical, travel, maxOffset)
+                Dim moved As Double = If(_scrollDragVertical, point.Y, point.X) - _scrollDragStart
+                ScrollThumbTo(size, _scrollDragVertical, _scrollDragStartOffset + moved / travel * maxOffset)
+                e.Handled = True
+                Return
+            End If
+
+            ' Resizing: the pointer's distance from where the drag started is the whole calculation, and
+            ' Apply* clamps and rounds it. Nothing is announced until the mouse comes up (see release).
+            If _resizeColumn > 0 Then
+                ApplyColumnWidth(_resizeColumn, _resizeStartSize + (point.X - _resizeStartX))
+                e.Handled = True
+                Return
+            End If
+
+            If _resizeRow > 0 Then
+                ApplyRowHeight(_resizeRow, _resizeStartSize + (point.Y - _resizeStartY))
+                e.Handled = True
+                Return
+            End If
+
+            If Not _draggingSelection AndAlso Not _draggingFill Then
+                ' Nothing is being dragged, so the only thing a move does is show whether the edge under
+                ' the pointer can be dragged.
+                SetCursor(CursorFor(hit))
+                Return
+            End If
+
             If hit = HitNothing Then
                 Return
             End If
@@ -1728,23 +2754,48 @@ Namespace Global.AvaloniaSpreadsheet
         ''' <summary>Ends the drag: applies a fill, or leaves the selection where it is.</summary>
         Protected Overrides Sub OnPointerReleased(e As PointerReleasedEventArgs)
             Dim wasFill As Boolean = _draggingFill
+            Dim resizedColumn As Integer = _resizeColumn
+            Dim resizedRow As Integer = _resizeRow
+            Dim resizeStartSize As Double = _resizeStartSize
             _draggingSelection = False
             _draggingFill = False
+            _resizeColumn = 0
+            _resizeRow = 0
+            _scrollDragging = False
             e.Pointer.Capture(Nothing)
             If wasFill Then
                 ApplyFill()
             End If
 
+            ' Now that the mouse is up, say so — once, with the size it ended on. A form can save the widths
+            ' here and get them back from ColumnWidths/RowHeights next run.
+            If resizedColumn > 0 AndAlso Math.Abs(ColumnWidthOf(resizedColumn) - resizeStartSize) > 0.01 Then
+                RaiseSizeChanged(resizedColumn, 0, ColumnWidthOf(resizedColumn))
+            End If
+
+            If resizedRow > 0 AndAlso Math.Abs(RowHeightOf(resizedRow) - resizeStartSize) > 0.01 Then
+                RaiseSizeChanged(0, resizedRow, RowHeightOf(resizedRow))
+            End If
+
+            SetCursor(StandardCursorType.Arrow)
             InvalidateVisual()
         End Sub
 
-        ''' <summary>Scrolling: the wheel moves three rows, Shift+wheel moves sideways.</summary>
+        ''' <summary>Scrolling: the wheel moves three rows or three columns, Shift makes it sideways, and
+        ''' when there is nothing to scroll VERTICALLY the wheel goes sideways instead — otherwise the
+        ''' columns off to the right are unreachable with an ordinary mouse.</summary>
         Protected Overrides Sub OnPointerWheelChanged(e As PointerWheelEventArgs)
             Dim size As Size = Bounds.Size
-            If e.KeyModifiers.HasFlag(KeyModifiers.Shift) Then
-                _scrollX -= e.Delta.Y * ColumnWidth
+            Dim grid As Rect = GridRect(size)
+            Dim vertical As Double = e.Delta.Y
+            If vertical <> 0 AndAlso ContentHeight() <= grid.Height + 0.5 Then
+                ' A sheet that is wide but not tall: a plain wheel has no rows to move, so it moves the
+                ' columns. This is what every browser does with a wheel over a horizontally scrolling box.
+                _scrollX -= vertical * ColumnWidth * 3
+            ElseIf e.KeyModifiers.HasFlag(KeyModifiers.Shift) Then
+                _scrollX -= vertical * ColumnWidth
             Else
-                _scrollY -= e.Delta.Y * RowHeight * 3
+                _scrollY -= vertical * RowHeight * 3
                 _scrollX -= e.Delta.X * ColumnWidth * 3
             End If
 
@@ -1903,7 +2954,7 @@ Namespace Global.AvaloniaSpreadsheet
 
         ''' <summary>Typing replaces the active cell — the fastest way into a sheet.</summary>
         Protected Overrides Sub OnTextInput(e As TextInputEventArgs)
-            If Not AllowEditing OrElse _editing OrElse String.IsNullOrEmpty(e.Text) Then
+            If Not AllowEditing OrElse String.IsNullOrEmpty(e.Text) Then
                 Return
             End If
 
@@ -1917,6 +2968,16 @@ Namespace Global.AvaloniaSpreadsheet
             Next
 
             If Not usable Then
+                Return
+            End If
+
+            ' The editor is already open — clicked into the cell, F2, or by the first character of this very
+            ' word — so this character goes IN at the caret. It used to be dropped on the floor:
+            ' InsertIntoEdit was written for exactly this and never called, so typing a word into a cell
+            ' kept only its first letter (found 2026-09-26, with the missing in-cell editor drawing).
+            If _editing Then
+                InsertIntoEdit(text)
+                e.Handled = True
                 Return
             End If
 

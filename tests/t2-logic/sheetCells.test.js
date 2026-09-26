@@ -317,4 +317,91 @@ module.exports = async (t) => {
         'the snippet\u2019s header cell is bold and shaded');
     t.ok(factory.includes('TextAlign=\\"Center\\"'), 'wiring',
         'and one of them is centred by name, which is the enum conversion the compiler has to accept');
+
+    // ---------------------------------------------------------------- the 2026-09-26 runtime batch
+    // Five things reported from the running app. Each is a SOURCE check because every one of them is a
+    // seam between two files (or between the twins), which is exactly where this project's bugs live:
+    // the in-cell editor drew nothing because Render skipped the cell the editor was supposed to draw,
+    // and the character that was not typed went nowhere because InsertIntoEdit was written and never
+    // called. Both compiled, both ran, and neither showed up in a test until now.
+    t.note('the runtime fixes are in BOTH twins, and in the C# one as well');
+
+    /** The two twins, so every assertion below is made twice — a fix in one language only is not a fix. */
+    const twins = [['C#', cs], ['VB', vb]];
+    const has = (source, needle) => source.replace(/\r\n/g, '\n').includes(needle);
+
+    // 1) the in-place editor's text is drawn, with its caret, while typing.
+    for (const [name, source] of twins) {
+        t.ok(has(source, 'inPlaceEdit'), `fix:${name}`, 'the cell being edited is drawn in place');
+        // The editor's text comes from _editText, not from GetCell() — the cell still holds the old value.
+        t.ok(/_editText[\s\S]{0,30}?GetCell\(row, column\)/.test(source), `fix:${name}`,
+            'its text comes from the editor, not from the cell it has not written yet');
+        t.ok(/editingAlign[\s\S]{0,500}?_caret/.test(source), `fix:${name}`,
+            'and it is drawn WITH the caret');
+        // …and every typed character reaches it: the insert method has to be CALLED, not just present.
+        t.ok(/OnTextInput[\s\S]{0,2500}?InsertIntoEdit\(/.test(source), `fix:${name}`,
+            'typing while the editor is open inserts into it (InsertIntoEdit is actually called)');
+    }
+
+    // 2) the selection corners: a whole-column selection spans every ROW, so its COLUMNS come from the
+    //    anchor. The two flags were swapped, which is why clicking C selected A:C.
+    for (const [name, source] of twins) {
+        t.ok(/SelectionFirstRow[\s\S]{0,400}?_wholeColumns/.test(source), `fix:${name}`,
+            'SelectionFirstRow tests the whole-COLUMN flag');
+        t.ok(/SelectionFirstColumn[\s\S]{0,400}?_wholeRows/.test(source), `fix:${name}`,
+            'and SelectionFirstColumn tests the whole-ROW one');
+        t.ok(has(source, 'SelectedFirstColumn') && has(source, 'SelectColumn('), `fix:${name}`,
+            'and the corners and SelectColumn are public, so the rule can be checked from outside');
+    }
+
+    // 3) the right-click menu, with the alignment the request was about.
+    for (const [name, source] of twins) {
+        t.ok(has(source, 'ContextMenu'), `fix:${name}`, 'the sheet has a context menu');
+        t.ok(has(source, 'Align centre'), `fix:${name}`, 'that offers centring');
+        t.ok(has(source, 'AlignSelection('), `fix:${name}`, 'through AlignSelection');
+        t.ok(has(source, 'SelectionTextAlign') && has(source, 'SelectionAllBold'), `fix:${name}`,
+            'and it can tick what the selection already is');
+        // A whole column must NOT gain a cell per empty row — the rule AlignSelection exists for.
+        t.ok(/AlignSelection[\s\S]{0,700}?bounded/.test(source), `fix:${name}`,
+            'a whole column only touches the cells that already exist');
+    }
+
+    // 4) dragging a border to size a column or a row.
+    for (const [name, source] of twins) {
+        t.ok(has(source, 'MinTrackSize'), `fix:${name}`, 'a track has a minimum size');
+        t.ok(has(source, 'ColumnBorderAt') && has(source, 'RowBorderAt'), `fix:${name}`,
+            'a header border is a hit zone of its own');
+        t.ok(has(source, 'ColumnOffsets()') && has(source, 'RowOffsets()'), `fix:${name}`,
+            'and the geometry is offset tables, not one width for every column');
+        t.ok(has(source, 'ColumnWidths') && has(source, 'RowHeights'), `fix:${name}`,
+            'the sizes are readable and writable as sparse attribute text');
+        t.ok(has(source, 'SheetSizeChanged'), `fix:${name}`,
+            'and announced once per drag (the name avoids Control.SizeChanged)');
+        t.ok(!has(source, 'public event EventHandler<SheetSizeChangedEventArgs>? SizeChanged;') &&
+            !has(source, 'Public Event SizeChanged '), `fix:${name}`,
+            'never hidden behind Control.SizeChanged');
+    }
+
+    // 5) scrollbars, and a wheel that can reach the columns on the right.
+    for (const [name, source] of twins) {
+        t.ok(has(source, 'ShowScrollBars'), `fix:${name}`, 'the scrollbars can be switched off');
+        t.ok(has(source, 'VScrollRect') && has(source, 'HScrollRect') && has(source, 'DrawScrollBars'),
+            `fix:${name}`, 'and each is drawn only when there is something to scroll to');
+        t.ok(has(source, 'ScrollTrackTo') && has(source, 'ScrollThumbTo'), `fix:${name}`,
+            'the thumb can be dragged and the track clicked');
+        // A plain wheel must scroll the columns when the rows all fit — the complaint was that the
+        // columns off to the right could not be reached at all with an ordinary mouse.
+        t.ok(/OnPointerWheelChanged[\s\S]{0,700}?ContentHeight\(\) <= grid\.Height/.test(source), `fix:${name}`,
+            'and the wheel falls back to the columns when there are no rows to scroll');
+        t.ok(/MeasureOverride[\s\S]{0,900}?ContentWidth\(\)/.test(source), `fix:${name}`,
+            'the natural size counts the widened columns, or the last ones stay clipped');
+        t.ok(has(source, 'ColumnWidthOf(column)') && has(source, 'RowHeightOf(row)'), `fix:${name}`,
+            'and header labels are centred in their own track');
+    }
+
+    t.note('the designer panel can set the new properties');
+    const catalog = read('src/propertyCatalog.ts');
+    for (const key of ['ShowScrollBars', 'ColumnWidths', 'RowHeights']) {
+        t.ok(catalog.includes(`key: '${key}'`), 'panel', `the GrumpySheet rows offer ${key}`);
+    }
 };

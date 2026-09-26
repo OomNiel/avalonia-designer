@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.10
+// BUNDLED-COPY: 0.12.11
 // GrumpySheet.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpySheet.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs / GrumpyCharts.cs.
 //
@@ -156,6 +156,30 @@ namespace AvaloniaSpreadsheet
         public string Name => GrumpySheet.CellName(Row, Column);
     }
 
+    /// <summary>A column or a row that was given its own size (a dragged border, or the API).</summary>
+    public sealed class SheetSizeChangedEventArgs : EventArgs
+    {
+        /// <summary>Creates the event data for one resized column or row.</summary>
+        public SheetSizeChangedEventArgs(int column, int row, double size)
+        {
+            Column = column;
+            Row = row;
+            Size = size;
+        }
+
+        /// <summary>The column that was resized, 1-based — 0 when a ROW was resized instead.</summary>
+        public int Column { get; }
+
+        /// <summary>The row that was resized, 1-based — 0 when a COLUMN was resized instead.</summary>
+        public int Row { get; }
+
+        /// <summary>The track's new size in pixels.</summary>
+        public double Size { get; }
+
+        /// <summary>True when this was a column.</summary>
+        public bool IsColumn => Column > 0;
+    }
+
     /// <summary>
     /// A spreadsheet grid: selectable cells, in-place editing, autofill and a formula bar, drawn by
     /// the control itself. See the file header for the XAML and the whole feature list.
@@ -193,6 +217,12 @@ namespace AvaloniaSpreadsheet
         /// <summary>Draw the formula bar (the cell address and the fx box) above the grid.</summary>
         public static readonly StyledProperty<bool> ShowFormulaBarProperty =
             AvaloniaProperty.Register<GrumpySheet, bool>(nameof(ShowFormulaBar), true);
+
+        /// <summary>Draw slim scrollbars when the sheet is bigger than the space it has. They appear by
+        /// themselves when there is something to scroll to, which is the only cue that the columns off to
+        /// the right are reachable at all.</summary>
+        public static readonly StyledProperty<bool> ShowScrollBarsProperty =
+            AvaloniaProperty.Register<GrumpySheet, bool>(nameof(ShowScrollBars), true);
 
         /// <summary>False makes the sheet read-only: selection still works, editing does not.</summary>
         public static readonly StyledProperty<bool> AllowEditingProperty =
@@ -241,6 +271,23 @@ namespace AvaloniaSpreadsheet
         /// <summary>The size of the autofill square, in pixels.</summary>
         private const double HandleSize = 7d;
 
+        /// <summary>The narrowest a column or a row can be dragged to. Any less and its border cannot be
+        /// grabbed again — a mis-drag there would be one you cannot drag back.</summary>
+        private const double MinTrackSize = 16d;
+
+        /// <summary>How near a header border the pointer has to be to resize it. Three pixels is what a
+        /// desktop toolkit uses; below two, hitting a border becomes a precision exercise.</summary>
+        private const double ResizeGrip = 3d;
+
+        /// <summary>The thickness of a scrollbar, in pixels. Slim, and drawn OVER the grid rather than
+        /// taking room from it: a sheet whose grid shifted every time the bars appeared would be worse
+        /// than one whose last column is partly covered by a bar.</summary>
+        private const double ScrollBarSize = 12d;
+
+        /// <summary>The shortest a scrollbar's thumb may get, so a very long sheet still leaves something
+        /// to grab.</summary>
+        private const double MinThumbSize = 24d;
+
         private readonly List<SheetCell> _lookup = new List<SheetCell>();
 
         // What is selected. The ANCHOR is where the selection started (the cell Shift extends from) and
@@ -274,10 +321,45 @@ namespace AvaloniaSpreadsheet
         private double _scrollX;
         private double _scrollY;
 
+        // ---- per-column widths and per-row heights ----------------------------------------------
+        // Sparse on purpose: the sheet's ColumnWidth/RowHeight answer for every column and row, and these
+        // dictionaries answer only for the ones a border was dragged on. The offset tables are their
+        // prefix sums, rebuilt on demand — without them every part of the geometry would have to assume
+        // all the columns are the same width, which is what it did until 2026-09-26.
+        private readonly Dictionary<int, double> _columnWidths = new Dictionary<int, double>();
+        private readonly Dictionary<int, double> _rowHeights = new Dictionary<int, double>();
+        private double[]? _columnOffsets;
+        private double[]? _rowOffsets;
+
+        // Dragging a border. Only one track is ever being resized, so a pair of fields per axis is enough
+        // and 0 means "not resizing".
+        private int _resizeColumn;
+        private int _resizeRow;
+        private double _resizeStartSize;
+        private double _resizeStartX;
+        private double _resizeStartY;
+
+        // Whether the pointer is being shown the resize cursor, so it is only set when it changes.
+        private StandardCursorType _cursor = StandardCursorType.Arrow;
+
+        // Dragging a scrollbar's thumb, and where inside it the drag started (so the thumb does not jump
+        // under the pointer on the first move).
+        private bool _scrollDragging;
+        private bool _scrollDragVertical;
+        private double _scrollDragStart;
+        private double _scrollDragStartOffset;
+
+        // The right-click menu, built once in the constructor. The alignment items and the two toggles are
+        // kept so their ticks can be refreshed from the selection each time the menu opens.
+        private readonly Dictionary<SheetAlign, MenuItem> _alignItems = new Dictionary<SheetAlign, MenuItem>();
+        private MenuItem? _boldItem;
+        private MenuItem? _italicItem;
+
         static GrumpySheet()
         {
             AffectsRender<GrumpySheet>(RowsProperty, ColumnsProperty, ColumnWidthProperty, RowHeightProperty,
                 HeaderWidthProperty, HeaderHeightProperty, ShowHeadersProperty, ShowFormulaBarProperty,
+                ShowScrollBarsProperty,
                 FontFamilyNameProperty, FontSizeProperty, GridColorProperty, HeaderBackColorProperty,
                 HeaderTextColorProperty, CellBackColorProperty, TextColorProperty, SelectionColorProperty,
                 SelectionFillColorProperty);
@@ -292,6 +374,23 @@ namespace AvaloniaSpreadsheet
             ClipToBounds = true;
             Cells.CollectionChanged += OnCellsChanged;
             LostFocus += OnSheetLostFocus;
+            BuildContextMenu();
+        }
+
+        /// <summary>
+        /// The offset tables are prefix sums of the sizes, so anything that changes a size invalidates
+        /// them — and the scroll limits change with them, or a sheet that just got narrower stays
+        /// scrolled past its own right edge.
+        /// </summary>
+        protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+        {
+            base.OnPropertyChanged(change);
+            if (change.Property == RowsProperty || change.Property == ColumnsProperty ||
+                change.Property == ColumnWidthProperty || change.Property == RowHeightProperty)
+            {
+                InvalidateTrackOffsets();
+                ClampScroll(Bounds.Size);
+            }
         }
 
         /// <summary>The cells with something in them. This is the CONTENT property, so a cell is
@@ -353,6 +452,13 @@ namespace AvaloniaSpreadsheet
         {
             get { return GetValue(ShowFormulaBarProperty); }
             set { SetValue(ShowFormulaBarProperty, value); }
+        }
+
+        /// <summary>Draw scrollbars when the sheet is bigger than its space.</summary>
+        public bool ShowScrollBars
+        {
+            get { return GetValue(ShowScrollBarsProperty); }
+            set { SetValue(ShowScrollBarsProperty, value); }
         }
 
         /// <summary>False makes the sheet read-only.</summary>
@@ -431,10 +537,59 @@ namespace AvaloniaSpreadsheet
         /// <summary>Raised when the selection moves, so a form can show where the user is.</summary>
         public event EventHandler? SelectionChanged;
 
+        /// <summary>Raised when a column or a row is given its own size by a drag, or from code — so a
+        /// form can save <see cref="ColumnWidths"/>/<see cref="RowHeights"/> and get it back next run.
+        ///
+        /// Named SheetSizeChanged and not SizeChanged because <c>Control.SizeChanged</c> already exists on
+        /// every control, and hiding it would make <c>sheet.SizeChanged</c> mean two different things
+        /// depending on the static type of the variable in hand.</summary>
+        public event EventHandler<SheetSizeChangedEventArgs>? SheetSizeChanged;
+
         /// <summary>The active cell's address, e.g. "B7".</summary>
         public string ActiveCellName
         {
             get { return CellName(_activeRow, _activeColumn); }
+        }
+
+        /// <summary>
+        /// The four corners of what is selected, 1-based — what a form needs to know what its user has
+        /// picked. A whole-COLUMN selection spans every row, and a whole-ROW one every column; only the
+        /// axis that was actually clicked narrows.
+        /// </summary>
+        public int SelectedFirstRow
+        {
+            get { return SelectionFirstRow(); }
+        }
+
+        /// <summary>The last row of the selection — see <see cref="SelectedFirstRow"/>.</summary>
+        public int SelectedLastRow
+        {
+            get { return SelectionLastRow(); }
+        }
+
+        /// <summary>The first column of the selection — see <see cref="SelectedFirstRow"/>.</summary>
+        public int SelectedFirstColumn
+        {
+            get { return SelectionFirstColumn(); }
+        }
+
+        /// <summary>The last column of the selection — see <see cref="SelectedFirstRow"/>.</summary>
+        public int SelectedLastColumn
+        {
+            get { return SelectionLastColumn(); }
+        }
+
+        /// <summary>True when every cell in the selection is bold, false when none is, null when they
+        /// disagree or there is nothing in it — what the right-click menu ticks.</summary>
+        public bool? SelectionAllBold
+        {
+            get { return SelectionFlag(true); }
+        }
+
+        /// <summary>The same for italics — see <see cref="SelectionAllBold"/>.</summary>
+        public bool? SelectionAllItalic
+        {
+            get { return SelectionFlag(false); }
         }
 
         /// <summary>The active cell's row, 1-based.</summary>
@@ -670,6 +825,19 @@ namespace AvaloniaSpreadsheet
             InvalidateVisual();
         }
 
+        /// <summary>Selects one whole column, exactly as clicking its letter in the header does — every
+        /// row of it, and only that column.</summary>
+        public void SelectColumn(int column)
+        {
+            SelectColumns(column, false);
+        }
+
+        /// <summary>Selects one whole row, as clicking its number in the header does.</summary>
+        public void SelectRow(int row)
+        {
+            SelectRows(row, false);
+        }
+
         /// <summary>True when a cell is being edited right now (in the cell, or in the fx box).</summary>
         public bool IsEditing
         {
@@ -871,6 +1039,77 @@ namespace AvaloniaSpreadsheet
             InvalidateVisual();
         }
 
+        /// <summary>
+        /// Lines the whole selection up. What the right-click menu's alignment items call.
+        ///
+        /// A bounded selection — a block of cells — has each cell CREATED if it was blank, which is what
+        /// makes "select A1, right-click, centre, then type" do the obvious thing. A whole column or row
+        /// is not bounded (all fifty of its rows), so only the cells that already exist are touched:
+        /// creating them would write an empty element per row into the form for a line-up with no text in
+        /// it, and nothing to see.
+        /// </summary>
+        public void AlignSelection(SheetAlign align)
+        {
+            var bounded = !_wholeColumns && !_wholeRows && !_selectAll;
+            var first = SelectionFirstRow();
+            var last = SelectionLastRow();
+            var left = SelectionFirstColumn();
+            var right = SelectionLastColumn();
+            for (var row = first; row <= last; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    var cell = bounded ? EnsureCell(row, column) : FindCell(row, column);
+                    if (cell == null || cell.TextAlign == align)
+                    {
+                        continue;
+                    }
+
+                    cell.TextAlign = align;
+                }
+            }
+
+            InvalidateVisual();
+        }
+
+        /// <summary>
+        /// The alignment the whole selection already agrees on, or null when it does not — what the menu
+        /// ticks. Cells that do not exist are IGNORED rather than counted as Auto: right-clicking a whole
+        /// column and centring it lines up the cells that are in it, and the tick has to say so — with the
+        /// empty rows counted as Auto, nothing could ever be ticked on a column that is mostly empty.
+        /// Null also means "nothing in the selection yet".
+        /// </summary>
+        public SheetAlign? SelectionTextAlign()
+        {
+            var first = SelectionFirstRow();
+            var last = SelectionLastRow();
+            var left = SelectionFirstColumn();
+            var right = SelectionLastColumn();
+            SheetAlign? agreed = null;
+            for (var row = first; row <= last; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    var cell = FindCell(row, column);
+                    if (cell == null)
+                    {
+                        continue;
+                    }
+
+                    if (agreed == null)
+                    {
+                        agreed = cell.TextAlign;
+                    }
+                    else if (agreed != cell.TextAlign)
+                    {
+                        return null;
+                    }
+                }
+            }
+
+            return agreed;
+        }
+
         /// <summary>Drops every formatting decision from the selected cells.</summary>
         public void ClearSelectionFormatting()
         {
@@ -891,47 +1130,52 @@ namespace AvaloniaSpreadsheet
         /// all already are, which is what Ctrl+B does in every spreadsheet.</summary>
         public void ToggleBoldSelection()
         {
-            var turnOn = false;
-            var first = SelectionFirstRow();
-            var last = SelectionLastRow();
-            var left = SelectionFirstColumn();
-            var right = SelectionLastColumn();
-            for (var row = first; row <= last && !turnOn; row++)
-            {
-                for (var column = left; column <= right; column++)
-                {
-                    var cell = FindCell(row, column);
-                    if (cell == null || !cell.Bold)
-                    {
-                        turnOn = true;
-                        break;
-                    }
-                }
-            }
-
-            for (var row = first; row <= last; row++)
-            {
-                for (var column = left; column <= right; column++)
-                {
-                    SetBold(row, column, turnOn);
-                }
-            }
+            ToggleSelectionFlag(true);
         }
 
         /// <summary>Italics for the whole selection, by the same rule as <see cref="ToggleBoldSelection"/>.</summary>
         public void ToggleItalicSelection()
         {
-            var turnOn = false;
+            ToggleSelectionFlag(false);
+        }
+
+        /// <summary>
+        /// Turns bold (or italics) on for the whole selection, or off when every cell in it already has
+        /// it — Ctrl+B's rule.
+        ///
+        /// Which cells it touches depends on the shape of the selection, exactly as
+        /// <see cref="AlignSelection"/> does: a bounded block gets cells CREATED where it has none, so
+        /// Ctrl+B before typing does something; a whole column or row only gets the cells that already
+        /// exist, or a whole column would put fifty empty elements into the form. A selected cell that is
+        /// blank counts as "not bold", which is what makes a second Ctrl+B turn the first one back off.
+        /// </summary>
+        private void ToggleSelectionFlag(bool bold)
+        {
+            var bounded = !_wholeColumns && !_wholeRows && !_selectAll;
             var first = SelectionFirstRow();
             var last = SelectionLastRow();
             var left = SelectionFirstColumn();
             var right = SelectionLastColumn();
+            var turnOn = false;
             for (var row = first; row <= last && !turnOn; row++)
             {
                 for (var column = left; column <= right; column++)
                 {
                     var cell = FindCell(row, column);
-                    if (cell == null || !cell.Italic)
+                    if (cell == null)
+                    {
+                        // A cell that is not there is not bold — but only a bounded selection may create
+                        // one, so an unbounded one ignores the gap and looks at the cells it has.
+                        turnOn = bounded;
+                        if (turnOn)
+                        {
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    if (!(bold ? cell.Bold : cell.Italic))
                     {
                         turnOn = true;
                         break;
@@ -943,9 +1187,24 @@ namespace AvaloniaSpreadsheet
             {
                 for (var column = left; column <= right; column++)
                 {
-                    SetItalic(row, column, turnOn);
+                    var cell = bounded ? EnsureCell(row, column) : FindCell(row, column);
+                    if (cell == null)
+                    {
+                        continue;
+                    }
+
+                    if (bold)
+                    {
+                        cell.Bold = turnOn;
+                    }
+                    else
+                    {
+                        cell.Italic = turnOn;
+                    }
                 }
             }
+
+            InvalidateVisual();
         }
 
         /// <summary>Finds the cell holding an address, or null. Uses the index, so it is not a scan.</summary>
@@ -1025,7 +1284,11 @@ namespace AvaloniaSpreadsheet
 
         private int SelectionFirstRow()
         {
-            if (_wholeRows || _selectAll)
+            // A whole-COLUMN selection spans every row, so its first row is always 1; it is a whole-ROW
+            // selection whose rows come from the anchor. The two flags were SWAPPED here until
+            // 2026-09-26, so clicking column C selected A:C and clicking row 5 selected rows 1:5 — and
+            // every caller of these corners inherited it (Clear, align, fill, the header highlights).
+            if (_wholeColumns || _selectAll)
             {
                 return 1;
             }
@@ -1040,7 +1303,7 @@ namespace AvaloniaSpreadsheet
 
         private int SelectionFirstColumn()
         {
-            if (_wholeColumns || _selectAll)
+            if (_wholeRows || _selectAll)
             {
                 return 1;
             }
@@ -1083,9 +1346,362 @@ namespace AvaloniaSpreadsheet
         private Rect CellRect(int row, int column)
         {
             var origin = GridOrigin;
-            return new Rect(origin.X + (column - 1) * ColumnWidth - _scrollX,
-                            origin.Y + (row - 1) * RowHeight - _scrollY,
-                            ColumnWidth, RowHeight);
+            return new Rect(origin.X + ColumnOffset(column) - _scrollX,
+                            origin.Y + RowOffset(row) - _scrollY,
+                            ColumnWidthOf(column), RowHeightOf(row));
+        }
+
+        /// <summary>Column <paramref name="column"/>'s width: its own after a border was dragged, else the
+        /// sheet's own <see cref="ColumnWidth"/>.</summary>
+        public double ColumnWidthOf(int column)
+        {
+            double width;
+            return _columnWidths.TryGetValue(column, out width) && width > 0 ? width : ColumnWidth;
+        }
+
+        /// <summary>Row <paramref name="row"/>'s height: its own after a border was dragged, else the
+        /// sheet's own <see cref="RowHeight"/>.</summary>
+        public double RowHeightOf(int row)
+        {
+            double height;
+            return _rowHeights.TryGetValue(row, out height) && height > 0 ? height : RowHeight;
+        }
+
+        /// <summary>The whole grid's width, and its height — what scrolling and measuring need.</summary>
+        private double ContentWidth()
+        {
+            return ColumnOffsets()[ColumnCount];
+        }
+
+        private double ContentHeight()
+        {
+            return RowOffsets()[RowCount];
+        }
+
+        /// <summary>
+        /// The left edge of every column measured from the left edge of column 1: entry
+        /// <c>column - 1</c> holds where that column starts, and the last entry holds the total width.
+        /// This is what makes a sheet with two resized columns work at all — drawing, hit testing, the
+        /// scroll limits and the visible range all read these tables instead of multiplying by a width.
+        /// </summary>
+        private double[] ColumnOffsets()
+        {
+            if (_columnOffsets == null || _columnOffsets.Length != ColumnCount + 1)
+            {
+                var offsets = new double[ColumnCount + 1];
+                var at = 0d;
+                for (var i = 0; i < ColumnCount; i++)
+                {
+                    offsets[i] = at;
+                    at += ColumnWidthOf(i + 1);
+                }
+
+                offsets[ColumnCount] = at;
+                _columnOffsets = offsets;
+            }
+
+            return _columnOffsets;
+        }
+
+        private double[] RowOffsets()
+        {
+            if (_rowOffsets == null || _rowOffsets.Length != RowCount + 1)
+            {
+                var offsets = new double[RowCount + 1];
+                var at = 0d;
+                for (var i = 0; i < RowCount; i++)
+                {
+                    offsets[i] = at;
+                    at += RowHeightOf(i + 1);
+                }
+
+                offsets[RowCount] = at;
+                _rowOffsets = offsets;
+            }
+
+            return _rowOffsets;
+        }
+
+        /// <summary>How far a column's left edge is from column 1's left edge. One past the last column is
+        /// allowed — that is the sheet's right edge, which the grid lines need.</summary>
+        private double ColumnOffset(int column)
+        {
+            var offsets = ColumnOffsets();
+            if (column < 1)
+            {
+                column = 1;
+            }
+            else if (column > ColumnCount + 1)
+            {
+                column = ColumnCount + 1;
+            }
+
+            return offsets[column - 1];
+        }
+
+        private double RowOffset(int row)
+        {
+            var offsets = RowOffsets();
+            if (row < 1)
+            {
+                row = 1;
+            }
+            else if (row > RowCount + 1)
+            {
+                row = RowCount + 1;
+            }
+
+            return offsets[row - 1];
+        }
+
+        /// <summary>Which column a distance from the grid's left edge falls in, and which row a distance
+        /// from its top falls in. A walk rather than a division, because the columns are not all the same
+        /// width once one has been dragged — and the tables are at most a few hundred entries.</summary>
+        private int ColumnAtOffset(double x)
+        {
+            var offsets = ColumnOffsets();
+            var column = 1;
+            for (var i = 0; i < ColumnCount; i++)
+            {
+                if (x < offsets[i])
+                {
+                    break;
+                }
+
+                column = i + 1;
+            }
+
+            return ClampColumn(column);
+        }
+
+        private int RowAtOffset(double y)
+        {
+            var offsets = RowOffsets();
+            var row = 1;
+            for (var i = 0; i < RowCount; i++)
+            {
+                if (y < offsets[i])
+                {
+                    break;
+                }
+
+                row = i + 1;
+            }
+
+            return ClampRow(row);
+        }
+
+        /// <summary>Drops the offset tables. Anything that changes a size, or how many there are, has to
+        /// do this — otherwise the sheet keeps drawing and hit testing at the OLD widths, which looks
+        /// like a resize that quietly did nothing.</summary>
+        private void InvalidateTrackOffsets()
+        {
+            _columnOffsets = null;
+            _rowOffsets = null;
+        }
+
+        // ---- sizing a column or a row ------------------------------------------------------------
+        // What dragging a header border calls. The sizes are per track and SPARSE: every column and row
+        // without an entry is still the sheet's own ColumnWidth/RowHeight, so the common case stays a
+        // single number and the form stays short.
+
+        /// <summary>Gives one column its own width. Clamped to <see cref="MinTrackSize"/> so its border
+        /// stays grabbable, and rounded to whole pixels — a fractional width is impossible to drag back.
+        /// A width that comes out exactly the sheet's own <see cref="ColumnWidth"/> CLEARS the override,
+        /// so the column goes back to following the sheet.</summary>
+        public void SetColumnWidth(int column, double width)
+        {
+            if (ApplyColumnWidth(column, width))
+            {
+                RaiseSizeChanged(column, 0, ColumnWidthOf(column));
+            }
+        }
+
+        /// <summary>Gives one row its own height, by the same rules as <see cref="SetColumnWidth"/>.</summary>
+        public void SetRowHeight(int row, double height)
+        {
+            if (ApplyRowHeight(row, height))
+            {
+                RaiseSizeChanged(0, row, RowHeightOf(row));
+            }
+        }
+
+        /// <summary>Sets one column's width without announcing it: the drag applies a new width per pixel of
+        /// movement, and an app that saves the form on <see cref="SheetSizeChanged"/> should not be asked to
+        /// write the file sixty times a second. The drag announces once, on release.</summary>
+        private bool ApplyColumnWidth(int column, double width)
+        {
+            if (column < 1 || column > ColumnCount)
+            {
+                return false;
+            }
+
+            var size = Math.Max(MinTrackSize, Math.Round(width));
+            if (Math.Abs(ColumnWidthOf(column) - size) < 0.01)
+            {
+                return false;
+            }
+
+            if (Math.Abs(ColumnWidth - size) < 0.01)
+            {
+                _columnWidths.Remove(column);
+            }
+            else
+            {
+                _columnWidths[column] = size;
+            }
+
+            RefreshGeometry();
+            return true;
+        }
+
+        private bool ApplyRowHeight(int row, double height)
+        {
+            if (row < 1 || row > RowCount)
+            {
+                return false;
+            }
+
+            var size = Math.Max(MinTrackSize, Math.Round(height));
+            if (Math.Abs(RowHeightOf(row) - size) < 0.01)
+            {
+                return false;
+            }
+
+            if (Math.Abs(RowHeight - size) < 0.01)
+            {
+                _rowHeights.Remove(row);
+            }
+            else
+            {
+                _rowHeights[row] = size;
+            }
+
+            RefreshGeometry();
+            return true;
+        }
+
+        /// <summary>Puts one column back on the sheet's own <see cref="ColumnWidth"/>.</summary>
+        public void ClearColumnWidth(int column)
+        {
+            if (_columnWidths.Remove(column))
+            {
+                RefreshGeometry();
+                RaiseSizeChanged(column, 0, ColumnWidth);
+            }
+        }
+
+        /// <summary>Puts one row back on the sheet's own <see cref="RowHeight"/>.</summary>
+        public void ClearRowHeight(int row)
+        {
+            if (_rowHeights.Remove(row))
+            {
+                RefreshGeometry();
+                RaiseSizeChanged(0, row, RowHeight);
+            }
+        }
+
+        /// <summary>Puts every column and row back on the sheet's own sizes.</summary>
+        public void ClearSizes()
+        {
+            if (_columnWidths.Count == 0 && _rowHeights.Count == 0)
+            {
+                return;
+            }
+
+            _columnWidths.Clear();
+            _rowHeights.Clear();
+            RefreshGeometry();
+        }
+
+        /// <summary>
+        /// The columns that have a width of their own, as <c>"3:120,7:60"</c> — sparse, so a sheet whose
+        /// columns are all the same writes nothing at all. Also the XAML form: <c>ColumnWidths="3:120"</c>.
+        /// </summary>
+        public string ColumnWidths
+        {
+            get { return TrackText(_columnWidths); }
+            set { ReadTrackText(value, _columnWidths, true); }
+        }
+
+        /// <summary>The rows that have a height of their own — see <see cref="ColumnWidths"/>.</summary>
+        public string RowHeights
+        {
+            get { return TrackText(_rowHeights); }
+            set { ReadTrackText(value, _rowHeights, false); }
+        }
+
+        /// <summary>Rebuilds everything that depended on the sizes: the offset tables, the scroll limits,
+        /// the picture. Called after any size change, by a drag or from code.</summary>
+        private void RefreshGeometry()
+        {
+            InvalidateTrackOffsets();
+            ClampScroll(Bounds.Size);
+            InvalidateVisual();
+        }
+
+        private void RaiseSizeChanged(int column, int row, double size)
+        {
+            var handler = SheetSizeChanged;
+            if (handler != null)
+            {
+                handler(this, new SheetSizeChangedEventArgs(column, row, size));
+            }
+        }
+
+        private static string TrackText(Dictionary<int, double> sizes)
+        {
+            if (sizes.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var keys = new List<int>(sizes.Keys);
+            keys.Sort();
+            var parts = new List<string>(keys.Count);
+            for (var i = 0; i < keys.Count; i++)
+            {
+                parts.Add(keys[i].ToString(CultureInfo.InvariantCulture) + ":" +
+                    sizes[keys[i]].ToString(CultureInfo.InvariantCulture));
+            }
+
+            return string.Join(",", parts);
+        }
+
+        /// <summary>
+        /// Reads <c>"3:120,7:60"</c>. Junk is SKIPPED rather than thrown on: this comes from an attribute
+        /// in a form, and one bad pair there must not take the window down. Off-the-sheet indexes are
+        /// ignored and tiny sizes are clamped exactly as a drag would clamp them.
+        /// </summary>
+        private void ReadTrackText(string? text, Dictionary<int, double> sizes, bool columns)
+        {
+            sizes.Clear();
+            if (!string.IsNullOrEmpty(text))
+            {
+                var parts = text!.Split(',');
+                var limit = columns ? ColumnCount : RowCount;
+                for (var i = 0; i < parts.Length; i++)
+                {
+                    var pair = parts[i].Split(':');
+                    if (pair.Length != 2)
+                    {
+                        continue;
+                    }
+
+                    int index;
+                    double size;
+                    if (!int.TryParse(pair[0].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out index) ||
+                        !double.TryParse(pair[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out size) ||
+                        index < 1 || index > limit)
+                    {
+                        continue;
+                    }
+
+                    sizes[index] = Math.Max(MinTrackSize, Math.Round(size));
+                }
+            }
+
+            RefreshGeometry();
         }
 
         private Rect SelectionRect()
@@ -1129,6 +1745,152 @@ namespace AvaloniaSpreadsheet
                 HandleSize, HandleSize);
         }
 
+        // ---- the scrollbars -----------------------------------------------------------------------
+        // Drawn OVER the grid, slim, and only when there is something to scroll to. Without them a sheet
+        // wider than its space gave no sign at all that the columns on the right existed (the wheel
+        // scrolls rows, and Shift+wheel scrolls columns — nobody guesses that).
+
+        /// <summary>The vertical scrollbar's track, along the right edge of the grid — or an empty rect
+        /// when the rows all fit.</summary>
+        private Rect VScrollRect(Size size)
+        {
+            var grid = GridRect(size);
+            if (!ShowScrollBars || grid.Width <= 0 || grid.Height <= 0 ||
+                ContentHeight() <= grid.Height + 0.5)
+            {
+                return new Rect(0, 0, 0, 0);
+            }
+
+            return new Rect(grid.Right - ScrollBarSize, grid.Y, ScrollBarSize, grid.Height);
+        }
+
+        /// <summary>The horizontal scrollbar's track, along the bottom edge of the grid.</summary>
+        private Rect HScrollRect(Size size)
+        {
+            var grid = GridRect(size);
+            if (!ShowScrollBars || grid.Width <= 0 || grid.Height <= 0 ||
+                ContentWidth() <= grid.Width + 0.5)
+            {
+                return new Rect(0, 0, 0, 0);
+            }
+
+            return new Rect(grid.X, grid.Bottom - ScrollBarSize, grid.Width, ScrollBarSize);
+        }
+
+        /// <summary>The grabbable thumb inside a track: its length is the visible fraction of the content,
+        /// and where it sits is where the sheet is scrolled to. The geometry here is exact — the thumb a
+        /// drag computes from is the thumb that is drawn, or it would creep away from the pointer.</summary>
+        private static Rect ThumbIn(Rect track, double content, double viewport, double offset, bool vertical)
+        {
+            if (track.Width <= 0 || track.Height <= 0)
+            {
+                return new Rect(0, 0, 0, 0);
+            }
+
+            var span = vertical ? track.Height : track.Width;
+            var thumb = ThumbSpan(span, content, viewport);
+            var travel = span - thumb;
+            var maxOffset = Math.Max(0.0001, content - viewport);
+            var at = travel * Math.Min(1d, Math.Max(0d, offset / maxOffset));
+            return vertical
+                ? new Rect(track.X, track.Y + at, track.Width, thumb)
+                : new Rect(track.X + at, track.Y, thumb, track.Height);
+        }
+
+        /// <summary>How long a thumb is: the visible fraction of the content, never shorter than
+        /// <see cref="MinThumbSize"/> so a very long sheet still leaves something to grab.</summary>
+        private static double ThumbSpan(double span, double content, double viewport)
+        {
+            return Math.Max(MinThumbSize, span * Math.Min(1d, viewport / content));
+        }
+
+        private Rect VScrollThumb(Size size)
+        {
+            var grid = GridRect(size);
+            return ThumbIn(VScrollRect(size), ContentHeight(), grid.Height, _scrollY, true);
+        }
+
+        private Rect HScrollThumb(Size size)
+        {
+            var grid = GridRect(size);
+            return ThumbIn(HScrollRect(size), ContentWidth(), grid.Width, _scrollX, false);
+        }
+
+        /// <summary>The travel a thumb has, in pixels — and the offset range it stands for.</summary>
+        private void TrackSpan(Size size, bool vertical, out double travel, out double maxOffset)
+        {
+            var grid = GridRect(size);
+            var track = vertical ? VScrollRect(size) : HScrollRect(size);
+            var span = vertical ? track.Height : track.Width;
+            var content = vertical ? ContentHeight() : ContentWidth();
+            var viewport = vertical ? grid.Height : grid.Width;
+            travel = Math.Max(0.0001, span - ThumbSpan(span, content, viewport));
+            maxOffset = Math.Max(0d, content - viewport);
+        }
+
+        /// <summary>Puts the sheet where a drag of a thumb has taken it: the distance the pointer moved,
+        /// scaled from thumb travel to scroll range.</summary>
+        private void ScrollThumbTo(Size size, bool vertical, double offset)
+        {
+            if (vertical)
+            {
+                _scrollY = offset;
+            }
+            else
+            {
+                _scrollX = offset;
+            }
+
+            ClampScroll(size);
+            InvalidateVisual();
+        }
+
+        /// <summary>Scrolls so a point in the track becomes the MIDDLE of the view — what clicking the
+        /// track itself does, the way every scrollbar in every toolkit behaves.</summary>
+        private void ScrollTrackTo(Size size, bool vertical, double position)
+        {
+            var grid = GridRect(size);
+            var track = vertical ? VScrollRect(size) : HScrollRect(size);
+            var span = vertical ? track.Height : track.Width;
+            var content = vertical ? ContentHeight() : ContentWidth();
+            var viewport = vertical ? grid.Height : grid.Width;
+            double travel;
+            double maxOffset;
+            TrackSpan(size, vertical, out travel, out maxOffset);
+            var thumb = ThumbSpan(span, content, viewport);
+            var at = (vertical ? position - track.Y : position - track.X) - thumb / 2;
+            ScrollThumbTo(size, vertical, at / travel * maxOffset);
+        }
+
+        /// <summary>Paints both scrollbars, when they apply.</summary>
+        private void DrawScrollBars(DrawingContext context, Size size)
+        {
+            var grid = GridRect(size);
+            using (context.PushClip(grid))
+            {
+                var back = new SolidColorBrush(Color.Parse("#EFF1F4"));
+                var edge = new SolidColorBrush(GridColor);
+                var thumb = new SolidColorBrush(Color.Parse("#B7BEC8"));
+                var vTrack = VScrollRect(size);
+                if (vTrack.Width > 0)
+                {
+                    context.FillRectangle(back, vTrack);
+                    context.DrawLine(new Pen(edge, 1d), new Point(vTrack.X + 0.5, vTrack.Y),
+                        new Point(vTrack.X + 0.5, vTrack.Bottom));
+                    context.FillRectangle(thumb, VScrollThumb(size));
+                }
+
+                var hTrack = HScrollRect(size);
+                if (hTrack.Height > 0)
+                {
+                    context.FillRectangle(back, hTrack);
+                    context.DrawLine(new Pen(edge, 1d), new Point(hTrack.X, hTrack.Y + 0.5),
+                        new Point(hTrack.Right, hTrack.Y + 0.5));
+                    context.FillRectangle(thumb, HScrollThumb(size));
+                }
+            }
+        }
+
         private void ClampScroll(Size size)
         {
             var grid = GridRect(size);
@@ -1142,8 +1904,8 @@ namespace AvaloniaSpreadsheet
                 return;
             }
 
-            var contentWidth = ColumnCount * ColumnWidth;
-            var contentHeight = RowCount * RowHeight;
+            var contentWidth = ContentWidth();
+            var contentHeight = ContentHeight();
             var maxX = contentWidth - grid.Width;
             var maxY = contentHeight - grid.Height;
             _scrollX = maxX <= 0 ? 0 : Math.Min(_scrollX, maxX);
@@ -1197,8 +1959,10 @@ namespace AvaloniaSpreadsheet
         protected override Size MeasureOverride(Size availableSize)
         {
             var origin = GridOrigin;
-            var width = origin.X + ColumnCount * ColumnWidth;
-            var height = origin.Y + RowCount * RowHeight;
+            // ContentWidth/Height, not Columns * ColumnWidth: a widened column makes the sheet wider, and
+            // measuring it as though it were not would leave the last columns clipped for good.
+            var width = origin.X + ContentWidth();
+            var height = origin.Y + ContentHeight();
             if (!double.IsInfinity(availableSize.Width) && width > availableSize.Width)
             {
                 width = availableSize.Width;
@@ -1299,21 +2063,34 @@ namespace AvaloniaSpreadsheet
                 {
                     for (var column = firstColumn; column <= lastColumn; column++)
                     {
-                        var text = GetCell(row, column);
-                        if (text.Length == 0)
+                        // The cell being edited IN PLACE, if this is it. Its text lives in _editText until
+                        // the edit is committed, so drawing GetCell() here would show the old value — and
+                        // SKIPPING it (which is what this did until 2026-09-26) drew nothing at all, so
+                        // typing looked invisible until the cell lost focus.
+                        var inPlaceEdit = _editing && !_barFocused
+                            && row == _activeRow && column == _activeColumn;
+                        var text = inPlaceEdit ? _editText : GetCell(row, column);
+                        if (text.Length == 0 && !inPlaceEdit)
                         {
                             continue;
-                        }
-
-                        var isEditingThis = _editing && !_barFocused && row == _activeRow && column == _activeColumn;
-                        if (isEditingThis)
-                        {
-                            continue;                       // the editor draws it, with its caret
                         }
 
                         // This cell's own formatting, all of it "unset means the sheet's own".
                         var cell = FindCell(row, column);
                         var align = AlignOf(cell);
+                        if (inPlaceEdit)
+                        {
+                            // Left while typing, the way every spreadsheet does it — a number should not
+                            // jump about as it becomes numeric — but a column the user aligned by hand
+                            // stays where they put it.
+                            var editingAlign = align == SheetAlign.Auto
+                                ? TextAlignment.Left
+                                : ToTextAlignment(align);
+                            DrawCellText(context, text, CellRect(row, column), TextBrushOf(cell, textBrush),
+                                false, editingAlign, _caret, TypefaceFor(cell), SizeOf(cell));
+                            continue;
+                        }
+
                         var numeric = LooksNumeric(text) && align == SheetAlign.Auto;
                         DrawCellText(context, text, CellRect(row, column), TextBrushOf(cell, textBrush),
                             numeric, ToTextAlignment(align), -1, TypefaceFor(cell), SizeOf(cell));
@@ -1326,6 +2103,7 @@ namespace AvaloniaSpreadsheet
             DrawFormulaBar(context, size, headerBrush, headerTextBrush, textBrush, selectionBrush);
             if (!AllowEditing)
             {
+                DrawScrollBars(context, size);
                 return;
             }
 
@@ -1338,6 +2116,9 @@ namespace AvaloniaSpreadsheet
                     context.FillRectangle(selectionBrush, handle);
                 }
             }
+
+            // Last, so nothing is drawn over a bar the user is trying to grab.
+            DrawScrollBars(context, size);
         }
 
         /// <summary>Draws the frozen headers, with the selected rows/columns lit up.</summary>
@@ -1360,7 +2141,9 @@ namespace AvaloniaSpreadsheet
                 context.FillRectangle(new SolidColorBrush(SelectionFillColor), highlighted);
                 for (var column = VisibleFirstColumn(grid); column <= VisibleLastColumn(grid); column++)
                 {
-                    var rect = new Rect(CellRect(1, column).X, columnHeader.Y, ColumnWidth, HeaderHeight);
+                    // Each letter is centred in ITS OWN column, which is not the sheet's ColumnWidth once
+                    // one has been dragged.
+                    var rect = new Rect(CellRect(1, column).X, columnHeader.Y, ColumnWidthOf(column), HeaderHeight);
                     DrawCellText(context, ColumnName(column), rect, text, false, TextAlignment.Center);
                 }
             }
@@ -1375,7 +2158,7 @@ namespace AvaloniaSpreadsheet
                 context.FillRectangle(new SolidColorBrush(SelectionFillColor), highlighted);
                 for (var row = VisibleFirstRow(grid); row <= VisibleLastRow(grid); row++)
                 {
-                    var rect = new Rect(0, CellRect(row, 1).Y, HeaderWidth, RowHeight);
+                    var rect = new Rect(0, CellRect(row, 1).Y, HeaderWidth, RowHeightOf(row));
                     DrawCellText(context, row.ToString(CultureInfo.InvariantCulture), rect, text, false,
                         TextAlignment.Center);
                 }
@@ -1622,26 +2405,22 @@ namespace AvaloniaSpreadsheet
 
         private int VisibleFirstRow(Rect grid)
         {
-            var row = (int)Math.Floor((grid.Y - GridOrigin.Y + _scrollY) / RowHeight) + 1;
-            return row < 1 ? 1 : row;
+            return RowAt(grid.Y);
         }
 
         private int VisibleLastRow(Rect grid)
         {
-            var row = (int)Math.Ceiling((grid.Bottom - GridOrigin.Y + _scrollY) / RowHeight);
-            return row > RowCount ? RowCount : row;
+            return RowAt(grid.Bottom);
         }
 
         private int VisibleFirstColumn(Rect grid)
         {
-            var column = (int)Math.Floor((grid.X - GridOrigin.X + _scrollX) / ColumnWidth) + 1;
-            return column < 1 ? 1 : column;
+            return ColumnAt(grid.X);
         }
 
         private int VisibleLastColumn(Rect grid)
         {
-            var column = (int)Math.Ceiling((grid.Right - GridOrigin.X + _scrollX) / ColumnWidth);
-            return column > ColumnCount ? ColumnCount : column;
+            return ColumnAt(grid.Right);
         }
 
         // ---- the mouse --------------------------------------------------------------------------
@@ -1653,6 +2432,12 @@ namespace AvaloniaSpreadsheet
         private const int HitCorner = 4;
         private const int HitHandle = 5;
         private const int HitBar = 6;
+        private const int HitColumnResize = 7;
+        private const int HitRowResize = 8;
+        private const int HitVScrollThumb = 9;
+        private const int HitVScrollTrack = 10;
+        private const int HitHScrollThumb = 11;
+        private const int HitHScrollTrack = 12;
 
         /// <summary>What is under a point, and which cell it belongs to.</summary>
         private int HitTest(Point point, out int row, out int column)
@@ -1680,13 +2465,29 @@ namespace AvaloniaSpreadsheet
                         return HitCorner;
                     }
 
-                    column = ColumnAt(point.X, grid);
+                    // A border between two columns — checked BEFORE the header itself, so a press on the
+                    // edge resizes instead of selecting the column the edge belongs to.
+                    var resizing = ColumnBorderAt(point.X);
+                    if (resizing > 0)
+                    {
+                        column = resizing;
+                        return HitColumnResize;
+                    }
+
+                    column = ColumnAt(point.X);
                     return HitColumnHeader;
                 }
 
                 if (point.X < HeaderWidth)
                 {
-                    row = RowAt(point.Y, grid);
+                    var resizing = RowBorderAt(point.Y);
+                    if (resizing > 0)
+                    {
+                        row = resizing;
+                        return HitRowResize;
+                    }
+
+                    row = RowAt(point.Y);
                     return HitRowHeader;
                 }
             }
@@ -1696,8 +2497,22 @@ namespace AvaloniaSpreadsheet
                 return HitNothing;
             }
 
-            row = RowAt(point.Y, grid);
-            column = ColumnAt(point.X, grid);
+            // The scrollbars are drawn over the grid, so they are hit first — otherwise the last column's
+            // cells would be under an unreachable bar.
+            var vTrack = VScrollRect(size);
+            if (vTrack.Contains(point))
+            {
+                return VScrollThumb(size).Contains(point) ? HitVScrollThumb : HitVScrollTrack;
+            }
+
+            var hTrack = HScrollRect(size);
+            if (hTrack.Contains(point))
+            {
+                return HScrollThumb(size).Contains(point) ? HitHScrollThumb : HitHScrollTrack;
+            }
+
+            row = RowAt(point.Y);
+            column = ColumnAt(point.X);
             if (!_selectAll && Math.Abs(point.X - HandleRect().Center.X) <= HandleSize &&
                 Math.Abs(point.Y - HandleRect().Center.Y) <= HandleSize)
             {
@@ -1707,14 +2522,259 @@ namespace AvaloniaSpreadsheet
             return HitCell;
         }
 
-        private int RowAt(double y, Rect grid)
+        private int RowAt(double y)
         {
-            return ClampRow((int)Math.Floor((y - GridOrigin.Y + _scrollY) / RowHeight) + 1);
+            return RowAtOffset(y - GridOrigin.Y + _scrollY);
         }
 
-        private int ColumnAt(double x, Rect grid)
+        private int ColumnAt(double x)
         {
-            return ClampColumn((int)Math.Floor((x - GridOrigin.X + _scrollX) / ColumnWidth) + 1);
+            return ColumnAtOffset(x - GridOrigin.X + _scrollX);
+        }
+
+        /// <summary>
+        /// The column whose RIGHT border the pointer is within <see cref="ResizeGrip"/> of, or 0. The
+        /// border belongs to the column on its left, which is the one a drag resizes — and the last
+        /// column's right edge counts too, that being how you widen the last one.
+        /// </summary>
+        private int ColumnBorderAt(double x)
+        {
+            var origin = GridOrigin.X - _scrollX;
+            for (var column = 1; column <= ColumnCount; column++)
+            {
+                if (Math.Abs(x - (origin + ColumnOffset(column + 1))) <= ResizeGrip)
+                {
+                    return column;
+                }
+            }
+
+            return 0;
+        }
+
+        /// <summary>The row whose BOTTOM border the pointer is on, or 0 — see <see cref="ColumnBorderAt"/>.</summary>
+        private int RowBorderAt(double y)
+        {
+            var origin = GridOrigin.Y - _scrollY;
+            for (var row = 1; row <= RowCount; row++)
+            {
+                if (Math.Abs(y - (origin + RowOffset(row + 1))) <= ResizeGrip)
+                {
+                    return row;
+                }
+            }
+
+            return 0;
+        }
+
+        /// <summary>The cursor a hit calls for: the only sign that a header edge can be dragged at all.</summary>
+        private static StandardCursorType CursorFor(int hit)
+        {
+            if (hit == HitColumnResize)
+            {
+                return StandardCursorType.SizeWestEast;
+            }
+
+            return hit == HitRowResize ? StandardCursorType.SizeNorthSouth : StandardCursorType.Arrow;
+        }
+
+        private void SetCursor(StandardCursorType wanted)
+        {
+            if (_cursor == wanted)
+            {
+                return;
+            }
+
+            _cursor = wanted;
+            Cursor = new Cursor(wanted);
+        }
+
+        /// <summary>Back to the arrow when the pointer leaves, whatever it was showing.</summary>
+        protected override void OnPointerExited(PointerEventArgs e)
+        {
+            SetCursor(StandardCursorType.Arrow);
+            base.OnPointerExited(e);
+        }
+
+        // ---- the right-click menu ------------------------------------------------------------------
+
+        /// <summary>
+        /// Right-click: line the selection up, bold it, or clear it. An ordinary Avalonia
+        /// <see cref="ContextMenu"/>, so it opens on right-click, closes on Escape and draws outside the
+        /// control's own bounds — the control's own drawing stops at its edges, a popup does not.
+        ///
+        /// The alignment items are what a spreadsheet needs most often, and the reason this exists: a
+        /// whole COLUMN can be lined up in one gesture, which the Ctrl+B/I keys and the toolbar could not
+        /// do without selecting all fifty rows of it by hand.
+        /// </summary>
+        private void BuildContextMenu()
+        {
+            var menu = new ContextMenu();
+            AddAlignItem(menu, "Align left", SheetAlign.Left);
+            AddAlignItem(menu, "Align centre", SheetAlign.Center);
+            AddAlignItem(menu, "Align right", SheetAlign.Right);
+            AddAlignItem(menu, "Align automatically", SheetAlign.Auto);
+            menu.Items.Add(new Separator());
+            _boldItem = AddToggleItem(menu, "Bold", () =>
+            {
+                ToggleBoldSelection();
+            });
+            _italicItem = AddToggleItem(menu, "Italics", () =>
+            {
+                ToggleItalicSelection();
+            });
+            menu.Items.Add(new Separator());
+            AddItem(menu, "Clear formatting", () =>
+            {
+                ClearSelectionFormatting();
+            });
+            AddItem(menu, "Clear cells", () =>
+            {
+                ClearSelection();
+            });
+
+            // The menu is about the SELECTION, so it is off entirely when the sheet is read-only.
+            menu.Opening += (sender, args) =>
+            {
+                if (!AllowEditing)
+                {
+                    args.Cancel = true;
+                    return;
+                }
+
+                UpdateMenuTicks();
+            };
+
+            ContextMenu = menu;
+            ContextRequested += OnSheetContextRequested;
+        }
+
+        private void AddAlignItem(ContextMenu menu, string title, SheetAlign align)
+        {
+            var item = new MenuItem { Header = title, ToggleType = MenuItemToggleType.Radio };
+            item.Click += (sender, args) =>
+            {
+                AlignSelection(align);
+                UpdateMenuTicks();
+            };
+            _alignItems[align] = item;
+            menu.Items.Add(item);
+        }
+
+        private MenuItem AddItem(ContextMenu menu, string title, Action action)
+        {
+            var item = new MenuItem { Header = title };
+            item.Click += (sender, args) => action();
+            menu.Items.Add(item);
+            return item;
+        }
+
+        private MenuItem AddToggleItem(ContextMenu menu, string title, Action action)
+        {
+            var item = new MenuItem { Header = title, ToggleType = MenuItemToggleType.CheckBox };
+            item.Click += (sender, args) =>
+            {
+                action();
+                UpdateMenuTicks();
+            };
+            menu.Items.Add(item);
+            return item;
+        }
+
+        /// <summary>Ticks what the whole selection currently is, so the menu reads as a state as well as a
+        /// set of commands. Nothing is ticked when the selection disagrees with itself.</summary>
+        private void UpdateMenuTicks()
+        {
+            var agreed = SelectionTextAlign();
+            foreach (var pair in _alignItems)
+            {
+                pair.Value.IsChecked = agreed == pair.Key;
+            }
+
+            if (_boldItem != null)
+            {
+                _boldItem.IsChecked = SelectionFlag(true) == true;
+            }
+
+            if (_italicItem != null)
+            {
+                _italicItem.IsChecked = SelectionFlag(false) == true;
+            }
+        }
+
+        /// <summary>True when every cell in the selection is bold (or italic), false when none is, null
+        /// when they disagree or the selection holds no cells at all. Cells that do not exist are ignored,
+        /// for the reason in <see cref="SelectionTextAlign"/>.</summary>
+        private bool? SelectionFlag(bool bold)
+        {
+            var first = SelectionFirstRow();
+            var last = SelectionLastRow();
+            var left = SelectionFirstColumn();
+            var right = SelectionLastColumn();
+            bool? all = null;
+            for (var row = first; row <= last; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    var cell = FindCell(row, column);
+                    if (cell == null)
+                    {
+                        continue;
+                    }
+
+                    var on = bold ? cell.Bold : cell.Italic;
+                    if (all == null)
+                    {
+                        all = on;
+                    }
+                    else if (all != on)
+                    {
+                        return null;
+                    }
+                }
+            }
+
+            return all;
+        }
+
+        /// <summary>
+        /// Moves the selection onto what was right-clicked — unless the cell is already inside the
+        /// selection, in which case the menu is about the whole block, which is what the user aimed at.
+        /// This is every spreadsheet's rule, and the reason the hook is on ContextRequested: it is the one
+        /// event that still knows where the pointer was.
+        /// </summary>
+        private void OnSheetContextRequested(object? sender, ContextRequestedEventArgs e)
+        {
+            Point point;
+            if (!e.TryGetPosition(this, out point))
+            {
+                return;
+            }
+
+            var hit = HitTest(point, out var row, out var column);
+            if (hit == HitColumnHeader)
+            {
+                SelectColumns(column, false);
+                return;
+            }
+
+            if (hit == HitRowHeader)
+            {
+                SelectRows(row, false);
+                return;
+            }
+
+            if (hit != HitCell)
+            {
+                return;
+            }
+
+            if (row >= SelectionFirstRow() && row <= SelectionLastRow() &&
+                column >= SelectionFirstColumn() && column <= SelectionLastColumn())
+            {
+                return;
+            }
+
+            SelectCell(row, column);
         }
 
         /// <summary>Starts a selection, a fill, or an edit.</summary>
@@ -1751,6 +2811,64 @@ namespace AvaloniaSpreadsheet
             if (hit == HitCorner)
             {
                 SelectAll();
+                e.Handled = true;
+                return;
+            }
+
+            // Dragging a scrollbar's thumb, or jumping when its track is clicked.
+            if (hit == HitVScrollThumb || hit == HitHScrollThumb)
+            {
+                _scrollDragging = true;
+                _scrollDragVertical = hit == HitVScrollThumb;
+                _scrollDragStart = _scrollDragVertical ? point.Position.Y : point.Position.X;
+                _scrollDragStartOffset = _scrollDragVertical ? _scrollY : _scrollX;
+                e.Pointer.Capture(this);
+                e.Handled = true;
+                return;
+            }
+
+            if (hit == HitVScrollTrack)
+            {
+                ScrollTrackTo(Bounds.Size, true, point.Position.Y);
+                _scrollDragging = true;
+                _scrollDragVertical = true;
+                _scrollDragStart = point.Position.Y;
+                _scrollDragStartOffset = _scrollY;
+                e.Pointer.Capture(this);
+                e.Handled = true;
+                return;
+            }
+
+            if (hit == HitHScrollTrack)
+            {
+                ScrollTrackTo(Bounds.Size, false, point.Position.X);
+                _scrollDragging = true;
+                _scrollDragVertical = false;
+                _scrollDragStart = point.Position.X;
+                _scrollDragStartOffset = _scrollX;
+                e.Pointer.Capture(this);
+                e.Handled = true;
+                return;
+            }
+
+            // Dragging a header border to size a column or a row. This comes before everything the headers
+            // normally do, because the press is ON the header strip.
+            if (hit == HitColumnResize)
+            {
+                _resizeColumn = column;
+                _resizeStartSize = ColumnWidthOf(column);
+                _resizeStartX = point.Position.X;
+                e.Pointer.Capture(this);
+                e.Handled = true;
+                return;
+            }
+
+            if (hit == HitRowResize)
+            {
+                _resizeRow = row;
+                _resizeStartSize = RowHeightOf(row);
+                _resizeStartY = point.Position.Y;
+                e.Pointer.Capture(this);
                 e.Handled = true;
                 return;
             }
@@ -1806,16 +2924,49 @@ namespace AvaloniaSpreadsheet
             e.Handled = true;
         }
 
-        /// <summary>Extends the selection, or moves the fill preview.</summary>
+        /// <summary>Extends the selection, moves a border, or moves the fill preview.</summary>
         protected override void OnPointerMoved(PointerEventArgs e)
         {
             var point = e.GetCurrentPoint(this).Position;
-            if (!_draggingSelection && !_draggingFill)
+            var hit = HitTest(point, out var row, out var column);
+
+            // Dragging a scrollbar: the pointer's travel along the track, scaled to the scroll range.
+            if (_scrollDragging)
             {
+                var size = Bounds.Size;
+                double travel;
+                double maxOffset;
+                TrackSpan(size, _scrollDragVertical, out travel, out maxOffset);
+                var moved = (_scrollDragVertical ? point.Y : point.X) - _scrollDragStart;
+                ScrollThumbTo(size, _scrollDragVertical, _scrollDragStartOffset + moved / travel * maxOffset);
+                e.Handled = true;
                 return;
             }
 
-            var hit = HitTest(point, out var row, out var column);
+            // Resizing: the pointer's distance from where the drag started is the whole calculation, and
+            // Apply* clamps and rounds it. Nothing is announced until the mouse comes up (see release).
+            if (_resizeColumn > 0)
+            {
+                ApplyColumnWidth(_resizeColumn, _resizeStartSize + (point.X - _resizeStartX));
+                e.Handled = true;
+                return;
+            }
+
+            if (_resizeRow > 0)
+            {
+                ApplyRowHeight(_resizeRow, _resizeStartSize + (point.Y - _resizeStartY));
+                e.Handled = true;
+                return;
+            }
+
+            if (!_draggingSelection && !_draggingFill)
+            {
+                // Nothing is being dragged, so the only thing a move does is show whether the edge under
+                // the pointer can be dragged.
+                SetCursor(CursorFor(hit));
+                return;
+            }
+
             if (hit == HitNothing)
             {
                 return;
@@ -1854,28 +3005,57 @@ namespace AvaloniaSpreadsheet
         protected override void OnPointerReleased(PointerReleasedEventArgs e)
         {
             var wasFill = _draggingFill;
+            var resizedColumn = _resizeColumn;
+            var resizedRow = _resizeRow;
+            var resizeStartSize = _resizeStartSize;
             _draggingSelection = false;
             _draggingFill = false;
+            _resizeColumn = 0;
+            _resizeRow = 0;
+            _scrollDragging = false;
             e.Pointer.Capture(null);
             if (wasFill)
             {
                 ApplyFill();
             }
 
+            // Now that the mouse is up, say so — once, with the size it ended on. A form can save the
+            // widths here and get them back from ColumnWidths/RowHeights next run.
+            if (resizedColumn > 0 && Math.Abs(ColumnWidthOf(resizedColumn) - resizeStartSize) > 0.01)
+            {
+                RaiseSizeChanged(resizedColumn, 0, ColumnWidthOf(resizedColumn));
+            }
+
+            if (resizedRow > 0 && Math.Abs(RowHeightOf(resizedRow) - resizeStartSize) > 0.01)
+            {
+                RaiseSizeChanged(0, resizedRow, RowHeightOf(resizedRow));
+            }
+
+            SetCursor(StandardCursorType.Arrow);
             InvalidateVisual();
         }
 
-        /// <summary>Scrolling: the wheel moves three rows, Shift+wheel moves sideways.</summary>
+        /// <summary>Scrolling: the wheel moves three rows or three columns, Shift makes it sideways, and
+        /// when there is nothing to scroll VERTICALLY the wheel goes sideways instead — otherwise the
+        /// columns off to the right are unreachable with an ordinary mouse.</summary>
         protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
         {
             var size = Bounds.Size;
-            if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+            var grid = GridRect(size);
+            var vertical = e.Delta.Y;
+            if (vertical != 0 && ContentHeight() <= grid.Height + 0.5)
             {
-                _scrollX -= e.Delta.Y * ColumnWidth;
+                // A sheet that is wide but not tall: a plain wheel has no rows to move, so it moves the
+                // columns. This is what every browser does with a wheel over a horizontally scrolling box.
+                _scrollX -= vertical * ColumnWidth * 3;
+            }
+            else if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+            {
+                _scrollX -= vertical * ColumnWidth;
             }
             else
             {
-                _scrollY -= e.Delta.Y * RowHeight * 3;
+                _scrollY -= vertical * RowHeight * 3;
                 _scrollX -= e.Delta.X * ColumnWidth * 3;
             }
 
@@ -2061,7 +3241,7 @@ namespace AvaloniaSpreadsheet
         /// <summary>Typing replaces the active cell — the fastest way into a sheet.</summary>
         protected override void OnTextInput(TextInputEventArgs e)
         {
-            if (!AllowEditing || _editing || string.IsNullOrEmpty(e.Text))
+            if (!AllowEditing || string.IsNullOrEmpty(e.Text))
             {
                 return;
             }
@@ -2079,6 +3259,17 @@ namespace AvaloniaSpreadsheet
 
             if (!usable)
             {
+                return;
+            }
+
+            // The editor is already open — clicked into the cell, F2, or by the first character of this very
+            // word — so this character goes IN at the caret. It used to be dropped on the floor:
+            // InsertIntoEdit was written for exactly this and never called, so typing a word into a cell
+            // kept only its first letter (found 2026-09-26, with the missing in-cell editor drawing).
+            if (_editing)
+            {
+                InsertIntoEdit(text);
+                e.Handled = true;
                 return;
             }
 

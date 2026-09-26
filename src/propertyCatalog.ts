@@ -715,6 +715,10 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'Cells', label: 'Edit cells…', kind: 'button', desc: 'Open the spreadsheet grid: type in the cells, select a range and drag its fill handle to continue a series. What you leave is written into the form as <spread:SheetCell> elements, and the Rows/Columns boxes at the top of the same dialog set how big the sheet is. The formatting bar in that dialog — bold, italics, size, font, text colour, highlight, alignment — applies to everything selected and shows the active cell’s own settings; a setting left on the sheet’s own is not written to the form at all, and Clear formatting drops the lot.' },
         { key: 'ColumnWidth', label: 'Column Width', kind: 'number', unit: 'px', defaultValue: '72' },
         { key: 'RowHeight', label: 'Row Height', kind: 'number', unit: 'px', defaultValue: '22' },
+        // Widths and heights for the tracks that are NOT the sheet's own, as "3:120,7:60" — the same
+        // sparse form the control drags into at run time when a header border is dragged.
+        { key: 'ColumnWidths', label: 'Own Column Widths', kind: 'text', desc: 'Columns with a width of their own, written as Column:Width pairs — for example 3:120,7:60. Everything else follows Column Width. In the running app these are what dragging a column border sets, and the sheet can hand them back through its ColumnWidths property so a form can save them.' },
+        { key: 'RowHeights', label: 'Own Row Heights', kind: 'text', desc: 'Rows with a height of their own — see Own Column Widths. Written as Row:Height pairs, for example 2:36.' },
         { key: 'HeaderWidth', label: 'Header Width', kind: 'number', unit: 'px', defaultValue: '44' },
         { key: 'HeaderHeight', label: 'Header Height', kind: 'number', unit: 'px', defaultValue: '24' },
         { key: 'FontFamilyName', label: 'Font Family', kind: 'text', defaultValue: '' },
@@ -728,6 +732,7 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'SelectionFillColor', label: 'Selection Fill', kind: 'color', options: COLORS, defaultValue: '#DCE9FA' },
         { key: 'ShowHeaders', label: 'Show Headers', kind: 'dropdown', options: BOOL, defaultValue: 'True' },
         { key: 'ShowFormulaBar', label: 'Formula Bar', kind: 'dropdown', options: BOOL, defaultValue: 'True' },
+        { key: 'ShowScrollBars', label: 'Scrollbars', kind: 'dropdown', options: BOOL, defaultValue: 'True', desc: 'Draw slim scrollbars when the sheet is bigger than its space. They appear by themselves when there is something to scroll to, and they are the only sign that columns off to the right are reachable.' },
         { key: 'AllowEditing', label: 'Allow Editing', kind: 'dropdown', options: BOOL, defaultValue: 'True' }
     ],
     GrumpyLinePlot: [
@@ -1995,8 +2000,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'MaxDropDownHeight', 'SizeToContent', 'CanResize', 'AutoSizeToCell', 'TitleBarHeight',
             'WindowState', 'WindowStartupLocation',
             // How big a cell is: the DataGrid's own column/row sizing and the sheet's, which share the
-            // keys (both are an honest size), plus the sheet's two header measurements.
-            'ColumnWidth', 'RowHeight', 'HeaderWidth', 'HeaderHeight'
+            // keys (both are an honest size), plus the sheet's two header measurements and the sparse
+            // per-column/per-row overrides a dragged border writes ('3:120').
+            'ColumnWidth', 'RowHeight', 'ColumnWidths', 'RowHeights', 'HeaderWidth', 'HeaderHeight'
         ]
     },
     {
@@ -2133,9 +2139,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // AsDrawn (the default) keeps the chart's own size and prints the legend as drawn, which is
             // what the rows did nothing about before.
             'PrintPaper', 'PrintMargin', 'PrintLightBackground', 'PrintLegend', 'PrintInk',
-            // GrumpySheet's three switches: whether the headers are drawn, whether the formula bar is,
-            // and whether the user of the form can type in it at all.
-            'ShowHeaders', 'ShowFormulaBar', 'AllowEditing'
+            // GrumpySheet's four switches: whether the headers are drawn, whether the formula bar is,
+            // whether the scrollbars are, and whether the user of the form can type in it at all.
+            'ShowHeaders', 'ShowFormulaBar', 'ShowScrollBars', 'AllowEditing'
         ]
     }
 ];
