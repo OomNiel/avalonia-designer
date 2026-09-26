@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.11
+// BUNDLED-COPY: 0.12.12
 // GrumpySheet.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpySheet.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs / GrumpyCharts.cs.
 //
@@ -349,12 +349,6 @@ namespace AvaloniaSpreadsheet
         private double _scrollDragStart;
         private double _scrollDragStartOffset;
 
-        // The right-click menu, built once in the constructor. The alignment items and the two toggles are
-        // kept so their ticks can be refreshed from the selection each time the menu opens.
-        private readonly Dictionary<SheetAlign, MenuItem> _alignItems = new Dictionary<SheetAlign, MenuItem>();
-        private MenuItem? _boldItem;
-        private MenuItem? _italicItem;
-
         static GrumpySheet()
         {
             AffectsRender<GrumpySheet>(RowsProperty, ColumnsProperty, ColumnWidthProperty, RowHeightProperty,
@@ -374,7 +368,42 @@ namespace AvaloniaSpreadsheet
             ClipToBounds = true;
             Cells.CollectionChanged += OnCellsChanged;
             LostFocus += OnSheetLostFocus;
-            BuildContextMenu();
+        }
+
+        /// <summary>
+        /// Takes the keyboard when the sheet appears and NOTHING else in the window has it. The arrow keys
+        /// need focus, and until this existed they did nothing at all until the user clicked a cell — which
+        /// reads as "the sheet ignores the keyboard" (reported 2026-09-26).
+        ///
+        /// The work happens on LOADED, not on attach: while the tree is being attached there is no TopLevel
+        /// yet, so GetTopLevel returns null and asking the FocusManager anything silently does nothing.
+        /// Deliberately conditional: a form that puts the caret in a TextBox on startup keeps it.
+        /// </summary>
+        protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            base.OnAttachedToVisualTree(e);
+            Loaded += OnSheetLoaded;
+        }
+
+        private void OnSheetLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            Loaded -= OnSheetLoaded;
+            // The focus request has to wait for the load to FINISH: asking inside the Loaded handler itself
+            // is too early and is simply refused (the window is active, the FocusManager is empty, and
+            // IsFocused stays false). One step through the dispatcher is what makes the arrows work the
+            // moment the form appears instead of only after the first click.
+            Avalonia.Threading.Dispatcher.UIThread.Post(TryTakeFocus, Avalonia.Threading.DispatcherPriority.Background);
+        }
+
+        private void TryTakeFocus()
+        {
+            var manager = TopLevel.GetTopLevel(this)?.FocusManager;
+            if (manager == null || manager.GetFocusedElement() != null || !IsVisible)
+            {
+                return;
+            }
+
+            Focus();
         }
 
         /// <summary>
@@ -2117,8 +2146,9 @@ namespace AvaloniaSpreadsheet
                 }
             }
 
-            // Last, so nothing is drawn over a bar the user is trying to grab.
+            // Last of all, over everything including the scrollbars: the right-click menu, if it is open.
             DrawScrollBars(context, size);
+            DrawContextMenu(context);
         }
 
         /// <summary>Draws the frozen headers, with the selected rows/columns lit up.</summary>
@@ -2596,109 +2626,300 @@ namespace AvaloniaSpreadsheet
         }
 
         // ---- the right-click menu ------------------------------------------------------------------
+        // Drawn by the control ITSELF, like the grid, the headers, the formula bar and the scrollbars.
+        //
+        // An Avalonia ContextMenu was tried first and it never opened for a real right-click (reported
+        // 2026-09-26): that needs the platform's popup plumbing and a control theme, and neither is
+        // something this control otherwise depends on — and it meant the menu could not be seen working in
+        // a headless render either, which is how it got shipped unverified. Drawing it costs the control
+        // nothing it does not already do, and it takes the sheet's own colours, so it fits whatever theme
+        // the form uses.
 
-        /// <summary>
-        /// Right-click: line the selection up, bold it, or clear it. An ordinary Avalonia
-        /// <see cref="ContextMenu"/>, so it opens on right-click, closes on Escape and draws outside the
-        /// control's own bounds — the control's own drawing stops at its edges, a popup does not.
-        ///
-        /// The alignment items are what a spreadsheet needs most often, and the reason this exists: a
-        /// whole COLUMN can be lined up in one gesture, which the Ctrl+B/I keys and the toolbar could not
-        /// do without selecting all fifty rows of it by hand.
-        /// </summary>
-        private void BuildContextMenu()
+        /// <summary>One line of the menu: a command, or a gap between groups of them.</summary>
+        private sealed class SheetMenuItem
         {
-            var menu = new ContextMenu();
-            AddAlignItem(menu, "Align left", SheetAlign.Left);
-            AddAlignItem(menu, "Align centre", SheetAlign.Center);
-            AddAlignItem(menu, "Align right", SheetAlign.Right);
-            AddAlignItem(menu, "Align automatically", SheetAlign.Auto);
-            menu.Items.Add(new Separator());
-            _boldItem = AddToggleItem(menu, "Bold", () =>
-            {
-                ToggleBoldSelection();
-            });
-            _italicItem = AddToggleItem(menu, "Italics", () =>
-            {
-                ToggleItalicSelection();
-            });
-            menu.Items.Add(new Separator());
-            AddItem(menu, "Clear formatting", () =>
-            {
-                ClearSelectionFormatting();
-            });
-            AddItem(menu, "Clear cells", () =>
-            {
-                ClearSelection();
-            });
+            /// <summary>The text shown, empty for a separator.</summary>
+            public string Label = string.Empty;
 
-            // The menu is about the SELECTION, so it is off entirely when the sheet is read-only.
-            menu.Opening += (sender, args) =>
+            /// <summary>A gap rather than a command.</summary>
+            public bool IsSeparator;
+
+            /// <summary>Show a tick beside it (what the selection already is).</summary>
+            public bool Ticked;
+
+            /// <summary>What choosing it does.</summary>
+            public Action? Run;
+        }
+
+        /// <summary>How wide the menu is, and how tall one of its lines is.</summary>
+        private const double MenuWidth = 200d;
+        private const double MenuItemHeight = 24d;
+        private const double MenuSeparatorHeight = 9d;
+        private const double MenuPad = 5d;
+
+        private List<SheetMenuItem> _menuItems = new List<SheetMenuItem>();
+        private bool _menuOpen;
+        private double _menuX;
+        private double _menuY;
+        private int _menuHot = -1;
+
+        /// <summary>What the menu offers, built on each open so the ticks are current. The commands act on
+        /// the SELECTION — a whole column lines up in one gesture, which is the point of having it.</summary>
+        private List<SheetMenuItem> BuildMenuItems()
+        {
+            var align = SelectionTextAlign();
+            var items = new List<SheetMenuItem>();
+            items.Add(AlignItem("Align left", SheetAlign.Left, align));
+            items.Add(AlignItem("Align centre", SheetAlign.Center, align));
+            items.Add(AlignItem("Align right", SheetAlign.Right, align));
+            items.Add(AlignItem("Align automatically", SheetAlign.Auto, align));
+            items.Add(new SheetMenuItem { IsSeparator = true });
+            items.Add(new SheetMenuItem
             {
-                if (!AllowEditing)
+                Label = "Bold",
+                Ticked = SelectionFlag(true) == true,
+                Run = ToggleBoldSelection
+            });
+            items.Add(new SheetMenuItem
+            {
+                Label = "Italics",
+                Ticked = SelectionFlag(false) == true,
+                Run = ToggleItalicSelection
+            });
+            items.Add(new SheetMenuItem { IsSeparator = true });
+            items.Add(new SheetMenuItem { Label = "Clear formatting", Run = ClearSelectionFormatting });
+            items.Add(new SheetMenuItem { Label = "Clear cells", Run = ClearSelection });
+            return items;
+        }
+
+        private SheetMenuItem AlignItem(string label, SheetAlign align, SheetAlign? current)
+        {
+            return new SheetMenuItem
+            {
+                Label = label,
+                Ticked = current == align,
+                Run = () => AlignSelection(align)
+            };
+        }
+
+        /// <summary>The menu's rectangle on the canvas, which is only meaningful while it is open.</summary>
+        private Rect MenuRect()
+        {
+            var height = 2 * MenuPad;
+            for (var i = 0; i < _menuItems.Count; i++)
+            {
+                height += _menuItems[i].IsSeparator ? MenuSeparatorHeight : MenuItemHeight;
+            }
+
+            return new Rect(_menuX, _menuY, MenuWidth, height);
+        }
+
+        /// <summary>Which line of the menu a point is on, or -1. Separators are not selectable.</summary>
+        private int MenuItemAt(Point point)
+        {
+            if (!_menuOpen || !MenuRect().Contains(point))
+            {
+                return -1;
+            }
+
+            var y = _menuY + MenuPad;
+            for (var i = 0; i < _menuItems.Count; i++)
+            {
+                var item = _menuItems[i];
+                var height = item.IsSeparator ? MenuSeparatorHeight : MenuItemHeight;
+                if (!item.IsSeparator && point.Y >= y && point.Y < y + height)
                 {
-                    args.Cancel = true;
-                    return;
+                    return i;
                 }
 
-                UpdateMenuTicks();
-            };
-
-            ContextMenu = menu;
-            ContextRequested += OnSheetContextRequested;
-        }
-
-        private void AddAlignItem(ContextMenu menu, string title, SheetAlign align)
-        {
-            var item = new MenuItem { Header = title, ToggleType = MenuItemToggleType.Radio };
-            item.Click += (sender, args) =>
-            {
-                AlignSelection(align);
-                UpdateMenuTicks();
-            };
-            _alignItems[align] = item;
-            menu.Items.Add(item);
-        }
-
-        private MenuItem AddItem(ContextMenu menu, string title, Action action)
-        {
-            var item = new MenuItem { Header = title };
-            item.Click += (sender, args) => action();
-            menu.Items.Add(item);
-            return item;
-        }
-
-        private MenuItem AddToggleItem(ContextMenu menu, string title, Action action)
-        {
-            var item = new MenuItem { Header = title, ToggleType = MenuItemToggleType.CheckBox };
-            item.Click += (sender, args) =>
-            {
-                action();
-                UpdateMenuTicks();
-            };
-            menu.Items.Add(item);
-            return item;
-        }
-
-        /// <summary>Ticks what the whole selection currently is, so the menu reads as a state as well as a
-        /// set of commands. Nothing is ticked when the selection disagrees with itself.</summary>
-        private void UpdateMenuTicks()
-        {
-            var agreed = SelectionTextAlign();
-            foreach (var pair in _alignItems)
-            {
-                pair.Value.IsChecked = agreed == pair.Key;
+                y += height;
             }
 
-            if (_boldItem != null)
+            return -1;
+        }
+
+        /// <summary>
+        /// Opens the menu under the pointer, on the selection the user just pointed at.
+        ///
+        /// The right button is handled HERE rather than left to the framework's context-request: that never
+        /// reached this control, so right-clicking did nothing at all. It also lets the menu move the
+        /// selection onto whatever was right-clicked, which is what every spreadsheet does — and keeps the
+        /// whole menu inside the control, flipping it up or left near an edge.
+        /// </summary>
+        private void ShowContextMenu(Point point)
+        {
+            if (!AllowEditing)
             {
-                _boldItem.IsChecked = SelectionFlag(true) == true;
+                return;
             }
 
-            if (_italicItem != null)
+            SetContextSelection(point);
+            _menuItems = BuildMenuItems();
+            _menuOpen = true;
+            _menuHot = -1;
+            var size = Bounds.Size;
+            var height = MenuRect().Height;
+            _menuX = Math.Max(0, Math.Min(point.X, size.Width - MenuWidth));
+            _menuY = Math.Max(0, Math.Min(point.Y, size.Height - height));
+            InvalidateVisual();
+        }
+
+        private void CloseContextMenu()
+        {
+            if (!_menuOpen)
             {
-                _italicItem.IsChecked = SelectionFlag(false) == true;
+                return;
             }
+
+            _menuOpen = false;
+            _menuHot = -1;
+            InvalidateVisual();
+        }
+
+        /// <summary>Runs the line a point is on, if any, and closes. True when the click was the menu's.</summary>
+        private bool ChooseMenuItem(Point point)
+        {
+            var index = MenuItemAt(point);
+            var run = index >= 0 ? _menuItems[index].Run : null;
+            CloseContextMenu();
+            if (run != null)
+            {
+                run();
+            }
+
+            return true;
+        }
+
+        /// <summary>Paints the menu over everything else.</summary>
+        private void DrawContextMenu(DrawingContext context)
+        {
+            if (!_menuOpen)
+            {
+                return;
+            }
+
+            var rect = MenuRect();
+            var edge = new SolidColorBrush(GridColor);
+            context.FillRectangle(new SolidColorBrush(CellBackColor), rect);
+            context.DrawRectangle(null, new Pen(edge, 1d), rect);
+            var text = new SolidColorBrush(TextColor);
+            var hot = new SolidColorBrush(SelectionFillColor);
+            var y = _menuY + MenuPad;
+            for (var i = 0; i < _menuItems.Count; i++)
+            {
+                var item = _menuItems[i];
+                if (item.IsSeparator)
+                {
+                    context.DrawLine(new Pen(edge, 1d), new Point(_menuX + 6, y + MenuSeparatorHeight / 2),
+                        new Point(rect.Right - 6, y + MenuSeparatorHeight / 2));
+                    y += MenuSeparatorHeight;
+                    continue;
+                }
+
+                if (i == _menuHot)
+                {
+                    context.FillRectangle(hot, new Rect(_menuX + 1, y, MenuWidth - 2, MenuItemHeight));
+                }
+
+                if (item.Ticked)
+                {
+                    DrawCellText(context, "\u2713", new Rect(_menuX + 1, y, 15, MenuItemHeight), text, false,
+                        TextAlignment.Center);
+                }
+
+                DrawCellText(context, item.Label, new Rect(_menuX + 17, y, MenuWidth - 22, MenuItemHeight),
+                    text, false, TextAlignment.Left);
+                y += MenuItemHeight;
+            }
+        }
+
+        /// <summary>
+        /// Moves the selection onto what was right-clicked — unless the cell is already inside the
+        /// selection, in which case the menu is about the whole block, which is what the user aimed at.
+        /// </summary>
+        private void SetContextSelection(Point point)
+        {
+            var hit = HitTest(point, out var row, out var column);
+            if (hit == HitColumnHeader)
+            {
+                SelectColumns(column, false);
+                return;
+            }
+
+            if (hit == HitRowHeader)
+            {
+                SelectRows(row, false);
+                return;
+            }
+
+            if (hit != HitCell)
+            {
+                return;
+            }
+
+            if (row >= SelectionFirstRow() && row <= SelectionLastRow() &&
+                column >= SelectionFirstColumn() && column <= SelectionLastColumn())
+            {
+                return;
+            }
+
+            SelectCell(row, column);
+        }
+
+        /// <summary>The menu's own keys: Escape closes, Up/Down move the highlight, Enter chooses.</summary>
+        private bool HandleMenuKey(KeyEventArgs e)
+        {
+            if (!_menuOpen)
+            {
+                return false;
+            }
+
+            if (e.Key == Key.Escape)
+            {
+                CloseContextMenu();
+                return true;
+            }
+
+            if (e.Key == Key.Up || e.Key == Key.Down)
+            {
+                var step = e.Key == Key.Down ? 1 : -1;
+                var at = _menuHot;
+                for (var i = 0; i < _menuItems.Count; i++)
+                {
+                    at += step;
+                    if (at < 0)
+                    {
+                        at = _menuItems.Count - 1;
+                    }
+                    else if (at >= _menuItems.Count)
+                    {
+                        at = 0;
+                    }
+
+                    if (!_menuItems[at].IsSeparator)
+                    {
+                        break;
+                    }
+                }
+
+                _menuHot = at;
+                InvalidateVisual();
+                return true;
+            }
+
+            if (e.Key == Key.Enter && _menuHot >= 0 && _menuHot < _menuItems.Count)
+            {
+                var run = _menuItems[_menuHot].Run;
+                CloseContextMenu();
+                if (run != null)
+                {
+                    run();
+                }
+
+                return true;
+            }
+
+            return true;                    // the menu owns the keyboard while it is open
         }
 
         /// <summary>True when every cell in the selection is bold (or italic), false when none is, null
@@ -2736,51 +2957,32 @@ namespace AvaloniaSpreadsheet
             return all;
         }
 
-        /// <summary>
-        /// Moves the selection onto what was right-clicked — unless the cell is already inside the
-        /// selection, in which case the menu is about the whole block, which is what the user aimed at.
-        /// This is every spreadsheet's rule, and the reason the hook is on ContextRequested: it is the one
-        /// event that still knows where the pointer was.
-        /// </summary>
-        private void OnSheetContextRequested(object? sender, ContextRequestedEventArgs e)
-        {
-            Point point;
-            if (!e.TryGetPosition(this, out point))
-            {
-                return;
-            }
-
-            var hit = HitTest(point, out var row, out var column);
-            if (hit == HitColumnHeader)
-            {
-                SelectColumns(column, false);
-                return;
-            }
-
-            if (hit == HitRowHeader)
-            {
-                SelectRows(row, false);
-                return;
-            }
-
-            if (hit != HitCell)
-            {
-                return;
-            }
-
-            if (row >= SelectionFirstRow() && row <= SelectionLastRow() &&
-                column >= SelectionFirstColumn() && column <= SelectionLastColumn())
-            {
-                return;
-            }
-
-            SelectCell(row, column);
-        }
-
         /// <summary>Starts a selection, a fill, or an edit.</summary>
         protected override void OnPointerPressed(PointerPressedEventArgs e)
         {
             var point = e.GetCurrentPoint(this);
+
+            // A press while the menu is open belongs to the menu: inside it chooses a line, outside it just
+            // closes. Either way the press does not also start a selection or a drag.
+            if (_menuOpen && !point.Properties.IsRightButtonPressed)
+            {
+                ChooseMenuItem(point.Position);
+                e.Handled = true;
+                return;
+            }
+
+            // The right button opens the menu HERE rather than being left to ContextRequested, which never
+            // reached this control (reported 2026-09-26: the menu existed, its items worked when invoked,
+            // and right-clicking opened nothing at all). Doing it here also lets the menu move the selection
+            // onto whatever was right-clicked first, which is what every spreadsheet does.
+            if (point.Properties.IsRightButtonPressed)
+            {
+                CloseContextMenu();
+                ShowContextMenu(point.Position);
+                e.Handled = true;
+                return;
+            }
+
             if (!point.Properties.IsLeftButtonPressed)
             {
                 return;
@@ -2930,6 +3132,19 @@ namespace AvaloniaSpreadsheet
             var point = e.GetCurrentPoint(this).Position;
             var hit = HitTest(point, out var row, out var column);
 
+            // While the menu is open a move only highlights the line under the pointer.
+            if (_menuOpen)
+            {
+                var hot = MenuItemAt(point);
+                if (hot != _menuHot)
+                {
+                    _menuHot = hot;
+                    InvalidateVisual();
+                }
+
+                return;
+            }
+
             // Dragging a scrollbar: the pointer's travel along the track, scaled to the scroll range.
             if (_scrollDragging)
             {
@@ -3040,6 +3255,8 @@ namespace AvaloniaSpreadsheet
         /// columns off to the right are unreachable with an ordinary mouse.</summary>
         protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
         {
+            // A menu that stayed put while the sheet scrolled under it would be pointing at nothing.
+            CloseContextMenu();
             var size = Bounds.Size;
             var grid = GridRect(size);
             var vertical = e.Delta.Y;
@@ -3106,6 +3323,13 @@ namespace AvaloniaSpreadsheet
             var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
             var control = e.KeyModifiers.HasFlag(KeyModifiers.Control);
 
+            // The menu owns the keyboard while it is open (Escape, the arrows, Enter).
+            if (HandleMenuKey(e))
+            {
+                e.Handled = true;
+                return;
+            }
+
             if (_editing)
             {
                 if (HandleEditKey(e, shift))
@@ -3169,28 +3393,28 @@ namespace AvaloniaSpreadsheet
 
             if (e.Key == Key.Left)
             {
-                MoveActive(0, -1, shift);
+                MoveWithControl(0, -1, shift, control);
                 e.Handled = true;
                 return;
             }
 
             if (e.Key == Key.Right)
             {
-                MoveActive(0, 1, shift);
+                MoveWithControl(0, 1, shift, control);
                 e.Handled = true;
                 return;
             }
 
             if (e.Key == Key.Up)
             {
-                MoveActive(-1, 0, shift);
+                MoveWithControl(-1, 0, shift, control);
                 e.Handled = true;
                 return;
             }
 
             if (e.Key == Key.Down)
             {
-                MoveActive(1, 0, shift);
+                MoveWithControl(1, 0, shift, control);
                 e.Handled = true;
                 return;
             }
@@ -3224,6 +3448,15 @@ namespace AvaloniaSpreadsheet
                 return;
             }
 
+            // Ctrl+End: the bottom-right corner of what is IN the sheet, the way every spreadsheet does it.
+            if (e.Key == Key.End && control)
+            {
+                var last = LastUsedCell();
+                MoveActive(last.Row - _activeRow, last.Column - _activeColumn, shift);
+                e.Handled = true;
+                return;
+            }
+
             if (e.Key == Key.Enter)
             {
                 MoveActive(shift ? -1 : 1, 0, false);
@@ -3236,6 +3469,83 @@ namespace AvaloniaSpreadsheet
                 MoveActive(0, shift ? -1 : 1, false);
                 e.Handled = true;
             }
+        }
+
+        /// <summary>
+        /// An arrow key: one cell on its own, or — with Ctrl — the far end of the block of filled cells in
+        /// that direction, which is how a spreadsheet is actually driven around a large sheet (Ctrl+Down
+        /// from the top of a column lands on the last value in it).
+        /// </summary>
+        private void MoveWithControl(int rowDelta, int columnDelta, bool extend, bool control)
+        {
+            if (!control)
+            {
+                MoveActive(rowDelta, columnDelta, extend);
+                return;
+            }
+
+            // Whether the cell NEXT to us is filled decides which rule applies: run to the end of a block
+            // of values, or skip a gap and land on the next value. The sheet edge is where either walk
+            // stops, so there is always somewhere to land.
+            var filled = GetCell(ClampRow(_activeRow + rowDelta),
+                ClampColumn(_activeColumn + columnDelta)).Length > 0;
+            var atRow = _activeRow;
+            var atColumn = _activeColumn;
+            while (true)
+            {
+                var nextRow = ClampRow(atRow + rowDelta);
+                var nextColumn = ClampColumn(atColumn + columnDelta);
+                if (nextRow == atRow && nextColumn == atColumn)
+                {
+                    break;                          // the edge: nowhere further to go
+                }
+
+                var nextFilled = GetCell(nextRow, nextColumn).Length > 0;
+                if (nextFilled != filled)
+                {
+                    if (!filled)
+                    {
+                        // The gap ended: land ON the value that ended it.
+                        atRow = nextRow;
+                        atColumn = nextColumn;
+                    }
+
+                    // A block of values ends on its LAST cell, which is the one we are standing on.
+                    break;
+                }
+
+                atRow = nextRow;
+                atColumn = nextColumn;
+            }
+
+            MoveActive(atRow - _activeRow, atColumn - _activeColumn, extend);
+        }
+
+        /// <summary>The bottom-right corner of the cells that hold something, or A1 on an empty sheet.</summary>
+        private (int Row, int Column) LastUsedCell()
+        {
+            var row = 1;
+            var column = 1;
+            for (var i = 0; i < _lookup.Count; i++)
+            {
+                var cell = _lookup[i];
+                if (GetCell(cell.Row, cell.Column).Length == 0)
+                {
+                    continue;
+                }
+
+                if (cell.Row > row)
+                {
+                    row = cell.Row;
+                }
+
+                if (cell.Column > column)
+                {
+                    column = cell.Column;
+                }
+            }
+
+            return (row, column);
         }
 
         /// <summary>Typing replaces the active cell — the fastest way into a sheet.</summary>
@@ -3283,6 +3593,7 @@ namespace AvaloniaSpreadsheet
         private void OnSheetLostFocus(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
             CommitEdit(true);
+            CloseContextMenu();
         }
 
         /// <summary>Moves the active cell by a delta, extending the selection when Shift is held.</summary>

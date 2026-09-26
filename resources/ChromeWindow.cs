@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.11
+// BUNDLED-COPY: 0.12.12
 // ============================================================================
 //  ChromeWindow.cs — Reusable frameless Avalonia window with a built-in
 //  "LinuxHelper-style" custom titlebar (dark bar, icon, centred title,

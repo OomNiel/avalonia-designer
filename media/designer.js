@@ -2601,6 +2601,15 @@
     // clipped by the Properties panel's own scrolling). Lists EVERY preset colour — plus the
     // current value if it isn't a preset — ~5 rows visible, then it scrolls.
     const PALETTE_ROWS_VISIBLE = 5;
+
+    /** The preset colours a swatch offers when its row did not bring its own list. The same set the
+     *  Properties catalog uses, so a colour chosen here is one a property row would offer too. */
+    const COLOR_PRESETS = [
+        'Transparent', 'Black', 'White', 'Red', 'Green', 'Blue', 'Yellow', 'Orange',
+        'Purple', 'Gray', 'DarkGray', 'LightGray', 'Silver', 'Navy', 'Teal', 'Aqua',
+        'Maroon', 'Olive', 'Lime', 'Fuchsia', 'Gold', 'Coral', 'Crimson', 'Indigo',
+        'Pink', 'Brown', 'Beige', 'LightBlue', 'DarkBlue', 'LightGreen', 'DarkGreen'
+    ];
     function colorPaletteEl() {
         let p = document.getElementById('colorPalette');
         if (!p) {
@@ -2611,14 +2620,41 @@
         }
         return p;
     }
-    function openColorPalette(trigger, controlName, key, options, current) {
+    function openColorPalette(trigger, controlName, key, options, current, onPick) {
         const pal = colorPaletteEl();
+        const pick = onPick || ((c) => post({ type: 'setProperty', name: controlName, key: key, value: c }));
         const entries = [];
         if (current && !options.includes(current)) entries.push(current); // custom colour on top
         for (const o of options || []) {
             if (!entries.includes(o)) entries.push(o);
         }
         pal.innerHTML = '';
+        // A colour that is not in the list can still be typed: the native <input type="color"> this popup
+        // replaced could do that, and losing it would be a real loss. Enter or Use takes the value as
+        // written, so a NAMED colour ("Teal") is allowed the same way the text fields beside these
+        // swatches have always allowed it.
+        const customRow = document.createElement('div');
+        customRow.className = 'cp-custom';
+        const customIn = document.createElement('input');
+        customIn.type = 'text';
+        customIn.maxLength = 32;
+        customIn.placeholder = '#RRGGBB or a name';
+        const customUse = document.createElement('button');
+        customUse.type = 'button';
+        customUse.textContent = 'Use';
+        const takeCustom = () => {
+            const v = String(customIn.value || '').trim();
+            if (!v) return;
+            closeColorPalette();
+            pick(v);
+        };
+        customIn.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); takeCustom(); }
+        });
+        customUse.addEventListener('click', (e) => { e.stopPropagation(); takeCustom(); });
+        customRow.appendChild(customIn);
+        customRow.appendChild(customUse);
+        pal.appendChild(customRow);
         for (const c of entries) {
             const row = document.createElement('div');
             row.className = 'cp-row';
@@ -2631,7 +2667,7 @@
             row.appendChild(name);
             row.addEventListener('click', () => {
                 closeColorPalette();
-                post({ type: 'setProperty', name: controlName, key: key, value: c });
+                pick(c);
             });
             pal.appendChild(row);
         }
@@ -2669,6 +2705,43 @@
         pal.style.left = left + 'px';
         pal.style.top = top + 'px';
         window.__colorPaletteOpen = true;
+    }
+
+    /**
+     * A colour SWATCH that opens the palette popup — the replacement for every native
+     * <input type="color"> this panel used to have.
+     *
+     * Why: Chromium draws the native picker ITSELF, inside the webview, and near the right edge of the
+     * panel it drew the whole palette off the side of the window (reported 2026-09-26: "the colour picker
+     * palettes draw offscreen to the right"). The position of that picker is not something a page can
+     * clamp — our own list is, and it is the same one the ▾ button already opens.
+     */
+    function colorSwatchButton(value, options, onPick, title) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'color-swatch';
+        btn.title = title || 'Choose a colour…';
+        setSwatchColor(btn, value);
+        btn.addEventListener('click', (e) => {
+            // BOTH of these matter: preventDefault keeps a surrounding <label> from activating anything,
+            // and stopPropagation keeps the document's own "click outside the palette closes it" handler
+            // from firing on THIS click and shutting the palette again the instant it opened.
+            e.preventDefault();
+            e.stopPropagation();
+            openColorPalette(btn, '', '', options, swatchColor(btn), onPick);
+        });
+        return btn;
+    }
+
+    /** The colour a swatch is showing (it lives in the style, not in a form value any more). */
+    function swatchColor(btn) {
+        return btn.dataset.color || '';
+    }
+
+    function setSwatchColor(btn, value) {
+        btn.dataset.color = String(value == null ? '' : value);
+        const hex = normalizeHex(String(value == null ? '' : value));
+        btn.style.background = hex || String(value || '') || '#B0B0B0';
     }
     function closeColorPalette() {
         const p = document.getElementById('colorPalette');
@@ -3000,26 +3073,18 @@
             } else if (p.kind === 'color') {
                 const wrap = document.createElement('div');
                 wrap.className = 'prop-input-group';
-                const swatch = document.createElement('input');
-                swatch.type = 'color';
-                swatch.className = 'color-swatch';
-                const hex = toHex(p.value);
-                if (hex) swatch.value = hex;
                 const text = document.createElement('input');
                 text.type = 'text';
                 text.dataset.propKey = p.key;
                 text.value = p.value || '';
-                swatch.addEventListener('input', () => {
-                    // Fires continuously while the native color picker is open. If we posted here
-                    // the extension would re-render the properties panel, destroying this swatch
-                    // and closing the picker mid-pick. So just mirror the value into the text box.
-                    text.value = swatch.value;
-                });
-                swatch.addEventListener('change', () => {
-                    // Fires only when the user CONFIRMS the color (closes the picker with OK/Enter).
-                    text.value = swatch.value;
-                    postSet(p.key, swatch.value);
-                });
+                const hex = toHex(p.value);
+                // The swatch opens OUR palette (which flips and clamps) rather than a native
+                // <input type="color">: Chromium drew that picker itself, off the side of the panel, and
+                // no page can clamp it. The hex box stays authoritative and still takes a name ("Teal").
+                const swatch = colorSwatchButton(hex || p.value, options, (c) => {
+                    text.value = c;
+                    postSet(p.key, c);
+                }, 'Choose a colour from the palette…');
                 onText(text);
                 // Palette button — opens the full colour list (hidden in multi-select; the swatch /
                 // hex field apply to all selected). (A <datalist> on the text box was dropped because
@@ -3781,7 +3846,7 @@
         els.chShortLength.value = clampNum(c.shortLength, 6, 4000, 50);
         els.chThickness.value = clampNum(c.thickness, 1, 12, 1);
         els.chOpacity.value = clampNum(c.opacity, 0, 100, 100);
-        els.chColor.value = /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : '#ff4d4d';
+        setSwatchColor(els.chColor, /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : '#ff4d4d');
         els.crosshairModal.hidden = false;
     }
     function closeCrosshairSettings() { els.crosshairModal.hidden = true; }
@@ -3804,7 +3869,7 @@
             shortLength: clampNum(els.chShortLength.value, 6, 4000, 50),
             thickness: clampNum(els.chThickness.value, 1, 12, 1),
             opacity: clampNum(els.chOpacity.value, 0, 100, 100),
-            color: els.chColor.value || '#ff4d4d'
+            color: swatchColor(els.chColor) || '#ff4d4d'
         };
         closeCrosshairSettings();
         post({ type: 'setCrosshair', settings });
@@ -3813,12 +3878,26 @@
         const g = state.dotGrid || {};
         els.dotGridSpacingX.value = g.spacingX || 16;
         els.dotGridSpacingY.value = g.spacingY || 16;
-        els.dotGridColor.value = g.color || '#9db4d0';
+        setSwatchColor(els.dotGridColor, g.color || '#9db4d0');
         els.dotGridDotSize.value = g.dotSize || 1.5;
         els.dotGridModal.hidden = false;
         els.dotGridSpacingX.focus();
     });
     function closeDotGridSettings() { els.dotGridModal.hidden = true; }
+    // The two modal swatches are BUTTONS that open the palette popup: there is no native picker left anywhere,
+    // because the browser draws that one itself and cannot be clamped (see colorSwatchButton).
+    els.dotGridColor.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openColorPalette(els.dotGridColor, '', '', COLOR_PRESETS, swatchColor(els.dotGridColor),
+            (c) => setSwatchColor(els.dotGridColor, c));
+    });
+    els.chColor.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openColorPalette(els.chColor, '', '', COLOR_PRESETS, swatchColor(els.chColor),
+            (c) => setSwatchColor(els.chColor, c));
+    });
     els.dotGridCancel.addEventListener('click', closeDotGridSettings);
     els.dotGridModal.addEventListener('click', (e) => {
         if (e.target === els.dotGridModal) closeDotGridSettings(); // click outside the box
@@ -3827,7 +3906,7 @@
         const settings = {
             spacingX: clampNum(els.dotGridSpacingX.value, 4, 1000, 16),
             spacingY: clampNum(els.dotGridSpacingY.value, 4, 1000, 16),
-            color: els.dotGridColor.value || '#9db4d0',
+            color: swatchColor(els.dotGridColor) || '#9db4d0',
             dotSize: clampNum(els.dotGridDotSize.value, 0.5, 20, 1.5)
         };
         closeDotGridSettings();
@@ -4717,19 +4796,24 @@
             thickIn.addEventListener('input', () => { row.thickness = thickIn.value; });
             thick.appendChild(thickIn);
             rowEl.appendChild(thick);
-            // Colour (native swatch + hex text kept in sync)
+            // Colour (our own palette popup + hex text kept in sync)
             const col = document.createElement('label');
             col.className = 'splitter-field';
             col.appendChild(document.createTextNode('Colour '));
-            const colSw = document.createElement('input');
-            colSw.type = 'color';
+            const init2 = normalizeHex(row.color) || '#B0B0B0';
+            row.color = init2;
             const colHex = document.createElement('input');
             colHex.type = 'text'; colHex.maxLength = 7;
-            // initial swatch from hex (fall back to a grey when the stored colour isn't hex)
-            const init = normalizeHex(row.color) || '#B0B0B0';
-            colSw.value = init; row.color = init; colHex.value = init;
-            colSw.addEventListener('input', () => { const h = normalizeHex(colSw.value); if (h) { row.color = h; colHex.value = h; } });
-            colHex.addEventListener('input', () => { const h = normalizeHex(colHex.value); if (h) { row.color = h; colSw.value = h; } });
+            colHex.value = init2;
+            const colSw = colorSwatchButton(init2, COLOR_PRESETS, (c) => {
+                row.color = c;
+                colHex.value = c;
+                setSwatchColor(colSw, c);
+            }, 'Choose the splitter bar\u2019s colour');
+            colHex.addEventListener('input', () => {
+                const h = normalizeHex(colHex.value);
+                if (h) { row.color = h; setSwatchColor(colSw, h); }
+            });
             col.appendChild(colSw);
             col.appendChild(colHex);
             rowEl.appendChild(col);
@@ -4863,17 +4947,17 @@
             } else if (f.kind === 'color') {
                 const group = document.createElement('div');
                 group.className = 'dg-color';
-                const sw = document.createElement('input');
-                sw.type = 'color';
                 const tx = document.createElement('input');
                 tx.type = 'text'; tx.maxLength = 7; tx.className = 'dg-input';
                 const init = normalizeColorValue(value);
-                sw.value = /^#[0-9a-fA-F]{6}$/.test(init) ? init : '#ffffff';
                 tx.value = init;
-                const syncTxt = () => { dgEdit.values[f.key] = tx.value; };
-                const syncSw = () => { const c = normalizeColorValue(sw.value); dgEdit.values[f.key] = c; tx.value = c; };
-                tx.addEventListener('input', syncTxt);
-                sw.addEventListener('input', syncSw);
+                const sw = colorSwatchButton(init, COLOR_PRESETS, (c) => {
+                    const v = normalizeColorValue(c);
+                    dgEdit.values[f.key] = v;
+                    tx.value = v;
+                    setSwatchColor(sw, v);
+                }, 'Choose a colour');
+                tx.addEventListener('input', () => { dgEdit.values[f.key] = tx.value; });
                 group.appendChild(sw);
                 group.appendChild(tx);
                 row.appendChild(group);
@@ -4983,15 +5067,15 @@
     /** A colour cell: a swatch (a convenience) PLUS the authoritative text field, so a NAMED colour
      *  written by hand ("White", "Teal") survives a trip through the editor unchanged. */
     function seriesColor(value, onChange) {
-        const sw = document.createElement('input');
-        sw.type = 'color';
-        sw.value = normalizeHex(value) || '#B0B0B0';
         const txt = seriesText(value, (v) => {
             onChange(v);
-            const hex = normalizeHex(v);
-            if (hex) sw.value = hex;
+            setSwatchColor(sw, v);
         }, 'A colour name (White, Teal, …) or #RRGGBB.');
-        sw.addEventListener('input', () => { txt.value = sw.value; onChange(sw.value); });
+        const sw = colorSwatchButton(value, COLOR_PRESETS, (c) => {
+            txt.value = c;
+            setSwatchColor(sw, c);
+            onChange(c);
+        }, 'Choose a colour');
         return [sw, txt];
     }
     /** The one-line summary shown for a series in the list. A waterfall entry is one SAMPLESET, so its
@@ -6215,8 +6299,8 @@
         els.sheetFamily.value = cell.fontFamily ? String(cell.fontFamily) : '';
         const textColor = String(cell.textColor == null ? '' : cell.textColor).trim();
         const fill = String(cell.fill == null ? '' : cell.fill).trim();
-        els.sheetTextColor.value = sheetColorHex(textColor, '#000000');
-        els.sheetFill.value = sheetColorHex(fill, '#FFCC00');
+        setSwatchColor(els.sheetTextColor, textColor || '#000000');
+        setSwatchColor(els.sheetFill, fill || '#FFCC00');
         // On the sheet's own colour: the swatch dims, because an empty colour box reads as black.
         els.sheetTextColor.classList.toggle('on-sheet', textColor.length === 0);
         els.sheetFill.classList.toggle('on-sheet', fill.length === 0);
@@ -6565,14 +6649,29 @@
         if (!sheetEdit) return;
         sheetStyleSelection('fontFamily', String(els.sheetFamily.value || '').trim());
     });
-    els.sheetTextColor.addEventListener('input', () => {
-        if (sheetEdit) sheetStyleSelection('textColor', String(els.sheetTextColor.value || '').toUpperCase());
+    // The two colour wells open the palette popup — the same clamped list the Properties panel uses, so a
+    // highlight is picked the same way everywhere in this webview (and no native picker is involved: the
+    // browser drew that one itself, off the side of the window).
+    els.sheetTextColor.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!sheetEdit) return;
+        openColorPalette(els.sheetTextColor, '', '', COLOR_PRESETS, swatchColor(els.sheetTextColor) || '#000000',
+            (c) => {
+                sheetStyleSelection('textColor', String(c).toUpperCase());
+            });
     });
     els.sheetTextColorNone.addEventListener('click', () => {
         if (sheetEdit) sheetStyleSelection('textColor', '');
     });
-    els.sheetFill.addEventListener('input', () => {
-        if (sheetEdit) sheetStyleSelection('fill', String(els.sheetFill.value || '').toUpperCase());
+    els.sheetFill.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!sheetEdit) return;
+        openColorPalette(els.sheetFill, '', '', COLOR_PRESETS, swatchColor(els.sheetFill) || '#FFCC00',
+            (c) => {
+                sheetStyleSelection('fill', String(c).toUpperCase());
+            });
     });
     els.sheetFillNone.addEventListener('click', () => {
         if (sheetEdit) sheetStyleSelection('fill', '');

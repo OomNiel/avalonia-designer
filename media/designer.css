@@ -874,6 +874,9 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     white-space: nowrap;
 }
 
+/* A colour swatch. A BUTTON, not an <input type="color">: the browser draws the native picker itself and
+ * cannot be clamped, which put the whole palette off the side of the panel (see colorSwatchButton in
+ * designer.js). Its colour lives in `dataset.color` and its background, so it reads as a swatch either way. */
 .color-swatch {
     flex: 0 0 30px !important;
     width: 30px;
@@ -920,6 +923,25 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 
 #colorPalette[hidden] {
     display: none;
+}
+
+/* The custom-colour row at the top of the palette: a text field and a Use button, so a value that is not in
+ * the preset list is still possible now the native picker is gone. */
+#colorPalette .cp-custom {
+    display: flex;
+    gap: 4px;
+    padding: 0 2px 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+}
+
+#colorPalette .cp-custom input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#colorPalette .cp-custom button {
+    flex: 0 0 auto;
 }
 
 #colorPalette .cp-row {
@@ -2640,17 +2662,18 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     height: 24px;
 }
 
-.sheet-color input[type="color"] {
+.sheet-color .sheet-well {
     width: 34px;
     height: 22px;
     padding: 0;
     border: 1px solid var(--border, #444);
-    background: none;
+    border-radius: 3px;
+    background: #000000;
     cursor: pointer;
 }
 
 /* On the sheet's own colour: the swatch is dimmed, and the × is what puts it back there. */
-.sheet-color input[type="color"].on-sheet {
+.sheet-color .sheet-well.on-sheet {
     opacity: 0.35;
 }
 

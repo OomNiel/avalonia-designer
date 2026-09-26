@@ -354,16 +354,69 @@ module.exports = async (t) => {
             'and the corners and SelectColumn are public, so the rule can be checked from outside');
     }
 
-    // 3) the right-click menu, with the alignment the request was about.
+    // 3) the right-click menu. It is DRAWN BY THE CONTROL, not an Avalonia ContextMenu: that never opened
+    //    for a real right-click (reported 2026-09-26 — the menu existed, its items worked when raised by
+    //    hand, and right-clicking opened nothing at all), and the pixel probes in /tmp/sheetkeys (C#) and
+    //    /tmp/sheetvbfix (VB) now right-click for real and find the panel on the canvas.
     for (const [name, source] of twins) {
-        t.ok(has(source, 'ContextMenu'), `fix:${name}`, 'the sheet has a context menu');
-        t.ok(has(source, 'Align centre'), `fix:${name}`, 'that offers centring');
-        t.ok(has(source, 'AlignSelection('), `fix:${name}`, 'through AlignSelection');
+        t.ok(!/new ContextMenu\(\)|New ContextMenu\(\)/.test(source), `fix:${name}`,
+            'no Avalonia ContextMenu is used any more');
+        t.ok(!/ContextRequested\s*\+=|AddHandler ContextRequested/.test(source), `fix:${name}`,
+            'and nothing is left waiting on ContextRequested, which never reached the control ' +
+            '(the comments may still explain why)');
+        t.ok(has(source, 'IsRightButtonPressed'), `fix:${name}`,
+            'the right button is handled by the control itself');
+        t.ok(/IsRightButtonPressed[\s\S]{0,400}?ShowContextMenu\(/.test(source), `fix:${name}`,
+            'and that is what opens the menu');
+        t.ok(has(source, 'class SheetMenuItem') || has(source, 'Class SheetMenuItem'), `fix:${name}`,
+            'a menu line is a plain class the control owns');
+        for (const [needle, what] of [['Label', 'a label'], ['IsSeparator', 'a separator'], ['Ticked', 'a tick'],
+            ['Run', 'and a command']]) {
+            t.ok(new RegExp(`\\b${needle}\\b[\\s\\S]{0,120}?[=;]`).test(source), `fix:${name}`,
+                `a menu line carries ${what}`);
+        }
+        for (const constant of ['MenuWidth', 'MenuItemHeight', 'MenuSeparatorHeight', 'MenuPad']) {
+            t.ok(has(source, constant), `fix:${name}`, `the menu's geometry is a constant (${constant})`);
+        }
+        t.ok(has(source, 'BuildMenuItems'), `fix:${name}`, 'the lines are built on each open');
+        for (const label of ['Align left', 'Align centre', 'Align right', 'Align automatically', 'Bold',
+            'Italics', 'Clear formatting', 'Clear cells']) {
+            t.ok(has(source, label), `fix:${name}`, `the menu offers ${label}`);
+        }
+        t.ok(has(source, 'AlignSelection('), `fix:${name}`, 'centring goes through AlignSelection');
         t.ok(has(source, 'SelectionTextAlign') && has(source, 'SelectionAllBold'), `fix:${name}`,
-            'and it can tick what the selection already is');
+            'and the tick comes from what the selection already is');
         // A whole column must NOT gain a cell per empty row — the rule AlignSelection exists for.
         t.ok(/AlignSelection[\s\S]{0,700}?bounded/.test(source), `fix:${name}`,
             'a whole column only touches the cells that already exist');
+        // Drawn, not popped up: the panel is painted LAST, over the scrollbars and everything else.
+        t.ok(/DrawScrollBars\([\s\S]{0,200}?DrawContextMenu\(/.test(source), `fix:${name}`,
+            'the panel is painted over everything else, last');
+        t.ok(/DrawContextMenu[\s\S]{0,900}?GridColor/.test(source), `fix:${name}`,
+            'and takes the sheet\'s own colours, so it fits any theme');
+        // The mouse and the keyboard both drive it, and there has to be a way out of it.
+        t.ok(/MenuItemAt[\s\S]{0,400}?IsSeparator/.test(source), `fix:${name}`,
+            'a separator is not a line the pointer can land on');
+        t.ok(has(source, 'ChooseMenuItem'), `fix:${name}`, 'a press inside the panel chooses a line');
+        t.ok(has(source, 'CloseContextMenu'), `fix:${name}`, 'and there is a way to close it');
+        t.ok(/OnPointerWheelChanged[\s\S]{0,300}?CloseContextMenu\(\)/.test(source), `fix:${name}`,
+            'the wheel closes it — a menu pointing at a cell that scrolled away is wrong');
+        t.ok(/OnSheetLostFocus[\s\S]{0,200}?CloseContextMenu\(\)/.test(source), `fix:${name}`,
+            'so does losing the keyboard');
+        t.ok(has(source, 'HandleMenuKey'), `fix:${name}`, 'the menu owns the keyboard while it is open');
+        t.ok(/HandleMenuKey[\s\S]{0,1200}?Key\.Escape/.test(source), `fix:${name}`, 'Escape closes it');
+        t.ok(/HandleMenuKey[\s\S]{0,1200}?Key\.Up/.test(source) && /HandleMenuKey[\s\S]{0,1200}?Key\.Down/.test(source),
+            `fix:${name}`, 'the arrows move the highlight past the separators');
+        t.ok(/HandleMenuKey[\s\S]{0,1600}?Key\.Enter/.test(source), `fix:${name}`, 'and Enter chooses');
+        t.ok(/HandleMenuKey[\s\S]{0,200}?_menuOpen[\s\S]{0,200}?Return False/.test(source) ||
+            /HandleMenuKey[\s\S]{0,200}?_menuOpen[\s\S]{0,200}?return false/.test(source), `fix:${name}`,
+            'and it does nothing at all when the menu is closed');
+        // A read-only sheet has nothing to line up, so it offers no menu.
+        t.ok(/ShowContextMenu[\s\S]{0,200}?AllowEditing/.test(source), `fix:${name}`,
+            'a read-only sheet opens no menu');
+        // The panel is clamped inside the control, so an edge right-click cannot draw it off the sheet.
+        t.ok(/ShowContextMenu[\s\S]{0,900}?Math\.Max\(0, Math\.Min\(point\.X, size\.Width - MenuWidth\)\)/.test(source),
+            `fix:${name}`, 'and the panel is clamped inside the sheet near an edge');
     }
 
     // 4) dragging a border to size a column or a row.
@@ -397,6 +450,30 @@ module.exports = async (t) => {
             'the natural size counts the widened columns, or the last ones stay clipped');
         t.ok(has(source, 'ColumnWidthOf(column)') && has(source, 'RowHeightOf(row)'), `fix:${name}`,
             'and header labels are centred in their own track');
+    }
+
+    // 6) the keyboard: an arrow key on its own, and the Ctrl+Arrow/Ctrl+End a real sheet is driven with.
+    for (const [name, source] of twins) {
+        t.ok(/Key\.Left[\s\S]{0,200}?MoveWithControl\(0, -1/.test(source), `nav:${name}`,
+            'Left goes through MoveWithControl');
+        t.ok(/Key\.Right[\s\S]{0,200}?MoveWithControl\(0, 1/.test(source), `nav:${name}`, 'Right too');
+        t.ok(/Key\.Up[\s\S]{0,200}?MoveWithControl\(-1, 0/.test(source), `nav:${name}`, 'Up too');
+        t.ok(/Key\.Down[\s\S]{0,200}?MoveWithControl\(1, 0/.test(source), `nav:${name}`, 'Down too');
+        t.ok(/MoveWithControl\([\s\S]{0,400}?If Not control|MoveWithControl\([\s\S]{0,400}?if \(!control\)/.test(source),
+            `nav:${name}`, 'without Ctrl it is a plain one-cell move');
+        t.ok(has(source, 'LastUsedCell'), `nav:${name}`, 'the last used cell can be found');
+        t.ok(/Key\.End[\s\S]{0,300}?LastUsedCell\(\)/.test(source), `nav:${name}`,
+            'Ctrl+End goes to the bottom-right of what is in the sheet');
+        // Focus on load: the arrows have to work before anything is clicked, or it reads as "ignores the
+        // keyboard". It cannot be done on attach — there is no TopLevel yet — so it waits for Loaded and
+        // then one step through the dispatcher.
+        t.ok(has(source, 'OnAttachedToVisualTree'), `focus:${name}`, 'the sheet hooks the attached event');
+        t.ok(/OnAttachedToVisualTree[\s\S]{0,300}?Loaded/.test(source), `focus:${name}`,
+            'and waits for Loaded, where there is a TopLevel to ask');
+        t.ok(/Dispatcher[\s\S]{0,120}?Post\([\s\S]{0,120}?TryTakeFocus/.test(source), `focus:${name}`,
+            'the request is posted, because asking inside Loaded itself is too early and is refused');
+        t.ok(/TryTakeFocus[\s\S]{0,500}?(GetFocusedElement\(\)|FocusManager)/.test(source), `focus:${name}`,
+            'and it only takes the keyboard when nothing else has it');
     }
 
     t.note('the designer panel can set the new properties');

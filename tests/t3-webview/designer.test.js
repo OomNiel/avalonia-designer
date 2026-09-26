@@ -110,7 +110,10 @@ function setup(omit = []) {
         if (id === 'aiLlamaStart' || id === 'aiLlamaStop') return 'button';
         if (id === 'aiLlamaOwner') return 'p';
         if (id === 'aiLoad' || id === 'aiUnload' || id === 'aiRemove' || id === 'aiStatus' || id === 'aiRefresh' || id === 'aiScan' || id === 'aiLearnConventions') return 'button';
-        if (id.startsWith('dotGridSpacing') || id === 'dotGridColor' || id === 'dotGridDotSize') return 'input';
+        if (id.startsWith('dotGridSpacing') || id === 'dotGridDotSize') return 'input';
+        // The colour controls are BUTTONS now, not <input type="color">: the browser draws the native picker
+        // itself and it could not be clamped, so every one of them opens the palette popup instead.
+        if (id === 'dotGridColor' || id === 'chColor' || id === 'sheetTextColor' || id === 'sheetFill') return 'button';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
             || id === 'dotGridSave' || id === 'dotGridCancel'
             || id === 'chModeShort' || id === 'chModeLong'
@@ -130,9 +133,9 @@ function setup(omit = []) {
         if (id === 'sheetGrid') return 'table';
         if (id === 'sheetAddress') return 'span';
         if (id === 'sheetBold' || id === 'sheetItalic' || id === 'sheetTextColorNone' || id === 'sheetFillNone' || id === 'sheetClearFormat') return 'button';
-        if (id === 'sheetSize' || id === 'sheetFamily' || id === 'sheetTextColor' || id === 'sheetFill') return 'input';
+        if (id === 'sheetSize' || id === 'sheetFamily') return 'input';
         if (id === 'sheetAlign') return 'select';
-        if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
+        if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
     };
@@ -1687,7 +1690,8 @@ module.exports = async (t) => {
         t.equal($('chThickness').value, '1', 'ch', 'thickness prefilled');
         t.equal($('chShortLength').value, '50', 'ch', 'short length prefilled');
         t.equal($('chOpacity').value, '100', 'ch', 'opacity prefilled');
-        t.equal($('chColor').value, '#000000', 'ch', 'colour prefilled');
+        t.equal($('chColor').dataset.color, '#000000', 'ch',
+            'colour prefilled (a swatch BUTTON now, so the colour lives on the element, not in a form value)');
         // Toggle Long + edit the fields, then Save.
         $('chModeLong').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal($('chModeLong').classList.contains('active'), true, 'ch', 'Long toggled on');
@@ -1695,7 +1699,13 @@ module.exports = async (t) => {
         $('chShortLength').value = '75';
         $('chThickness').value = '2';
         $('chOpacity').value = '60';
-        $('chColor').value = '#00ff88';
+        // The colour is chosen from the palette now; the test drives the same two steps the user does.
+        $('chColor').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const chPal = s.window.document.getElementById('colorPalette');
+        t.equal(!!chPal && !chPal.hidden, true, 'ch', 'clicking the colour swatch opens the palette');
+        const chRow = [...chPal.querySelectorAll('.cp-row')].find((r) => r.textContent.includes('Teal'));
+        chRow.dispatchEvent(new s.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal($('chColor').dataset.color, 'Teal', 'ch', 'and the pick lands on the swatch');
         posted.length = 0;
         $('crosshairSave').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
         t.equal($('crosshairModal').hidden, true, 'ch', 'popup closes on save');
@@ -1705,7 +1715,7 @@ module.exports = async (t) => {
         t.equal(sc.settings.shortLength, 75, 'ch', 'short length saved');
         t.equal(sc.settings.thickness, 2, 'ch', 'thickness saved');
         t.equal(sc.settings.opacity, 60, 'ch', 'opacity saved');
-        t.equal(sc.settings.color, '#00ff88', 'ch', 'colour saved');
+        t.equal(sc.settings.color, 'Teal', 'ch', 'colour saved');
         // Cancel just closes without posting.
         posted.length = 0;
         $('btnCrosshair').dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
@@ -2528,8 +2538,13 @@ module.exports = async (t) => {
         t.equal($('dgTitle').textContent, 'Rows', 'dg-editor', 'title Rows');
         const rowEls = $('dgBody').querySelectorAll('.splitter-row');
         t.equal(rowEls.length, 8, 'dg-editor', 'eight row fields');
-        const colors = rowEls[0].querySelectorAll('input');
-        t.ok(colors.length >= 2, 'dg-editor', 'row background has a colour field');
+        const colors = rowEls[0].querySelectorAll('.dg-color');
+        t.equal(colors.length, 1, 'dg-editor', 'row background has a colour field');
+        t.ok(!!rowEls[0].querySelector('.dg-color button.color-swatch'), 'dg-editor',
+            'drawn as a swatch BUTTON that opens the palette — no native <input type="color"> is left in the ' +
+            'webview, because the browser drew its picker off the side of the panel');
+        t.ok(!!rowEls[0].querySelector('.dg-color input'), 'dg-editor',
+            'with the authoritative text field beside it');
         const rowHeightInput = rowEls[2].querySelector('input');
         rowHeightInput.value = '28';
         rowHeightInput.dispatchEvent(new s.window.Event('input', { bubbles: true }));
@@ -2787,7 +2802,8 @@ module.exports = async (t) => {
         // NAME like "White" survives). The text field is the one the editor reads and writes.
         const aColour = (caption) => {
             const row = aFields().find((f) => f.querySelector('span') && f.querySelector('span').textContent === caption);
-            return row ? row.querySelectorAll('input')[1] : null;
+            // The swatch is a BUTTON now, so the only INPUT in the row is the authoritative text field.
+            return row ? row.querySelectorAll('input')[0] : null;
         };
         // common Y, common X, series 1 X, series 1 Y, and an information row for series 2
         t.equal(aItems().length, 5, 'axes', 'both common axes and the per-series axes are listed');
@@ -3491,6 +3507,18 @@ module.exports = async (t) => {
             new sh.window.MouseEvent(type, { bubbles: true, cancelable: true, ...opts }));
         const change = (el) => el.dispatchEvent(new sh.window.Event('change', { bubbles: true }));
         const typeIn = (el) => el.dispatchEvent(new sh.window.Event('input', { bubbles: true }));
+        // Choosing a colour is a click on the swatch, then a pick in the palette: the wells are buttons and
+        // the palette's own custom row is what takes a value that is not one of the presets.
+        const pickWell = (id, value) => {
+            sh.$(id).dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+            const pal = sh.window.document.getElementById('colorPalette');
+            if (!pal || pal.hidden) return false;
+            const input = pal.querySelector('.cp-custom input');
+            input.value = value;
+            pal.querySelector('.cp-custom button')
+                .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+            return true;
+        };
         const cell = (r, c) => sh.$('sheetGrid').querySelector(`td[data-row="${r}"][data-col="${c}"]`);
         const save = () => {
             fire(sh.$('sheetSave'), 'click');
@@ -3533,11 +3561,10 @@ module.exports = async (t) => {
         sh.$('sheetFamily').value = 'Consolas';
         change(sh.$('sheetFamily'));
         t.equal(cell(2, 1).style.fontFamily, 'Consolas', 'sheet-format', 'so does a font family');
-        sh.$('sheetTextColor').value = '#cc0000';
-        typeIn(sh.$('sheetTextColor'));
+        t.ok(pickWell('sheetTextColor', '#cc0000'), 'sheet-format',
+            'clicking the Text well opens the palette (the native picker is gone from the whole webview)');
         t.ok(cell(2, 1).style.color.length > 0, 'sheet-format', 'and a text colour', cell(2, 1).style.color);
-        sh.$('sheetFill').value = '#22AA55';
-        typeIn(sh.$('sheetFill'));
+        pickWell('sheetFill', '#22AA55');
         t.ok(cell(2, 1).style.backgroundColor.toUpperCase().indexOf('34, 170, 85') >= 0 ||
             cell(2, 1).style.backgroundColor.toUpperCase().indexOf('#22AA55') >= 0, 'sheet-format',
             'and a highlight', cell(2, 1).style.backgroundColor);
@@ -3569,7 +3596,8 @@ module.exports = async (t) => {
             .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
         t.equal(sh.$('sheetSize').value, '18', 'sheet-format', 'the size the cells were given is shown again');
         t.equal(sh.$('sheetAlign').value, 'Center', 'sheet-format', 'as is the alignment');
-        t.equal(sh.$('sheetFill').value.toUpperCase(), '#22AA55', 'sheet-format', 'and the highlight colour');
+        t.equal(String(sh.$('sheetFill').dataset.color).toUpperCase(), '#22AA55', 'sheet-format',
+            'and the fill swatch shows the highlight colour it was given');
         t.ok(!sh.$('sheetFill').classList.contains('on-sheet'), 'sheet-format',
             'and the fill well no longer reads as the sheet’s own');
 

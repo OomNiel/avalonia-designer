@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.11
+' BUNDLED-COPY: 0.12.12
 ' GrumpySheet.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpySheet.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb / GrumpyCharts.vb.
 '
@@ -368,11 +368,13 @@ Namespace Global.AvaloniaSpreadsheet
         Private _scrollDragStart As Double
         Private _scrollDragStartOffset As Double
 
-        ' The right-click menu, built once in the constructor. The alignment items and the two toggles are
-        ' kept so their ticks can be refreshed from the selection each time the menu opens.
-        Private ReadOnly _alignItems As New Dictionary(Of SheetAlign, MenuItem)()
-        Private _boldItem As MenuItem
-        Private _italicItem As MenuItem
+        ' The right-click menu. It is DRAWN by the control itself — see the menu section far below for why it
+        ' is not an Avalonia ContextMenu.
+        Private _menuItems As New List(Of SheetMenuItem)()
+        Private _menuOpen As Boolean
+        Private _menuX As Double
+        Private _menuY As Double
+        Private _menuHot As Integer = -1
 
         Shared Sub New()
             AffectsRender(Of GrumpySheet)(RowsProperty, ColumnsProperty, ColumnWidthProperty, RowHeightProperty,
@@ -391,7 +393,42 @@ Namespace Global.AvaloniaSpreadsheet
             ClipToBounds = True
             AddHandler Cells.CollectionChanged, AddressOf OnCellsChanged
             AddHandler LostFocus, AddressOf OnSheetLostFocus
-            BuildContextMenu()
+        End Sub
+
+        ''' <summary>
+        ''' Takes the keyboard when the form appears, so the arrow keys work without a click first.
+        '''
+        ''' The work happens on LOADED, not on attach: while the tree is being attached there is no TopLevel
+        ''' yet, so GetTopLevel returns Nothing and asking the FocusManager anything silently does nothing.
+        ''' Deliberately conditional: a form that puts the caret in a TextBox on startup keeps it.
+        ''' </summary>
+        Protected Overrides Sub OnAttachedToVisualTree(e As VisualTreeAttachmentEventArgs)
+            MyBase.OnAttachedToVisualTree(e)
+            AddHandler Loaded, AddressOf OnSheetLoaded
+        End Sub
+
+        Private Sub OnSheetLoaded(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)
+            RemoveHandler Loaded, AddressOf OnSheetLoaded
+            ' The focus request has to wait for the load to FINISH: asking inside the Loaded handler itself
+            ' is too early and is simply refused (the window is active, the FocusManager is empty, and
+            ' IsFocused stays False). One step through the dispatcher is what makes the arrows work the
+            ' moment the form appears instead of only after the first click.
+            Avalonia.Threading.Dispatcher.UIThread.Post(AddressOf TryTakeFocus,
+                Avalonia.Threading.DispatcherPriority.Background)
+        End Sub
+
+        Private Sub TryTakeFocus()
+            Dim top As TopLevel = TopLevel.GetTopLevel(Me)
+            If top Is Nothing Then
+                Return
+            End If
+
+            Dim manager As IFocusManager = top.FocusManager
+            If manager Is Nothing OrElse manager.GetFocusedElement() IsNot Nothing OrElse Not IsVisible Then
+                Return
+            End If
+
+            Focus()
         End Sub
 
         ''' <summary>
@@ -1624,101 +1661,185 @@ Namespace Global.AvaloniaSpreadsheet
         End Sub
 
         ' ---- the right-click menu ------------------------------------------------------------------
+        '
+        ' An Avalonia ContextMenu was tried first and it never opened for a real right-click (reported
+        ' 2026-09-26): that needs the platform's popup plumbing and a control theme, and neither is
+        ' something this control otherwise depends on — and it meant the menu could not be seen working in
+        ' a headless render either, which is how it got shipped unverified. Drawing it costs the control
+        ' nothing it does not already do, and it takes the sheet's own colours, so it fits whatever theme
+        ' the form uses.
 
-        ''' <summary>
-        ''' Right-click: line the selection up, bold it, or clear it. An ordinary Avalonia ContextMenu, so
-        ''' it opens on right-click, closes on Escape and draws outside the control's own bounds — the
-        ''' control's own drawing stops at its edges, a popup does not.
-        '''
-        ''' The alignment items are what a spreadsheet needs most often, and the reason this exists: a whole
-        ''' COLUMN can be lined up in one gesture, which the Ctrl+B/I keys and the toolbar could not do
-        ''' without selecting all fifty rows of it by hand.
-        ''' </summary>
-        Private Sub BuildContextMenu()
-            Dim menu As New ContextMenu()
-            AddAlignItem(menu, "Align left", SheetAlign.Left)
-            AddAlignItem(menu, "Align centre", SheetAlign.Center)
-            AddAlignItem(menu, "Align right", SheetAlign.Right)
-            AddAlignItem(menu, "Align automatically", SheetAlign.Auto)
-            menu.Items.Add(New Separator())
-            _boldItem = AddToggleItem(menu, "Bold", AddressOf ToggleBoldSelection)
-            _italicItem = AddToggleItem(menu, "Italics", AddressOf ToggleItalicSelection)
-            menu.Items.Add(New Separator())
-            AddItem(menu, "Clear formatting", AddressOf ClearSelectionFormatting)
-            AddItem(menu, "Clear cells", AddressOf ClearSelection)
+        ''' <summary>One line of the menu: a command, or a gap between groups of them.</summary>
+        Private NotInheritable Class SheetMenuItem
+            ''' <summary>The text shown, empty for a separator.</summary>
+            Public Label As String = String.Empty
 
-            ' The menu is about the SELECTION, so it is off entirely when the sheet is read-only.
-            AddHandler menu.Opening, Sub(sender As Object, args As System.ComponentModel.CancelEventArgs)
-                                         If Not AllowEditing Then
-                                             args.Cancel = True
-                                             Return
-                                         End If
+            ''' <summary>A gap rather than a command.</summary>
+            Public IsSeparator As Boolean
 
-                                         UpdateMenuTicks()
-                                     End Sub
+            ''' <summary>Show a tick beside it (what the selection already is).</summary>
+            Public Ticked As Boolean
 
-            ContextMenu = menu
-            AddHandler ContextRequested, AddressOf OnSheetContextRequested
-        End Sub
+            ''' <summary>What choosing it does.</summary>
+            Public Run As Action
+        End Class
 
-        Private Sub AddAlignItem(menu As ContextMenu, title As String, align As SheetAlign)
-            Dim item As New MenuItem() With {.Header = title, .ToggleType = MenuItemToggleType.Radio}
-            AddHandler item.Click, Sub(sender As Object, args As Avalonia.Interactivity.RoutedEventArgs)
-                                       AlignSelection(align)
-                                       UpdateMenuTicks()
-                                   End Sub
-            _alignItems(align) = item
-            menu.Items.Add(item)
-        End Sub
+        ''' <summary>How wide the menu is, and how tall one of its lines is.</summary>
+        Private Const MenuWidth As Double = 200.0
+        Private Const MenuItemHeight As Double = 24.0
+        Private Const MenuSeparatorHeight As Double = 9.0
+        Private Const MenuPad As Double = 5.0
 
-        Private Function AddItem(menu As ContextMenu, title As String, action As Action) As MenuItem
-            Dim item As New MenuItem() With {.Header = title}
-            AddHandler item.Click, Sub(sender As Object, args As Avalonia.Interactivity.RoutedEventArgs)
-                                       action()
-                                   End Sub
-            menu.Items.Add(item)
+        ''' <summary>What the menu offers, built on each open so the ticks are current. The commands act on
+        ''' the SELECTION — a whole column lines up in one gesture, which is the point of having it.</summary>
+        Private Function BuildMenuItems() As List(Of SheetMenuItem)
+            Dim align As Nullable(Of SheetAlign) = SelectionTextAlign()
+            Dim items As New List(Of SheetMenuItem)()
+            items.Add(AlignItem("Align left", SheetAlign.Left, align))
+            items.Add(AlignItem("Align centre", SheetAlign.Center, align))
+            items.Add(AlignItem("Align right", SheetAlign.Right, align))
+            items.Add(AlignItem("Align automatically", SheetAlign.Auto, align))
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(New SheetMenuItem With {
+                .Label = "Bold",
+                .Ticked = SelectionFlag(True) = True,
+                .Run = AddressOf ToggleBoldSelection})
+            items.Add(New SheetMenuItem With {
+                .Label = "Italics",
+                .Ticked = SelectionFlag(False) = True,
+                .Run = AddressOf ToggleItalicSelection})
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(New SheetMenuItem With {.Label = "Clear formatting", .Run = AddressOf ClearSelectionFormatting})
+            items.Add(New SheetMenuItem With {.Label = "Clear cells", .Run = AddressOf ClearSelection})
+            Return items
+        End Function
+
+        Private Function AlignItem(label As String, align As SheetAlign, current As Nullable(Of SheetAlign)) As SheetMenuItem
+            Dim item As New SheetMenuItem()
+            item.Label = label
+            item.Ticked = current.HasValue AndAlso current.Value = align
+            item.Run = Sub() AlignSelection(align)
             Return item
         End Function
 
-        Private Function AddToggleItem(menu As ContextMenu, title As String, action As Action) As MenuItem
-            Dim item As New MenuItem() With {.Header = title, .ToggleType = MenuItemToggleType.CheckBox}
-            AddHandler item.Click, Sub(sender As Object, args As Avalonia.Interactivity.RoutedEventArgs)
-                                       action()
-                                       UpdateMenuTicks()
-                                   End Sub
-            menu.Items.Add(item)
-            Return item
-        End Function
-
-        ''' <summary>Ticks what the whole selection currently is, so the menu reads as a state as well as a
-        ''' set of commands. Nothing is ticked when the selection disagrees with itself.</summary>
-        Private Sub UpdateMenuTicks()
-            Dim agreed As Nullable(Of SheetAlign) = SelectionTextAlign()
-            For Each pair As KeyValuePair(Of SheetAlign, MenuItem) In _alignItems
-                pair.Value.IsChecked = agreed.HasValue AndAlso agreed.Value = pair.Key
+        ''' <summary>The menu's rectangle on the canvas, which is only meaningful while it is open.</summary>
+        Private Function MenuRect() As Rect
+            Dim height As Double = 2 * MenuPad
+            For i As Integer = 0 To _menuItems.Count - 1
+                height += If(_menuItems(i).IsSeparator, MenuSeparatorHeight, MenuItemHeight)
             Next
 
-            If _boldItem IsNot Nothing Then
-                _boldItem.IsChecked = SelectionFlag(True) = True
+            Return New Rect(_menuX, _menuY, MenuWidth, height)
+        End Function
+
+        ''' <summary>Which line of the menu a point is on, or -1. Separators are not selectable.</summary>
+        Private Function MenuItemAt(point As Point) As Integer
+            If Not _menuOpen OrElse Not MenuRect().Contains(point) Then
+                Return -1
             End If
 
-            If _italicItem IsNot Nothing Then
-                _italicItem.IsChecked = SelectionFlag(False) = True
+            Dim y As Double = _menuY + MenuPad
+            For i As Integer = 0 To _menuItems.Count - 1
+                Dim item As SheetMenuItem = _menuItems(i)
+                Dim height As Double = If(item.IsSeparator, MenuSeparatorHeight, MenuItemHeight)
+                If Not item.IsSeparator AndAlso point.Y >= y AndAlso point.Y < y + height Then
+                    Return i
+                End If
+
+                y += height
+            Next
+
+            Return -1
+        End Function
+
+        ''' <summary>
+        ''' Opens the menu under the pointer, on the selection the user just pointed at.
+        '''
+        ''' The right button is handled HERE rather than left to the framework's context-request: that never
+        ''' reached this control, so right-clicking did nothing at all. It also lets the menu move the
+        ''' selection onto whatever was right-clicked, which is what every spreadsheet does — and keeps the
+        ''' whole menu inside the control, flipping it up or left near an edge.
+        ''' </summary>
+        Private Sub ShowContextMenu(point As Point)
+            If Not AllowEditing Then
+                Return
             End If
+
+            SetContextSelection(point)
+            _menuItems = BuildMenuItems()
+            _menuOpen = True
+            _menuHot = -1
+            Dim size As Size = Bounds.Size
+            Dim height As Double = MenuRect().Height
+            _menuX = Math.Max(0, Math.Min(point.X, size.Width - MenuWidth))
+            _menuY = Math.Max(0, Math.Min(point.Y, size.Height - height))
+            InvalidateVisual()
+        End Sub
+
+        Private Sub CloseContextMenu()
+            If Not _menuOpen Then
+                Return
+            End If
+
+            _menuOpen = False
+            _menuHot = -1
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Runs the line a point is on, if any, and closes. Always True: the press was the menu's.</summary>
+        Private Function ChooseMenuItem(point As Point) As Boolean
+            Dim index As Integer = MenuItemAt(point)
+            Dim run As Action = If(index >= 0, _menuItems(index).Run, Nothing)
+            CloseContextMenu()
+            If run IsNot Nothing Then
+                run()
+            End If
+
+            Return True
+        End Function
+
+        ''' <summary>Paints the menu over everything else.</summary>
+        Private Sub DrawContextMenu(context As DrawingContext)
+            If Not _menuOpen Then
+                Return
+            End If
+
+            Dim rect As Rect = MenuRect()
+            Dim edge As New SolidColorBrush(GridColor)
+            context.FillRectangle(New SolidColorBrush(CellBackColor), rect)
+            context.DrawRectangle(Nothing, New Pen(edge, 1.0), rect)
+            Dim text As New SolidColorBrush(TextColor)
+            Dim hot As New SolidColorBrush(SelectionFillColor)
+            Dim y As Double = _menuY + MenuPad
+            For i As Integer = 0 To _menuItems.Count - 1
+                Dim item As SheetMenuItem = _menuItems(i)
+                If item.IsSeparator Then
+                    context.DrawLine(New Pen(edge, 1.0), New Point(_menuX + 6, y + MenuSeparatorHeight / 2),
+                        New Point(rect.Right - 6, y + MenuSeparatorHeight / 2))
+                    y += MenuSeparatorHeight
+                    Continue For
+                End If
+
+                If i = _menuHot Then
+                    context.FillRectangle(hot, New Rect(_menuX + 1, y, MenuWidth - 2, MenuItemHeight))
+                End If
+
+                If item.Ticked Then
+                    DrawCellText(context, ChrW(&H2713), New Rect(_menuX + 1, y, 15, MenuItemHeight), text, False,
+                        TextAlignment.Center)
+                End If
+
+                DrawCellText(context, item.Label, New Rect(_menuX + 17, y, MenuWidth - 22, MenuItemHeight),
+                    text, False, TextAlignment.Left)
+                y += MenuItemHeight
+            Next
         End Sub
 
         ''' <summary>
         ''' Moves the selection onto what was right-clicked — unless the cell is already inside the
         ''' selection, in which case the menu is about the whole block, which is what the user aimed at.
-        ''' This is every spreadsheet's rule, and the reason the hook is on ContextRequested: it is the one
-        ''' event that still knows where the pointer was.
         ''' </summary>
-        Private Sub OnSheetContextRequested(sender As Object, e As ContextRequestedEventArgs)
-            Dim point As Point = Nothing
-            If Not e.TryGetPosition(Me, point) Then
-                Return
-            End If
-
+        Private Sub SetContextSelection(point As Point)
             Dim row As Integer = 0
             Dim column As Integer = 0
             Dim hit As Integer = HitTest(point, row, column)
@@ -1743,6 +1864,52 @@ Namespace Global.AvaloniaSpreadsheet
 
             SelectCell(row, column)
         End Sub
+
+        ''' <summary>The menu's own keys: Escape closes, Up/Down move the highlight, Enter chooses.</summary>
+        Private Function HandleMenuKey(e As KeyEventArgs) As Boolean
+            If Not _menuOpen Then
+                Return False
+            End If
+
+            If e.Key = Key.Escape Then
+                CloseContextMenu()
+                Return True
+            End If
+
+            If e.Key = Key.Up OrElse e.Key = Key.Down Then
+                ' NOT "step": that is a VB keyword (For … Step) and cannot name a local.
+                Dim direction As Integer = If(e.Key = Key.Down, 1, -1)
+                Dim at As Integer = _menuHot
+                For i As Integer = 0 To _menuItems.Count - 1
+                    at += direction
+                    If at < 0 Then
+                        at = _menuItems.Count - 1
+                    ElseIf at >= _menuItems.Count Then
+                        at = 0
+                    End If
+
+                    If Not _menuItems(at).IsSeparator Then
+                        Exit For
+                    End If
+                Next
+
+                _menuHot = at
+                InvalidateVisual()
+                Return True
+            End If
+
+            If e.Key = Key.Enter AndAlso _menuHot >= 0 AndAlso _menuHot < _menuItems.Count Then
+                Dim run As Action = _menuItems(_menuHot).Run
+                CloseContextMenu()
+                If run IsNot Nothing Then
+                    run()
+                End If
+
+                Return True
+            End If
+
+            Return True                 ' the menu owns the keyboard while it is open
+        End Function
 
         ' ---- sizing a column or a row ------------------------------------------------------------
         ' What dragging a header border calls. The sizes are per track and SPARSE: every column and row
@@ -2142,8 +2309,9 @@ Namespace Global.AvaloniaSpreadsheet
                 End If
             End If
 
-            ' Last, so nothing is drawn over a bar the user is trying to grab.
+            ' Last of all, over everything including the scrollbars: the right-click menu, if it is open.
             DrawScrollBars(context, size)
+            DrawContextMenu(context)
         End Sub
 
         ''' <summary>Draws the frozen headers, with the selected rows/columns lit up.</summary>
@@ -2561,6 +2729,26 @@ Namespace Global.AvaloniaSpreadsheet
         ''' <summary>Starts a selection, a fill, or an edit.</summary>
         Protected Overrides Sub OnPointerPressed(e As PointerPressedEventArgs)
             Dim point As PointerPoint = e.GetCurrentPoint(Me)
+
+            ' A press while the menu is open belongs to the menu: inside it chooses a line, outside it just
+            ' closes. Either way the press does not also start a selection or a drag.
+            If _menuOpen AndAlso Not point.Properties.IsRightButtonPressed Then
+                ChooseMenuItem(point.Position)
+                e.Handled = True
+                Return
+            End If
+
+            ' The right button opens the menu HERE rather than being left to ContextRequested, which never
+            ' reached this control (reported 2026-09-26: the menu existed, its items worked when invoked,
+            ' and right-clicking opened nothing at all). Doing it here also lets the menu move the selection
+            ' onto whatever was right-clicked first, which is what every spreadsheet does.
+            If point.Properties.IsRightButtonPressed Then
+                CloseContextMenu()
+                ShowContextMenu(point.Position)
+                e.Handled = True
+                Return
+            End If
+
             If Not point.Properties.IsLeftButtonPressed Then
                 Return
             End If
@@ -2691,6 +2879,17 @@ Namespace Global.AvaloniaSpreadsheet
             Dim column As Integer
             Dim hit As Integer = HitTest(point, row, column)
 
+            ' While the menu is open a move only highlights the line under the pointer.
+            If _menuOpen Then
+                Dim hot As Integer = MenuItemAt(point)
+                If hot <> _menuHot Then
+                    _menuHot = hot
+                    InvalidateVisual()
+                End If
+
+                Return
+            End If
+
             ' Dragging a scrollbar: the pointer's travel along the track, scaled to the scroll range.
             If _scrollDragging Then
                 Dim size As Size = Bounds.Size
@@ -2785,6 +2984,8 @@ Namespace Global.AvaloniaSpreadsheet
         ''' when there is nothing to scroll VERTICALLY the wheel goes sideways instead — otherwise the
         ''' columns off to the right are unreachable with an ordinary mouse.</summary>
         Protected Overrides Sub OnPointerWheelChanged(e As PointerWheelEventArgs)
+            ' A menu that stayed put while the sheet scrolled under it would be pointing at nothing.
+            CloseContextMenu()
             Dim size As Size = Bounds.Size
             Dim grid As Rect = GridRect(size)
             Dim vertical As Double = e.Delta.Y
@@ -2841,6 +3042,12 @@ Namespace Global.AvaloniaSpreadsheet
             Dim shift As Boolean = e.KeyModifiers.HasFlag(KeyModifiers.Shift)
             Dim control As Boolean = e.KeyModifiers.HasFlag(KeyModifiers.Control)
 
+            ' The menu owns the keyboard while it is open (Escape, the arrows, Enter).
+            If HandleMenuKey(e) Then
+                e.Handled = True
+                Return
+            End If
+
             If _editing Then
                 If HandleEditKey(e, shift) Then
                     e.Handled = True
@@ -2894,25 +3101,25 @@ Namespace Global.AvaloniaSpreadsheet
             End If
 
             If e.Key = Key.Left Then
-                MoveActive(0, -1, shift)
+                MoveWithControl(0, -1, shift, control)
                 e.Handled = True
                 Return
             End If
 
             If e.Key = Key.Right Then
-                MoveActive(0, 1, shift)
+                MoveWithControl(0, 1, shift, control)
                 e.Handled = True
                 Return
             End If
 
             If e.Key = Key.Up Then
-                MoveActive(-1, 0, shift)
+                MoveWithControl(-1, 0, shift, control)
                 e.Handled = True
                 Return
             End If
 
             If e.Key = Key.Down Then
-                MoveActive(1, 0, shift)
+                MoveWithControl(1, 0, shift, control)
                 e.Handled = True
                 Return
             End If
@@ -2936,6 +3143,14 @@ Namespace Global.AvaloniaSpreadsheet
                     MoveActive(0, 1 - _activeColumn, shift)
                 End If
 
+                e.Handled = True
+                Return
+            End If
+
+            ' Ctrl+End: the bottom-right corner of what is IN the sheet, the way every spreadsheet does it.
+            If e.Key = Key.End AndAlso control Then
+                Dim last As CellAddress = LastUsedCell()
+                MoveActive(last.Row - _activeRow, last.Column - _activeColumn, shift)
                 e.Handled = True
                 Return
             End If
@@ -2990,7 +3205,88 @@ Namespace Global.AvaloniaSpreadsheet
         ''' OnLostFocus with this signature.</summary>
         Private Sub OnSheetLostFocus(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)
             CommitEdit(True)
+            CloseContextMenu()
         End Sub
+
+        ''' <summary>A cell's address, for the couple of places that return one.</summary>
+        Private Structure CellAddress
+            ''' <summary>The one-based row.</summary>
+            Public Row As Integer
+
+            ''' <summary>The one-based column.</summary>
+            Public Column As Integer
+
+            Public Sub New(row As Integer, column As Integer)
+                Me.Row = row
+                Me.Column = column
+            End Sub
+        End Structure
+
+        ''' <summary>
+        ''' An arrow key: one cell on its own, or — with Ctrl — the far end of the block of filled cells in
+        ''' that direction, which is how a spreadsheet is actually driven around a large sheet (Ctrl+Down
+        ''' from the top of a column lands on the last value in it).
+        ''' </summary>
+        Private Sub MoveWithControl(rowDelta As Integer, columnDelta As Integer, extend As Boolean, control As Boolean)
+            If Not control Then
+                MoveActive(rowDelta, columnDelta, extend)
+                Return
+            End If
+
+            ' Whether the cell NEXT to us is filled decides which rule applies: run to the end of a block
+            ' of values, or skip a gap and land on the next value. The sheet edge is where either walk
+            ' stops, so there is always somewhere to land.
+            Dim filled As Boolean = GetCell(ClampRow(_activeRow + rowDelta),
+                ClampColumn(_activeColumn + columnDelta)).Length > 0
+            Dim atRow As Integer = _activeRow
+            Dim atColumn As Integer = _activeColumn
+            Do
+                Dim nextRow As Integer = ClampRow(atRow + rowDelta)
+                Dim nextColumn As Integer = ClampColumn(atColumn + columnDelta)
+                If nextRow = atRow AndAlso nextColumn = atColumn Then
+                    Exit Do                     ' the edge: nowhere further to go
+                End If
+
+                Dim nextFilled As Boolean = GetCell(nextRow, nextColumn).Length > 0
+                If nextFilled <> filled Then
+                    If Not filled Then
+                        ' The gap ended: land ON the value that ended it.
+                        atRow = nextRow
+                        atColumn = nextColumn
+                    End If
+
+                    ' A block of values ends on its LAST cell, which is the one we are standing on.
+                    Exit Do
+                End If
+
+                atRow = nextRow
+                atColumn = nextColumn
+            Loop
+
+            MoveActive(atRow - _activeRow, atColumn - _activeColumn, extend)
+        End Sub
+
+        ''' <summary>The bottom-right corner of the cells that hold something, or A1 on an empty sheet.</summary>
+        Private Function LastUsedCell() As CellAddress
+            Dim row As Integer = 1
+            Dim column As Integer = 1
+            For i As Integer = 0 To _lookup.Count - 1
+                Dim cell As SheetCell = _lookup(i)
+                If GetCell(cell.Row, cell.Column).Length = 0 Then
+                    Continue For
+                End If
+
+                If cell.Row > row Then
+                    row = cell.Row
+                End If
+
+                If cell.Column > column Then
+                    column = cell.Column
+                End If
+            Next
+
+            Return New CellAddress(row, column)
+        End Function
 
         ''' <summary>Moves the active cell by a delta, extending the selection when Shift is held.</summary>
         Private Sub MoveActive(rowDelta As Integer, columnDelta As Integer, extend As Boolean)

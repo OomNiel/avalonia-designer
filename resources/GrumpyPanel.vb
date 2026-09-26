@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.11
+' BUNDLED-COPY: 0.12.12
 ' ============================================================================
 '  GrumpyPanel.vb — Reusable Avalonia docking region panel ("GrumpyPanel").
 '
