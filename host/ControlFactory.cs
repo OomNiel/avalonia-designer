@@ -196,7 +196,10 @@ public class ControlFactory
             // freshly dropped sheet looks like a sheet rather than an empty box. Its cells are CHILD
             // ELEMENTS (the content property), and the `spread:` prefix (xmlns:spread=
             // "using:AvaloniaSpreadsheet") is declared by the extension when it places the control.
-            ["GrumpySheet"] = n => $"<spread:GrumpySheet x:Name=\"{n}\" Width=\"560\" Height=\"320\">\n    <spread:SheetCell Row=\"1\" Column=\"1\" Text=\"Item\"/>\n    <spread:SheetCell Row=\"1\" Column=\"2\" Text=\"Qty\"/>\n    <spread:SheetCell Row=\"2\" Column=\"1\" Text=\"Widget\"/>\n    <spread:SheetCell Row=\"2\" Column=\"2\" Text=\"3\"/>\n</spread:GrumpySheet>"
+            // The header row carries the phase-2 formatting — bold, shaded — which is also what makes the
+            // T5 matrix a real test of it: that project's form is written from THIS snippet and compiled
+            // by the real XAML compiler, so a colour or an enum the compiler cannot convert fails there.
+            ["GrumpySheet"] = n => $"<spread:GrumpySheet x:Name=\"{n}\" Width=\"560\" Height=\"320\">\n    <spread:SheetCell Row=\"1\" Column=\"1\" Text=\"Item\" Bold=\"True\" Fill=\"#DDE7F5\"/>\n    <spread:SheetCell Row=\"1\" Column=\"2\" Text=\"Qty\" Bold=\"True\" Fill=\"#DDE7F5\" TextAlign=\"Center\"/>\n    <spread:SheetCell Row=\"2\" Column=\"1\" Text=\"Widget\"/>\n    <spread:SheetCell Row=\"2\" Column=\"2\" Text=\"3\"/>\n</spread:GrumpySheet>"
         };
     }
 

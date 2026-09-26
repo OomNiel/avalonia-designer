@@ -23,6 +23,7 @@ const ROOT = path.join(__dirname, '..', '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const cs = read('resources/GrumpySheet.cs');
 const vb = read('resources/GrumpySheet.vb');
+const renderer = read('host/XamlRenderer.cs');
 const moduleSource = read('src/sheetCells.ts');
 
 /** The renderer default the C# registers for a styled property, as a number. */
@@ -181,4 +182,139 @@ module.exports = async (t) => {
     t.note('the module owns the model, so the panel cannot drift from it');
     t.ok(moduleSource.includes("from './xamlModel'"), 'wiring', 'sheetCells imports the model');
     t.ok(moduleSource.includes('writeSheetCells'), 'wiring', 'the writer is the only way in');
+
+    // ---------------------------------------------------------------- phase 2: per-cell formatting
+    t.note('formatting: every attribute name is a property the twins declare');
+    t.equal(sheet.SHEET_CELL_FIELDS.length, 7, 'format', 'the seven formatting fields');
+    for (const field of sheet.SHEET_CELL_FIELDS) {
+        t.ok(new RegExp(`public\\s+[\\w?<>]+\\s+${field.attr}\\s*\\{`).test(cs), 'format',
+            `the C# SheetCell declares ${field.attr}`);
+        t.ok(new RegExp(`Public Property ${field.attr}\\b`).test(vb), 'format',
+            `the VB SheetCell declares ${field.attr}`);
+        // The preview host reads the cell elements itself, so a name it does not know means the canvas
+        // shows a plain cell while the built app shows the formatted one.
+        t.ok(renderer.includes(`case "${field.attr}":`), 'format',
+            `the preview host applies ${field.attr}`);
+    }
+
+    t.note('the alignment enum: named as the twins name it, and not `Default`');
+    t.equal(JSON.stringify(sheet.SHEET_ALIGNS), '["Auto","Left","Center","Right"]', 'format',
+        'the four alignments');
+    const csEnum = /public enum SheetAlign\s*\{([^}]*)\}/.exec(cs);
+    const vbEnum = /Public Enum SheetAlign([\s\S]*?)End Enum/.exec(vb);
+    t.ok(csEnum !== null, 'format', 'the C# enum is there');
+    t.ok(vbEnum !== null, 'format', 'the VB enum is there');
+    for (const name of sheet.SHEET_ALIGNS) {
+        t.ok(new RegExp(`\\b${name}\\b`).test(csEnum ? csEnum[1] : ''), 'format', `the C# enum declares ${name}`);
+        t.ok(new RegExp(`\\b${name}\\b`).test(vbEnum ? vbEnum[1] : ''), 'format', `the VB enum declares ${name}`);
+    }
+    // This is the reason the member is `Auto`: `Default` is a VB keyword, so an enum member by that
+    // name is a BC30185 error where the C# twin compiles happily — a twin that is not a twin.
+    t.ok(!cs.includes('SheetAlign.Default') && !vb.includes('SheetAlign.Default'), 'format',
+        'neither twin calls the member Default');
+
+    t.note('formatting values are spelled the one way the writer writes them');
+    t.equal(sheet.normaliseSheetColor('#ffcc00'), '#FFCC00', 'format', 'a hex colour is upper-cased');
+    t.equal(sheet.normaliseSheetColor('#f0c'), '#FF00CC', 'format', 'three digits are widened to six');
+    t.equal(sheet.normaliseSheetColor('  #80FF0000  '), '#80FF0000', 'format', 'eight digits are kept');
+    t.equal(sheet.normaliseSheetColor('Red'), 'Red', 'format',
+        'a named colour is passed through — trashing a value this module cannot read would delete a ' +
+        'highlight the user wrote by hand');
+    t.equal(sheet.normaliseSheetColor(''), '', 'format', 'empty is the sheet\u2019s own colour');
+    t.equal(sheet.normaliseSheetAlign('cEnTeR'), 'Center', 'format', 'an alignment is matched by name');
+    t.equal(sheet.normaliseSheetAlign(''), '', 'format', 'empty is left empty — it is the sheet\u2019s own');
+    t.equal(sheet.normaliseSheetNumber('20.126'), 20.13, 'format', 'a size is rounded to two decimals');
+    t.equal(sheet.normaliseSheetNumber(''), 0, 'format', 'an empty size is 0 = the sheet\u2019s own');
+    t.equal(sheet.normaliseSheetNumber('-5'), 0, 'format', 'and a negative one is refused');
+    t.equal(sheet.normaliseSheetNumber('big'), 0, 'format', 'as is a word where a number belongs');
+
+    t.note('a cell is styled when it decides anything of its own');
+    t.equal(sheet.sheetCellIsStyled({ row: 1, column: 1, text: 'x' }), false, 'format', 'text alone is plain');
+    t.equal(sheet.sheetCellIsStyled({ row: 1, column: 1, text: '', fill: '#FFCC00' }), true, 'format',
+        'a highlight is formatting');
+    t.equal(sheet.sheetCellIsStyled({ row: 1, column: 1, text: 'x', bold: false, textAlign: 'Auto' }), false,
+        'format', 'stating the default is not formatting');
+
+    t.note('writing formatting, and leaving the sheet\u2019s own settings out');
+    const styled = model(SHEET('Rows="10" Columns="5"', ''));
+    const styledEl = findSheet(styled);
+    sheet.writeSheetCells(styled, styledEl, [
+        {
+            row: 1, column: 1, text: 'Item', bold: true, italic: true, fontSize: 20,
+            fontFamily: 'Consolas', textColor: '#cc0000', fill: '#ffcc00', textAlign: 'center'
+        },
+        { row: 2, column: 1, text: '', fill: '#22AA55' },   // blank but highlighted: worth an element
+        { row: 3, column: 1, text: '', bold: false },       // blank and plain: not
+        { row: 4, column: 1, text: 'x', fill: 'Red' },      // a colour only the control can read
+        { row: 5, column: 1, text: 'x', bold: false, fontSize: 0, textAlign: 'Auto', textColor: '' }
+    ]);
+    const styledText = styled.serialize(true);
+    t.ok(styledText.indexOf('<spread:SheetCell Row="1" Column="1" Text="Item" Bold="True" Italic="True" ' +
+        'FontSize="20" FontFamily="Consolas" TextColor="#CC0000" Fill="#FFCC00" TextAlign="Center"/>') >= 0,
+        'format', 'the whole cell is written in one element, with the values normalised');
+    t.ok(styledText.indexOf('<spread:SheetCell Row="2" Column="1" Fill="#22AA55"/>') >= 0, 'format',
+        'a formatted but BLANK cell is written, and with no Text attribute at all');
+    t.ok(styledText.indexOf('Row="3"') < 0, 'format', 'a blank cell with nothing to say is not written');
+    t.ok(styledText.indexOf('<spread:SheetCell Row="4" Column="1" Text="x" Fill="Red"/>') >= 0, 'format',
+        'a named colour is written back exactly as it came in');
+    t.ok(styledText.indexOf('Row="5"') >= 0 && styledText.indexOf('Bold="False"') < 0 &&
+        styledText.indexOf('FontSize="0"') < 0 && styledText.indexOf('TextAlign="Auto"') < 0, 'format',
+        'stating the sheet\u2019s own settings writes no attributes for them');
+
+    t.note('reading formatting back');
+    t.equal(JSON.stringify(sheet.sheetCellsOf(styledEl)), JSON.stringify([
+        {
+            row: 1, column: 1, text: 'Item', bold: true, italic: true, fontSize: 20,
+            fontFamily: 'Consolas', textColor: '#CC0000', fill: '#FFCC00', textAlign: 'Center'
+        },
+        { row: 2, column: 1, text: '', fill: '#22AA55' },
+        { row: 4, column: 1, text: 'x', fill: 'Red' },
+        { row: 5, column: 1, text: 'x' }
+    ]), 'format', 'the cells come back with their formatting, and only what they decided');
+    t.equal(JSON.stringify(sheet.sheetCellsOf(styledEl)[1]),
+        '{"row":2,"column":1,"text":"","fill":"#22AA55"}', 'format',
+        'a blank formatted cell survives the round trip — dropping it would delete the highlight');
+    t.equal(JSON.stringify(sheet.sheetCellsOf(styledEl)[3]), '{"row":5,"column":1,"text":"x"}',
+        'format', 'and a cell with only defaults reads as a plain cell did before formatting existed');
+
+    t.note('clearing formatting takes the attributes OUT of the file');
+    const plainAgain = sheet.sheetCellsOf(styledEl).map((cell) => (
+        { row: cell.row, column: cell.column, text: cell.text }));
+    sheet.writeSheetCells(styled, styledEl, plainAgain);
+    const clearedText = styled.serialize(true);
+    t.ok(clearedText.indexOf('Fill=') < 0 && clearedText.indexOf('Bold=') < 0 &&
+        clearedText.indexOf('FontSize=') < 0 && clearedText.indexOf('TextAlign=') < 0 &&
+        clearedText.indexOf('TextColor=') < 0 && clearedText.indexOf('FontFamily=') < 0 &&
+        clearedText.indexOf('Italic=') < 0, 'format',
+        'every formatting attribute is gone from the form');
+    t.ok(clearedText.indexOf('Text="x"') >= 0, 'format', 'while the text the cells hold is untouched');
+    t.ok(clearedText.indexOf('Row="2"') < 0, 'format',
+        'and the blank cell that only had a highlight leaves no element behind');
+
+    t.note('the formatting survives a full round trip unchanged');
+    const again = model(SHEET('Rows="10" Columns="5"', ''));
+    const againEl = findSheet(again);
+    const beforeTrip = sheet.sheetCellsOf(styledEl);
+    sheet.writeSheetCells(again, againEl, beforeTrip);
+    t.equal(JSON.stringify(sheet.sheetCellsOf(againEl)), JSON.stringify(beforeTrip), 'format',
+        'reading what was written gives back exactly what was read');
+
+    t.note('the editor and the host agree on what a cell is');
+    t.ok(read('media/designer.js').includes("'bold', 'italic', 'fontSize', 'fontFamily', 'textColor', 'fill', 'textAlign'"),
+        'wiring', 'the webview editor keys its cells by the same seven fields');
+    t.ok(renderer.includes('AvaloniaSpreadsheet.GrumpySheet sheet'), 'wiring',
+        'and the host reads a sheet\u2019s cell elements the same way the control does');
+
+    // The snippet a dropped sheet arrives as is what the T5 matrix writes into a real VB project and
+    // compiles with the real XAML compiler, so formatting in the snippet is how the VB twin's own
+    // attribute conversion (a nullable Colour, an enum by name) finally gets built. Keeping it there
+    // keeps that check alive.
+    t.note('the toolbox snippet ships the formatting, so T5 compiles it');
+    const factory = read('host/ControlFactory.cs');
+    // The snippet is a C# interpolated string, so its quotes are ESCAPED in the source — the assertion
+    // has to match what the file says, backslashes and all.
+    t.ok(factory.includes('Text=\\"Item\\" Bold=\\"True\\" Fill=\\"#DDE7F5\\"'), 'wiring',
+        'the snippet\u2019s header cell is bold and shaded');
+    t.ok(factory.includes('TextAlign=\\"Center\\"'), 'wiring',
+        'and one of them is centred by name, which is the enum conversion the compiler has to accept');
 };

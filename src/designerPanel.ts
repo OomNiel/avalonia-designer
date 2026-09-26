@@ -7920,6 +7920,31 @@ ${publishButtons}      <span class="sep"></span>
           <span id="sheetAddress" class="sheet-address">A1</span>
           <input id="sheetFormula" class="sheet-formula" type="text" placeholder="the active cell's contents">
         </div>
+        <div class="sheet-format">
+          <button id="sheetBold" type="button" class="sheet-tool" title="Bold the selection (Ctrl+B at run time)"><b>B</b></button>
+          <button id="sheetItalic" type="button" class="sheet-tool" title="Italicise the selection (Ctrl+I at run time)"><i>I</i></button>
+          <label class="sheet-tool-field" title="The selection's font size — empty means the sheet's own">Size
+            <input id="sheetSize" type="number" min="0" max="200" step="1" placeholder="sheet"></label>
+          <label class="sheet-tool-field" title="The selection's font family — empty means the sheet's own">Font
+            <input id="sheetFamily" type="text" maxlength="60" placeholder="sheet"></label>
+          <label class="sheet-tool-field sheet-color" title="The selection's text colour — the × puts it back on the sheet's own">Text
+            <input id="sheetTextColor" type="color" value="#000000"><button id="sheetTextColorNone" type="button" class="sheet-none" title="Use the sheet's own text colour">&times;</button></label>
+          <label class="sheet-tool-field sheet-color" title="The selection's highlight — the × takes it away">Fill
+            <input id="sheetFill" type="color" value="#FFCC00"><button id="sheetFillNone" type="button" class="sheet-none" title="No highlight — the sheet's own paper colour">&times;</button></label>
+          <label class="sheet-tool-field" title="How the selection's text is lined up">Align
+            <select id="sheetAlign">
+              <option value="Auto">Auto</option>
+              <option value="Left">Left</option>
+              <option value="Center">Center</option>
+              <option value="Right">Right</option>
+            </select></label>
+          <button id="sheetClearFormat" type="button" class="sheet-tool sheet-tool-wide" title="Drop every formatting decision from the selected cells, leaving what they hold">Clear formatting</button>
+        </div>
+        <p class="modal-hint sheet-format-hint">The bar above formats <b>everything selected</b>, exactly as
+          <b>Ctrl+B</b>/<b>Ctrl+I</b> do in the sheet at run time; it shows the active cell's own settings. A
+          setting left on <b>Auto</b>, an empty size or font, or a colour cleared with <b>&times;</b> is the
+          sheet's own — nothing is written to the form for it. A cell that carries formatting but no text is
+          still saved: an empty highlighted box is a real thing to want.</p>
         <div id="sheetGridWrap" class="sheet-wrap"><table id="sheetGrid" class="sheet-grid"></table></div>
         <div class="modal-buttons">
           <button id="sheetClear" type="button" class="modal-btn">Clear cells</button>

@@ -2586,3 +2586,86 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     cursor: crosshair;
     z-index: 5;
 }
+
+/* The formatting bar. It acts on the whole SELECTION (like Ctrl+B in the sheet at run time) and shows
+ * the active cell's own settings, so a lit B means "every selected cell is bold". A setting showing the
+ * sheet's own value is drawn dimmed rather than blank, because an empty colour box reads as black. */
+.sheet-format {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 6px;
+}
+
+.sheet-tool {
+    min-width: 26px;
+    height: 24px;
+    padding: 0 6px;
+    border: 1px solid var(--border, #444);
+    border-radius: 3px;
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, #ddd);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.sheet-tool[aria-pressed="true"] {
+    background: var(--vscode-focusBorder, #2d7dd2);
+    border-color: var(--vscode-focusBorder, #2d7dd2);
+    color: var(--vscode-button-foreground, #fff);
+}
+
+.sheet-tool-wide {
+    padding: 0 10px;
+}
+
+.sheet-tool-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.sheet-tool-field input[type="number"] {
+    width: 68px;
+}
+
+.sheet-tool-field input[type="text"] {
+    width: 110px;
+}
+
+.sheet-tool-field select {
+    height: 24px;
+}
+
+.sheet-color input[type="color"] {
+    width: 34px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--border, #444);
+    background: none;
+    cursor: pointer;
+}
+
+/* On the sheet's own colour: the swatch is dimmed, and the × is what puts it back there. */
+.sheet-color input[type="color"].on-sheet {
+    opacity: 0.35;
+}
+
+.sheet-none {
+    width: 20px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--border, #444);
+    border-radius: 3px;
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, #ddd);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.sheet-format-hint {
+    margin: 0 0 8px;
+}

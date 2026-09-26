@@ -762,6 +762,13 @@ public class XamlRenderer
     /// (<c>&lt;spread:SheetCell Row="1" Column="1" Text="Item"/&gt;</c>) — the same shape the C#/VB
     /// control reads from XAML at run time, so what the canvas draws is what the app will show. A cell
     /// with no address, or an address the sheet does not have, is skipped by the control itself.
+    ///
+    /// A cell's FORMATTING rides on the same element (Bold, Italic, FontSize, FontFamily, TextColor,
+    /// Fill, TextAlign). Only the attributes that are THERE are applied: every Set* call creates the
+    /// cell if it is missing, and asking for the value it already has does nothing — so touching an
+    /// absent attribute would litter the sheet with blank cells nobody asked for. The values are parsed
+    /// exactly as the XAML compiler parses them, and anything unparseable is skipped rather than
+    /// guessed at, so the preview matches the built app instead of quietly inventing a colour.
     /// </summary>
     private static void ApplySheetCells(Control ctrl, XElement elem)
     {
@@ -776,6 +783,51 @@ public class XamlRenderer
             if (!int.TryParse(columnAttr.Value.Trim(), out var column)) continue;
             var textAttr = child.Attributes().FirstOrDefault(a => a.Name.LocalName == "Text");
             sheet.SetCell(row, column, textAttr is null ? string.Empty : textAttr.Value);
+
+            foreach (var attr in child.Attributes())
+            {
+                var name = attr.Name.LocalName;
+                // Row/Column/Text are done; xmlns is the markup itself; anything else this version
+                // does not know is ignored exactly as the control ignores it.
+                if (name.Equals("Row", StringComparison.Ordinal) ||
+                    name.Equals("Column", StringComparison.Ordinal) ||
+                    name.Equals("Text", StringComparison.Ordinal) ||
+                    name.StartsWith("xmlns", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                switch (name)
+                {
+                    case "Bold":
+                        if (bool.TryParse(attr.Value.Trim(), out var bold)) sheet.SetBold(row, column, bold);
+                        break;
+                    case "Italic":
+                        if (bool.TryParse(attr.Value.Trim(), out var italic)) sheet.SetItalic(row, column, italic);
+                        break;
+                    case "FontSize":
+                        if (double.TryParse(attr.Value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var size))
+                        {
+                            sheet.SetFontSize(row, column, size);
+                        }
+                        break;
+                    case "FontFamily":
+                        sheet.SetFontFamily(row, column, attr.Value.Trim());
+                        break;
+                    case "TextColor":
+                        if (Color.TryParse(attr.Value.Trim(), out var textColor)) sheet.SetTextColor(row, column, textColor);
+                        break;
+                    case "Fill":
+                        if (Color.TryParse(attr.Value.Trim(), out var fill)) sheet.SetFill(row, column, fill);
+                        break;
+                    case "TextAlign":
+                        if (Enum.TryParse<AvaloniaSpreadsheet.SheetAlign>(attr.Value.Trim(), true, out var align))
+                        {
+                            sheet.SetTextAlign(row, column, align);
+                        }
+                        break;
+                }
+            }
         }
     }
 

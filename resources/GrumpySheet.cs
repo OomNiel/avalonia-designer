@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.9
+// BUNDLED-COPY: 0.12.10
 // GrumpySheet.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpySheet.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs / GrumpyCharts.cs.
 //
@@ -77,10 +77,23 @@ using Avalonia.Metadata;
 
 namespace AvaloniaSpreadsheet
 {
+    /// <summary>How a cell's text is lined up in its column. Auto follows the content: numbers to the
+    /// right, everything else to the left, which is what a spreadsheet does. (Called Auto rather than
+    /// Default because `Default` is a VB keyword — an enum member by that name will not compile there.)</summary>
+    public enum SheetAlign
+    {
+        Auto,
+        Left,
+        Center,
+        Right
+    }
+
     /// <summary>
-    /// One cell of a <see cref="GrumpySheet"/>: where it is and what it holds. Cells are written as
-    /// direct children of the sheet, in the order they should be read — order does not matter for
-    /// cells that do not overlap, because a later cell with the same address replaces an earlier one.
+    /// One cell of a <see cref="GrumpySheet"/>: where it is, what it holds, and how it is FORMATTED.
+    /// Cells are written as direct children of the sheet, in the order they should be read — order does
+    /// not matter for cells that do not overlap, because a later cell with the same address replaces an
+    /// earlier one. Every formatting property has an "unset" value (false, 0, null, Default) that means
+    /// "whatever the sheet is set to", so a cell that was never styled stays a short element.
     /// </summary>
     public sealed class SheetCell
     {
@@ -91,8 +104,32 @@ namespace AvaloniaSpreadsheet
         public int Column { get; set; } = 1;
 
         /// <summary>The cell's contents. Null or empty means the cell is blank, so it need not be
-        /// written at all.</summary>
+        /// written at all — unless it carries formatting, which a blank cell may (a highlighted box
+        /// with nothing in it is a real thing to want).</summary>
         public string? Text { get; set; }
+
+        /// <summary>Draw this cell's text in bold.</summary>
+        public bool Bold { get; set; }
+
+        /// <summary>Draw this cell's text in italics.</summary>
+        public bool Italic { get; set; }
+
+        /// <summary>The cell's font size. 0 (the default) means the sheet's own FontSize.</summary>
+        public double FontSize { get; set; }
+
+        /// <summary>The cell's font family name. Empty means the sheet's own FontFamilyName.</summary>
+        public string? FontFamily { get; set; }
+
+        /// <summary>The cell's text colour. Null means the sheet's own TextColor.</summary>
+        public Color? TextColor { get; set; }
+
+        /// <summary>The cell's own backcolour — its highlight. Null means the sheet's CellBackColor
+        /// (the paper). It is drawn under the grid lines and under the selection wash, so a highlighted
+        /// cell still reads as selected when it is.</summary>
+        public Color? Fill { get; set; }
+
+        /// <summary>How the text is lined up. Auto = by content (numbers right, text left).</summary>
+        public SheetAlign TextAlign { get; set; } = SheetAlign.Auto;
     }
 
     /// <summary>What changed, and what it is now — raised once per committed cell change.</summary>
@@ -680,6 +717,237 @@ namespace AvaloniaSpreadsheet
             }
         }
 
+        /// <summary>The cell holding an address, or null. For reading or changing its FORMATTING — a
+        /// blank cell may carry formatting, and <see cref="EnsureCell"/> creates it if it is missing.</summary>
+        public SheetCell? CellAt(int row, int column)
+        {
+            return FindCell(row, column);
+        }
+
+        /// <summary>
+        /// The cell at an address, added if it was not there — how an EMPTY cell is given a highlight
+        /// or an alignment. Null when the address is off the sheet (the same rule as SetCell).
+        /// </summary>
+        public SheetCell? EnsureCell(int row, int column)
+        {
+            if (row < 1 || column < 1 || row > RowCount || column > ColumnCount)
+            {
+                return null;
+            }
+
+            var cell = FindCell(row, column);
+            if (cell != null)
+            {
+                return cell;
+            }
+
+            cell = new SheetCell();
+            cell.Row = row;
+            cell.Column = column;
+            cell.Text = string.Empty;
+            Cells.Add(cell);
+            _lookup.Add(cell);
+            return cell;
+        }
+
+        /// <summary>
+        /// Repaints after the cell OBJECTS were changed in code. They are plain objects, so nothing
+        /// tells the sheet that one moved — touch a cell with CellAt/EnsureCell, set what you want,
+        /// then call this (the Set* methods below do it for you).
+        /// </summary>
+        public void Refresh()
+        {
+            InvalidateVisual();
+        }
+
+        /// <summary>Turns bold on or off for one cell.</summary>
+        public void SetBold(int row, int column, bool bold)
+        {
+            var cell = EnsureCell(row, column);
+            if (cell == null || cell.Bold == bold)
+            {
+                return;
+            }
+
+            cell.Bold = bold;
+            InvalidateVisual();
+        }
+
+        /// <summary>Turns italics on or off for one cell.</summary>
+        public void SetItalic(int row, int column, bool italic)
+        {
+            var cell = EnsureCell(row, column);
+            if (cell == null || cell.Italic == italic)
+            {
+                return;
+            }
+
+            cell.Italic = italic;
+            InvalidateVisual();
+        }
+
+        /// <summary>Sets one cell's font size. 0 puts it back on the sheet's own.</summary>
+        public void SetFontSize(int row, int column, double size)
+        {
+            var cell = EnsureCell(row, column);
+            if (cell == null || Math.Abs(cell.FontSize - size) < 0.001)
+            {
+                return;
+            }
+
+            cell.FontSize = size;
+            InvalidateVisual();
+        }
+
+        /// <summary>Sets one cell's font family. Empty puts it back on the sheet's own.</summary>
+        public void SetFontFamily(int row, int column, string? family)
+        {
+            var cell = EnsureCell(row, column);
+            var value = family == null ? string.Empty : family!;
+            if (cell == null || (cell.FontFamily ?? string.Empty) == value)
+            {
+                return;
+            }
+
+            cell.FontFamily = value;
+            InvalidateVisual();
+        }
+
+        /// <summary>Sets one cell's text colour. Null puts it back on the sheet's own.</summary>
+        public void SetTextColor(int row, int column, Color? color)
+        {
+            var cell = EnsureCell(row, column);
+            if (cell == null || cell.TextColor == color)
+            {
+                return;
+            }
+
+            cell.TextColor = color;
+            InvalidateVisual();
+        }
+
+        /// <summary>Sets one cell's highlight. Null puts it back on the sheet's paper colour.</summary>
+        public void SetFill(int row, int column, Color? color)
+        {
+            var cell = EnsureCell(row, column);
+            if (cell == null || cell.Fill == color)
+            {
+                return;
+            }
+
+            cell.Fill = color;
+            InvalidateVisual();
+        }
+
+        /// <summary>Sets one cell's text alignment.</summary>
+        public void SetTextAlign(int row, int column, SheetAlign align)
+        {
+            var cell = EnsureCell(row, column);
+            if (cell == null || cell.TextAlign == align)
+            {
+                return;
+            }
+
+            cell.TextAlign = align;
+            InvalidateVisual();
+        }
+
+        /// <summary>Drops every formatting decision from one cell, leaving what it holds.</summary>
+        public void ClearFormatting(int row, int column)
+        {
+            var cell = FindCell(row, column);
+            if (cell == null)
+            {
+                return;
+            }
+
+            cell.Bold = false;
+            cell.Italic = false;
+            cell.FontSize = 0;
+            cell.FontFamily = null;
+            cell.TextColor = null;
+            cell.Fill = null;
+            cell.TextAlign = SheetAlign.Auto;
+            InvalidateVisual();
+        }
+
+        /// <summary>Drops every formatting decision from the selected cells.</summary>
+        public void ClearSelectionFormatting()
+        {
+            var first = SelectionFirstRow();
+            var last = SelectionLastRow();
+            var left = SelectionFirstColumn();
+            var right = SelectionLastColumn();
+            for (var row = first; row <= last; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    ClearFormatting(row, column);
+                }
+            }
+        }
+
+        /// <summary>Bold for the whole selection — bold when any selected cell is not, plain when they
+        /// all already are, which is what Ctrl+B does in every spreadsheet.</summary>
+        public void ToggleBoldSelection()
+        {
+            var turnOn = false;
+            var first = SelectionFirstRow();
+            var last = SelectionLastRow();
+            var left = SelectionFirstColumn();
+            var right = SelectionLastColumn();
+            for (var row = first; row <= last && !turnOn; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    var cell = FindCell(row, column);
+                    if (cell == null || !cell.Bold)
+                    {
+                        turnOn = true;
+                        break;
+                    }
+                }
+            }
+
+            for (var row = first; row <= last; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    SetBold(row, column, turnOn);
+                }
+            }
+        }
+
+        /// <summary>Italics for the whole selection, by the same rule as <see cref="ToggleBoldSelection"/>.</summary>
+        public void ToggleItalicSelection()
+        {
+            var turnOn = false;
+            var first = SelectionFirstRow();
+            var last = SelectionLastRow();
+            var left = SelectionFirstColumn();
+            var right = SelectionLastColumn();
+            for (var row = first; row <= last && !turnOn; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    var cell = FindCell(row, column);
+                    if (cell == null || !cell.Italic)
+                    {
+                        turnOn = true;
+                        break;
+                    }
+                }
+            }
+
+            for (var row = first; row <= last; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    SetItalic(row, column, turnOn);
+                }
+            }
+        }
+
         /// <summary>Finds the cell holding an address, or null. Uses the index, so it is not a scan.</summary>
         private SheetCell? FindCell(int row, int column)
         {
@@ -978,6 +1246,25 @@ namespace AvaloniaSpreadsheet
             var firstColumn = VisibleFirstColumn(grid);
             var lastColumn = VisibleLastColumn(grid);
 
+            // CELL FILLS go down first — under the wash and under the grid lines, so a highlighted cell
+            // keeps its lines and still reads as selected when the selection is over it.
+            using (context.PushClip(grid))
+            {
+                for (var row = firstRow; row <= lastRow; row++)
+                {
+                    for (var column = firstColumn; column <= lastColumn; column++)
+                    {
+                        var fill = FillOf(row, column);
+                        if (!fill.HasValue)
+                        {
+                            continue;
+                        }
+
+                        context.FillRectangle(new SolidColorBrush(fill.Value), CellRect(row, column));
+                    }
+                }
+            }
+
             // The wash goes down before the grid lines, so the lines still read through a selection.
             var selection = SelectionRect();
             var visibleSelection = selection.Intersect(grid);
@@ -1024,7 +1311,12 @@ namespace AvaloniaSpreadsheet
                             continue;                       // the editor draws it, with its caret
                         }
 
-                        DrawCellText(context, text, CellRect(row, column), textBrush, LooksNumeric(text), null);
+                        // This cell's own formatting, all of it "unset means the sheet's own".
+                        var cell = FindCell(row, column);
+                        var align = AlignOf(cell);
+                        var numeric = LooksNumeric(text) && align == SheetAlign.Auto;
+                        DrawCellText(context, text, CellRect(row, column), TextBrushOf(cell, textBrush),
+                            numeric, ToTextAlignment(align), -1, TypefaceFor(cell), SizeOf(cell));
                     }
                 }
             }
@@ -1197,16 +1489,17 @@ namespace AvaloniaSpreadsheet
         /// spreadsheet.
         /// </summary>
         private void DrawCellText(DrawingContext context, string text, Rect rect, IBrush brush,
-            bool rightAligned, TextAlignment? align, int caret = -1)
+            bool rightAligned, TextAlignment? align, int caret = -1, Typeface? typeface = null, double size = 0)
         {
             if (text.Length == 0 && caret < 0)
             {
                 return;
             }
 
-            var typeface = TypefaceFor();
+            var font = typeface ?? TypefaceFor();
+            var emSize = size > 0 ? size : FontSize;
             var formatted = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                typeface, FontSize, brush);
+                font, emSize, brush);
             var inner = new Rect(rect.X + 3, rect.Y, rect.Width - 6, rect.Height);
             if (inner.Width <= 0)
             {
@@ -1230,7 +1523,7 @@ namespace AvaloniaSpreadsheet
                 if (caret >= 0)
                 {
                     var upToCaret = new FormattedText(text.Substring(0, caret), CultureInfo.CurrentCulture,
-                        FlowDirection.LeftToRight, typeface, FontSize, brush);
+                        FlowDirection.LeftToRight, font, emSize, brush);
                     if (x + upToCaret.Width > inner.Right)
                     {
                         x -= x + upToCaret.Width - inner.Right;
@@ -1247,15 +1540,64 @@ namespace AvaloniaSpreadsheet
             }
         }
 
-        private Typeface TypefaceFor()
+        private Typeface TypefaceFor(SheetCell? cell = null)
         {
-            var name = FontFamilyName;
-            if (string.IsNullOrEmpty(name))
+            var name = cell != null && !string.IsNullOrEmpty(cell.FontFamily) ? cell.FontFamily : FontFamilyName;
+            var family = string.IsNullOrEmpty(name) ? FontFamily.Default : new FontFamily(name!);
+            var weight = cell != null && cell.Bold ? FontWeight.Bold : FontWeight.Normal;
+            var style = cell != null && cell.Italic ? FontStyle.Italic : FontStyle.Normal;
+            return new Typeface(family, style, weight);
+        }
+
+        /// <summary>The font size a cell is drawn at: its own, else the sheet's.</summary>
+        private double SizeOf(SheetCell? cell)
+        {
+            return cell != null && cell.FontSize > 0 ? cell.FontSize : FontSize;
+        }
+
+        /// <summary>The brush a cell's text is drawn in: its own colour, else the sheet's.</summary>
+        private static IBrush TextBrushOf(SheetCell? cell, IBrush fallback)
+        {
+            if (cell == null || !cell.TextColor.HasValue)
             {
-                return Typeface.Default;
+                return fallback;
             }
 
-            return new Typeface(new FontFamily(name!));
+            return new SolidColorBrush(cell.TextColor.Value);
+        }
+
+        /// <summary>A cell's highlight, or null when it has none.</summary>
+        private Color? FillOf(int row, int column)
+        {
+            var cell = FindCell(row, column);
+            return cell == null ? null : cell.Fill;
+        }
+
+        private static SheetAlign AlignOf(SheetCell? cell)
+        {
+            return cell == null ? SheetAlign.Auto : cell.TextAlign;
+        }
+
+        /// <summary>The sheet's alignment for a cell, or null to leave it to the caller's rule
+        /// (numbers right, everything else left).</summary>
+        private static TextAlignment? ToTextAlignment(SheetAlign align)
+        {
+            if (align == SheetAlign.Left)
+            {
+                return TextAlignment.Left;
+            }
+
+            if (align == SheetAlign.Center)
+            {
+                return TextAlignment.Center;
+            }
+
+            if (align == SheetAlign.Right)
+            {
+                return TextAlignment.Right;
+            }
+
+            return null;
         }
 
         /// <summary>True when the text reads as a number, so it is right-aligned.</summary>
@@ -1597,6 +1939,21 @@ namespace AvaloniaSpreadsheet
             if (control && e.Key == Key.A)
             {
                 SelectAll();
+                e.Handled = true;
+                return;
+            }
+
+            // Ctrl+B / Ctrl+I style the selection, the way every spreadsheet does.
+            if (control && e.Key == Key.B)
+            {
+                ToggleBoldSelection();
+                e.Handled = true;
+                return;
+            }
+
+            if (control && e.Key == Key.I)
+            {
+                ToggleItalicSelection();
                 e.Handled = true;
                 return;
             }

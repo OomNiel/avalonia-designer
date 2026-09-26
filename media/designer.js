@@ -226,6 +226,16 @@
         sheetFormula: $('sheetFormula'),
         sheetGrid: $('sheetGrid'),
         sheetGridWrap: $('sheetGridWrap'),
+        sheetBold: $('sheetBold'),
+        sheetItalic: $('sheetItalic'),
+        sheetSize: $('sheetSize'),
+        sheetFamily: $('sheetFamily'),
+        sheetTextColor: $('sheetTextColor'),
+        sheetTextColorNone: $('sheetTextColorNone'),
+        sheetFill: $('sheetFill'),
+        sheetFillNone: $('sheetFillNone'),
+        sheetAlign: $('sheetAlign'),
+        sheetClearFormat: $('sheetClearFormat'),
         sheetClear: $('sheetClear'),
         sheetSave: $('sheetSave'),
         sheetCancel: $('sheetCancel'),
@@ -6058,6 +6068,18 @@
     // Item3; anything else repeats), so the designer previews what the app will fill.
     let sheetEdit = null;
 
+    // A cell is an OBJECT now that it can carry formatting, not just a string. These key names are the
+    // model's own (src/sheetCells.ts) and reach the XAML as the twin's attribute names. A key that is
+    // ABSENT means "the sheet's own setting", which is what keeps a plain cell's element short.
+    //
+    // Anything the reader handed over that this editor does not understand — a named colour, say — is
+    // left in the object untouched, so saving a sheet never rewrites a value nobody edited.
+    const SHEET_STYLE_KEYS = ['bold', 'italic', 'fontSize', 'fontFamily', 'textColor', 'fill', 'textAlign'];
+    const SHEET_STYLE_DEFAULTS = {
+        bold: false, italic: false, fontSize: 0, fontFamily: '', textColor: '', fill: '', textAlign: 'Auto'
+    };
+    const SHEET_ALIGN_NAMES = ['Auto', 'Left', 'Center', 'Right'];
+
     function sheetKey(row, column) { return row + ':' + column; }
 
     function sheetColumnName(column) {
@@ -6070,15 +6092,135 @@
         return letters;
     }
 
+    function sheetCellAt(row, column) { return sheetEdit.cells.get(sheetKey(row, column)) || null; }
+
     function sheetText(row, column) {
-        const value = sheetEdit.cells.get(sheetKey(row, column));
-        return value == null ? '' : value;
+        const cell = sheetCellAt(row, column);
+        return !cell || cell.text == null ? '' : String(cell.text);
+    }
+
+    /** The cell at an address, added if it was not there — how an EMPTY cell is given a highlight. */
+    function sheetEnsure(row, column) {
+        if (!(row >= 1) || !(column >= 1) || row > sheetEdit.rows || column > sheetEdit.columns) return null;
+        const key = sheetKey(row, column);
+        let cell = sheetEdit.cells.get(key);
+        if (!cell) {
+            cell = { row: row, column: column, text: '' };
+            sheetEdit.cells.set(key, cell);
+        }
+        return cell;
+    }
+
+    /** True when a cell decides any of its own formatting — which is what keeps a BLANK cell alive: a
+     *  highlighted empty box is written, a plain empty one is not. */
+    function sheetStyled(cell) {
+        return SHEET_STYLE_KEYS.some((key) => key in cell);
     }
 
     function sheetSet(row, column, text) {
         const value = text == null ? '' : String(text);
-        if (value.length === 0) sheetEdit.cells.delete(sheetKey(row, column));
-        else sheetEdit.cells.set(sheetKey(row, column), value);
+        const key = sheetKey(row, column);
+        const cell = sheetEdit.cells.get(key);
+        if (value.length === 0) {
+            if (!cell) return;
+            cell.text = '';
+            if (!sheetStyled(cell)) sheetEdit.cells.delete(key);
+            return;
+        }
+        if (cell) cell.text = value;
+        else sheetEdit.cells.set(key, { row: row, column: column, text: value });
+    }
+
+    /** A colour as the picker needs it — six hex digits. A named colour or an eight-digit value cannot
+     *  be shown by <input type="color">, so it falls back; the cell itself keeps what it had. */
+    function sheetColorHex(value, fallback) {
+        const text = String(value == null ? '' : value).trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(text)) return text.toUpperCase();
+        if (/^#[0-9a-fA-F]{3}$/.test(text)) {
+            return ('#' + text[1] + text[1] + text[2] + text[2] + text[3] + text[3]).toUpperCase();
+        }
+        return fallback;
+    }
+
+    /** An alignment by name, any case. Anything else SHOWS as Auto but is left as it was on save. */
+    function sheetAlignName(value) {
+        const text = String(value == null ? '' : value).trim().toLowerCase();
+        return SHEET_ALIGN_NAMES.find((name) => name.toLowerCase() === text) || 'Auto';
+    }
+
+    /** A cell's own font size: positive, at most two decimals, or 0 for the sheet's own. */
+    function sheetNumber(value) {
+        const n = Number(value);
+        return isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0;
+    }
+
+    /** Sets — or, for the field's own default, clears — one formatting field on every SELECTED cell.
+     *  The formatting commands act on the selection, never on the active cell alone: that is the rule
+     *  the control follows for Ctrl+B, and the one every spreadsheet uses. */
+    function sheetStyleSelection(key, value) {
+        const bounds = sheetBounds();
+        const isDefault = value === SHEET_STYLE_DEFAULTS[key];
+        for (let r = bounds.r1; r <= bounds.r2; r++) {
+            for (let c = bounds.c1; c <= bounds.c2; c++) {
+                const cell = sheetEnsure(r, c);
+                if (!cell) continue;
+                if (isDefault) delete cell[key];
+                else cell[key] = value;
+                // Nothing left to say about it: the element goes too.
+                if (!sheetStyled(cell) && String(cell.text == null ? '' : cell.text).length === 0) {
+                    sheetEdit.cells.delete(sheetKey(r, c));
+                }
+            }
+        }
+        renderSheet();
+    }
+
+    /** Bold/italic over the selection: ON when any selected cell is not, OFF when they all already
+     *  are — the same rule as ToggleBoldSelection in the control. */
+    function sheetToggleSelection(key) {
+        const bounds = sheetBounds();
+        let turnOn = false;
+        for (let r = bounds.r1; r <= bounds.r2 && !turnOn; r++) {
+            for (let c = bounds.c1; c <= bounds.c2; c++) {
+                const cell = sheetCellAt(r, c);
+                if (!cell || cell[key] !== true) { turnOn = true; break; }
+            }
+        }
+        sheetStyleSelection(key, turnOn);
+    }
+
+    /** Drops every formatting decision from the selected cells, leaving what they hold. */
+    function sheetClearSelectionFormat() {
+        const bounds = sheetBounds();
+        for (let r = bounds.r1; r <= bounds.r2; r++) {
+            for (let c = bounds.c1; c <= bounds.c2; c++) {
+                const cell = sheetCellAt(r, c);
+                if (!cell) continue;
+                SHEET_STYLE_KEYS.forEach((key) => { delete cell[key]; });
+                if (String(cell.text == null ? '' : cell.text).length === 0) sheetEdit.cells.delete(sheetKey(r, c));
+            }
+        }
+        renderSheet();
+    }
+
+    /** Shows the ACTIVE cell's own settings in the bar. The bar acts on the SELECTION but reads back
+     *  from the one cell the name box points at, which is how a spreadsheet's toolbar behaves. */
+    function sheetSyncFormatBar() {
+        if (!sheetEdit) return;
+        const cell = sheetCellAt(sheetEdit.sel.r1, sheetEdit.sel.c1) || {};
+        els.sheetBold.setAttribute('aria-pressed', cell.bold === true ? 'true' : 'false');
+        els.sheetItalic.setAttribute('aria-pressed', cell.italic === true ? 'true' : 'false');
+        const size = sheetNumber(cell.fontSize);
+        els.sheetSize.value = size > 0 ? String(size) : '';
+        els.sheetFamily.value = cell.fontFamily ? String(cell.fontFamily) : '';
+        const textColor = String(cell.textColor == null ? '' : cell.textColor).trim();
+        const fill = String(cell.fill == null ? '' : cell.fill).trim();
+        els.sheetTextColor.value = sheetColorHex(textColor, '#000000');
+        els.sheetFill.value = sheetColorHex(fill, '#FFCC00');
+        // On the sheet's own colour: the swatch dims, because an empty colour box reads as black.
+        els.sheetTextColor.classList.toggle('on-sheet', textColor.length === 0);
+        els.sheetFill.classList.toggle('on-sheet', fill.length === 0);
+        els.sheetAlign.value = sheetAlignName(cell.textAlign);
     }
 
     /** The corners of the selection, with whole columns/rows resolved to their full extent. */
@@ -6248,11 +6390,35 @@
             for (let c = 1; c <= sheetEdit.columns; c++) {
                 const td = document.createElement('td');
                 const text = sheetText(r, c);
+                const cell = sheetCellAt(r, c);
                 td.textContent = text;
-                if (text.length > 0 && !isNaN(Number(text))) td.className = 'sheet-num';
+                // The cell's own formatting, so the table shows what the form will draw. A number is
+                // only right-aligned when nothing has been decided for it — the control's own rule.
+                const align = sheetAlignName(cell && cell.textAlign);
+                if (text.length > 0 && !isNaN(Number(text)) && align === 'Auto') td.className = 'sheet-num';
+                if (cell) {
+                    if (cell.bold === true) td.style.fontWeight = 'bold';
+                    if (cell.italic === true) td.style.fontStyle = 'italic';
+                    const size = sheetNumber(cell.fontSize);
+                    if (size > 0) td.style.fontSize = size + 'px';
+                    if (cell.fontFamily) td.style.fontFamily = String(cell.fontFamily);
+                    if (cell.textColor) td.style.color = String(cell.textColor);
+                    if (align !== 'Auto') td.style.textAlign = align.toLowerCase();
+                }
+                const fill = cell && cell.fill ? String(cell.fill) : '';
                 td.dataset.row = String(r);
                 td.dataset.col = String(c);
-                if (r >= bounds.r1 && r <= bounds.r2 && c >= bounds.c1 && c <= bounds.c2) {
+                const selected = r >= bounds.r1 && r <= bounds.r2 && c >= bounds.c1 && c <= bounds.c2;
+                // A highlight is drawn UNDER the selection wash, as the control draws it — but the wash
+                // is translucent here so a highlight can still be seen while it is being chosen. The
+                // saved XAML is the same either way.
+                if (fill && selected) {
+                    td.style.backgroundColor = fill;
+                    td.style.backgroundImage = 'linear-gradient(rgba(45, 125, 210, 0.45), rgba(45, 125, 210, 0.45))';
+                } else if (fill) {
+                    td.style.backgroundColor = fill;
+                }
+                if (selected) {
                     td.classList.add('sheet-sel');
                 }
                 if (fillRow != null) {
@@ -6300,6 +6466,7 @@
         if (document.activeElement !== els.sheetFormula) {
             els.sheetFormula.value = sheetText(sheetEdit.sel.r1, sheetEdit.sel.c1);
         }
+        sheetSyncFormatBar();
     }
 
     function openSheetEditor(name, info) {
@@ -6319,7 +6486,17 @@
             const row = Math.floor(Number(cell.row));
             const column = Math.floor(Number(cell.column));
             if (!(row >= 1) || !(column >= 1) || row > rows || column > columns) return;
-            sheetSet(row, column, cell.text);
+            // The whole incoming object is kept — its formatting included — so a value this editor does
+            // not understand survives the round trip instead of being written away.
+            const kept = {
+                row: row,
+                column: column,
+                text: cell.text == null ? '' : String(cell.text)
+            };
+            SHEET_STYLE_KEYS.forEach((key) => {
+                if (cell[key] !== undefined && cell[key] !== null) kept[key] = cell[key];
+            });
+            sheetEdit.cells.set(sheetKey(row, column), kept);
         });
         els.sheetTitle.textContent = 'Cells' + (sheetEdit.name ? ' \u2014 ' + sheetEdit.name : '');
         els.sheetRows.value = String(rows);
@@ -6374,12 +6551,54 @@
         }
         renderSheet();
     });
+    // The formatting bar. It acts on the SELECTION — a size typed here applies to every selected cell,
+    // exactly as Ctrl+B does at run time — and it reads back from the active cell.
+    els.sheetBold.addEventListener('click', () => { if (sheetEdit) sheetToggleSelection('bold'); });
+    els.sheetItalic.addEventListener('click', () => { if (sheetEdit) sheetToggleSelection('italic'); });
+    // Size and font act on CHANGE, not on every keystroke: applying "2" on the way to "20" would be a
+    // size the user never asked for, and an emptied box clears the cell's own size in one move.
+    els.sheetSize.addEventListener('change', () => {
+        if (!sheetEdit) return;
+        sheetStyleSelection('fontSize', sheetNumber(els.sheetSize.value));
+    });
+    els.sheetFamily.addEventListener('change', () => {
+        if (!sheetEdit) return;
+        sheetStyleSelection('fontFamily', String(els.sheetFamily.value || '').trim());
+    });
+    els.sheetTextColor.addEventListener('input', () => {
+        if (sheetEdit) sheetStyleSelection('textColor', String(els.sheetTextColor.value || '').toUpperCase());
+    });
+    els.sheetTextColorNone.addEventListener('click', () => {
+        if (sheetEdit) sheetStyleSelection('textColor', '');
+    });
+    els.sheetFill.addEventListener('input', () => {
+        if (sheetEdit) sheetStyleSelection('fill', String(els.sheetFill.value || '').toUpperCase());
+    });
+    els.sheetFillNone.addEventListener('click', () => {
+        if (sheetEdit) sheetStyleSelection('fill', '');
+    });
+    els.sheetAlign.addEventListener('change', () => {
+        if (sheetEdit) sheetStyleSelection('textAlign', String(els.sheetAlign.value || 'Auto'));
+    });
+    els.sheetClearFormat.addEventListener('click', () => {
+        if (sheetEdit) sheetClearSelectionFormat();
+    });
     els.sheetSave.addEventListener('click', () => {
         if (sheetEdit) {
             const cells = [];
-            sheetEdit.cells.forEach((text, key) => {
-                const parts = key.split(':');
-                cells.push({ row: Number(parts[0]), column: Number(parts[1]), text: text });
+            sheetEdit.cells.forEach((cell) => {
+                if (!cell) return;
+                // Only the fields that mean something are sent: an absent field is "the sheet's own",
+                // and the writer leaves that attribute out of the form entirely.
+                const out = {
+                    row: cell.row,
+                    column: cell.column,
+                    text: cell.text == null ? '' : String(cell.text)
+                };
+                SHEET_STYLE_KEYS.forEach((key) => {
+                    if (key in cell) out[key] = cell[key];
+                });
+                cells.push(out);
             });
             post({
                 type: 'saveSheetCells', name: sheetEdit.name,

@@ -25,9 +25,11 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'sliceModal', 'sliceTitle', 'sliceList', 'sliceFields', 'sliceHead', 'sliceAdd', 'sliceDel', 'sliceSave', 'sliceCancel',
     'dataModal', 'dataTitle', 'dataKind', 'dataFields', 'dataHead', 'dataSave', 'dataCancel',
     // the Cells editor for a GrumpySheet (2026-09-27): the grid, its size boxes, the name box and the
-    // fx input the active cell is typed in.
+    // fx input the active cell is typed in, plus the formatting bar added with the formatting phase.
     'sheetModal', 'sheetTitle', 'sheetRows', 'sheetCols', 'sheetAddress', 'sheetFormula',
     'sheetGrid', 'sheetGridWrap', 'sheetClear', 'sheetSave', 'sheetCancel',
+    'sheetBold', 'sheetItalic', 'sheetSize', 'sheetFamily', 'sheetTextColor', 'sheetTextColorNone',
+    'sheetFill', 'sheetFillNone', 'sheetAlign', 'sheetClearFormat',
     'handlerModal', 'handlerTitle', 'handlerHint', 'handlerList', 'handlerAdd', 'handlerClose',
     'btnCodeSettings', 'settingsModal', 'settingsHint', 'settingsModes', 'settingsBadges', 'settingsSave', 'settingsCancel',
     // the dialog's own "still arriving" marker (2026-09-17), left of Cancel/Save
@@ -122,11 +124,14 @@ function setup(omit = []) {
             || id === 'gradientSave' || id === 'gradientCancel'
             || id === 'codeRecheck' || id === 'codeFixAll' || id === 'codeClose') return 'button';
         if (id === 'splitCount') return 'input';
-        // The spreadsheet editor: three buttons, three inputs, the grid itself, and the name box.
+        // The spreadsheet editor: five buttons, five inputs, the align dropdown, the grid, and the name box.
         if (id === 'sheetSave' || id === 'sheetCancel' || id === 'sheetClear') return 'button';
         if (id === 'sheetRows' || id === 'sheetCols' || id === 'sheetFormula') return 'input';
         if (id === 'sheetGrid') return 'table';
         if (id === 'sheetAddress') return 'span';
+        if (id === 'sheetBold' || id === 'sheetItalic' || id === 'sheetTextColorNone' || id === 'sheetFillNone' || id === 'sheetClearFormat') return 'button';
+        if (id === 'sheetSize' || id === 'sheetFamily' || id === 'sheetTextColor' || id === 'sheetFill') return 'input';
+        if (id === 'sheetAlign') return 'select';
         if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity' || id === 'chColor') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
@@ -142,6 +147,17 @@ function setup(omit = []) {
             const hint = window.document.createElement('span');
             hint.className = 'ai-hint';
             el.appendChild(hint);
+        }
+        // The alignment dropdown is built from <option>s in the real markup. Without them a test cannot
+        // set a value on it at all: a <select> whose value matches no option keeps what it had, so the
+        // formatting bar would silently read back Auto for every cell.
+        if (id === 'sheetAlign') {
+            ['Auto', 'Left', 'Center', 'Right'].forEach((name) => {
+                const option = window.document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                el.appendChild(option);
+            });
         }
         // Mirror the two publish buttons as the extension emits them: Install starts DISABLED (nothing has
         // been published until the extension reports a state), Publish is always available.
@@ -3448,6 +3464,130 @@ module.exports = async (t) => {
         const a1 = (saved.cells || []).find((c) => c.row === 1 && c.column === 1);
         t.equal(a1 && a1.text, 'Qty', 'sheet-editor', 'and the cell that was typed in');
         t.equal(sh.$('sheetModal').hidden, true, 'sheet-editor', 'and the editor closes');
+    }
+
+    // ---- the Cells editor's formatting bar (2026-09-27) -----------------------------------------------
+    // What formatting has to get right in the DESIGNER: the bar acts on the whole SELECTION, as Ctrl+B
+    // does at run time; it reads back from the active cell; a setting left on the sheet's own is sent as
+    // nothing at all (so the panel leaves the attribute out of the form); and a BLANK cell with a
+    // highlight stays in the payload — dropping it would delete the highlight from the saved form.
+    {
+        const sh = setup();
+        sh.msg({
+            type: 'properties', name: 'Sheet2',
+            properties: [{ key: 'Cells', label: 'Edit cells…', kind: 'button', value: 'Edit cells…' }],
+            sheetInfo: {
+                rows: 4, columns: 3,
+                cells: [
+                    { row: 1, column: 1, text: 'Item', bold: true },
+                    { row: 2, column: 1, text: '', fill: '#FFCC00' }
+                ]
+            }
+        });
+        sh.$('propsBody').querySelector('[data-prop-key="Cells"]')
+            .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        const fire = (el, type, opts = {}) => el.dispatchEvent(
+            new sh.window.MouseEvent(type, { bubbles: true, cancelable: true, ...opts }));
+        const change = (el) => el.dispatchEvent(new sh.window.Event('change', { bubbles: true }));
+        const typeIn = (el) => el.dispatchEvent(new sh.window.Event('input', { bubbles: true }));
+        const cell = (r, c) => sh.$('sheetGrid').querySelector(`td[data-row="${r}"][data-col="${c}"]`);
+        const save = () => {
+            fire(sh.$('sheetSave'), 'click');
+            const posted = sh.posted.filter((m) => m.type === 'saveSheetCells').pop() || { cells: [] };
+            return posted.cells;
+        };
+        const at = (cells, row, column) => cells.find((c) => c.row === row && c.column === column) || {};
+
+        // The bar reads back from the ACTIVE cell, and a cell the form already had arrives lit.
+        t.equal(sh.$('sheetBold').getAttribute('aria-pressed'), 'true', 'sheet-format',
+            'a bold A1 lights the B button');
+        t.equal(sh.$('sheetItalic').getAttribute('aria-pressed'), 'false', 'sheet-format', 'and I stays unlit');
+        t.equal(sh.$('sheetAddress').textContent, 'A1', 'sheet-format', 'the active cell is the first one');
+        // A2 is blank but highlighted: the editor has to draw the highlight, or the user is formatting by
+        // guesswork — and the cell itself has to exist in the grid even though it holds no text.
+        t.equal(cell(2, 1).textContent, '', 'sheet-format', 'a highlighted empty cell is drawn empty');
+        t.ok(cell(2, 1).style.backgroundColor.length > 0, 'sheet-format',
+            'and it carries its highlight', cell(2, 1).style.backgroundColor);
+        t.ok(sh.$('sheetFill').classList.contains('on-sheet'), 'sheet-format',
+            'while the fill well shows the sheet’s own colour for A1, which has none');
+
+        // Select A1:A2 and format the SELECTION: bold is already on for A1 and off for A2, so the toggle
+        // turns it ON everywhere (the control’s own rule), and a second click turns it off again.
+        fire(cell(1, 1), 'mousedown');
+        fire(cell(2, 1), 'mouseover');
+        fire(sh.window.document, 'mouseup');
+        t.ok(cell(2, 1).classList.contains('sheet-sel'), 'sheet-format', 'A1:A2 is selected');
+        fire(sh.$('sheetBold'), 'click');
+        t.equal(sh.$('sheetBold').getAttribute('aria-pressed'), 'true', 'sheet-format',
+            'bold over a mixed selection turns it on');
+        t.equal(cell(2, 1).style.fontWeight, 'bold', 'sheet-format', 'and the whole selection is bold in the grid');
+        fire(sh.$('sheetItalic'), 'click');
+        t.equal(cell(1, 1).style.fontStyle, 'italic', 'sheet-format', 'italics apply to the selection too');
+
+        // The size and the font act on change, not on every keystroke — "2" on the way to "20" is a size
+        // nobody asked for. The align dropdown and the two colours are the other three fields.
+        sh.$('sheetSize').value = '18';
+        change(sh.$('sheetSize'));
+        t.equal(cell(2, 1).style.fontSize, '18px', 'sheet-format', 'a size applies to the selection');
+        sh.$('sheetFamily').value = 'Consolas';
+        change(sh.$('sheetFamily'));
+        t.equal(cell(2, 1).style.fontFamily, 'Consolas', 'sheet-format', 'so does a font family');
+        sh.$('sheetTextColor').value = '#cc0000';
+        typeIn(sh.$('sheetTextColor'));
+        t.ok(cell(2, 1).style.color.length > 0, 'sheet-format', 'and a text colour', cell(2, 1).style.color);
+        sh.$('sheetFill').value = '#22AA55';
+        typeIn(sh.$('sheetFill'));
+        t.ok(cell(2, 1).style.backgroundColor.toUpperCase().indexOf('34, 170, 85') >= 0 ||
+            cell(2, 1).style.backgroundColor.toUpperCase().indexOf('#22AA55') >= 0, 'sheet-format',
+            'and a highlight', cell(2, 1).style.backgroundColor);
+        sh.$('sheetAlign').value = 'Center';
+        change(sh.$('sheetAlign'));
+        t.equal(cell(2, 1).style.textAlign, 'center', 'sheet-format', 'and an alignment');
+
+        const formatted = save();
+        const f1 = at(formatted, 1, 1);
+        t.equal(f1.bold, true, 'sheet-format', 'Save carries bold');
+        t.equal(f1.italic, true, 'sheet-format', 'italics');
+        t.equal(f1.fontSize, 18, 'sheet-format', 'the size');
+        t.equal(f1.fontFamily, 'Consolas', 'sheet-format', 'the family');
+        t.equal(f1.textColor, '#CC0000', 'sheet-format', 'the text colour, upper-cased as the writer wants it');
+        t.equal(f1.fill, '#22AA55', 'sheet-format', 'the highlight');
+        t.equal(f1.textAlign, 'Center', 'sheet-format', 'the alignment, spelled as the enum is');
+        const f2 = at(formatted, 2, 1);
+        t.equal(f2.text, '', 'sheet-format', 'a blank cell that carries formatting is still sent');
+        t.equal(f2.fill, '#22AA55', 'sheet-format', 'with the highlight it was given');
+
+        // Re-open the editor on what was just saved: the formatting comes back into the bar, and a saved
+        // blank-but-highlighted cell is not lost on the way through.
+        sh.msg({
+            type: 'properties', name: 'Sheet2',
+            properties: [{ key: 'Cells', label: 'Edit cells…', kind: 'button', value: 'Edit cells…' }],
+            sheetInfo: { rows: 4, columns: 3, cells: formatted }
+        });
+        sh.$('propsBody').querySelector('[data-prop-key="Cells"]')
+            .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal(sh.$('sheetSize').value, '18', 'sheet-format', 'the size the cells were given is shown again');
+        t.equal(sh.$('sheetAlign').value, 'Center', 'sheet-format', 'as is the alignment');
+        t.equal(sh.$('sheetFill').value.toUpperCase(), '#22AA55', 'sheet-format', 'and the highlight colour');
+        t.ok(!sh.$('sheetFill').classList.contains('on-sheet'), 'sheet-format',
+            'and the fill well no longer reads as the sheet’s own');
+
+        // Clearing the formatting on the selection takes it off every field — including the highlight on
+        // the blank cell — so nothing is left to write.
+        fire(cell(1, 1), 'mousedown');
+        fire(cell(2, 1), 'mouseover');
+        fire(sh.window.document, 'mouseup');
+        fire(sh.$('sheetClearFormat'), 'click');
+        t.equal(sh.$('sheetBold').getAttribute('aria-pressed'), 'false', 'sheet-format', 'B goes out');
+        t.equal(sh.$('sheetSize').value, '', 'sheet-format', 'the size box empties');
+        t.ok(sh.$('sheetFill').classList.contains('on-sheet'), 'sheet-format', 'the fill well dims again');
+        const cleared = save();
+        const c1 = at(cleared, 1, 1);
+        t.equal(JSON.stringify(c1), '{"row":1,"column":1,"text":"Item"}', 'sheet-format',
+            'a cleared cell carries its text and nothing else — no defaults are sent');
+        t.equal(cleared.findIndex((cell2) => cell2.row === 2 && cell2.column === 1), -1, 'sheet-format',
+            'and a blank cell with no formatting left goes back to being nothing at all');
     }
 
     t.note('T3 done');

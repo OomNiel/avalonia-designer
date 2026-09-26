@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.9
+' BUNDLED-COPY: 0.12.10
 ' GrumpySheet.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpySheet.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb / GrumpyCharts.vb.
 '
@@ -84,9 +84,24 @@ Imports Avalonia.Metadata
 ' which is why every bundled VB file except the older ChromeWindow.vb writes it.
 Namespace Global.AvaloniaSpreadsheet
 
-    ''' <summary>One cell of a <see cref="GrumpySheet"/>: where it is and what it holds. Cells are written
-    ''' as direct children of the sheet, in the order they should be read — order does not matter for
-    ''' cells that do not overlap, because a later cell with the same address replaces an earlier one.</summary>
+    ''' <summary>How a cell's text is lined up in its column. Auto follows the content: numbers to
+    ''' the right, everything else to the left, which is what a spreadsheet does. (Called Auto rather
+    ''' than Default because `Default` is a VB keyword — the C# twin could have used it, and a twin whose
+    ''' members have different names is not a twin.)</summary>
+    Public Enum SheetAlign
+        Auto
+        Left
+        Center
+        Right
+    End Enum
+
+    ''' <summary>
+    ''' One cell of a <see cref="GrumpySheet"/>: where it is, what it holds, and how it is FORMATTED.
+    ''' Cells are written as direct children of the sheet, in the order they should be read — order does
+    ''' not matter for cells that do not overlap, because a later cell with the same address replaces an
+    ''' earlier one. Every formatting property has an "unset" value (false, 0, null, Default) that means
+    ''' "whatever the sheet is set to", so a cell that was never styled stays a short element.
+    ''' </summary>
     Public NotInheritable Class SheetCell
 
         ''' <summary>The row, 1-based: Row = 1 is the first row. 0 or less is read as 1.</summary>
@@ -96,8 +111,32 @@ Namespace Global.AvaloniaSpreadsheet
         Public Property Column As Integer = 1
 
         ''' <summary>The cell's contents. Null or empty means the cell is blank, so it need not be
-        ''' written at all.</summary>
+        ''' written at all — unless it carries formatting, which a blank cell may (a highlighted box
+        ''' with nothing in it is a real thing to want).</summary>
         Public Property Text As String
+
+        ''' <summary>Draw this cell's text in bold.</summary>
+        Public Property Bold As Boolean
+
+        ''' <summary>Draw this cell's text in italics.</summary>
+        Public Property Italic As Boolean
+
+        ''' <summary>The cell's font size. 0 (the default) means the sheet's own FontSize.</summary>
+        Public Property FontSize As Double
+
+        ''' <summary>The cell's font family name. Empty means the sheet's own FontFamilyName.</summary>
+        Public Property FontFamily As String
+
+        ''' <summary>The cell's text colour. Null means the sheet's own TextColor.</summary>
+        Public Property TextColor As Nullable(Of Color)
+
+        ''' <summary>The cell's own backcolour — its highlight. Null means the sheet's CellBackColor
+        ''' (the paper). It is drawn under the grid lines and under the selection wash, so a highlighted
+        ''' cell still reads as selected when it is.</summary>
+        Public Property Fill As Nullable(Of Color)
+
+        ''' <summary>How the text is lined up. Auto = by content (numbers right, text left).</summary>
+        Public Property TextAlign As SheetAlign = SheetAlign.Auto
 
     End Class
 
@@ -718,6 +757,209 @@ Namespace Global.AvaloniaSpreadsheet
             Next
         End Sub
 
+        ''' <summary>The cell holding an address, or null. For reading or changing its FORMATTING — a
+        ''' blank cell may carry formatting, and <see cref="EnsureCell"/> creates it if it is missing.</summary>
+        Public Function CellAt(row As Integer, column As Integer) As SheetCell
+            Return FindCell(row, column)
+        End Function
+
+        ''' <summary>
+        ''' The cell at an address, added if it was not there — how an EMPTY cell is given a highlight
+        ''' or an alignment. Null when the address is off the sheet (the same rule as SetCell).
+        ''' </summary>
+        Public Function EnsureCell(row As Integer, column As Integer) As SheetCell
+            If row < 1 OrElse column < 1 OrElse row > RowCount OrElse column > ColumnCount Then
+                Return Nothing
+            End If
+
+            Dim cell As SheetCell = FindCell(row, column)
+            If cell IsNot Nothing Then
+                Return cell
+            End If
+
+            cell = New SheetCell()
+            cell.Row = row
+            cell.Column = column
+            cell.Text = String.Empty
+            Cells.Add(cell)
+            _lookup.Add(cell)
+            Return cell
+        End Function
+
+        ''' <summary>
+        ''' Repaints after the cell OBJECTS were changed in code. They are plain objects, so nothing
+        ''' tells the sheet that one moved — touch a cell with CellAt/EnsureCell, set what you want,
+        ''' then call this (the Set* methods below do it for you).
+        ''' </summary>
+        Public Sub Refresh()
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Turns bold on or off for one cell.</summary>
+        Public Sub SetBold(row As Integer, column As Integer, bold As Boolean)
+            Dim cell As SheetCell = EnsureCell(row, column)
+            If cell Is Nothing OrElse cell.Bold = bold Then
+                Return
+            End If
+
+            cell.Bold = bold
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Turns italics on or off for one cell.</summary>
+        Public Sub SetItalic(row As Integer, column As Integer, italic As Boolean)
+            Dim cell As SheetCell = EnsureCell(row, column)
+            If cell Is Nothing OrElse cell.Italic = italic Then
+                Return
+            End If
+
+            cell.Italic = italic
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Sets one cell's font size. 0 puts it back on the sheet's own.</summary>
+        Public Sub SetFontSize(row As Integer, column As Integer, size As Double)
+            Dim cell As SheetCell = EnsureCell(row, column)
+            If cell Is Nothing OrElse Math.Abs(cell.FontSize - size) < 0.001 Then
+                Return
+            End If
+
+            cell.FontSize = size
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Sets one cell's font family. Empty puts it back on the sheet's own.</summary>
+        Public Sub SetFontFamily(row As Integer, column As Integer, family As String)
+            Dim cell As SheetCell = EnsureCell(row, column)
+            Dim value As String = If(family, String.Empty)
+            If cell Is Nothing OrElse If(cell.FontFamily, String.Empty) = value Then
+                Return
+            End If
+
+            cell.FontFamily = value
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Sets one cell's text colour. Null puts it back on the sheet's own.</summary>
+        Public Sub SetTextColor(row As Integer, column As Integer, color As Nullable(Of Color))
+            Dim cell As SheetCell = EnsureCell(row, column)
+            If cell Is Nothing OrElse cell.TextColor = color Then
+                Return
+            End If
+
+            cell.TextColor = color
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Sets one cell's highlight. Null puts it back on the sheet's paper colour.</summary>
+        Public Sub SetFill(row As Integer, column As Integer, color As Nullable(Of Color))
+            Dim cell As SheetCell = EnsureCell(row, column)
+            If cell Is Nothing OrElse cell.Fill = color Then
+                Return
+            End If
+
+            cell.Fill = color
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Sets one cell's text alignment.</summary>
+        Public Sub SetTextAlign(row As Integer, column As Integer, align As SheetAlign)
+            Dim cell As SheetCell = EnsureCell(row, column)
+            If cell Is Nothing OrElse cell.TextAlign = align Then
+                Return
+            End If
+
+            cell.TextAlign = align
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Drops every formatting decision from one cell, leaving what it holds.</summary>
+        Public Sub ClearFormatting(row As Integer, column As Integer)
+            Dim cell As SheetCell = FindCell(row, column)
+            If cell Is Nothing Then
+                Return
+            End If
+
+            cell.Bold = False
+            cell.Italic = False
+            cell.FontSize = 0
+            cell.FontFamily = Nothing
+            cell.TextColor = Nothing
+            cell.Fill = Nothing
+            cell.TextAlign = SheetAlign.Auto
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Drops every formatting decision from the selected cells.</summary>
+        Public Sub ClearSelectionFormatting()
+            Dim first As Integer = SelectionFirstRow()
+            Dim last As Integer = SelectionLastRow()
+            Dim left As Integer = SelectionFirstColumn()
+            Dim right As Integer = SelectionLastColumn()
+            For row As Integer = first To last
+                For column As Integer = left To right
+                    ClearFormatting(row, column)
+                Next
+            Next
+        End Sub
+
+        ''' <summary>Bold for the whole selection — bold when any selected cell is not, plain when they
+        ''' all already are, which is what Ctrl+B does in every spreadsheet.</summary>
+        Public Sub ToggleBoldSelection()
+            Dim turnOn As Boolean = False
+            Dim first As Integer = SelectionFirstRow()
+            Dim last As Integer = SelectionLastRow()
+            Dim left As Integer = SelectionFirstColumn()
+            Dim right As Integer = SelectionLastColumn()
+            For row As Integer = first To last
+                If turnOn Then
+                    Exit For
+                End If
+
+                For column As Integer = left To right
+                    Dim cell As SheetCell = FindCell(row, column)
+                    If cell Is Nothing OrElse Not cell.Bold Then
+                        turnOn = True
+                        Exit For
+                    End If
+                Next
+            Next
+
+            For row As Integer = first To last
+                For column As Integer = left To right
+                    SetBold(row, column, turnOn)
+                Next
+            Next
+        End Sub
+
+        ''' <summary>Italics for the whole selection, by the same rule as <see cref="ToggleBoldSelection"/>.</summary>
+        Public Sub ToggleItalicSelection()
+            Dim turnOn As Boolean = False
+            Dim first As Integer = SelectionFirstRow()
+            Dim last As Integer = SelectionLastRow()
+            Dim left As Integer = SelectionFirstColumn()
+            Dim right As Integer = SelectionLastColumn()
+            For row As Integer = first To last
+                If turnOn Then
+                    Exit For
+                End If
+
+                For column As Integer = left To right
+                    Dim cell As SheetCell = FindCell(row, column)
+                    If cell Is Nothing OrElse Not cell.Italic Then
+                        turnOn = True
+                        Exit For
+                    End If
+                Next
+            Next
+
+            For row As Integer = first To last
+                For column As Integer = left To right
+                    SetItalic(row, column, turnOn)
+                Next
+            Next
+        End Sub
+
         ''' <summary>Finds the cell holding an address, or null. Uses the index, so it is not a scan.</summary>
         Private Function FindCell(row As Integer, column As Integer) As SheetCell
             If _lookup.Count <> Cells.Count Then
@@ -960,6 +1202,21 @@ Namespace Global.AvaloniaSpreadsheet
             Dim firstColumn As Integer = VisibleFirstColumn(grid)
             Dim lastColumn As Integer = VisibleLastColumn(grid)
 
+            ' CELL FILLS go down first — under the wash and under the grid lines, so a highlighted cell
+            ' keeps its lines and still reads as selected when the selection is over it.
+            Using context.PushClip(grid)
+                For row As Integer = firstRow To lastRow
+                    For column As Integer = firstColumn To lastColumn
+                        Dim fill As Nullable(Of Color) = FillOf(row, column)
+                        If Not fill.HasValue Then
+                            Continue For
+                        End If
+
+                        context.FillRectangle(New SolidColorBrush(fill.Value), CellRect(row, column))
+                    Next
+                Next
+            End Using
+
             ' The wash goes down before the grid lines, so the lines still read through a selection.
             Dim selection As Rect = SelectionRect()
             Dim visibleSelection As Rect = selection.Intersect(grid)
@@ -997,7 +1254,12 @@ Namespace Global.AvaloniaSpreadsheet
                             Continue For                 ' the editor draws it, with its caret
                         End If
 
-                        DrawCellText(context, text, CellRect(row, column), textBrush, LooksNumeric(text), Nothing)
+                        ' This cell's own formatting, all of it "unset means the sheet's own".
+                        Dim cell As SheetCell = FindCell(row, column)
+                        Dim align As SheetAlign = AlignOf(cell)
+                        Dim numeric As Boolean = LooksNumeric(text) AndAlso align = SheetAlign.Auto
+                        DrawCellText(context, text, CellRect(row, column), TextBrushOf(cell, textBrush),
+                            numeric, ToTextAlignment(align), -1, TypefaceFor(cell), SizeOf(cell))
                     Next
                 Next
             End Using
@@ -1147,14 +1409,19 @@ Namespace Global.AvaloniaSpreadsheet
         ''' spreadsheet.
         ''' </summary>
         Private Sub DrawCellText(context As DrawingContext, text As String, rect As Rect, brush As IBrush,
-            rightAligned As Boolean, align As Nullable(Of TextAlignment), Optional caret As Integer = -1)
+            rightAligned As Boolean, align As Nullable(Of TextAlignment), Optional caret As Integer = -1,
+            Optional typeface As Nullable(Of Typeface) = Nothing, Optional size As Double = 0)
             If text.Length = 0 AndAlso caret < 0 Then
                 Return
             End If
 
-            Dim typeface As Typeface = TypefaceFor()
+            ' Typeface is a STRUCT in Avalonia 12, so VB cannot null-coalesce it the way the C# twin does —
+            ' the two-argument If wants a reference or a nullable on the left, which is why this asks
+            ' HasValue instead.
+            Dim font As Typeface = If(typeface.HasValue, typeface.Value, TypefaceFor())
+            Dim emSize As Double = If(size > 0, size, FontSize)
             Dim formatted As New FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                typeface, FontSize, brush)
+                font, emSize, brush)
             Dim inner As New Rect(rect.X + 3, rect.Y, rect.Width - 6, rect.Height)
             If inner.Width <= 0 Then
                 Return
@@ -1172,7 +1439,7 @@ Namespace Global.AvaloniaSpreadsheet
                 ' Keep the caret in view while the text is longer than the box it is edited in.
                 If caret >= 0 Then
                     Dim upToCaret As New FormattedText(text.Substring(0, caret), CultureInfo.CurrentCulture,
-                        FlowDirection.LeftToRight, typeface, FontSize, brush)
+                        FlowDirection.LeftToRight, font, emSize, brush)
                     If x + upToCaret.Width > inner.Right Then
                         x -= x + upToCaret.Width - inner.Right
                     End If
@@ -1188,13 +1455,59 @@ Namespace Global.AvaloniaSpreadsheet
             End Using
         End Sub
 
-        Private Function TypefaceFor() As Typeface
-            Dim name As String = FontFamilyName
-            If String.IsNullOrEmpty(name) Then
-                Return Typeface.Default
+        Private Function TypefaceFor(Optional cell As SheetCell = Nothing) As Typeface
+            Dim name As String = If(cell IsNot Nothing AndAlso Not String.IsNullOrEmpty(cell.FontFamily),
+                cell.FontFamily, FontFamilyName)
+            Dim family As FontFamily = If(String.IsNullOrEmpty(name), FontFamily.Default, New FontFamily(name))
+            Dim weight As FontWeight = If(cell IsNot Nothing AndAlso cell.Bold, FontWeight.Bold, FontWeight.Normal)
+            Dim style As FontStyle = If(cell IsNot Nothing AndAlso cell.Italic, FontStyle.Italic, FontStyle.Normal)
+            Return New Typeface(family, style, weight)
+        End Function
+
+        ''' <summary>The font size a cell is drawn at: its own, else the sheet's.</summary>
+        Private Function SizeOf(cell As SheetCell) As Double
+            Return If(cell IsNot Nothing AndAlso cell.FontSize > 0, cell.FontSize, FontSize)
+        End Function
+
+        ''' <summary>The brush a cell's text is drawn in: its own colour, else the sheet's.</summary>
+        Private Shared Function TextBrushOf(cell As SheetCell, fallback As IBrush) As IBrush
+            If cell Is Nothing OrElse Not cell.TextColor.HasValue Then
+                Return fallback
             End If
 
-            Return New Typeface(New FontFamily(name))
+            Return New SolidColorBrush(cell.TextColor.Value)
+        End Function
+
+        ''' <summary>A cell's highlight, or null when it has none.</summary>
+        Private Function FillOf(row As Integer, column As Integer) As Nullable(Of Color)
+            Dim cell As SheetCell = FindCell(row, column)
+            If cell Is Nothing Then
+                Return Nothing
+            End If
+
+            Return cell.Fill
+        End Function
+
+        Private Shared Function AlignOf(cell As SheetCell) As SheetAlign
+            Return If(cell Is Nothing, SheetAlign.Auto, cell.TextAlign)
+        End Function
+
+        ''' <summary>The sheet's alignment for a cell, or null to leave it to the caller's rule
+        ''' (numbers right, everything else left).</summary>
+        Private Shared Function ToTextAlignment(align As SheetAlign) As Nullable(Of TextAlignment)
+            If align = SheetAlign.Left Then
+                Return TextAlignment.Left
+            End If
+
+            If align = SheetAlign.Center Then
+                Return TextAlignment.Center
+            End If
+
+            If align = SheetAlign.Right Then
+                Return TextAlignment.Right
+            End If
+
+            Return Nothing
         End Function
 
         ''' <summary>True when the text reads as a number, so it is right-aligned.</summary>
@@ -1487,6 +1800,19 @@ Namespace Global.AvaloniaSpreadsheet
 
             If control AndAlso e.Key = Key.A Then
                 SelectAll()
+                e.Handled = True
+                Return
+            End If
+
+            ' Ctrl+B / Ctrl+I style the selection, the way every spreadsheet does.
+            If control AndAlso e.Key = Key.B Then
+                ToggleBoldSelection()
+                e.Handled = True
+                Return
+            End If
+
+            If control AndAlso e.Key = Key.I Then
+                ToggleItalicSelection()
                 e.Handled = True
                 Return
             End If

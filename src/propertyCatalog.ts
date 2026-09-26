@@ -712,7 +712,7 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
     // it is the thing that draws the grid those two numbers describe (and the keys 'Rows'/'Columns'
     // are already the DataGrid's editors — one key, one section).
     GrumpySheet: [
-        { key: 'Cells', label: 'Edit cells…', kind: 'button', desc: 'Open the spreadsheet grid: type in the cells, select a range and drag its fill handle to continue a series. What you leave is written into the form as <spread:SheetCell> elements, and the Rows/Columns boxes at the top of the same dialog set how big the sheet is.' },
+        { key: 'Cells', label: 'Edit cells…', kind: 'button', desc: 'Open the spreadsheet grid: type in the cells, select a range and drag its fill handle to continue a series. What you leave is written into the form as <spread:SheetCell> elements, and the Rows/Columns boxes at the top of the same dialog set how big the sheet is. The formatting bar in that dialog — bold, italics, size, font, text colour, highlight, alignment — applies to everything selected and shows the active cell’s own settings; a setting left on the sheet’s own is not written to the form at all, and Clear formatting drops the lot.' },
         { key: 'ColumnWidth', label: 'Column Width', kind: 'number', unit: 'px', defaultValue: '72' },
         { key: 'RowHeight', label: 'Row Height', kind: 'number', unit: 'px', defaultValue: '22' },
         { key: 'HeaderWidth', label: 'Header Width', kind: 'number', unit: 'px', defaultValue: '44' },
