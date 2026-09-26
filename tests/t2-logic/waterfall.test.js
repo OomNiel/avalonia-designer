@@ -94,7 +94,7 @@ module.exports = async (t) => {
     for (const gone of ['MinX', 'MaxX', 'MinY', 'MaxY', 'BarMode', 'DoughnutPercent']) {
         t.ok(!keys.includes(gone), 'rows', `and no ${gone} row (it does not belong to this chart)`);
     }
-    for (const key of ['Series', 'Legend', 'Data']) {
+    for (const key of ['Series', 'Legend', 'DataSelector']) {
         t.ok(editors.includes(key), 'rows', `the waterfall offers the ${key} editor`);
     }
     t.ok(!editors.includes('Axis'), 'rows', 'but no Axis editor: the three projected axes are styled by rows');

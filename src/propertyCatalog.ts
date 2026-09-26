@@ -2049,6 +2049,9 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
         // The control's data payload and how it is edited: item/row sources, the selected item,
         // the grid's user-edit permissions and the file/folder picker's settings.
         keys: [
+            // GrumpyCharts: the Data Selector editor FIRST — it is where a chart's data comes from, and the
+            // values below it (the inline array, the workbook columns) are what it points at.
+            'DataSelector',
             'ItemsSource', 'SelectedItem', 'SelectedIndex',
             'PathType', 'SelectedPath', 'Filter', 'InitialFolder', 'IsPathReadOnly',
             'AutoGenerateColumns', 'IsReadOnly',
@@ -2330,10 +2333,13 @@ export function propertyDefsFor(
         });
     }
     // 'Data Selector' opens the data-source editor on EVERY chart: which source (Spreadsheet or Data
-    // Files), the file it reads, and — for a spreadsheet — which PAGE of it. Shown at the TOP.
+    // Files), the file it reads, and — for a spreadsheet — which PAGE of it. It is listed in the DATA
+    // section (2026-09-26), not in Appearance where the shape control's `Data` (path geometry) lives and not
+    // in Editors where an unlisted button would land: the row answers "where does this chart's data come
+    // from", and that is what a reader looks under. Hence a key of its own — `Data` means path geometry.
     if (isChartTag(tag)) {
         topActions.push({
-            key: 'Data',
+            key: 'DataSelector',
             label: 'Data Selector',
             kind: 'button',
             value: 'Select data…',

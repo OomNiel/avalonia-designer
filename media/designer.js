@@ -3071,7 +3071,7 @@
                     // 'Slices' opens the pie's slice editor (one row per wedge, colour + Explode).
                     if (p.key === 'Slices') openSliceEditor(msg.name, msg.sliceInfo || {});
                     // 'Data Selector' opens the data-source editor (source, workbook, page, data file).
-                    if (p.key === 'Data') openDataEditor(msg.name, msg.dataSource || {});
+                    if (p.key === 'DataSelector') openDataEditor(msg.name, msg.dataSource || {});
                 });
                 control = btn;
             } else if (p.kind === 'file') {

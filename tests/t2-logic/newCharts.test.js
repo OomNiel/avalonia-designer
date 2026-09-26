@@ -127,7 +127,7 @@ module.exports = async (t) => {
     const propRows = (tag) => propertyDefsFor(pieModel(`<Canvas Name="Holder"><charts:${tag} x:Name="c1"/></Canvas>`).findByName('c1')) || [];
     const barRows = propRows('GrumpyBarPlot');
     const barKeys = barRows.map((r) => r.key);
-    for (const key of ['BarMode', 'BarWidth', 'BarCornerRadius', 'XColumn', 'YColumn', 'Data', 'Gradient']) {
+    for (const key of ['BarMode', 'BarWidth', 'BarCornerRadius', 'XColumn', 'YColumn', 'DataSelector', 'Gradient']) {
         t.ok(barKeys.includes(key), 'properties', `the bar chart has a ${key} row`);
     }
     const barMode = barRows.find((r) => r.key === 'BarMode');
@@ -155,7 +155,7 @@ module.exports = async (t) => {
     const pieRows = propRows('GrumpyPiePlot');
     const pieKeys = pieRows.map((r) => r.key);
     for (const key of ['Labels', 'Values', 'DoughnutPercent', 'StartAngle', 'SliceGap', 'SliceBorderColor',
-        'SliceBorderThickness', 'HoverExplode', 'Data', 'Gradient']) {
+        'SliceBorderThickness', 'HoverExplode', 'DataSelector', 'Gradient']) {
         t.ok(pieKeys.includes(key), 'properties', `the pie has a ${key} row`);
     }
     const pieEditors = pieRows.filter((r) => r.kind === 'button').map((r) => r.key);

@@ -93,7 +93,11 @@ module.exports = async (t) => {
             .findByName('c1');
         const rows = propertyDefsFor(el) || [];
         const editors = rows.filter((r) => r.kind === 'button').map((r) => r.key);
-        t.ok(editors.includes('Data'), 'panel', `${tag} offers the Data Selector`);
+        t.ok(editors.includes('DataSelector'), 'panel', `${tag} offers the Data Selector`);
+        // The row sits in the DATA section (2026-09-26): it is where the chart's data comes from, and an
+        // UNLISTED editor button would land in Editors instead — hence the explicit listing.
+        t.equal(rows.find((r) => r.key === 'DataSelector').sectionId, 'data', 'panel',
+            `${tag}: the Data Selector lives in the Data section`);
         t.ok(!rows.some((r) => r.key === 'SourceFile'), 'panel',
             `${tag} no longer has a Spreadsheet row (the editor owns the file now)`);
     }
@@ -157,8 +161,8 @@ module.exports = async (t) => {
         t.ok(web.includes(`$('${id}')`), 'webview', `designer.js uses the ${id} element`);
         t.ok(panel.includes(`id="${id}"`), 'webview', `and the webview HTML defines ${id}`);
     }
-    t.ok(/function openDataEditor/.test(web) && /p\.key === 'Data'/.test(web), 'webview',
-        'the Data row opens the editor');
+    t.ok(/function openDataEditor/.test(web) && /p\.key === 'DataSelector'/.test(web), 'webview',
+        'the Data Selector row opens the editor');
     t.ok(/case 'sheetsResult'/.test(web) && /case 'chartSourcePicked'/.test(web), 'webview',
         'and it handles the two replies the editor waits for');
     t.ok(/type: 'pickChartSource'/.test(web) && /case 'pickChartSource'/.test(panel), 'webview',
