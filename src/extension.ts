@@ -78,7 +78,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // form in the Designer. Checked again when the workspace folders arrive slightly after
         // activation.
         context.subscriptions.push(
-            vscode.workspace.onDidChangeWorkspaceFolders(() => maybeRunFirstBuild(context))
+            vscode.workspace.onDidChangeWorkspaceFolders(() => void maybeRunFirstBuild(context)),
         );
 
         // Previewer Host lifecycle (spawns the C# headless renderer on demand).
@@ -258,7 +258,7 @@ export function activate(context: vscode.ExtensionContext): void {
         log('activate complete');
         // AFTER the commands are registered: the first-open hook opens the new project's form in the
         // Designer by executing `avaloniaDesigner.openInDesigner`, which must exist by then.
-        maybeRunFirstBuild(context);
+        void maybeRunFirstBuild(context);
     } catch (err) {
         logger.logError(err);
         logger.log('activate FAILED — views/editors may not be registered');

@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.13.0
+// BUNDLED-COPY: 0.13.1
 // GrumpySheet.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpySheet.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs / GrumpyCharts.cs.
 //
@@ -126,6 +126,42 @@ namespace AvaloniaSpreadsheet
     }
 
     /// <summary>
+    /// Which of a cell's four edges carry a border line. [Flags], because a corner cell can want Top
+    /// and Left at once, and a boxed one wants all four.
+    ///
+    /// A cell keeps only this, ONE thickness and ONE colour (see <see cref="SheetCell.BorderEdges"/>):
+    /// four different line weights round one cell is not what this control is for, and a per-edge
+    /// weight would quadruple the attributes a cell can carry for no picture anyone asked for.
+    ///
+    /// The right-click menu also offers the whole-set spellings a spreadsheet user expects — All,
+    /// Outside and Inside — but those are about a SELECTION, not a cell: Outside is the rim of the
+    /// block and Inside is the lines between the cells in it, so the menu works out what that means for
+    /// each cell and stores the answer here. On a single cell All and Outside are the same four edges,
+    /// and Inside is None — a single cell has no inside.
+    /// </summary>
+    [Flags]
+    public enum SheetBorderEdges
+    {
+        /// <summary>No border on any edge — what a cell starts with.</summary>
+        None = 0,
+
+        /// <summary>A line along the cell's top edge.</summary>
+        Top = 1,
+
+        /// <summary>A line down the cell's right edge.</summary>
+        Right = 2,
+
+        /// <summary>A line along the cell's bottom edge.</summary>
+        Bottom = 4,
+
+        /// <summary>A line down the cell's left edge.</summary>
+        Left = 8,
+
+        /// <summary>All four edges: a box round the cell.</summary>
+        All = Top | Right | Bottom | Left
+    }
+
+    /// <summary>
     /// One cell of a <see cref="GrumpySheet"/>: where it is, what it holds, and how it is FORMATTED.
     /// Cells are written as direct children of the sheet, in the order they should be read — order does
     /// not matter for cells that do not overlap, because a later cell with the same address replaces an
@@ -167,6 +203,21 @@ namespace AvaloniaSpreadsheet
 
         /// <summary>How the text is lined up. Auto = by content (numbers right, text left).</summary>
         public SheetAlign TextAlign { get; set; } = SheetAlign.Auto;
+
+        /// <summary>Which of the cell's edges are drawn with a border line. None (the default) means no
+        /// border at all, which is what keeps a cell that was never boxed a short element.</summary>
+        public SheetBorderEdges BorderEdges { get; set; } = SheetBorderEdges.None;
+
+        /// <summary>How thick the cell's border lines are, in pixels — the same on every edge the cell
+        /// has. 0 (the default) means the SHEET'S OWN line: one pixel, the width of the grid line itself,
+        /// so a cell that says where its border goes but not how thick gets a line like every other line
+        /// on the sheet rather than nothing at all. <see cref="BorderEdges"/> is what decides whether there
+        /// is a border; the width only decides how heavy it is.</summary>
+        public double BorderThickness { get; set; }
+
+        /// <summary>The border's colour. Null means the sheet's own GridColor, so a border that was asked
+        /// for but not coloured reads as the grid it sits on rather than vanishing.</summary>
+        public Color? BorderColor { get; set; }
     }
 
     /// <summary>What changed, and what it is now — raised once per committed cell change.</summary>
@@ -1433,9 +1484,13 @@ namespace AvaloniaSpreadsheet
                         }
 
                         var text = cell.Text ?? string.Empty;
-                        if (text.Length == 0 && !cell.Fill.HasValue)
+                        if (text.Length == 0 && !cell.Fill.HasValue &&
+                            cell.BorderEdges == SheetBorderEdges.None)
                         {
-                            continue;               // nothing to say and nothing to show
+                            // Nothing to say and nothing to show: no text, no highlight and no border. A
+                            // BORDERED blank cell is the one that must not be dropped here — an empty box is
+                            // exactly what someone draws a border FOR.
+                            continue;
                         }
 
                         written++;
@@ -1513,7 +1568,9 @@ namespace AvaloniaSpreadsheet
             }
 
             /// <summary>Text as XML: the five characters that would break the part are escaped, and the
-            /// control characters XML cannot carry at all are dropped.</summary>
+            /// control characters XML cannot carry at all are dropped. (The VB twin calls this XmlText:
+            /// VB is case-INSENSITIVE, so there `Text(text)` would bind to the parameter `text` and index
+            /// it — it compiles and then throws, which is how the twin lost every text cell it saved.)</summary>
             internal static string Text(string text)
             {
                 var builder = new System.Text.StringBuilder(text.Length + 8);
@@ -1550,12 +1607,17 @@ namespace AvaloniaSpreadsheet
             /// </summary>
             private sealed class StyleTable
             {
+                private const string EmptyBorder =
+                    "<border><left /><right /><top /><bottom /><diagonal /></border>";
+
                 private readonly GrumpySheet _sheet;
                 private readonly List<string> _fonts = new List<string>();
                 private readonly List<string> _fills = new List<string>();
+                private readonly List<string> _borders = new List<string>();
                 private readonly List<string> _formats = new List<string>();
                 private readonly Dictionary<string, int> _fontAt = new Dictionary<string, int>(StringComparer.Ordinal);
                 private readonly Dictionary<string, int> _fillAt = new Dictionary<string, int>(StringComparer.Ordinal);
+                private readonly Dictionary<string, int> _borderAt = new Dictionary<string, int>(StringComparer.Ordinal);
                 private readonly Dictionary<string, int> _formatAt = new Dictionary<string, int>(StringComparer.Ordinal);
 
                 internal StyleTable(GrumpySheet sheet)
@@ -1563,6 +1625,7 @@ namespace AvaloniaSpreadsheet
                     _sheet = sheet;
                     _fills.Add("<fill><patternFill /></fill>");                          // 0: no fill
                     _fills.Add("<fill><patternFill patternType=\"gray125\" /></fill>");  // 1: Excel's own
+                    _borders.Add(EmptyBorder);                                          // 0: no border
                     _fonts.Add(FontXml(false, false, sheet.FontSize, sheet.FontFamilyName ?? string.Empty, null));
                     _formats.Add("<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" />");
                 }
@@ -1588,20 +1651,75 @@ namespace AvaloniaSpreadsheet
                             "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"" + Rgb(fill.Value) +
                             "\" /><bgColor indexed=\"64\" /></patternFill></fill>")
                         : 0;
+                    var borderKey = BorderKey(cell);
+                    var borderId = borderKey.Length > 0
+                        ? Intern(_borders, _borderAt, borderKey, BorderXml(cell))
+                        : 0;
                     var align = cell.TextAlign == SheetAlign.Left ? "left"
                         : cell.TextAlign == SheetAlign.Center ? "center"
                         : cell.TextAlign == SheetAlign.Right ? "right" : string.Empty;
-                    if (font == 0 && fillId == 0 && align.Length == 0)
+                    if (font == 0 && fillId == 0 && borderId == 0 && align.Length == 0)
                     {
                         return 0;
                     }
 
-                    var format = Intern(_formats, _formatAt, font + "|" + fillId + "|" + align,
+                    var format = Intern(_formats, _formatAt, font + "|" + fillId + "|" + borderId + "|" + align,
                         "<xf numFmtId=\"0\" fontId=\"" + font + "\" fillId=\"" + fillId +
-                        "\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"" +
+                        "\" borderId=\"" + borderId + "\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"" +
+                        (borderId > 0 ? " applyBorder=\"1\"" : string.Empty) +
                         (align.Length == 0 ? " />"
                             : " applyAlignment=\"1\"><alignment horizontal=\"" + align + "\" /></xf>"));
                     return format;
+                }
+
+                /// <summary>The OOXML line style that stands for a width in pixels. Excel has three that mean
+                /// anything at 100 % zoom — thin, medium, thick — and they are what anyone drawing these
+                /// lines by hand picks. Everything below medium is thin, which is also what a cell's width of
+                /// 0 means (the sheet's own one-pixel line).</summary>
+                private static string EdgeStyle(double thickness)
+                {
+                    if (thickness >= 3)
+                    {
+                        return "thick";
+                    }
+
+                    return thickness >= 2 ? "medium" : "thin";
+                }
+
+                /// <summary>The borders table's key for this cell, or empty when it asked for none — which
+                /// is what keeps a plain cell out of the table AND off the xf's borderId.</summary>
+                private string BorderKey(SheetCell cell)
+                {
+                    if (cell.BorderEdges == SheetBorderEdges.None)
+                    {
+                        return string.Empty;
+                    }
+
+                    return EdgeStyle(cell.BorderThickness) + "|" + Rgb(cell.BorderColor ?? _sheet.GridColor) +
+                           "|" + (int)cell.BorderEdges;
+                }
+
+                /// <summary>One cell's border, in OOXML's own order (left, right, top, bottom, diagonal) —
+                /// an edge the cell did not ask for is written as an empty element, which is how a border
+                /// says which of its sides are bare.</summary>
+                private string BorderXml(SheetCell cell)
+                {
+                    var style = EdgeStyle(cell.BorderThickness);
+                    var ink = Rgb(cell.BorderColor ?? _sheet.GridColor);
+                    var edges = cell.BorderEdges;
+                    return "<border>" +
+                           EdgeXml("left", (edges & SheetBorderEdges.Left) != 0, style, ink) +
+                           EdgeXml("right", (edges & SheetBorderEdges.Right) != 0, style, ink) +
+                           EdgeXml("top", (edges & SheetBorderEdges.Top) != 0, style, ink) +
+                           EdgeXml("bottom", (edges & SheetBorderEdges.Bottom) != 0, style, ink) +
+                           "<diagonal /></border>";
+                }
+
+                private static string EdgeXml(string side, bool on, string style, string ink)
+                {
+                    return on
+                        ? "<" + side + " style=\"" + style + "\"><color rgb=\"" + ink + "\" /></" + side + ">"
+                        : "<" + side + " />";
                 }
 
                 /// <summary>The whole styles part, with each table's count beside it (Excel ignores the
@@ -1612,7 +1730,7 @@ namespace AvaloniaSpreadsheet
                            "<styleSheet xmlns=\"" + Main + "\">" +
                            "<fonts count=\"" + _fonts.Count + "\">" + string.Concat(_fonts) + "</fonts>" +
                            "<fills count=\"" + _fills.Count + "\">" + string.Concat(_fills) + "</fills>" +
-                           "<borders count=\"1\"><border><left /><right /><top /><bottom /><diagonal /></border></borders>" +
+                           "<borders count=\"" + _borders.Count + "\">" + string.Concat(_borders) + "</borders>" +
                            "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" /></cellStyleXfs>" +
                            "<cellXfs count=\"" + _formats.Count + "\">" + string.Concat(_formats) + "</cellXfs>" +
                            "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\" /></cellStyles>" +
@@ -1762,6 +1880,14 @@ namespace AvaloniaSpreadsheet
                             if (built2 == null)
                             {
                                 continue;
+                            }
+
+                            // A border colour that IS the sheet's own grid colour comes back as no colour at
+                            // all: a workbook cannot tell "the grid colour" from "no colour chosen", and a
+                            // form that grew an attribute per reloaded cell would be longer every time.
+                            if (built2.BorderColor.HasValue && built2.BorderColor.Value == sheet.GridColor)
+                            {
+                                built2.BorderColor = null;
                             }
 
                             lastRow = Math.Max(lastRow, built2.Row);
@@ -2034,9 +2160,10 @@ namespace AvaloniaSpreadsheet
                 }
 
                 var format = styleAt >= 0 && styleAt < formats.Count ? formats[styleAt] : null;
-                if (text.Length == 0 && (format == null || !format.Fill.HasValue))
+                if (text.Length == 0 && (format == null ||
+                    (!format.Fill.HasValue && format.Edges == SheetBorderEdges.None)))
                 {
-                    return null;                        // neither a value nor a highlight: nothing to carry
+                    return null;                        // neither a value, a highlight nor a border: nothing
                 }
 
                 var built = new SheetCell { Row = row, Column = column, Text = text };
@@ -2049,6 +2176,9 @@ namespace AvaloniaSpreadsheet
                     built.TextColor = format.Text;
                     built.Fill = format.Fill;
                     built.TextAlign = format.Align;
+                    built.BorderEdges = format.Edges;
+                    built.BorderThickness = format.EdgeThickness;
+                    built.BorderColor = format.EdgeColour;
                 }
 
                 return built;
@@ -2119,6 +2249,9 @@ namespace AvaloniaSpreadsheet
                 internal Color? Text;
                 internal Color? Fill;
                 internal SheetAlign Align = SheetAlign.Auto;
+                internal SheetBorderEdges Edges = SheetBorderEdges.None;
+                internal double EdgeThickness;
+                internal Color? EdgeColour;
             }
 
             /// <summary>The styles part, as a lookup from a cell's `s` index to what it means.</summary>
@@ -2133,6 +2266,7 @@ namespace AvaloniaSpreadsheet
 
                 var fonts = new List<XElement>();
                 var fills = new List<XElement>();
+                var borders = new List<XElement>();
                 var xfs = new List<XElement>();
                 foreach (var element in styles.Descendants())
                 {
@@ -2145,6 +2279,11 @@ namespace AvaloniaSpreadsheet
                              element.Parent.Name.LocalName == "fills")
                     {
                         fills.Add(element);
+                    }
+                    else if (element.Name.LocalName == "border" && element.Parent != null &&
+                             element.Parent.Name.LocalName == "borders")
+                    {
+                        borders.Add(element);
                     }
                     else if (element.Name.LocalName == "xf" && element.Parent != null &&
                              element.Parent.Name.LocalName == "cellXfs")
@@ -2195,6 +2334,39 @@ namespace AvaloniaSpreadsheet
                         }
                     }
 
+                    // The border: which sides this format lines, how heavy, and in what colour. A side is
+                    // bordered when its element names a style (an empty element, or style="none", is a bare
+                    // side) — that is the whole of OOXML's answer to the same question this control asks.
+                    var border = At(borders, Attribute(xf, "borderId"));
+                    if (border != null)
+                    {
+                        foreach (var child in border.Elements())
+                        {
+                            var side = child.Name.LocalName;
+                            var picked = side == "left" ? SheetBorderEdges.Left
+                                : side == "right" ? SheetBorderEdges.Right
+                                : side == "top" ? SheetBorderEdges.Top
+                                : side == "bottom" ? SheetBorderEdges.Bottom
+                                : SheetBorderEdges.None;
+                            var weight = Attribute(child, "style");
+                            if (picked == SheetBorderEdges.None || weight == null || weight == "none")
+                            {
+                                continue;
+                            }
+
+                            format.Edges |= picked;
+                            var edges = StyleThickness(weight);
+                            format.EdgeThickness = format.EdgeThickness > edges ? format.EdgeThickness : edges;
+                            foreach (var ink in child.Elements())
+                            {
+                                if (ink.Name.LocalName == "color" && !format.EdgeColour.HasValue)
+                                {
+                                    format.EdgeColour = Colour(ink);
+                                }
+                            }
+                        }
+                    }
+
                     foreach (var child in xf.Descendants())
                     {
                         if (child.Name.LocalName != "alignment")
@@ -2224,6 +2396,20 @@ namespace AvaloniaSpreadsheet
                 }
 
                 return at >= 0 && at < list.Count ? list[at] : null;
+            }
+
+            /// <summary>An OOXML line style as a width in pixels — the inverse of what the writer chooses.
+            /// Everything Excel can draw that this control cannot is read as a one-pixel line, which keeps
+            /// the borrowed border visible rather than dropping it.</summary>
+            private static double StyleThickness(string style)
+            {
+                var name = style.Trim().ToLowerInvariant();
+                if (name == "thick" || name == "double")
+                {
+                    return 3;
+                }
+
+                return name == "medium" || name == "mediumDashed".ToLowerInvariant() ? 2 : 1;
             }
 
             /// <summary>Does this element have a child of that name? (A loop, not LINQ: a bundled file
@@ -3083,6 +3269,46 @@ namespace AvaloniaSpreadsheet
             InvalidateVisual();
         }
 
+        /// <summary>
+        /// Sets one cell's border: which of its edges are lined, how thick, and in what colour. The whole
+        /// border goes in one call because a cell keeps one thickness and one colour for every edge it
+        /// has (<see cref="SheetCell.BorderEdges"/>).
+        ///
+        /// <paramref name="edges"/> = None is what TURNS THE BORDER OFF, colour and width included:
+        /// leaving either behind would mean a cell that looks plain remembering a border the moment edges
+        /// came back, which is not what "no border" means to anyone. A thickness of 0 or less is NOT "no
+        /// border" — it is the sheet's own one-pixel line, so the edges alone are enough to ask for one.
+        ///
+        /// A thickness of 1 px drawn exactly on the cell's edge covers the 1 px grid line under it, so a
+        /// default-coloured thin border looks like the grid — that is the point of BorderColor's null.
+        /// </summary>
+        public void SetBorder(int row, int column, SheetBorderEdges edges, double thickness, Color? color)
+        {
+            var cell = EnsureCell(row, column);
+            if (cell == null)
+            {
+                return;
+            }
+
+            if (edges == SheetBorderEdges.None)
+            {
+                edges = SheetBorderEdges.None;
+                thickness = 0;
+                color = null;
+            }
+
+            if (cell.BorderEdges == edges && Math.Abs(cell.BorderThickness - thickness) < 0.001 &&
+                cell.BorderColor == color)
+            {
+                return;
+            }
+
+            cell.BorderEdges = edges;
+            cell.BorderThickness = thickness;
+            cell.BorderColor = color;
+            InvalidateVisual();
+        }
+
         /// <summary>Drops every formatting decision from one cell, leaving what it holds.</summary>
         public void ClearFormatting(int row, int column)
         {
@@ -3099,6 +3325,9 @@ namespace AvaloniaSpreadsheet
             cell.TextColor = null;
             cell.Fill = null;
             cell.TextAlign = SheetAlign.Auto;
+            cell.BorderEdges = SheetBorderEdges.None;
+            cell.BorderThickness = 0;
+            cell.BorderColor = null;
             InvalidateVisual();
         }
 
@@ -4190,7 +4419,7 @@ namespace AvaloniaSpreadsheet
                 context.FillRectangle(selectionFill, visibleSelection);
             }
 
-            // Cells: the grid lines, then the text.
+            // Cells: the grid lines, the borders, then the text.
             using (context.PushClip(grid))
             {
                 var gridPen = new Pen(gridBrush, 1d);
@@ -4209,6 +4438,18 @@ namespace AvaloniaSpreadsheet
                     if (x >= grid.X - 0.5 && x <= grid.Right + 0.5)
                     {
                         context.DrawLine(gridPen, new Point(x, grid.Y), new Point(x, grid.Bottom));
+                    }
+                }
+
+                // A cell that was given a border draws it OVER the grid line it sits on, and this pass runs
+                // before the text so the text keeps its own colour on top. It is deliberately NOT skipped on
+                // a page: a border is something the cell was told to be, so it prints (unlike the wash and
+                // the outline, which are about SELECTING).
+                for (var row = firstRow; row <= lastRow; row++)
+                {
+                    for (var column = firstColumn; column <= lastColumn; column++)
+                    {
+                        DrawCellBorder(context, CellRect(row, column), FindCell(row, column));
                     }
                 }
 
@@ -4437,6 +4678,63 @@ namespace AvaloniaSpreadsheet
 
             // A light border on the address box is the cue that it can be clicked to type there.
             context.DrawRectangle(null, new Pen(accent, 1d), new Rect(0.5, bar.Y + 0.5, name.Width, name.Height - 1));
+        }
+
+        /// <summary>
+        /// Draws one cell's border — which of its edges were asked for, at the cell's own thickness and
+        /// colour, or null <see cref="SheetCell.BorderColor"/> for the sheet's GridColor (so a border that
+        /// was asked for but not coloured reads as the grid line it covers, rather than vanishing).
+        ///
+        /// A cell with no border, a thickness of 0, or no cell element at all draws nothing. The lines are
+        /// CENTRED on the cell's edges, which is what lets a 1 px border sit exactly on the grid line and
+        /// cover it.
+        ///
+        /// Each end is LENGTHENED by half the thickness wherever the edge it meets at that corner is drawn
+        /// too: stroking two single lines that stop at the corner leaves a small square notch on the OUTSIDE
+        /// of it (half the thickness each way) — invisible at 1 px, an obvious chip out of a 3 px box.
+        /// </summary>
+        private void DrawCellBorder(DrawingContext context, Rect rect, SheetCell? cell)
+        {
+            if (cell == null || cell.BorderEdges == SheetBorderEdges.None)
+            {
+                return;
+            }
+
+            var edges = cell.BorderEdges;
+            var top = (edges & SheetBorderEdges.Top) != 0;
+            var right = (edges & SheetBorderEdges.Right) != 0;
+            var bottom = (edges & SheetBorderEdges.Bottom) != 0;
+            var left = (edges & SheetBorderEdges.Left) != 0;
+            // 0 = the sheet's own line, which is one pixel — the width the grid is drawn at. The EDGES are
+            // what asked for the border, so a cell that named them gets a line like every other line on the
+            // sheet rather than nothing.
+            var weight = cell.BorderThickness > 0 ? cell.BorderThickness : BorderOwnThickness;
+            var half = weight / 2;
+            var pen = new Pen(new SolidColorBrush(cell.BorderColor ?? GridColor), weight);
+
+            if (top)
+            {
+                context.DrawLine(pen, new Point(rect.X - (left ? half : 0), rect.Y),
+                    new Point(rect.Right + (right ? half : 0), rect.Y));
+            }
+
+            if (bottom)
+            {
+                context.DrawLine(pen, new Point(rect.X - (left ? half : 0), rect.Bottom),
+                    new Point(rect.Right + (right ? half : 0), rect.Bottom));
+            }
+
+            if (left)
+            {
+                context.DrawLine(pen, new Point(rect.X, rect.Y - (top ? half : 0)),
+                    new Point(rect.X, rect.Bottom + (bottom ? half : 0)));
+            }
+
+            if (right)
+            {
+                context.DrawLine(pen, new Point(rect.Right, rect.Y - (top ? half : 0)),
+                    new Point(rect.Right, rect.Bottom + (bottom ? half : 0)));
+            }
         }
 
         /// <summary>
@@ -5108,6 +5406,27 @@ namespace AvaloniaSpreadsheet
 
             /// <summary>What choosing it does.</summary>
             public Action? Run;
+
+            /// <summary>The colours on this line, drawn as a row of squares — empty for an ordinary line,
+            /// whose label is its text. A swatch row has no label: the squares ARE the line.</summary>
+            public List<Color> Swatches = new List<Color>();
+
+            /// <summary>Which swatch of the row is the current one (-1 for none), drawn with a ring round
+            /// it so a panel says what the selection already is.</summary>
+            public int TickedSwatch = -1;
+
+            /// <summary>What picking a swatch of this row does — it is handed the colour.</summary>
+            public Action<Color>? SwatchRun;
+
+            /// <summary>Draw this line as a SOLID BAR of the colour instead of a label — the colour
+            /// picker's preview, which has to be big enough to judge.</summary>
+            public Color? Preview;
+
+            /// <summary>This line is a SLIDER for one channel of the colour being mixed (0 = red, 1 =
+            /// green, 2 = blue), or -1 for a line that is not a slider at all. A slider is dragged like a
+            /// scrollbar's thumb — the pattern this control already has — and Enter must not throw the
+            /// panel away, so it is not a command.</summary>
+            public int Channel = -1;
         }
 
         /// <summary>The ink a warning line is drawn in — the one colour in this file that is deliberately NOT
@@ -5115,15 +5434,33 @@ namespace AvaloniaSpreadsheet
         private static readonly Color WarningColor = Color.Parse("#B3261E");
 
         /// <summary>Which of the things a menu can be: the right-click menu, a toolbar button's menu, the
-        /// macro list a '=' opens, the print-area warning, or the page question. They share the drawing, the
-        /// hover and the keys; the kind is what tells Tab (and the painters) which one is showing.</summary>
-        private enum MenuKind { Context, Toolbar, Macro, Warning, Setup }
+        /// macro list a '=' opens, the print-area warning, the page question, or one of the colour and
+        /// border PANELS a right-click line leads to. They share the drawing, the hover and the keys; the
+        /// kind is what tells Tab (and the painters) which one is showing.</summary>
+        private enum MenuKind { Context, Toolbar, Macro, Warning, Setup, Panel }
 
         /// <summary>How wide the menu is, and how tall one of its lines is.</summary>
         private const double MenuWidth = 200d;
         private const double MenuItemHeight = 24d;
         private const double MenuSeparatorHeight = 9d;
         private const double MenuPad = 5d;
+
+        /// <summary>A swatch: a 16 px square with 4 px between them, eight to a line — 156 px of a 200 px
+        /// panel, so the grid is the same whatever the panel is over.</summary>
+        private const double MenuSwatchSize = 16d;
+        private const double MenuSwatchGap = 4d;
+        private const double MenuSwatchLeft = 9d;
+        private const int MenuSwatchPerRow = 8;
+
+        /// <summary>The three line weights the borders panel offers, in pixels. 1 px lands exactly on the
+        /// grid line and covers it; 2 and 3 read as a line someone chose.</summary>
+        private const double BorderThin = 1d;
+        private const double BorderMedium = 2d;
+        private const double BorderThick = 3d;
+
+        /// <summary>The width of the sheet's OWN line, which is what a cell's 0 means: one pixel, the same
+        /// width the grid itself is drawn at.</summary>
+        private const double BorderOwnThickness = 1d;
 
         /// <summary>The macro list is wider than a command menu: it draws each function's syntax as well
         /// as its name, and a name with no room for its hint is just a name.</summary>
@@ -5136,6 +5473,29 @@ namespace AvaloniaSpreadsheet
         private double _menuX;
         private double _menuY;
         private int _menuHot = -1;
+
+        /// <summary>Where the panel CHAIN opened — the right-click point. A line of the menu can open
+        /// another panel (the palette is not the picker, and Borders is three choices), and every panel
+        /// updates this, so a chain stacks in one place the user is already looking at instead of walking
+        /// across the sheet, one panel per click.</summary>
+        private double _chainX;
+        private double _chainY;
+
+        // What the colour and border panels are working with. The border choices are REMEMBERED on the
+        // sheet because each line applies on its own — choosing a thickness after choosing the edges has to
+        // know which thickness the edges were drawn with, and the next edge choice uses the last colour.
+        private BorderChoice _borderChoice = BorderChoice.None;
+        private double _borderThickness = BorderThin;
+        private Color? _borderColour;
+
+        /// <summary>The colour the picker is mixing, and the two lines that have to follow it.</summary>
+        private Color _pick = Colors.Black;
+        private SheetMenuItem? _pickPreview;
+        private SheetMenuItem? _pickUse;
+
+        /// <summary>The slider being dragged, or -1. The pointer is captured for it, so the knob follows
+        /// past the edge of the panel.</summary>
+        private int _slider = -1;
 
         /// <summary>Where in the editor text the '=' that opened the macro list sits, or -1.</summary>
         private int _macroStart = -1;
@@ -5171,6 +5531,27 @@ namespace AvaloniaSpreadsheet
                 Label = "Italics",
                 Ticked = SelectionFlag(false) == true,
                 Run = ToggleItalicSelection
+            });
+            items.Add(new SheetMenuItem { IsSeparator = true });
+            items.Add(new SheetMenuItem
+            {
+                Label = "Fill colour…",
+                Hint = "the cell's highlight",
+                Run = () => OpenColourPanel("Fill colour", "No fill", "the sheet's own paper",
+                    SelectionColour(cell => cell.Fill), CellBackColor, ChooseFillColour)
+            });
+            items.Add(new SheetMenuItem
+            {
+                Label = "Text colour…",
+                Hint = "the ink the text is drawn in",
+                Run = () => OpenColourPanel("Text colour", "Automatic", "the sheet's own text colour",
+                    SelectionColour(cell => cell.TextColor), TextColor, ChooseTextColour)
+            });
+            items.Add(new SheetMenuItem
+            {
+                Label = "Borders…",
+                Hint = "lines round the cells",
+                Run = OpenBordersPanel
             });
             items.Add(new SheetMenuItem { IsSeparator = true });
             items.Add(new SheetMenuItem { Label = "Clear formatting", Run = ClearSelectionFormatting });
@@ -5315,6 +5696,609 @@ namespace AvaloniaSpreadsheet
             return items;
         }
 
+        // ---------------------------------------------------------------------------------------------
+        // THE COLOUR AND BORDER PANELS.
+        //
+        // A cell's look is chosen in STEPS, because a menu here is a flat list of lines and a Control has no
+        // dialog to put OK and Cancel in. The precedent is the print-area warning that leads to the page
+        // question: one panel opens the next. So Fill colour… offers the palette, one of its lines opens the
+        // picker for a colour the palette does not hold, and Borders… is a hub whose lines open the edges,
+        // the single edges and the thickness.
+        //
+        // Every pick APPLIES at once, exactly like Bold and the alignment lines — there is no OK to press,
+        // which is why the picker has a Use line of its own. And every panel acts on the SELECTION.
+        // ---------------------------------------------------------------------------------------------
+
+        /// <summary>The whole-set border spellings the hub offers, in the order a user thinks of them.
+        /// NOT the same thing as <see cref="SheetBorderEdges"/>, which is what ONE CELL stores: Outside and
+        /// Inside are about the BLOCK, so what they mean is worked out per cell as the choice is applied —
+        /// Outside is the rim of the block and Inside is the lines between the cells in it. On a single
+        /// cell All and Outside are the same four edges, and Inside is None: one cell has no inside.</summary>
+        private enum BorderChoice { All, Outside, Inside, Top, Bottom, Left, Right, None }
+
+        /// <summary>
+        /// The palette the colour panels offer: five lines of eight — greys, the hues at full strength, the
+        /// same hues deep, then two lines of tints for a highlight that has to stay readable. Forty is
+        /// enough to work in and few enough to read as squares with no hover preview, and anything it does
+        /// not hold is what the picker is for.
+        /// </summary>
+        private static readonly string[] MenuPaletteText =
+        {
+            "#FFFFFF", "#F2F2F2", "#D9D9D9", "#BFBFBF", "#808080", "#404040", "#262626", "#000000",
+            "#FF0000", "#FF8000", "#FFC000", "#FFFF00", "#92D050", "#00B050", "#00B0F0", "#0070C0",
+            "#C00000", "#C55A11", "#BF8F00", "#548235", "#2E75B6", "#1F4E79", "#7030A0", "#5B2C6F",
+            "#FFCCCC", "#FFE5CC", "#FFF2CC", "#FFFFCC", "#E2EFDA", "#DDEBF7", "#E4DFEC", "#EDEDED",
+            "#FF9999", "#FFCC99", "#FFE699", "#FFFF99", "#C6E0B4", "#BDD7EE", "#D9C2E9", "#E7E6E6"
+        };
+
+        private static readonly Color[] MenuPalette = BuildMenuPalette();
+
+        private static Color[] BuildMenuPalette()
+        {
+            var colours = new Color[MenuPaletteText.Length];
+            for (var i = 0; i < colours.Length; i++)
+            {
+                colours[i] = Color.Parse(MenuPaletteText[i]);
+            }
+
+            return colours;
+        }
+
+        /// <summary>The hex a colour is written as in the menu — the picker's preview and its Use line, so
+        /// the number the user reads is the number they are about to accept.</summary>
+        private static string HexOf(Color colour)
+        {
+            return "#" + colour.R.ToString("X2", CultureInfo.InvariantCulture) +
+                   colour.G.ToString("X2", CultureInfo.InvariantCulture) +
+                   colour.B.ToString("X2", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>Ink that stays readable ON a colour: black on a light one, white on a dark one.</summary>
+        private static IBrush ContrastInk(Color colour)
+        {
+            var luminance = (0.299 * colour.R + 0.587 * colour.G + 0.114 * colour.B) / 255d;
+            return new SolidColorBrush(luminance > 0.6 ? Colors.Black : Colors.White);
+        }
+
+        /// <summary>
+        /// Walks the selected cells and hands each one over. A BOUNDED selection — a block of cells — has
+        /// cells CREATED where it has none, exactly as <see cref="AlignSelection"/> does, so "select a
+        /// block, right-click, pick a highlight, then type" does the obvious thing. A whole column, a whole
+        /// row, or the whole sheet only gets the cells that ALREADY exist: creating them would write an
+        /// empty element per row into the form for a highlight with nothing in it.
+        /// </summary>
+        private void ForEachSelectedCell(Action<int, int, SheetCell> apply)
+        {
+            var bounded = !_wholeColumns && !_wholeRows && !_selectAll;
+            var first = SelectionFirstRow();
+            var last = SelectionLastRow();
+            var left = SelectionFirstColumn();
+            var right = SelectionLastColumn();
+            for (var row = first; row <= last; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    var cell = bounded ? EnsureCell(row, column) : FindCell(row, column);
+                    if (cell == null)
+                    {
+                        continue;
+                    }
+
+                    apply(row, column, cell);
+                }
+            }
+        }
+
+        /// <summary>
+        /// The colour every selected cell already has, or null when they disagree or none has one — what a
+        /// panel ticks and what the picker starts from. Cells that do not exist are ignored, for the reason
+        /// in <see cref="SelectionTextAlign"/>.
+        /// </summary>
+        private Color? SelectionColour(Func<SheetCell, Color?> of)
+        {
+            var first = SelectionFirstRow();
+            var last = SelectionLastRow();
+            var left = SelectionFirstColumn();
+            var right = SelectionLastColumn();
+            Color? agreed = null;
+            var seen = false;
+            for (var row = first; row <= last; row++)
+            {
+                for (var column = left; column <= right; column++)
+                {
+                    var cell = FindCell(row, column);
+                    if (cell == null)
+                    {
+                        continue;
+                    }
+
+                    var colour = of(cell);
+                    if (!seen)
+                    {
+                        agreed = colour;
+                        seen = true;
+                    }
+                    else if (agreed != colour)
+                    {
+                        return null;
+                    }
+                }
+            }
+
+            return agreed;
+        }
+
+        /// <summary>Which of ONE cell's edges a whole-set choice means. See <see cref="BorderChoice"/>.</summary>
+        private static SheetBorderEdges EdgesFor(BorderChoice choice, int row, int column,
+            int firstRow, int lastRow, int firstColumn, int lastColumn)
+        {
+            switch (choice)
+            {
+                case BorderChoice.All:
+                    return SheetBorderEdges.All;
+                case BorderChoice.None:
+                    return SheetBorderEdges.None;
+                case BorderChoice.Top:
+                    return SheetBorderEdges.Top;
+                case BorderChoice.Bottom:
+                    return SheetBorderEdges.Bottom;
+                case BorderChoice.Left:
+                    return SheetBorderEdges.Left;
+                case BorderChoice.Right:
+                    return SheetBorderEdges.Right;
+            }
+
+            var edges = SheetBorderEdges.None;
+            if (choice == BorderChoice.Outside)
+            {
+                if (row == firstRow)
+                {
+                    edges |= SheetBorderEdges.Top;
+                }
+
+                if (row == lastRow)
+                {
+                    edges |= SheetBorderEdges.Bottom;
+                }
+
+                if (column == firstColumn)
+                {
+                    edges |= SheetBorderEdges.Left;
+                }
+
+                if (column == lastColumn)
+                {
+                    edges |= SheetBorderEdges.Right;
+                }
+
+                return edges;
+            }
+
+            // Inside: only the edges SHARED with another selected cell, so each line between two cells is
+            // drawn once from each side of it and the rim is left alone.
+            if (row > firstRow)
+            {
+                edges |= SheetBorderEdges.Top;
+            }
+
+            if (row < lastRow)
+            {
+                edges |= SheetBorderEdges.Bottom;
+            }
+
+            if (column > firstColumn)
+            {
+                edges |= SheetBorderEdges.Left;
+            }
+
+            if (column < lastColumn)
+            {
+                edges |= SheetBorderEdges.Right;
+            }
+
+            return edges;
+        }
+
+        /// <summary>The right-click menu's answer to "fill colour": the whole selection takes the colour, or
+        /// the sheet's own paper again when it is null.</summary>
+        private void ChooseFillColour(Color? colour)
+        {
+            ForEachSelectedCell((row, column, cell) => SetFill(row, column, colour));
+        }
+
+        /// <summary>The same for the text's ink.</summary>
+        private void ChooseTextColour(Color? colour)
+        {
+            ForEachSelectedCell((row, column, cell) => SetTextColor(row, column, colour));
+        }
+
+        /// <summary>Applies a whole-set border choice to every selected cell, with the thickness and colour
+        /// the borders panels are holding. This is the step that turns Outside and Inside into the four
+        /// edges a cell can actually store.</summary>
+        private void ApplyBorderChoice(BorderChoice choice)
+        {
+            _borderChoice = choice;
+            var first = SelectionFirstRow();
+            var last = SelectionLastRow();
+            var left = SelectionFirstColumn();
+            var right = SelectionLastColumn();
+            ForEachSelectedCell((row, column, cell) =>
+                SetBorder(row, column, EdgesFor(choice, row, column, first, last, left, right),
+                    _borderThickness, _borderColour));
+        }
+
+        /// <summary>
+        /// Remembers a line thickness and puts it on the selection. Only the cells that ALREADY have a
+        /// border are touched: a thickness on its own cannot invent one — there would be no edges to draw —
+        /// so on a borderless selection this only remembers the choice for the next edge.
+        /// </summary>
+        private void ApplyBorderThickness(double thickness)
+        {
+            _borderThickness = thickness;
+            ForEachSelectedCell((row, column, cell) =>
+            {
+                if (cell.BorderEdges != SheetBorderEdges.None)
+                {
+                    SetBorder(row, column, cell.BorderEdges, thickness, cell.BorderColor);
+                }
+            });
+        }
+
+        /// <summary>The line colour, by the same rule as the thickness: it goes on the cells that already
+        /// have a border, and is remembered for the next one.</summary>
+        private void ChooseBorderColour(Color? colour)
+        {
+            _borderColour = colour;
+            ForEachSelectedCell((row, column, cell) =>
+            {
+                if (cell.BorderEdges != SheetBorderEdges.None)
+                {
+                    SetBorder(row, column, cell.BorderEdges, cell.BorderThickness, colour);
+                }
+            });
+        }
+
+        /// <summary>The hub's own hint for the line colour: the colour it would use, or the grid's.</summary>
+        private string BorderColourHint()
+        {
+            return _borderColour.HasValue ? HexOf(_borderColour.Value) : "the grid colour";
+        }
+
+        /// <summary>The hub's own hint for the thickness: which of the three it is holding.</summary>
+        private string ThicknessHint()
+        {
+            if (Math.Abs(_borderThickness - BorderThin) < 0.01)
+            {
+                return "thin";
+            }
+
+            return Math.Abs(_borderThickness - BorderMedium) < 0.01 ? "medium" : "thick";
+        }
+
+        /// <summary>One line of the borders hub or the single-edge panel: a whole-set choice, ticked when it
+        /// is the one the sheet last applied.</summary>
+        private SheetMenuItem BorderChoiceItem(string label, BorderChoice choice, string hint)
+        {
+            return new SheetMenuItem
+            {
+                Label = label,
+                Hint = hint,
+                Ticked = _borderChoice == choice,
+                Run = () => ApplyBorderChoice(choice)
+            };
+        }
+
+        /// <summary>
+        /// The borders hub: the whole-set spellings first, then the three lines that lead to the single
+        /// edges, the thickness and the colour, then the line that takes a border away again. Thirteen lines
+        /// in one flat panel would be taller than a small sheet, so the four single edges are the one thing
+        /// that gets its own panel.
+        /// </summary>
+        private void OpenBordersPanel()
+        {
+            var items = new List<SheetMenuItem>
+            {
+                new SheetMenuItem { Label = "Borders", Hint = "round the selected cells", Enabled = false },
+                BorderChoiceItem("All edges", BorderChoice.All, "a box round every cell"),
+                BorderChoiceItem("Outside edges only", BorderChoice.Outside, "the rim of the block"),
+                BorderChoiceItem("Inside lines only", BorderChoice.Inside, "between the cells"),
+                new SheetMenuItem { IsSeparator = true },
+                new SheetMenuItem
+                {
+                    Label = "Single edges…",
+                    Hint = "one side at a time",
+                    Run = OpenBorderEdgesPanel
+                },
+                new SheetMenuItem
+                {
+                    Label = "Line thickness…",
+                    Hint = ThicknessHint(),
+                    Run = OpenBorderThicknessPanel
+                },
+                new SheetMenuItem
+                {
+                    Label = "Line colour…",
+                    Hint = BorderColourHint(),
+                    Run = () => OpenColourPanel("Line colour", "Grid colour", "the sheet's own line colour",
+                        _borderColour, GridColor, ChooseBorderColour)
+                },
+                new SheetMenuItem { IsSeparator = true },
+                BorderChoiceItem("No border", BorderChoice.None, "take the lines away")
+            };
+            OpenPanel(items);
+        }
+
+        /// <summary>One side at a time — the four lines the hub keeps out of the way.</summary>
+        private void OpenBorderEdgesPanel()
+        {
+            var items = new List<SheetMenuItem>
+            {
+                new SheetMenuItem { Label = "Single edges", Hint = "one side at a time", Enabled = false },
+                new SheetMenuItem { IsSeparator = true },
+                BorderChoiceItem("Top edge", BorderChoice.Top, "along the top"),
+                BorderChoiceItem("Bottom edge", BorderChoice.Bottom, "under the cells"),
+                BorderChoiceItem("Left edge", BorderChoice.Left, "down the left"),
+                BorderChoiceItem("Right edge", BorderChoice.Right, "down the right")
+            };
+            OpenPanel(items);
+        }
+
+        /// <summary>The three line weights. Each is applied to the cells that already have a border, and
+        /// remembered for the ones that do not, yet — the panel has a line saying so, because a thickness
+        /// that appears to do nothing on an unbordered selection needs explaining.</summary>
+        private void OpenBorderThicknessPanel()
+        {
+            var items = new List<SheetMenuItem>
+            {
+                new SheetMenuItem { Label = "Line thickness", Hint = "in pixels", Enabled = false },
+                new SheetMenuItem { IsSeparator = true },
+                ThicknessItem("Thin", BorderThin, "one pixel"),
+                ThicknessItem("Medium", BorderMedium, "two pixels"),
+                ThicknessItem("Thick", BorderThick, "three pixels"),
+                new SheetMenuItem { IsSeparator = true },
+                new SheetMenuItem
+                {
+                    Label = "Applies to cells that already",
+                    Hint = "have a border",
+                    Enabled = false
+                }
+            };
+            OpenPanel(items);
+        }
+
+        private SheetMenuItem ThicknessItem(string label, double thickness, string hint)
+        {
+            return new SheetMenuItem
+            {
+                Label = label,
+                Hint = hint,
+                Ticked = Math.Abs(_borderThickness - thickness) < 0.01,
+                Run = () => ApplyBorderThickness(thickness)
+            };
+        }
+
+        /// <summary>
+        /// A colour panel: the "no colour" line first (named for what it means in the panel it was opened
+        /// from), then the palette as rows of squares, then the line that opens the picker for anything the
+        /// palette does not hold. <paramref name="current"/> is what the selection already is, so the swatch
+        /// it came from wears a ring and the picker starts from it.
+        /// </summary>
+        private void OpenColourPanel(string heading, string noneLabel, string noneHint, Color? current,
+            Color seed, Action<Color?> choose)
+        {
+            var items = new List<SheetMenuItem>
+            {
+                new SheetMenuItem { Label = heading, Hint = "the whole selection", Enabled = false },
+                new SheetMenuItem
+                {
+                    Label = noneLabel,
+                    Hint = noneHint,
+                    Ticked = !current.HasValue,
+                    Run = () => choose(null)
+                },
+                new SheetMenuItem { IsSeparator = true }
+            };
+
+            for (var at = 0; at < MenuPalette.Length; at += MenuSwatchPerRow)
+            {
+                var row = new SheetMenuItem { SwatchRun = colour => choose(colour) };
+                for (var i = at; i < at + MenuSwatchPerRow && i < MenuPalette.Length; i++)
+                {
+                    row.Swatches.Add(MenuPalette[i]);
+                    if (current.HasValue && MenuPalette[i] == current.Value)
+                    {
+                        row.TickedSwatch = row.Swatches.Count - 1;
+                    }
+                }
+
+                items.Add(row);
+            }
+
+            items.Add(new SheetMenuItem { IsSeparator = true });
+            items.Add(new SheetMenuItem
+            {
+                Label = "More colours…",
+                Hint = "mix one",
+                Run = () => OpenColourPickerPanel(heading, current, seed, choose)
+            });
+            OpenPanel(items);
+        }
+
+        /// <summary>
+        /// The picker: three sliders over a preview — for a colour the palette does not hold. A slider is a
+        /// line of the panel, dragged like a scrollbar's thumb (a pattern this control already has), and the
+        /// preview line shows the mix and its hex. Nothing reaches the cells until Use this colour, so a
+        /// half-mixed colour never lands on a block of them by accident.
+        /// </summary>
+        private void OpenColourPickerPanel(string heading, Color? current, Color seed, Action<Color?> choose)
+        {
+            _pick = current ?? seed;
+            // The preview is a LINE THAT CAN BE CHOSEN, not just a picture: clicking the bar of colour you
+            // have just mixed is the obvious way to accept it, and it gives the keyboard a second way in.
+            _pickPreview = new SheetMenuItem { Preview = _pick, Run = () => choose(_pick) };
+            _pickUse = new SheetMenuItem { Label = "Use this colour", Hint = HexOf(_pick), Run = () => choose(_pick) };
+            var items = new List<SheetMenuItem>
+            {
+                new SheetMenuItem { Label = heading + " — mix one", Enabled = false },
+                new SheetMenuItem { IsSeparator = true },
+                new SheetMenuItem { Label = "Red", Channel = 0 },
+                new SheetMenuItem { Label = "Green", Channel = 1 },
+                new SheetMenuItem { Label = "Blue", Channel = 2 },
+                new SheetMenuItem { IsSeparator = true },
+                _pickPreview,
+                new SheetMenuItem { IsSeparator = true },
+                _pickUse
+            };
+            OpenPanel(items);
+
+            // Enter takes the colour the mix ended on, so the highlight starts on the line that applies it.
+            _menuHot = items.Count - 1;
+        }
+
+        /// <summary>Opens one of the panels a context-menu line leads to, at the point the chain opened.</summary>
+        private void OpenPanel(List<SheetMenuItem> items)
+        {
+            OpenMenu(MenuKind.Panel, items, new Point(_chainX, _chainY), MenuWidth);
+        }
+
+        /// <summary>How tall a panel line is — a separator is shorter than everything else. (Not RowHeight:
+        /// that is the sheet's own row size, and a menu line has nothing to do with it.)</summary>
+        private static double MenuRowHeight(SheetMenuItem item)
+        {
+            return item.IsSeparator ? MenuSeparatorHeight : MenuItemHeight;
+        }
+
+        /// <summary>The top of a line, in the control's coordinates. Every panel's geometry comes from this
+        /// one walk, so the drawing and the hit tests cannot disagree about where a line is.</summary>
+        private double RowTop(int index)
+        {
+            var y = _menuY + MenuPad;
+            for (var i = 0; i < index && i < _menuItems.Count; i++)
+            {
+                y += MenuRowHeight(_menuItems[i]);
+            }
+
+            return y;
+        }
+
+        /// <summary>The square of one swatch of one line.</summary>
+        private Rect SwatchRect(int index, int swatch)
+        {
+            return new Rect(
+                _menuX + MenuSwatchLeft + swatch * (MenuSwatchSize + MenuSwatchGap),
+                RowTop(index) + (MenuItemHeight - MenuSwatchSize) / 2,
+                MenuSwatchSize, MenuSwatchSize);
+        }
+
+        /// <summary>The track a slider's knob travels along, and the span a click on the line maps to. It
+        /// starts past the channel's name and stops short of the value printed at the right.</summary>
+        private Rect SliderTrackRect(int index)
+        {
+            return new Rect(_menuX + 66, RowTop(index) + 4, _menuWidth - 112, MenuItemHeight - 8);
+        }
+
+        /// <summary>One channel of the colour being mixed, 0–255.</summary>
+        private int ChannelValue(int channel)
+        {
+            return channel == 0 ? _pick.R : channel == 1 ? _pick.G : _pick.B;
+        }
+
+        /// <summary>Sets one channel, and lets the two lines that show the mix catch up.</summary>
+        private void SetChannel(int channel, int value)
+        {
+            value = Math.Max(0, Math.Min(255, value));
+            _pick = Color.FromRgb(
+                (byte)(channel == 0 ? value : _pick.R),
+                (byte)(channel == 1 ? value : _pick.G),
+                (byte)(channel == 2 ? value : _pick.B));
+            if (_pickPreview != null)
+            {
+                _pickPreview.Preview = _pick;
+            }
+
+            if (_pickUse != null)
+            {
+                _pickUse.Hint = HexOf(_pick);
+            }
+
+            InvalidateVisual();
+        }
+
+        /// <summary>Moves a channel to where the pointer is on its track. The whole line counts, so a drag
+        /// that wanders off the track sideways keeps working — it clamps at the ends.</summary>
+        private void SetChannelFromPoint(int index, Point point)
+        {
+            var track = SliderTrackRect(index);
+            SetChannel(_menuItems[index].Channel,
+                (int)Math.Round((point.X - track.X) / track.Width * 255d));
+        }
+
+        /// <summary>Which slider line a point is on, or -1.</summary>
+        private int SliderAt(Point point)
+        {
+            if (!_menuOpen || !MenuRect().Contains(point))
+            {
+                return -1;
+            }
+
+            for (var i = 0; i < _menuItems.Count; i++)
+            {
+                if (_menuItems[i].Channel >= 0 && point.Y >= RowTop(i) && point.Y < RowTop(i) + MenuItemHeight)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>Which swatch of which line a point is on, or null when it is not on a swatch at all —
+        /// the squares are the only part of a swatch row that can be picked.</summary>
+        private SheetMenuItem? SwatchAt(Point point, out int swatch)
+        {
+            swatch = -1;
+            if (!_menuOpen || !MenuRect().Contains(point))
+            {
+                return null;
+            }
+
+            for (var i = 0; i < _menuItems.Count; i++)
+            {
+                var item = _menuItems[i];
+                for (var s = 0; s < item.Swatches.Count; s++)
+                {
+                    if (SwatchRect(i, s).Contains(point))
+                    {
+                        swatch = s;
+                        return item;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>True when a point is on a line that holds swatches — whether or not it landed on one of
+        /// the squares. See <see cref="ChooseMenuItem"/>: a near miss must not close the panel.</summary>
+        private bool OnSwatchRow(Point point)
+        {
+            if (!_menuOpen || !MenuRect().Contains(point))
+            {
+                return false;
+            }
+
+            for (var i = 0; i < _menuItems.Count; i++)
+            {
+                if (_menuItems[i].Swatches.Count > 0 && point.Y >= RowTop(i) &&
+                    point.Y < RowTop(i) + MenuItemHeight)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>Opens a menu of items at a point, kept inside the control. The context menu has its own
         /// opener — it moves the selection onto what was right-clicked first — and everything else comes
         /// through here.</summary>
@@ -5337,6 +6321,10 @@ namespace AvaloniaSpreadsheet
                 _menuY = Math.Max(0, size.Height - height);
             }
 
+            // Where a panel opened from one of these lines will open: the same place, so a chain of panels
+            // stacks in one spot rather than walking across the sheet.
+            _chainX = _menuX;
+            _chainY = _menuY;
             InvalidateVisual();
         }
 
@@ -5469,6 +6457,8 @@ namespace AvaloniaSpreadsheet
             var height = MenuRect().Height;
             _menuX = Math.Max(0, Math.Min(point.X, size.Width - MenuWidth));
             _menuY = Math.Max(0, Math.Min(point.Y, size.Height - height));
+            _chainX = _menuX;
+            _chainY = _menuY;
             InvalidateVisual();
         }
 
@@ -5481,6 +6471,9 @@ namespace AvaloniaSpreadsheet
 
             _menuOpen = false;
             _menuHot = -1;
+            _slider = -1;                   // a panel closing lets go of the knob it was dragging
+            _pickPreview = null;
+            _pickUse = null;
             _macroStart = -1;               // any menu closing ends the macro list's claim on the text
             InvalidateVisual();
         }
@@ -5488,6 +6481,40 @@ namespace AvaloniaSpreadsheet
         /// <summary>Runs the line a point is on, if any, and closes. True when the click was the menu's.</summary>
         private bool ChooseMenuItem(Point point)
         {
+            // A swatch row is picked by its SQUARES: a press between two of them is a press on the panel's
+            // own furniture, so the panel stays up rather than closing as if a line had been chosen.
+            var swatchRow = SwatchAt(point, out var swatch);
+            if (swatchRow != null)
+            {
+                var picked = swatchRow.Swatches[swatch];
+                var run = swatchRow.SwatchRun;
+                CloseContextMenu();
+                if (run != null)
+                {
+                    run(picked);
+                }
+
+                return true;
+            }
+
+            // A slider line starts a DRAG and keeps the panel open — it is not a command, and closing here
+            // would throw away the colour being mixed.
+            var slider = SliderAt(point);
+            if (slider >= 0)
+            {
+                _slider = slider;
+                SetChannelFromPoint(slider, point);
+                return true;
+            }
+
+            // A press on a swatch ROW that missed the squares — the 4 px between two of them — is a press on
+            // the panel's own furniture, exactly like a click on the warning text. Closing on it would throw
+            // the whole palette away for a near miss.
+            if (OnSwatchRow(point))
+            {
+                return true;
+            }
+
             var index = MenuItemAt(point);
             if (index < 0 && OnWarningLine(point))
             {
@@ -5496,11 +6523,11 @@ namespace AvaloniaSpreadsheet
                 return true;
             }
 
-            var run = index >= 0 ? _menuItems[index].Run : null;
+            var rowRun = index >= 0 ? _menuItems[index].Run : null;
             CloseContextMenu();
-            if (run != null)
+            if (rowRun != null)
             {
-                run();
+                rowRun();
             }
 
             return true;
@@ -5564,6 +6591,55 @@ namespace AvaloniaSpreadsheet
                 if (i == _menuHot && item.Enabled)
                 {
                     context.FillRectangle(hot, new Rect(_menuX + 1, y, _menuWidth - 2, MenuItemHeight));
+                }
+
+                // A row of swatches: the squares ARE the line, and the one the selection already is wears a
+                // ring round it — which is the only way a panel of colours can say what is set.
+                if (item.Swatches.Count > 0)
+                {
+                    for (var s = 0; s < item.Swatches.Count; s++)
+                    {
+                        var square = SwatchRect(i, s);
+                        context.FillRectangle(new SolidColorBrush(item.Swatches[s]), square);
+                        context.DrawRectangle(null, new Pen(edge, 1d), square);
+                        if (s == item.TickedSwatch)
+                        {
+                            context.DrawRectangle(null, new Pen(text, 1.5d), square.Inflate(1.5d));
+                        }
+                    }
+
+                    y += MenuItemHeight;
+                    continue;
+                }
+
+                // A slider: a track with a knob, the channel's name at the left and its value at the right —
+                // the value is the number being mixed, so it is drawn rather than saved for a tooltip.
+                if (item.Channel >= 0)
+                {
+                    var track = SliderTrackRect(i);
+                    context.FillRectangle(edge, new Rect(track.X, track.Center.Y - 1d, track.Width, 2d));
+                    var at = track.X + track.Width * ChannelValue(item.Channel) / 255d;
+                    context.FillRectangle(text, new Rect(at - 3d, track.Y, 6d, track.Height));
+                    DrawCellText(context, item.Label, new Rect(_menuX + 17, y, 46, MenuItemHeight), ink,
+                        false, TextAlignment.Left);
+                    DrawCellText(context, ChannelValue(item.Channel).ToString(CultureInfo.InvariantCulture),
+                        new Rect(_menuX + _menuWidth - 40, y, 32, MenuItemHeight), ink, false,
+                        TextAlignment.Right);
+                    y += MenuItemHeight;
+                    continue;
+                }
+
+                // The picker's preview: a bar of the colour being mixed, wide enough to judge, with its hex
+                // written on it in whichever of black or white can be read there.
+                if (item.Preview.HasValue)
+                {
+                    var bar = new Rect(_menuX + 9, y + 3, _menuWidth - 18, MenuItemHeight - 6);
+                    context.FillRectangle(new SolidColorBrush(item.Preview.Value), bar);
+                    context.DrawRectangle(null, new Pen(edge, 1d), bar);
+                    DrawCellText(context, HexOf(item.Preview.Value), bar, ContrastInk(item.Preview.Value),
+                        false, TextAlignment.Center);
+                    y += MenuItemHeight;
+                    continue;
                 }
 
                 if (item.Ticked)
@@ -5663,6 +6739,25 @@ namespace AvaloniaSpreadsheet
                 return true;
             }
 
+            // Left and Right nudge the channel the highlight is on — a slider that could only be dragged
+            // would leave the keyboard with no way to mix a colour at all. Shift moves it by ten.
+            if ((e.Key == Key.Left || e.Key == Key.Right) && _menuHot >= 0 && _menuHot < _menuItems.Count &&
+                _menuItems[_menuHot].Channel >= 0)
+            {
+                var channel = _menuItems[_menuHot].Channel;
+                var step = (e.Key == Key.Right ? 1 : -1) * (e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 10 : 1);
+                SetChannel(channel, ChannelValue(channel) + step);
+                return true;
+            }
+
+            // A slider is not a command: Enter must not throw the panel away, or the colour being mixed
+            // would go with it.
+            if ((e.Key == Key.Enter || e.Key == Key.Tab) && _menuHot >= 0 && _menuHot < _menuItems.Count &&
+                _menuItems[_menuHot].Channel >= 0)
+            {
+                return true;
+            }
+
             var choose = e.Key == Key.Enter || (e.Key == Key.Tab && _menuKind == MenuKind.Macro);
             if (choose && _menuHot >= 0 && _menuHot < _menuItems.Count && _menuItems[_menuHot].Enabled)
             {
@@ -5724,6 +6819,13 @@ namespace AvaloniaSpreadsheet
             if (_menuOpen && !point.Properties.IsRightButtonPressed)
             {
                 ChooseMenuItem(point.Position);
+                if (_menuOpen && _slider >= 0)
+                {
+                    // A slider is being dragged: keep the pointer, so the knob follows it out of the panel
+                    // the way a scrollbar's thumb does.
+                    e.Pointer.Capture(this);
+                }
+
                 e.Handled = true;
                 return;
             }
@@ -5900,9 +7002,17 @@ namespace AvaloniaSpreadsheet
             var point = e.GetCurrentPoint(this).Position;
             var hit = HitTest(point, out var row, out var column);
 
-            // While the menu is open a move only highlights the line under the pointer.
+            // While the menu is open a move only highlights the line under the pointer — unless a slider is
+            // being dragged, when it moves that channel instead and the panel stays exactly as it is.
             if (_menuOpen)
             {
+                if (_slider >= 0)
+                {
+                    SetChannelFromPoint(_slider, point);
+                    e.Handled = true;
+                    return;
+                }
+
                 var hot = MenuItemAt(point);
                 if (hot != _menuHot)
                 {
@@ -6013,6 +7123,7 @@ namespace AvaloniaSpreadsheet
             _resizeColumn = 0;
             _resizeRow = 0;
             _scrollDragging = false;
+            _slider = -1;
             e.Pointer.Capture(null);
             if (wasFill)
             {

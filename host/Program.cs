@@ -197,6 +197,14 @@ internal static class Program
                                     foreach (var c in cole.EnumerateArray()) cols.Add(c.GetString() ?? "");
                                     gd.Columns = cols.ToArray();
                                 }
+                                // Optional HEADER text per column (the app writes `caption || name`);
+                                // without it the header is the column name.
+                                if (g.TryGetProperty("headers", out var he) && he.ValueKind == JsonValueKind.Array)
+                                {
+                                    var heads = new List<string>();
+                                    foreach (var head in he.EnumerateArray()) heads.Add(head.GetString() ?? "");
+                                    gd.Headers = heads.ToArray();
+                                }
                                 if (g.TryGetProperty("rows", out var rowe) && rowe.ValueKind == JsonValueKind.Array)
                                 {
                                     var rows = new List<object?[]>();
@@ -227,6 +235,9 @@ internal static class Program
                             height = frame.Height,
                             controls = frame.Controls,
                             gridCells = frame.GridCells,
+                            // What each design-time-filled DataGrid ended up showing (columns + their
+                            // header text), so a caller can check the caption rule without pixels.
+                            gridPreviews = frame.GridPreviews,
                             error = frame.Error
                         });
                     }

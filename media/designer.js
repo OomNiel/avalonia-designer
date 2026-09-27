@@ -234,6 +234,10 @@
         sheetTextColorNone: $('sheetTextColorNone'),
         sheetFill: $('sheetFill'),
         sheetFillNone: $('sheetFillNone'),
+        sheetEdges: $('sheetEdges'),
+        sheetBorderWeight: $('sheetBorderWeight'),
+        sheetBorderColor: $('sheetBorderColor'),
+        sheetBorderColorNone: $('sheetBorderColorNone'),
         sheetAlign: $('sheetAlign'),
         sheetClearFormat: $('sheetClearFormat'),
         sheetClear: $('sheetClear'),
@@ -6267,11 +6271,26 @@
     //
     // Anything the reader handed over that this editor does not understand — a named colour, say — is
     // left in the object untouched, so saving a sheet never rewrites a value nobody edited.
-    const SHEET_STYLE_KEYS = ['bold', 'italic', 'fontSize', 'fontFamily', 'textColor', 'fill', 'textAlign'];
+    const SHEET_STYLE_KEYS = ['bold', 'italic', 'fontSize', 'fontFamily', 'textColor', 'fill', 'textAlign',
+        'borderEdges', 'borderThickness', 'borderColor'];
     const SHEET_STYLE_DEFAULTS = {
-        bold: false, italic: false, fontSize: 0, fontFamily: '', textColor: '', fill: '', textAlign: 'Auto'
+        bold: false, italic: false, fontSize: 0, fontFamily: '', textColor: '', fill: '', textAlign: 'Auto',
+        borderEdges: '', borderThickness: 0, borderColor: ''
     };
     const SHEET_ALIGN_NAMES = ['Auto', 'Left', 'Center', 'Right'];
+
+    /** The four edges a cell can carry, in the order the model writes them (src/sheetCells.ts) — so the same
+     *  edges always save as the same string, whatever order they were set in. */
+    const SHEET_EDGE_NAMES = ['Top', 'Right', 'Bottom', 'Left'];
+
+    /** Every spelling the sheet's OWN right-click menu offers, in its order. Outside and Inside are about a
+     *  BLOCK of cells, so what they mean is worked out per cell as they are applied (sheetEdgeEdges). */
+    const SHEET_EDGE_CHOICES = ['None', 'All', 'Outside', 'Inside', 'Top', 'Right', 'Bottom', 'Left'];
+
+    /** The sheet's own line colour (the control's GridColor) — what the Line well shows for a cell with no
+     *  border colour of its own — and the width a border takes when the bar has not been told one. */
+    const SHEET_GRID_COLOR = '#C9CED6';
+    const SHEET_BORDER_DEFAULT_WEIGHT = 1;
 
     function sheetKey(row, column) { return row + ':' + column; }
 
@@ -6347,6 +6366,109 @@
         return isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0;
     }
 
+    /** Which of ONE cell's four edges a whole-set choice means — the same rule the control applies (EdgesFor
+     *  in the twins): Outside is the rim of the block, Inside is only the lines SHARED with another selected
+     *  cell, and on a single cell All and Outside are the same four edges while Inside is nothing. */
+    function sheetEdgeEdges(choice, row, column, bounds) {
+        if (!choice || choice === 'None') return '';
+        if (choice === 'All') return 'All';
+        if (SHEET_EDGE_NAMES.indexOf(choice) >= 0) return choice;
+        const edges = [];
+        if (choice === 'Outside') {
+            if (row === bounds.r1) edges.push('Top');
+            if (row === bounds.r2) edges.push('Bottom');
+            if (column === bounds.c1) edges.push('Left');
+            if (column === bounds.c2) edges.push('Right');
+        } else if (choice === 'Inside') {
+            if (row > bounds.r1) edges.push('Top');
+            if (row < bounds.r2) edges.push('Bottom');
+            if (column > bounds.c1) edges.push('Left');
+            if (column < bounds.c2) edges.push('Right');
+        }
+        return SHEET_EDGE_NAMES.filter((name) => edges.indexOf(name) >= 0).join(',');
+    }
+
+    /** Applies a whole-set border choice to every SELECTED cell, each cell getting the edges that spelling
+     *  means for IT.
+     *
+     *  A cell that is given edges and has no width of its own takes the bar's weight, so what the bar shows
+     *  is what the form says. (A width is not REQUIRED — 0 means the sheet's own one-pixel line — but the bar
+     *  has a weight in it, and a form that named one edge in 1 px and the next in 3 px would be a puzzle.) */
+    function sheetApplyEdgeChoice(choice) {
+        const bounds = sheetBounds();
+        const weight = sheetNumber(els.sheetBorderWeight.value) || SHEET_BORDER_DEFAULT_WEIGHT;
+        for (let r = bounds.r1; r <= bounds.r2; r++) {
+            for (let c = bounds.c1; c <= bounds.c2; c++) {
+                const cell = sheetEnsure(r, c);
+                if (!cell) continue;
+                const edges = sheetEdgeEdges(choice, r, c, bounds);
+                if (edges.length === 0) {
+                    // No edges: the whole border goes, colour included, exactly as SetBorder does in the app.
+                    delete cell.borderEdges;
+                    delete cell.borderThickness;
+                    delete cell.borderColor;
+                } else {
+                    cell.borderEdges = edges;
+                    if (!sheetNumber(cell.borderThickness)) cell.borderThickness = weight;
+                }
+                if (!sheetStyled(cell) && String(cell.text == null ? '' : cell.text).length === 0) {
+                    sheetEdit.cells.delete(sheetKey(r, c));
+                }
+            }
+        }
+        renderSheet();
+    }
+
+    /** The line width goes on the cells that ALREADY have a border, and is remembered by the bar for the
+     *  next set of edges — the rule the control's own panels follow: a width alone cannot invent a border,
+     *  because there would be no edges to draw. */
+    function sheetApplyBorderWeight(weight) {
+        const bounds = sheetBounds();
+        for (let r = bounds.r1; r <= bounds.r2; r++) {
+            for (let c = bounds.c1; c <= bounds.c2; c++) {
+                const cell = sheetCellAt(r, c);
+                if (!cell || !cell.borderEdges) continue;
+                cell.borderThickness = weight;
+            }
+        }
+        renderSheet();
+    }
+
+    /** The line colour, by the same rule as the width: it goes on the cells that already have a border. */
+    function sheetApplyBorderColour(colour) {
+        const bounds = sheetBounds();
+        for (let r = bounds.r1; r <= bounds.r2; r++) {
+            for (let c = bounds.c1; c <= bounds.c2; c++) {
+                const cell = sheetCellAt(r, c);
+                if (!cell || !cell.borderEdges) continue;
+                if (colour) cell.borderColor = colour;
+                else delete cell.borderColor;
+            }
+        }
+        renderSheet();
+    }
+
+    /** Shows what the ACTIVE cell's edges are in the Edges list, which is a fixed set of whole-set
+     *  spellings. A cell carrying a combination no single spelling means (Outside was applied, so it holds
+     *  `Top,Left` and friends) gets an option of its own saying so — a bar that quietly showed "All" for a
+     *  cell with two edges would be lying about the cell. */
+    function sheetShowEdges(cell) {
+        const edges = String(cell.borderEdges == null ? '' : cell.borderEdges).trim();
+        const spelled = SHEET_EDGE_CHOICES.filter((name) => name !== 'None' && name !== 'Outside' && name !== 'Inside')
+            .indexOf(edges) >= 0 ? edges : '';
+        const known = edges.length === 0 ? 'None' : (edges === 'All' ? 'All' : spelled);
+        els.sheetEdges.textContent = '';
+        const add = (value, label) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            els.sheetEdges.appendChild(option);
+        };
+        if (known.length === 0) add(edges, '(as set: ' + edges + ')');
+        SHEET_EDGE_CHOICES.forEach((name) => add(name === 'None' ? '' : name, name));
+        els.sheetEdges.value = known === 'None' ? '' : (known.length > 0 ? known : edges);
+    }
+
     /** Sets — or, for the field's own default, clears — one formatting field on every SELECTED cell.
      *  The formatting commands act on the selection, never on the active cell alone: that is the rule
      *  the control follows for Ctrl+B, and the one every spreadsheet uses. */
@@ -6414,6 +6536,13 @@
         els.sheetTextColor.classList.toggle('on-sheet', textColor.length === 0);
         els.sheetFill.classList.toggle('on-sheet', fill.length === 0);
         els.sheetAlign.value = sheetAlignName(cell.textAlign);
+        // The border: the list of edge spellings, the weight, and the line colour (which shows the sheet's
+        // own grid colour when the cell has none of its own — an empty well reads as black).
+        sheetShowEdges(cell);
+        els.sheetBorderWeight.value = String(sheetNumber(cell.borderThickness) || SHEET_BORDER_DEFAULT_WEIGHT);
+        const line = String(cell.borderColor == null ? '' : cell.borderColor).trim();
+        setSwatchColor(els.sheetBorderColor, line || SHEET_GRID_COLOR);
+        els.sheetBorderColor.classList.toggle('on-sheet', line.length === 0);
     }
 
     /** The corners of the selection, with whole columns/rows resolved to their full extent. */
@@ -6844,6 +6973,25 @@
                     if (cell.fontFamily) td.style.fontFamily = String(cell.fontFamily);
                     if (cell.textColor) td.style.color = String(cell.textColor);
                     if (align !== 'Auto') td.style.textAlign = align.toLowerCase();
+                    // The cell's own border, drawn the way the control draws it: the edges it names, at its
+                    // width, in its colour — or the sheet's own grid colour when it has none of its own,
+                    // which is what makes a 1 px border look exactly like the line it covers. Where two
+                    // cells share an edge the running control's LATER cell wins, which a collapsing CSS
+                    // table cannot say; the widths match, and only the colour can differ there.
+                    const edges = String(cell.borderEdges == null ? '' : cell.borderEdges);
+                    const weight = sheetNumber(cell.borderThickness);
+                    if (edges.length > 0 && weight > 0) {
+                        const line = weight + 'px solid ' +
+                            (cell.borderColor ? String(cell.borderColor) : SHEET_GRID_COLOR);
+                        if (edges === 'All') {
+                            td.style.border = line;
+                        } else {
+                            if (edges.indexOf('Top') >= 0) td.style.borderTop = line;
+                            if (edges.indexOf('Right') >= 0) td.style.borderRight = line;
+                            if (edges.indexOf('Bottom') >= 0) td.style.borderBottom = line;
+                            if (edges.indexOf('Left') >= 0) td.style.borderLeft = line;
+                        }
+                    }
                 }
                 const fill = cell && cell.fill ? String(cell.fill) : '';
                 td.dataset.row = String(r);
@@ -7066,6 +7214,28 @@
     });
     els.sheetFillNone.addEventListener('click', () => {
         if (sheetEdit) sheetStyleSelection('fill', '');
+    });
+    // The border's three controls. Edges is the whole-set choice the running sheet's own right-click menu
+    // offers; Weight and Line follow the control's rule and only touch cells that already have a border.
+    els.sheetEdges.addEventListener('change', () => {
+        if (sheetEdit) sheetApplyEdgeChoice(String(els.sheetEdges.value || 'None'));
+    });
+    els.sheetBorderWeight.addEventListener('change', () => {
+        if (!sheetEdit) return;
+        sheetApplyBorderWeight(sheetNumber(els.sheetBorderWeight.value) || SHEET_BORDER_DEFAULT_WEIGHT);
+    });
+    els.sheetBorderColor.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!sheetEdit) return;
+        openColorPalette(els.sheetBorderColor, '', '', [], swatchColor(els.sheetBorderColor) || SHEET_GRID_COLOR,
+            (c) => {
+                setSwatchColor(els.sheetBorderColor, c);
+                sheetApplyBorderColour(String(c).toUpperCase());
+            });
+    });
+    els.sheetBorderColorNone.addEventListener('click', () => {
+        if (sheetEdit) sheetApplyBorderColour('');
     });
     els.sheetAlign.addEventListener('change', () => {
         if (sheetEdit) sheetStyleSelection('textAlign', String(els.sheetAlign.value || 'Auto'));

@@ -46,7 +46,19 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // job is composed on with the orientation question asked before it, which
             // `PrintOrientationProperty` names and no earlier copy has. A marker is only ever replaced
             // by a NEWER token, never by an older one.
-            marker: 'PrintOrientationProperty'
+            //
+            // The same day again: a cell can now be given a BORDER (`SheetBorderEdges` / `SetBorder`),
+            // and a drawing change in an existing type is the case this marker exists for — a project
+            // holding the older sheet would draw no border at all, and every border the designer writes
+            // would be silently missing from its picture. The newest token is the method that draws it.
+            //
+            // And once more, the same day: a border now travels in the WORKBOOK — the styles part carries a
+            // real `<borders>` TABLE and the xf points at it (`EmptyBorder`, the empty entry that table
+            // starts with) — and a bordered blank cell is no longer dropped by the writer or the reader.
+            // Not a drawing change, but the same kind of change as far as this marker is concerned: the
+            // copy a project already holds would still write a workbook that loses every box, and its VB
+            // half could not save a cell holding text at all. A marker only ever moves FORWARD.
+            marker: 'EmptyBorder'
         },
         {
             kind: 'ChromeWindow',

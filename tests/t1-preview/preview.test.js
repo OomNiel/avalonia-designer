@@ -433,6 +433,115 @@ module.exports = async (t) => {
                 `file=${fileGlyph} folder=${folderGlyph}`);
             t.ok(offGlyph < 4, 'picker-icon', 'ShowIcon="False" leaves the icon area empty', `dark px=${offGlyph}`);
         }
+
+        // 14) A SHEET'S CELL BORDERS reach the picture. The renderer reads a cell's three border attributes
+        //     ITSELF (ApplySheetCells), so a picture that ignored them would show a plain sheet while the
+        //     built app draws boxes — exactly the divergence this host exists to prevent. The colour is a
+        //     magenta nothing else on the form uses, and the SAME form is rendered without the border first:
+        //     a count that moves for the right reason is the only kind worth having.
+        {
+            const sheetForm = (border) => `<Window ${NS} xmlns:spread="using:AvaloniaSpreadsheet" Width="800" Height="450">\n` +
+                '  <Window.Styles><FluentTheme/></Window.Styles>\n' +
+                '  <Canvas>\n' +
+                '    <spread:GrumpySheet x:Name="sh1" Canvas.Left="20" Canvas.Top="20" Width="360" Height="240">\n' +
+                `      <spread:SheetCell Row="2" Column="2" Text="x"${border}/>\n` +
+                '    </spread:GrumpySheet>\n' +
+                '  </Canvas>\n' +
+                '</Window>';
+            // "Magenta-ish", not exact magenta: a 1 px line antialiases against the paper, so the test asks
+            // for pixels nothing else on the form could produce — clearly more red and blue than green.
+            const magenta = (r, g, b) => r > 150 && b > 150 && r > g + 60 && b > g + 60;
+            const box = (border) => ` BorderEdges="All" BorderThickness="${border}" BorderColor="#FF00FF"`;
+
+            const plain = await renderPng(host, sheetForm(''), 800, 450);
+            t.ok(!plain.frame.error, 'sheet-borders', 'a sheet with a cell renders', plain.frame.error || '');
+            const plainInk = countIn(plain.img, 0, 800, 0, 450, magenta);
+            t.equal(plainInk, 0, 'sheet-borders',
+                'and nothing magenta is drawn for a cell that asked for no border');
+
+            const thin = await renderPng(host, sheetForm(box(1)), 800, 450);
+            t.ok(!thin.frame.error, 'sheet-borders', 'a bordered cell renders', thin.frame.error || '');
+            const thinInk = countIn(thin.img, 0, 800, 0, 450, magenta);
+            t.ok(thinInk > 5, 'sheet-borders', 'a 1 px box round a cell is drawn', `magenta px=${thinInk}`);
+
+            const thick = await renderPng(host, sheetForm(box(4)), 800, 450);
+            const thickInk = countIn(thick.img, 0, 800, 0, 450, magenta);
+            // The ink grows with the WIDTH, not with the box: a 4 px stroke marks about twice as much of
+            // the picture as a 1 px one (measured 360 → 720), because only the middle of a wider stroke is
+            // still "clearly magenta" after the edges blend into the paper either side.
+            t.ok(thickInk > thinInk * 1.5, 'sheet-borders',
+                'and a 4 px one marks far more of the picture — the WIDTH reaches the preview too',
+                `1px=${thinInk} 4px=${thickInk}`);
+
+            // The same form with a COLOUR but no width: the edges alone are enough, and the line is the
+            // sheet's own one pixel — the width the grid is drawn at. The preview has to show that too, or
+            // a form the app draws would look empty here.
+            const edgeless = await renderPng(host, sheetForm(' BorderEdges="All" BorderColor="#FF00FF"'), 800, 450);
+            const ownWidth = countIn(edgeless.img, 0, 800, 0, 450, magenta);
+            t.ok(ownWidth > thinInk / 2, 'sheet-borders',
+                'edges with no width draw the sheet\u2019s own 1 px line', `px=${ownWidth} (1 px was ${thinInk})`);
+            t.ok(ownWidth < thickInk, 'sheet-borders', 'which is thinner than the 4 px one', `px=${ownWidth}`);
+        }
+
+        // 21) Design-time rows for a DataGrid bound to a DataSet table (2026-09-27).
+        //     A bound grid is filled by the app's own code-behind, which the headless host never runs,
+        //     so the DESIGNER supplies the rows: it resolves the table's database (see the T2 reader
+        //     pins — per-user folder first), asks the host for them, and passes them with the render.
+        //     These checks pin the host half of that path: with rows the grid paints its header and
+        //     cells, without them it stays an empty frame — which is exactly what the user saw while
+        //     the extension was looking for the database in the wrong place.
+        {
+            const gridXaml = W(`<Canvas Name="Body">` +
+                `<DataGrid x:Name="DataGrid1" Width="300" Height="150" Canvas.Left="20" Canvas.Top="20" AutoGenerateColumns="True"/>` +
+                `</Canvas>`);
+            const rows = [[1, 'PeaCock', '/home/niel/Pictures/PeaCock.jpeg'],
+            [2, 'Goggles', '/home/niel/Pictures/Goggles.png']];
+            const dark = (r, g, b) => r < 200 && g < 200 && b < 200;
+            const empty = await renderPng(host, gridXaml, 800, 450);
+            const cols = ['Id', 'Image', 'File'];
+            const heads = ['ID', 'Image', 'File'];   // the DataSet's Caption for `Id` is "ID"
+            const filled = await renderPng(host, gridXaml, 800, 450, undefined, undefined,
+                [{ control: 'DataGrid1', columns: cols, headers: heads, rows }]);
+            t.ok(!filled.frame.error, 'grid-rows', 'a grid with design-time rows renders',
+                filled.frame.error || '');
+            // The frame says what the grid was given, so the CAPTION rule is checkable without pixels:
+            // the app labels a column `caption || name`, and the canvas must read the same.
+            const preview = (filled.frame.gridPreviews || []).find((x) => x.control === 'DataGrid1');
+            t.ok(!!preview, 'grid-rows', 'the frame reports which grids got design-time data');
+            t.equal(JSON.stringify(preview && preview.headers), JSON.stringify(heads), 'grid-rows',
+                'with the CAPTION as each header, exactly as the generated columns write it');
+            const noHeaders = await renderPng(host, gridXaml, 800, 450, undefined, undefined,
+                [{ control: 'DataGrid1', columns: cols, rows: [] }]);
+            t.equal(JSON.stringify((noHeaders.frame.gridPreviews || [])[0].headers), JSON.stringify(cols),
+                'grid-rows', 'and with no headers given the column NAME is the header');
+            const emptyInk = countIn(empty.img, 20, 320, 20, 170, dark);
+            const filledInk = countIn(filled.img, 20, 320, 20, 170, dark);
+            t.ok(filledInk > emptyInk + 200, 'grid-rows',
+                'the rows light the grid up — header and cells are drawn', `empty=${emptyInk} px, filled=${filledInk} px`);
+            // The FIRST DATA ROW is under the header strip: ink there can only be the supplied row.
+            const rowBand = (img) => countIn(img, 22, 318, 46, 68, dark);
+            t.ok(rowBand(filled.img) > 30, 'grid-rows', 'and the first data row is painted',
+                `row px=${rowBand(filled.img)}`);
+            t.ok(rowBand(empty.img) < rowBand(filled.img) / 2, 'grid-rows',
+                'while an unsupplied grid has no row there at all', `empty row px=${rowBand(empty.img)}`);
+            // The grid still reports its own bounds, so the canvas can be clicked and dragged.
+            const g = byName(filled.frame, 'DataGrid1');
+            t.ok(!!g && near(g.width, 300, 6) && near(g.height, 150, 6), 'grid-rows',
+                'and the control is still reported at its own size', g ? `${g.width}x${g.height}` : 'missing');
+
+            // An EXISTING but EMPTY table — the database the app created on its first run, with no rows
+            // typed yet. The columns still reach the grid, so its header is drawn: "no rows" is not the
+            // same picture as "nothing supplied", and the designer must not make an empty table look
+            // like an unbound grid.
+            const headerOnly = await renderPng(host, gridXaml, 800, 450, undefined, undefined,
+                [{ control: 'DataGrid1', columns: cols, headers: heads, rows: [] }]);
+            const headerBand = (img) => countIn(img, 22, 318, 22, 46, dark);
+            t.ok(headerBand(headerOnly.img) > 30, 'grid-rows',
+                'columns with NO rows still paint the header — an empty table is not a blank grid',
+                `header px=${headerBand(headerOnly.img)}, untouched=${headerBand(empty.img)}`);
+            t.ok(headerBand(headerOnly.img) > headerBand(empty.img) + 20, 'grid-rows',
+                'and it shows more than the same grid with nothing supplied at all');
+        }
     } finally {
         host.close();
     }

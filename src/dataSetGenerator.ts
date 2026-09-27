@@ -3,6 +3,7 @@
  * (C# or VB.NET) that builds the DataSet, plus a standard .xsd schema file.
  */
 import { DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, csType, vbType, xsType, isSqliteTable, keyColumnOf, sqliteTableName } from './dataSetModel';
+import * as os from 'os';
 
 function escCs(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
 function escVb(s: string): string { return s.replace(/"/g, '""'); }
@@ -1927,11 +1928,18 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
     lines.push('using System;');
     lines.push('using System.Data;');
     lines.push('using System.Collections.Generic;');
+    if (needsStorage) {
+        // RuntimeStorage/DatabaseAdapter read and write files (Path/File/Directory), and they are
+        // emitted whenever ANY table persists — including a table whose storage is a database FILE
+        // with nothing bound to it. Hanging this on the grid binding instead is what made a generated
+        // file stop compiling after a DataGrid was un-bound: CS0103 "The name 'Path' does not exist
+        // in the current context" (GrumpyDesignerDemo, 2026-09-27).
+        lines.push('using System.IO;');
+    }
     if (grid) {
         lines.push('using Avalonia;');
         lines.push('using System.Collections.ObjectModel;');
         lines.push('using System.ComponentModel;');
-        lines.push('using System.IO;');
         lines.push('using System.Threading.Tasks;');
         lines.push('using Avalonia.Controls;');
         lines.push('using Avalonia.Input;');
@@ -2045,6 +2053,24 @@ export function generateCs(spec: DataSetSpec, rootNamespace: string): string {
     return lines.join('\n') + '\n';
 }
 
+/** The folder the GENERATED app keeps its data in — the rule {@link csRuntimeStorageClass} emits, in
+ *  one place so the designer can look for a table's database exactly where the RUNNING app writes it:
+ *  `~/.local/share/<App>` on Linux/macOS (`$XDG_DATA_HOME` when the user sets it), `%LOCALAPPDATA%\<App>`
+ *  on Windows, where `<App>` is the ASSEMBLY name (`assemblyNameOf`). Empty when no root can be found,
+ *  which a caller treats as "no candidate". */
+export function runtimeDataFolder(appName: string,
+    env: Record<string, string | undefined> = process.env, platform: string = process.platform): string {
+    if (!appName) return '';
+    const sep = platform === 'win32' ? '\\' : '/';
+    if (platform === 'win32') {
+        const root = env.LOCALAPPDATA || env.APPDATA || '';
+        return root ? `${root}${sep}${appName}` : '';
+    }
+    const home = env.HOME || env.USERPROFILE || os.homedir();
+    const root = env.XDG_DATA_HOME || (home ? `${home}${sep}.local${sep}share` : '');
+    return root ? `${root}${sep}${appName}` : '';
+}
+
 /** C# helper the generated code uses to locate its runtime files. An installed app lives in a
  *  folder the user cannot write to (`/usr/lib/<pkg>` from the .deb, "Program Files" from the MSI),
  *  so the database, the XML stores and the remembered picker folder live in the per-user data
@@ -2133,10 +2159,14 @@ export function generateVb(spec: DataSetSpec, rootNamespace: string): string {
     lines.push('Imports System');
     lines.push('Imports System.Data');
     lines.push('Imports System.Collections.Generic');
+    if (needsStorage) {
+        // The mirror of the C# header: the storage helpers are emitted for any persisted table, even
+        // one that is stored in a database file with no control bound to it at all.
+        lines.push('Imports System.IO');
+    }
     if (grid) {
         lines.push('Imports System.Collections.ObjectModel');
         lines.push('Imports System.ComponentModel');
-        lines.push('Imports System.IO');
         lines.push('Imports Avalonia');
         lines.push('Imports Avalonia.Controls');
         lines.push('Imports Avalonia.Input');

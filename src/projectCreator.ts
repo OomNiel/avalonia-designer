@@ -4,7 +4,8 @@ import * as fs from 'fs';
 import { execFile } from 'child_process';
 import { TEMPLATES, FormTemplate } from './formTemplates';
 import { pickerStartFolder, rememberPickerFolder } from './pickerFolders';
-import { generateProjectScaffold } from './projectScaffold';
+import { generateProjectScaffold, MAIN_FORM_NAME } from './projectScaffold';
+import { log, logError } from './logger';
 
 // ---------------------------------------------------------------------------
 // "Avalonia: New Project…" — creates a complete, ready-to-run Avalonia project
@@ -97,7 +98,7 @@ export async function createNewProject(context: vscode.ExtensionContext, forcedL
     // the whole point of creating a project is to start designing its form.
     const pendingForms = context.globalState.get<string[]>(PENDING_DESIGNER_KEY) ?? [];
     await context.globalState.update(PENDING_DESIGNER_KEY,
-        [...pendingForms, path.join(projectPath, 'MainWindow.axaml')]);
+        [...pendingForms, path.join(projectPath, `${MAIN_FORM_NAME}.axaml`)]);
 
     const open = await vscode.window.showInformationMessage(
         `Project "${name}" created in ${projectPath}.`,
@@ -147,18 +148,24 @@ export async function openLastProject(context: vscode.ExtensionContext): Promise
  * If the currently-open workspace is a freshly-created project (marked by
  * createNewProject), open the terminal pane and run `dotnet build` — done once,
  * the first time the project folder is opened. The marker is cleared afterwards.
+ *
+ * The second half lands the user IN the Designer on the new project's main form. It is retried a few
+ * times because this runs from an activation hook that can arrive while the window is still settling,
+ * and **the marker is only given up when the editor really opened** — a lost marker would mean the
+ * feature never happens for that project at all (the failure mode this used to have).
  */
-export function maybeRunFirstBuild(context: vscode.ExtensionContext): void {
+export async function maybeRunFirstBuild(context: vscode.ExtensionContext): Promise<void> {
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!root) return;
 
     // 1) Build the freshly-created project once.
     const pending = context.globalState.get<string[]>(PENDING_BUILDS_KEY) ?? [];
     if (pending.includes(root)) {
-        void context.globalState.update(PENDING_BUILDS_KEY, pending.filter((p) => p !== root) ?? []);
         const terminal = vscode.window.createTerminal({ name: 'dotnet build', cwd: root });
         terminal.show();
         terminal.sendText('dotnet build');
+        await context.globalState.update(PENDING_BUILDS_KEY, pending.filter((p) => p !== root) ?? []);
+        log(`[first-open] building the new project in ${root}`);
     }
 
     // 2) Open the new project's main form in the Designer. Done through the existing
@@ -166,10 +173,32 @@ export function maybeRunFirstBuild(context: vscode.ExtensionContext): void {
     //    this module must not depend on designerPanel (extension.ts wires the two together).
     const forms = context.globalState.get<string[]>(PENDING_DESIGNER_KEY) ?? [];
     const form = forms.find((f) => f.startsWith(root + path.sep));
-    if (form) {
-        void context.globalState.update(PENDING_DESIGNER_KEY, forms.filter((f) => f !== form) ?? []);
-        void vscode.commands.executeCommand('avaloniaDesigner.openInDesigner', vscode.Uri.file(form));
+    if (!form) return;
+    if (await openFormInDesigner(form)) {
+        await context.globalState.update(PENDING_DESIGNER_KEY, forms.filter((f) => f !== form) ?? []);
     }
+}
+
+/** Opens one form in the Designer editor, retrying while the window settles. Returns true when the
+ *  editor was opened. An unknown command (called before `activate` reached its registrations, or from
+ *  the folder-change event) throws — that is a "not yet", not a "never", so the caller keeps its marker
+ *  and the next activation tries again. */
+export async function openFormInDesigner(form: string, attempts = 3,
+    wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<boolean> {
+    for (let i = 0; i < attempts; i++) {
+        if (i > 0) await wait(250 * i);
+        try {
+            await vscode.commands.executeCommand('avaloniaDesigner.openInDesigner', vscode.Uri.file(form));
+            log(`[first-open] opened ${path.basename(form)} in the Designer`);
+            return true;
+        } catch (err) {
+            if (i === attempts - 1) logError(
+                new Error(`[first-open] could not open ${path.basename(form)} in the Designer: `
+                    + `${err instanceof Error ? err.message : String(err)} — it stays pending, so the next `
+                    + 'window that opens this project will try again.'));
+        }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------

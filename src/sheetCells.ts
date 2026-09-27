@@ -72,7 +72,26 @@ export interface SheetCell {
     fill?: string;
     /** How the text is lined up. Absent or 'Auto' = by content (numbers right, text left). */
     textAlign?: string;
+    /** Which of the cell's edges are drawn with a border line, as `Top,Left` or `All` — the control's own
+     *  SheetBorderEdges names. Absent = no border at all. */
+    borderEdges?: string;
+    /** The border's line width in px. Absent or 0 = the SHEET'S OWN line (one pixel, the grid's own width),
+     *  so an edge set is enough to ask for a border. */
+    borderThickness?: number;
+    /** The border's colour, same spelling as the others. Absent = the sheet's GridColor, so a border that
+     *  was asked for but not coloured reads as the grid line it covers. */
+    borderColor?: string;
 }
+
+/** The four edges a cell can carry, in the order the value is written in — so the same edges always save
+ *  as the same string, whatever order they were set in. Spelled exactly as SheetBorderEdges is. */
+export const SHEET_EDGE_MEMBERS = ['Top', 'Right', 'Bottom', 'Left'] as const;
+
+/** Every spelling the CONTROL's border menu offers. `Outside` and `Inside` are about a BLOCK of cells
+ *  rather than one cell — the control works out what they mean per cell as it applies them — so anything
+ *  that writes a cell's own edges has to expand them the same way (the Cells editor does, in designer.js).
+ *  `All` is the four together, in one name. */
+export const SHEET_EDGE_CHOICES = ['All', 'Outside', 'Inside', 'Top', 'Right', 'Bottom', 'Left', 'None'] as const;
 
 /** The four alignments, spelled exactly as the control's SheetAlign. `Auto` and not `Default`
  *  because `Default` is a VB keyword — see the enum in the twins. */
@@ -86,9 +105,10 @@ export type SheetAlignName = typeof SHEET_ALIGNS[number];
  *  property (`Fill` vs `fill`) fails SILENTLY: the form still compiles, still draws, and the
  *  formatting is simply gone. */
 interface SheetField {
-    key: 'bold' | 'italic' | 'fontSize' | 'fontFamily' | 'textColor' | 'fill' | 'textAlign';
+    key: 'bold' | 'italic' | 'fontSize' | 'fontFamily' | 'textColor' | 'fill' | 'textAlign' |
+    'borderEdges' | 'borderThickness' | 'borderColor';
     attr: string;
-    kind: 'bool' | 'number' | 'text' | 'color' | 'align';
+    kind: 'bool' | 'number' | 'text' | 'color' | 'align' | 'edges';
     def: string | number | boolean;
 }
 
@@ -99,7 +119,14 @@ export const SHEET_CELL_FIELDS: SheetField[] = [
     { key: 'fontFamily', attr: 'FontFamily', kind: 'text', def: '' },
     { key: 'textColor', attr: 'TextColor', kind: 'color', def: '' },
     { key: 'fill', attr: 'Fill', kind: 'color', def: '' },
-    { key: 'textAlign', attr: 'TextAlign', kind: 'align', def: 'Auto' }
+    { key: 'textAlign', attr: 'TextAlign', kind: 'align', def: 'Auto' },
+    // The border's three parts, in the order the control's own SetBorder takes them. The width's unset
+    // value is 0, which means the SHEET'S OWN line — one pixel, the grid's own width — so a cell that says
+    // WHERE its border goes but not HOW THICK still gets a line. The edges are what decide whether there is
+    // a border at all.
+    { key: 'borderEdges', attr: 'BorderEdges', kind: 'edges', def: '' },
+    { key: 'borderThickness', attr: 'BorderThickness', kind: 'number', def: 0 },
+    { key: 'borderColor', attr: 'BorderColor', kind: 'color', def: '' }
 ];
 
 /** One spelling of a colour for this module: `#RRGGBB` or `#AARRGGBB`, upper case, `#RGB` widened to
@@ -126,6 +153,45 @@ export function normaliseSheetAlign(value: unknown): string {
     return SHEET_ALIGNS.find((name) => name.toLowerCase() === text.toLowerCase()) ?? text;
 }
 
+/**
+ * A cell's border edges, spelled the one way the writer writes them: the four edge names, `All` for the
+ * four together, comma separated, in the enum's own order.
+ *
+ * `None` comes back as EMPTY, because it means the same thing as an absent attribute and treating it as a
+ * value would make a cell that says "no edges" look FORMATTED — which is what keeps a blank cell alive, and
+ * would write an element for a cell that says nothing at all.
+ *
+ * A token that is not one of the six members is passed through untouched, like every other value this
+ * module cannot read: dropping it would delete a border someone wrote by hand.
+ */
+export function normaliseSheetEdges(value: unknown): string {
+    const text = String(value ?? '').trim();
+    if (text.length === 0) return '';
+    const known: string[] = [];
+    const unknown: string[] = [];
+    for (const part of text.split(',')) {
+        const token = part.trim();
+        if (token.length === 0) continue;
+        const lowered = token.toLowerCase();
+        if (lowered === 'all') {
+            for (const member of SHEET_EDGE_MEMBERS) if (!known.includes(member)) known.push(member);
+            continue;
+        }
+        if (lowered === 'none') continue;
+        const member = SHEET_EDGE_MEMBERS.find((name) => name.toLowerCase() === lowered);
+        if (member) {
+            if (!known.includes(member)) known.push(member);
+            continue;
+        }
+        if (!unknown.includes(token)) unknown.push(token);
+    }
+    const order: readonly string[] = SHEET_EDGE_MEMBERS;
+    known.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    if (known.length === 0) return unknown.join(',');
+    if (known.length === SHEET_EDGE_MEMBERS.length) return ['All', ...unknown].join(',');
+    return [...known, ...unknown].join(',');
+}
+
 /** A cell's own font size: positive, at most two decimals, or 0 (= the sheet's own). */
 export function normaliseSheetNumber(value: unknown): number {
     const n = Number(value);
@@ -138,6 +204,7 @@ function fieldValue(field: SheetField, raw: unknown): string | number | boolean 
         case 'bool': return raw === true || raw === 'true' || raw === 'True';
         case 'number': return normaliseSheetNumber(raw);
         case 'color': return normaliseSheetColor(raw);
+        case 'edges': return normaliseSheetEdges(raw);
         // An alignment is the one field whose ABSENT value is not '' but its own default word: a cell
         // with no TextAlign attribute is on Auto, and a cell that says 'Auto' is the same cell. Treating
         // absent as '' here would make every plain cell look formatted — which is what T2 caught.

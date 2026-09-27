@@ -66,21 +66,61 @@ module.exports = async (t) => {
             'the designer marker is consumed too');
 
         // A later call (another workspace-folder event) must do neither again.
-        maybeRunFirstBuild(context);
-        await tick();
+        await maybeRunFirstBuild(context);
         t.equal(terminals.length, 1, 'once-only', 'a later call does not build again');
         t.equal(commands.filter((c) => c.id === 'avaloniaDesigner.openInDesigner').length, 1, 'once-only',
             'and does not reopen the designer');
+
+        // --- the marker survives a call that could NOT open the editor (2026-09-27) ---
+        // This hook runs from an activation path that can arrive before the command is registered (or
+        // before the window is ready). It used to consume the marker either way, so a single bad call
+        // meant the designer never opened for that project — the feature silently did nothing. Now the
+        // open is retried and the marker is only given up when the editor really opened.
+        const store2 = new Map([['pendingDesignerForms', [form]]]);
+        const ctx2 = {
+            globalState: {
+                get: (k) => store2.get(k),
+                update: async (k, v) => { if (v === undefined) store2.delete(k); else store2.set(k, v); }
+            }
+        };
+        let failFor = 2;
+        const tried = [];
+        vscode.commands.executeCommand = async (id, arg) => {
+            tried.push(id);
+            if (id === 'avaloniaDesigner.openInDesigner' && failFor-- > 0) throw new Error('command not found');
+        };
+        await maybeRunFirstBuild(ctx2);
+        t.equal(tried.length, 3, 'retry', 'a rejected open is retried, not given up on');
+        t.equal((store2.get('pendingDesignerForms') || []).length, 0, 'retry',
+            'and a retry that succeeds clears the marker');
+
+        // Still failing (nothing registered yet): the marker STAYS, so the next activation tries again.
+        const store3 = new Map([['pendingDesignerForms', [form]]]);
+        const ctx3 = {
+            globalState: {
+                get: (k) => store3.get(k),
+                update: async (k, v) => { if (v === undefined) store3.delete(k); else store3.set(k, v); }
+            }
+        };
+        vscode.commands.executeCommand = async () => { throw new Error('command not found'); };
+        await maybeRunFirstBuild(ctx3);
+        t.equal((store3.get('pendingDesignerForms') || []).length, 1, 'retry',
+            'a form that could not be opened stays pending — it is never silently dropped');
+        // ... and it opens as soon as the command is there (the next activation).
+        vscode.commands.executeCommand = async (id, arg) => { commands.push({ id, arg }); };
+        await maybeRunFirstBuild(ctx3);
+        t.equal((store3.get('pendingDesignerForms') || []).length, 0, 'retry',
+            'and the next activation after that opens it');
 
         // The markers belong to a SPECIFIC project: another folder must be left alone.
         const other = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-other-'));
         store.set('pendingFirstBuilds', [other]);
         store.set('pendingDesignerForms', [path.join(other, 'MainWindow.axaml')]);
-        maybeRunFirstBuild(context);
-        await tick();
+        const opensBefore = commands.filter((c) => c.id === 'avaloniaDesigner.openInDesigner').length;
+        await maybeRunFirstBuild(context);
         t.equal(terminals.length, 1, 'unrelated', 'an unrelated workspace builds nothing');
-        t.equal(commands.filter((c) => c.id === 'avaloniaDesigner.openInDesigner').length, 1, 'unrelated',
-            'and opens no designer');
+        t.equal(commands.filter((c) => c.id === 'avaloniaDesigner.openInDesigner').length, opensBefore,
+            'unrelated', 'and opens no designer');
         t.equal(store.get('pendingFirstBuilds'), [other], 'unrelated',
             'leaving the marker for the project it belongs to');
 

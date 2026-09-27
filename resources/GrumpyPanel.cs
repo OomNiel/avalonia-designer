@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.13.0
+// BUNDLED-COPY: 0.13.1
 // ============================================================================
 //  GrumpyPanel.cs — Reusable Avalonia docking region panel ("GrumpyPanel").
 //

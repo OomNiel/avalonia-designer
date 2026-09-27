@@ -22,7 +22,7 @@ import { withDesignerHeader } from './xamlHeader';
 
 const AVALONIA_VERSION = '12.1.1';
 const TARGET_FRAMEWORK = 'net10.0';
-const MAIN_FORM_NAME = 'MainWindow';
+export const MAIN_FORM_NAME = 'MainWindow';
 // Hardcopy printing on the chart controls (GrumpyCharts) is compiled in behind PRINT_SUPPORT.
 // Avae.Printables provides the native print dialog (platform services); AvaloniaUI.PrintToPDF
 // provides cross-platform PDF export via Skia. Generated projects define PRINT_SUPPORT, reference

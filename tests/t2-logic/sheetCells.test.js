@@ -187,7 +187,7 @@ module.exports = async (t) => {
 
     // ---------------------------------------------------------------- phase 2: per-cell formatting
     t.note('formatting: every attribute name is a property the twins declare');
-    t.equal(sheet.SHEET_CELL_FIELDS.length, 7, 'format', 'the seven formatting fields');
+    t.equal(sheet.SHEET_CELL_FIELDS.length, 10, 'format', 'the ten formatting fields — seven, and the border’s three');
     for (const field of sheet.SHEET_CELL_FIELDS) {
         t.ok(new RegExp(`public\\s+[\\w?<>]+\\s+${field.attr}\\s*\\{`).test(cs), 'format',
             `the C# SheetCell declares ${field.attr}`);
@@ -215,6 +215,172 @@ module.exports = async (t) => {
     t.ok(!cs.includes('SheetAlign.Default') && !vb.includes('SheetAlign.Default'), 'format',
         'neither twin calls the member Default');
 
+    // ---------------------------------------------------------------- the border model (0.13.1)
+    // A cell's border is which of its four edges are lined, one thickness and one colour. It is pinned
+    // here — before any menu can offer it and any writer can spell it — because it is a FLAGS enum, and a
+    // flags enum is the one place two twins can disagree while both compile: `Top | Right` and
+    // `Top Or Right` are different spellings of the same idea, and a mistyped member name is a silent 0.
+    t.note('the border enum: the same members, with the same VALUES, in both twins');
+    const csBorder = /public enum SheetBorderEdges\s*\{([\s\S]*?)\}/.exec(cs);
+    const vbBorder = /Public Enum SheetBorderEdges([\s\S]*?)End Enum/.exec(vb);
+    t.ok(csBorder !== null, 'borders', 'the C# twin declares SheetBorderEdges');
+    t.ok(vbBorder !== null, 'borders', 'the VB twin declares SheetBorderEdges');
+    t.ok(/\[Flags\]\s*public enum SheetBorderEdges/.test(cs), 'borders',
+        'C# marks it [Flags] — a corner cell wants Top and Left at once');
+    t.ok(/<Flags>\s*Public Enum SheetBorderEdges/.test(vb), 'borders', 'and so does VB');
+
+    /** name → value, out of a flags enum body: numbers, and `|`/`Or` chains of earlier members. */
+    const flagsOf = (body) => {
+        const values = {};
+        for (const line of body.split('\n')) {
+            const m = /^\s*(\w+)\s*=\s*(.+?)\s*,?\s*$/.exec(line);
+            if (!m) {
+                continue;
+            }
+            let value = 0;
+            for (const part of m[2].split(/\s*(?:\||\bOr\b)\s*/)) {
+                const n = /^\d+$/.test(part) ? Number(part) : values[part];
+                if (n === undefined) {
+                    return null;   // a member this cannot work out, so the comparison below must fail loudly
+                }
+                value |= n;
+            }
+            values[m[1]] = value;
+        }
+        return values;
+    };
+
+    const csFlags = csBorder ? flagsOf(csBorder[1]) : null;
+    const vbFlags = vbBorder ? flagsOf(vbBorder[1]) : null;
+    t.ok(csFlags !== null && vbFlags !== null, 'borders', 'both enums read as flags');
+    t.equal(JSON.stringify(csFlags),
+        JSON.stringify({ None: 0, Top: 1, Right: 2, Bottom: 4, Left: 8, All: 15 }), 'borders',
+        'the six members: the four edges, None, and All as the four together');
+    t.equal(JSON.stringify(vbFlags), JSON.stringify(csFlags), 'borders',
+        'and the VB twin carries the same members with the same values — `|` is not `Or`');
+
+    t.note('the cell keeps one edge set, one thickness and one colour — and no border until it is asked for');
+    t.ok(/public SheetBorderEdges BorderEdges \{ get; set; \} = SheetBorderEdges\.None;/.test(cs), 'borders',
+        'C#: BorderEdges starts at None');
+    t.ok(/Public Property BorderEdges As SheetBorderEdges = SheetBorderEdges\.None/.test(vb), 'borders',
+        'VB: BorderEdges starts at None');
+    // The other two have NO initialiser on purpose: unset is 0 and null, which is what keeps a cell that
+    // was never boxed a short element — and what the writer will have to leave out (see the fields table).
+    t.ok(/public double BorderThickness \{ get; set; \}/.test(cs) &&
+        /public Color\? BorderColor \{ get; set; \}/.test(cs), 'borders',
+        'C#: BorderThickness and BorderColor are plain, unfilled members');
+    t.ok(/Public Property BorderThickness As Double\s*$/m.test(vb) &&
+        /Public Property BorderColor As Nullable\(Of Color\)\s*$/m.test(vb), 'borders',
+        'VB: the same two, and neither carries a default');
+    t.ok(!/BorderThickness\s*\{ get; set; \} =/.test(cs) && !/Property BorderThickness As Double\s*=/.test(vb),
+        'borders', 'so 0 is available to mean the sheet\'s own line, in both twins');
+    t.ok(/BorderOwnThickness/.test(cs) && /BorderOwnThickness/.test(vb), 'borders',
+        'and both twins name the width a 0 stands for — one pixel, the grid line\'s own');
+    t.ok(/BorderThickness > 0 \? cell\.BorderThickness : BorderOwnThickness/.test(cs) &&
+        /If\(cell\.BorderThickness > 0, cell\.BorderThickness, BorderOwnThickness\)/.test(vb), 'borders',
+        'which ONE place uses when drawing, so the rule cannot drift from the model');
+
+    t.note('setting a border, and what turns it off again');
+    t.ok(/public void SetBorder\(int row, int column, SheetBorderEdges edges, double thickness, Color\? color\)/
+        .test(cs), 'borders', 'C#: SetBorder takes the whole border in one call, beside the other Set*');
+    t.ok(/Public Sub SetBorder\(row As Integer, column As Integer, edges As SheetBorderEdges,\s*\n?\s*thickness As Double, color As Nullable\(Of Color\)\)/
+        .test(vb), 'borders', 'VB: the same signature, member for member');
+    for (const [name, source] of [['C#', cs], ['VB', vb]]) {
+        // The EDGES are the switch. A width of 0 (or less) is the sheet's own line, NOT "no border" — a
+        // cell that says where its border goes but not how thick gets a line like every other line on the
+        // sheet, which is what a hand-written `BorderEdges="All"` relies on.
+        t.ok(/SetBorder[\s\S]{0,1400}?SheetBorderEdges\.None/.test(source), 'borders',
+            `${name}: no EDGES is what turns a border off`);
+        t.ok(!/SetBorder[\s\S]{0,1400}?thickness <= 0/.test(source), 'borders',
+            `${name}: and a width alone never does — 0 means the sheet's own line`);
+        t.ok(/SetBorder[\s\S]{0,1600}?color = (?:null|Nothing)\b/.test(source), 'borders',
+            `${name}: turning it off clears the colour too`);
+        t.ok(/SetBorder[\s\S]{0,1800}?InvalidateVisual\(\)/.test(source), 'borders',
+            `${name}: a border change repaints`);
+        // ClearFormatting is the one path that has to drop it as well, or "Clear formatting" leaves a box.
+        t.ok(/ClearFormatting[\s\S]{0,1500}?BorderEdges = SheetBorderEdges\.None[\s\S]{0,200}?BorderThickness = 0[\s\S]{0,200}?BorderColor = (?:null|Nothing)\b/
+            .test(source), 'borders', `${name}: ClearFormatting drops the border with the rest`);
+    }
+
+    t.note('the border is DRAWN — over the grid lines, before the text, and on a page as well');
+    for (const [name, source, area, helper] of [
+        ['C#', cs, 'public override void Render', 'private void DrawCellBorder'],
+        ['VB', vb, 'Public Overrides Sub Render', 'Private Sub DrawCellBorder']
+    ]) {
+        const body = source.slice(source.indexOf(area));
+        t.ok(body.includes(helper), 'borders', `${name}: the render has a border pass of its own`);
+        // Order is the whole point: a border must cover the grid line it sits on, and the text must stay
+        // on top of both — so the call has to fall between the grid-line loops and the text loop.
+        const lines = body.indexOf('gridPen');
+        const borders = body.indexOf('DrawCellBorder(context, CellRect');
+        const text = body.indexOf('inPlaceEdit');
+        t.ok(lines >= 0 && borders > lines && text > borders, 'borders',
+            `${name}: the pass runs after the grid lines and before the text`);
+        // A border is PAGE CONTENT — unlike the wash and the selection outline, which a page drops — so
+        // neither the call site nor the drawing method may test the page flag.
+        t.ok(!/_printRange/.test(source.slice(borders - 400, borders)) &&
+            !/_printRange/.test(source.slice(source.indexOf(helper), source.indexOf(helper) + 2200)), 'borders',
+            `${name}: borders print — nothing about the page suppresses them`);
+        // The half-thickness end extension: two lines that stop at the corner leave a chip out of the
+        // outside of every corner of a box (proved in /tmp/sheetborders by the four outer corner pixels).
+        t.ok(/rect\.X - \(left \? half : 0\)/.test(source) || /rect\.X - If\(hasLeft, half, 0\.0\)/.test(source),
+            'borders', `${name}: the ends reach into the corner when the edge that meets there is drawn too`);
+        t.ok(helper.slice(0, 40).length > 0 &&
+            new RegExp(`${helper}[\\s\\S]{0,1800}?GridColor`).test(source), 'borders',
+            `${name}: and a null BorderColor falls back to the sheet's own GridColor`);
+    }
+
+    t.note('the border travels in the workbook: a borders table, a borderId, and both directions');
+    for (const [name, source] of [['C#', cs], ['VB', vb]]) {
+        // Excel names every look twice over; a border is the third table of that kind, and it is INTERNED
+        // the same way — one entry per distinct border, however many cells wear it.
+        t.ok(/EmptyBorder/.test(source) && /_borders\b/.test(source) && /_borderAt/.test(source), 'borders',
+            `${name}: a borders table of its own, interned like the fonts and the fills`);
+        t.ok(/<border><left \/><right \/><top \/><bottom \/><diagonal \/><\/border>/.test(source), 'borders',
+            `${name}: index 0 is Excel's empty border, with all four sides bare and a diagonal it ignores`);
+        t.ok(/Function EdgeStyle|string EdgeStyle/.test(source) && /"thick"/.test(source) &&
+            /"medium"/.test(source) && /"thin"/.test(source), 'borders',
+            `${name}: a width in pixels becomes the one of Excel's three line styles it means — ` +
+            'everything under medium is thin, which is also what a width of 0 is');
+        t.ok(/String\.Empty|string\.Empty/.test(source) && /BorderKey/.test(source), 'borders',
+            `${name}: and a cell that asked for no border has no key — so it never enters the table`);
+        // The xf points into the table, and `applyBorder` is what tells a reader the border is meant.
+        t.ok(source.includes('borderId=') && source.includes('applyBorder'), 'borders',
+            `${name}: the format carries a borderId and says the border applies`);
+        t.ok(/<borders count=/.test(source), 'borders', `${name}: the styles part writes the table itself`);
+        // Order is not cosmetic: Excel refuses a styles part whose tables are out of schema order.
+        const fillsAt = source.indexOf('<fills count');
+        const bordersAt = source.indexOf('<borders count');
+        const xfsAt = source.indexOf('<cellXfs count');
+        t.ok(fillsAt > 0 && bordersAt > fillsAt && xfsAt > bordersAt, 'borders',
+            `${name}: and writes it in the one order Excel accepts — fonts, fills, borders, cellXfs`);
+        // Reading it back: the same four sides, the style's width, and the side's own colour.
+        t.ok(/StyleThickness/.test(source) && /"thick"/.test(source), 'borders',
+            `${name}: the reader turns Excel's line style back into a width`);
+        t.ok(/"borders"/.test(source), 'borders',
+            `${name}: it finds the border elements under the borders table, not anywhere in the part`);
+        t.ok(/diagonal/.test(source), 'borders',
+            `${name}: and knows a diagonal is not one of the four sides it draws`);
+        // THE KEEP-ALIVE RULE, in the two places a cell can be dropped for having nothing to say. An empty
+        // box is exactly what someone draws a border FOR, so a bordered blank must survive both.
+        t.ok(/text\.Length == 0 && !cell\.Fill\.HasValue &&[\s\S]{0,90}?cell\.BorderEdges == SheetBorderEdges\.None/
+            .test(source) || /text\.Length = 0 AndAlso Not cell\.Fill\.HasValue AndAlso[\s\S]{0,90}?cell\.BorderEdges = SheetBorderEdges\.None/
+                .test(source), 'borders',
+            `${name}: the WRITER still writes a cell whose only feature is a border`);
+        t.ok(/format\.Edges ={1,2} SheetBorderEdges\.None/.test(source), 'borders',
+            `${name}: and the READER still builds one — neither half may call a bordered blank "nothing"`);
+    }
+
+    // The VB twin's own traps, each one a bug that COMPILED and failed only at run time.
+    t.ok(/Dim borderLook As String = BorderKey\(cell\)/.test(vb) && !/Dim borderKey As String = BorderKey\(/.test(vb),
+        'borders', 'VB: the local is not named after the method it calls — VB is case-insensitive, so ' +
+    '`borderKey` would shadow `BorderKey` and index it');
+    t.ok(/wanted As Boolean/.test(vb) && !/EdgeXml\([\s\S]{0,120}?\bon As Boolean/.test(vb), 'borders',
+        'VB: no parameter is called `on` — that is a reserved word, and the twin ships with Option Strict Off');
+    t.ok(vb.includes('& XmlText(text) &') && !vb.includes('& Text(text) &'), 'borders',
+        'VB: the inline string is escaped by XmlText — `Text(text)` binds to the String PARAMETER `text` ' +
+        'and indexes it, so the twin could not save a text cell at all until this was caught');
+
     t.note('formatting values are spelled the one way the writer writes them');
     t.equal(sheet.normaliseSheetColor('#ffcc00'), '#FFCC00', 'format', 'a hex colour is upper-cased');
     t.equal(sheet.normaliseSheetColor('#f0c'), '#FF00CC', 'format', 'three digits are widened to six');
@@ -234,6 +400,9 @@ module.exports = async (t) => {
     t.equal(sheet.sheetCellIsStyled({ row: 1, column: 1, text: 'x' }), false, 'format', 'text alone is plain');
     t.equal(sheet.sheetCellIsStyled({ row: 1, column: 1, text: '', fill: '#FFCC00' }), true, 'format',
         'a highlight is formatting');
+    t.equal(sheet.sheetCellIsStyled({ row: 1, column: 1, text: '', borderEdges: 'All' }), true, 'format',
+        'and so is a border — the third place the "nothing to say" rule lives, after the writer\'s loop ' +
+        'and the reader\'s filter');
     t.equal(sheet.sheetCellIsStyled({ row: 1, column: 1, text: 'x', bold: false, textAlign: 'Auto' }), false,
         'format', 'stating the default is not formatting');
 
@@ -302,8 +471,9 @@ module.exports = async (t) => {
         'reading what was written gives back exactly what was read');
 
     t.note('the editor and the host agree on what a cell is');
-    t.ok(read('media/designer.js').includes("'bold', 'italic', 'fontSize', 'fontFamily', 'textColor', 'fill', 'textAlign'"),
-        'wiring', 'the webview editor keys its cells by the same seven fields');
+    t.ok(read('media/designer.js').includes("'bold', 'italic', 'fontSize', 'fontFamily', 'textColor', 'fill', 'textAlign',") &&
+        read('media/designer.js').includes("'borderEdges', 'borderThickness', 'borderColor'"), 'wiring',
+        'the webview editor keys its cells by the same ten fields');
     t.ok(renderer.includes('AvaloniaSpreadsheet.GrumpySheet sheet'), 'wiring',
         'and the host reads a sheet\u2019s cell elements the same way the control does');
 
@@ -410,7 +580,7 @@ module.exports = async (t) => {
         t.ok(/HandleMenuKey[\s\S]{0,1200}?Key\.Escape/.test(source), `fix:${name}`, 'Escape closes it');
         t.ok(/HandleMenuKey[\s\S]{0,1200}?Key\.Up/.test(source) && /HandleMenuKey[\s\S]{0,1200}?Key\.Down/.test(source),
             `fix:${name}`, 'the arrows move the highlight past the separators');
-        t.ok(/HandleMenuKey[\s\S]{0,1600}?Key\.Enter/.test(source), `fix:${name}`, 'and Enter chooses');
+        t.ok(/HandleMenuKey[\s\S]{0,3200}?Key\.Enter/.test(source), `fix:${name}`, 'and Enter chooses');
         t.ok(/HandleMenuKey[\s\S]{0,200}?_menuOpen[\s\S]{0,200}?Return False/.test(source) ||
             /HandleMenuKey[\s\S]{0,200}?_menuOpen[\s\S]{0,200}?return false/.test(source), `fix:${name}`,
             'and it does nothing at all when the menu is closed');
@@ -744,8 +914,13 @@ module.exports = async (t) => {
     t.note('an existing project is offered the refresh');
     const { bundledComponentSpecs } = require('../../out/bundledComponents.js');
     const sheetSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpySheet');
-    t.equal(sheetSpec.marker, 'PrintOrientationProperty', 'bundled',
-        'the marker moved to a token only today\'s copy has, or a form that updated once would keep its old sheet for ever');
+    t.equal(sheetSpec.marker, 'EmptyBorder', 'bundled',
+        'the marker moved to a token only today\'s copy has, or a form that updated once would keep its old ' +
+        'sheet for ever — and this batch is not only a drawing change (a copy without EmptyBorder writes a ' +
+        'workbook whose borders table cannot carry a box, and its VB half cannot save a text cell at all)');
+    t.ok(/EmptyBorder/.test(cs) && /EmptyBorder/.test(vb), 'bundled',
+        'and the token it names is in BOTH twins — the update check runs against whichever file a project holds, ' +
+        'so a marker only one twin carries would offer the other one a refresh that never comes');
     t.ok(/marker/.test(read('src/bundledComponents.ts')) && sheetSpec.bundled.test('// BUNDLED RESOURCE'),
         'bundled', 'and the file still identifies itself as bundled boilerplate, so a user\'s own copy is left alone');
     const panel = read('src/designerPanel.ts');
@@ -998,7 +1173,7 @@ module.exports = async (t) => {
         'and it says so in the status line, the way Abort does');
     t.ok(/_menuHot = current/.test(cs) && /_menuHot = current/.test(vb), 'print',
         'the highlight STARTS on the current page, so Enter accepts what the sheet already has');
-    t.ok(/enum MenuKind \{ Context, Toolbar, Macro, Warning, Setup \}/.test(cs) && /Setup/.test(vb), 'print',
+    t.ok(/enum MenuKind \{ Context, Toolbar, Macro, Warning, Setup, Panel \}/.test(cs) && /Setup/.test(vb), 'print',
         'the question is its own menu kind, which is what keeps Tab (the macro list\'s key) out of it');
     t.ok(/, " \+ PageText\(\)/.test(cs) && /& ", " & PageText\(\)/.test(vb), 'print',
         'every status line names the page as well as the area — "Saved a.png — B2:C3, A4 portrait"');
@@ -1039,4 +1214,91 @@ module.exports = async (t) => {
         'passing the page question\'s own answer');
     t.ok(/PaperSize = PrintPaperName/.test(cs) && /\.PaperSize = PrintPaperName/.test(vb), 'print',
         'and the paper the page was composed for — named once, so the page and the job cannot disagree');
+
+    // ---------------------------------------------------------------------------------------------
+    // 2026-09-27 — the CELL LOOK panels: fill colour, text colour and borders.
+    //
+    // These are menus that are not lists of commands, so the failures that matter are different ones:
+    //
+    //   * a panel line that reaches the wrong cells — "Inside" has to become the four edges a CELL can
+    //     store, worked out per cell, and a whole-column selection must not gain fifty empty elements;
+    //   * a panel that closes on a MISS (the 4 px between two swatches) — the palette then vanishes for a
+    //     click that meant nothing;
+    //   * a colour picked in one panel landing in the wrong field (a fill where the ink was meant);
+    //   * and the one that already bit: in VB `Nothing = True` is Nothing, and a Nothing assigned to a
+    //     Boolean THROWS — right-clicking a BLANK cell (no cell element at all) killed the menu outright.
+    //     Proved with /tmp/sheetpanels (C#) and /tmp/sheetpanelsvb (VB): the same 26 checks, the same
+    //     numbers from both twins.
+    // ---------------------------------------------------------------------------------------------
+    t.section('T2: the spreadsheet colour and border panels');
+
+    t.note('the three lines are offered, and both twins offer them');
+    for (const label of ['Fill colour…', 'Text colour…', 'Borders…']) {
+        bothTwins(label, 'panels');
+    }
+
+    t.note('the panel machinery is in both twins, member for member');
+    for (const member of ['OpenColourPanel', 'OpenColourPickerPanel', 'OpenBordersPanel',
+        'OpenBorderEdgesPanel', 'OpenBorderThicknessPanel', 'OpenPanel', 'ForEachSelectedCell',
+        'SelectionColour', 'EdgesFor', 'ChooseFillColour', 'ChooseTextColour', 'ApplyBorderChoice',
+        'ApplyBorderThickness', 'ChooseBorderColour', 'BorderChoiceItem', 'ThicknessItem', 'HexOf',
+        'ContrastInk', 'MenuRowHeight', 'RowTop', 'SwatchRect', 'SliderTrackRect', 'SetChannel',
+        'SetChannelFromPoint', 'SliderAt', 'SwatchAt', 'OnSwatchRow', 'ChannelValue', 'BuildMenuPalette']) {
+        bothTwins(member, 'panels');
+    }
+
+    t.note('Outside and Inside are SELECTION spellings, worked out per cell, and only they are');
+    for (const [name, source] of twins) {
+        t.ok(/Enum BorderChoice[\s\S]{0,200}?Outside[\s\S]{0,80}?Inside/.test(source) ||
+            /enum BorderChoice[\s\S]{0,200}?Outside[\s\S]{0,80}?Inside/.test(source), 'panels',
+            `${name}: the hub's choice enum carries Outside and Inside`);
+        t.ok(/EdgesFor\([\s\S]{0,2600}?row == firstRow/.test(source) ||
+            /EdgesFor\([\s\S]{0,2600}?row = firstRow/.test(source), 'panels',
+            `${name}: Outside is the rim — the first row's top, the last row's bottom, and so on`);
+        t.ok(/EdgesFor\([\s\S]{0,3200}?row > firstRow/.test(source), 'panels',
+            `${name}: and Inside is only the edges SHARED with another selected cell`);
+    }
+    // SheetBorderEdges itself must stay the four edges: a cell cannot store "Outside".
+    t.ok(!/Outside|Inside/.test(/public enum SheetBorderEdges\s*\{([\s\S]*?)\}/.exec(cs)[1]), 'panels',
+        'the flag enum a CELL stores has no Outside/Inside in it — those are not shapes a cell has');
+
+    t.note('the palette is the same forty colours in both twins, and the probe\'s red is unique');
+    const paletteCs = /MenuPaletteText =[\s\S]*?\{([\s\S]*?)\};/.exec(cs);
+    const paletteVb = /MenuPaletteText As String\(\) = \{([\s\S]*?)\}/.exec(vb);
+    t.ok(paletteCs !== null && paletteVb !== null, 'panels', 'both twins carry the palette text');
+    const coloursOf = (body) => (body.match(/#[0-9A-Fa-f]{6}/g) || []);
+    t.equal(coloursOf(paletteCs[1]).length, 40, 'panels', 'forty swatches — five lines of eight');
+    t.equal(JSON.stringify(coloursOf(paletteVb[1])), JSON.stringify(coloursOf(paletteCs[1])), 'panels',
+        'the two lists are the same, colour for colour');
+    t.equal(coloursOf(paletteCs[1]).filter((c) => c.toUpperCase() === '#FF0000').length, 1, 'panels',
+        'and pure red appears exactly ONCE — /tmp/sheetpanels finds a swatch by that ink, so a second one ' +
+        'would let it click the wrong square and still pass');
+
+    t.note('a pick applies to the whole selection, creating cells only when the selection is bounded');
+    for (const [name, source] of twins) {
+        t.ok(/ForEachSelectedCell[\s\S]{0,500}?bounded/.test(source), 'panels',
+            `${name}: a whole column is not given fifty empty elements (the rule AlignSelection keeps)`);
+        t.ok(/ForEachSelectedCell[\s\S]{0,900}?EnsureCell/.test(source), 'panels',
+            `${name}: a bounded block has cells created, so "select, colour, type" works`);
+    }
+
+    t.note('a near miss inside a panel does not close it, and a slider keeps it open');
+    for (const [name, source] of twins) {
+        t.ok(/ChooseMenuItem[\s\S]{0,2000}?OnSwatchRow\(point\)/.test(source), 'panels',
+            `${name}: a press between two swatches is the panel's own furniture (it stays up)`);
+        t.ok(/ChooseMenuItem[\s\S]{0,1400}?SliderAt\(point\)/.test(source), 'panels',
+            `${name}: a slider starts a drag instead of closing the panel`);
+    }
+
+    t.note('the VB trap that crashed the menu: Nothing is not False');
+    // SelectionFlag answers Nothing for a selection with no cell elements at all. The C# twin's `== true`
+    // is false there; VB's `= True` is NOTHING, and assigning that to a plain Boolean throws — so
+    // right-clicking a blank cell crashed the VB control, and the C# one never could.
+    t.ok(/Ticked = SelectionFlag\(true\) == true/.test(cs), 'panels', 'C#: the flag is compared, not assigned');
+    t.ok(!/SelectionFlag\((True|False)\) = True/.test(vb), 'panels',
+        'VB: nothing is assigned straight from a lifted comparison — that is the crash');
+    t.ok(/SelectionFlag\(True\)\.GetValueOrDefault\(\)/.test(vb), 'panels',
+        'VB: the flag is read out once, with its Nothing turned into False');
+    t.ok(/allBold/.test(vb) && /allItalics/.test(vb), 'panels',
+        'and both ticks come from those two locals');
 };

@@ -110,15 +110,22 @@ module.exports = async (t) => {
     t.ok(has(pkg.icon), 'manifest', 'the declared icon file exists (vsce refuses to package without it)');
 
     // ---------- 2) activation: from contributions, not on every window start ----------
-    t.equal(pkg.activationEvents, [], 'activation',
-        'the extension does not activate on start-up (activationEvents is empty)');
+    // The rule is "do not load for every user at every window start". `onStartupFinished` did exactly
+    // that and was removed (NOTES §Packaging). What is allowed is a WORKSPACE-scoped event: a window
+    // whose folder holds a form is a window this extension is for, and it is the only way a freshly
+    // created project's window can land the user IN the designer (2026-09-27: without it the extension
+    // was never activated there — no command, view or custom editor had been touched yet — so the
+    // "first open" hook below never ran).
+    t.equal(pkg.activationEvents.length, 1, 'activation', 'exactly one activation event');
+    t.equal(pkg.activationEvents[0], 'workspaceContains:**/*.axaml', 'activation',
+        'and it is the workspace-scoped one: a folder that actually contains a form');
     t.ok(JSON.stringify(pkg.activationEvents).includes('onStartupFinished') === false, 'activation',
-        'in particular it does not slow down every VS Code start');
+        'in particular it still does not slow down every VS Code start');
     const contrib = pkg.contributes || {};
     const implicit = (contrib.commands || []).length + (contrib.customEditors || []).length
         + Object.keys((contrib.viewsContainers || {}).activitybar || {}).length;
     t.ok(implicit > 0, 'activation',
-        'which is safe because contributed commands/views/custom editors activate it on demand');
+        'and everything else still activates it on demand through commands/views/custom editors');
     t.ok((contrib.customEditors || []).length >= 1, 'activation', 'the AXAML designer is a custom editor');
 
     // ---------- 3) the icon really is a Marketplace-grade PNG (>= 128x128) ----------

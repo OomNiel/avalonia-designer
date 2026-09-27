@@ -843,7 +843,10 @@ export function hasDataSetBinding(axamlUri: vscode.Uri, b: DataSetBindingRef): b
     } catch { return false; }
 }
 
-/** Removes the generated DataSet binding (the ItemsSource line + the DataView property). */
+/** Removes the generated DataSet binding: the ItemsSource line, the row-collection property/field, the
+ *  Load/Wire wiring — and the imports the binding added, when nothing left in the file needs them.
+ *  Un-binding must leave the code-behind as it was before the binding, or it is still "code added by
+ *  the binding process" that no action ever takes away. */
 export async function unbindControlFromDataSet(axamlUri: vscode.Uri, b: DataSetBindingRef): Promise<void> {
     const filePath = findCodeBehindFile(axamlUri);
     if (!filePath) return;
@@ -950,6 +953,10 @@ function insertVbDataSetBinding(text: string, b: DataSetBindingRef, className?: 
     const em = /End\s+Class/i.exec(after);
     if (!em) return undefined;
     const endIndex = m.index + em.index;
+    // Insert at the START of the `End Class` line, never at the `End` itself: the indentation in front
+    // of it belongs to that line, so inserting after it glued `End Class` to the left margin — and the
+    // un-bind could not put that indentation back, because the insert had thrown it away.
+    const endLineStart = t.lastIndexOf('\n', endIndex - 1) + 1;
     const lineStart = t.lastIndexOf('\n', m.index) + 1;
     const indent = t.slice(lineStart, m.index).match(/^\s*/)?.[0] ?? '';
     const bodyIndent = indent + '    ';
@@ -958,7 +965,7 @@ function insertVbDataSetBinding(text: string, b: DataSetBindingRef, className?: 
         // Live editable grid: a persistent row collection + Load/Wire wiring.
         const field = `${bodyIndent}Private _${lcFirst(b.tableName)} As System.Collections.ObjectModel.ObservableCollection(Of ${b.tableName}Row)`;
         if (!t.includes(field)) {
-            t = t.slice(0, endIndex) + field + '\n' + t.slice(endIndex);
+            t = t.slice(0, endLineStart) + field + '\n' + t.slice(endLineStart);
         }
         // Constructor wiring right after InitializeComponent()
         const ic = /InitializeComponent\s*\(\)/i.exec(t);
@@ -984,7 +991,7 @@ function insertVbDataSetBinding(text: string, b: DataSetBindingRef, className?: 
         `${bodyIndent}    End Get\n` +
         `${bodyIndent}End Property`;
     if (!t.includes(property)) {
-        t = t.slice(0, endIndex) + property + '\n' + t.slice(endIndex);
+        t = t.slice(0, endLineStart) + property + '\n' + t.slice(endLineStart);
     }
 
     // Constructor one-liner right after InitializeComponent()
@@ -1035,7 +1042,27 @@ function removeDataSetBinding(text: string, language: 'cs' | 'vb', b: DataSetBin
         const fieldRe = new RegExp(`^[ \\t]*Private\\s+_${escapeRe(lc)}\\s+As\\s+System\\.Collections\\.ObjectModel\\.ObservableCollection\\(Of\\s+${escapeRe(b.tableName)}Row\\)\\s*\\r?\\n`, 'gm');
         t = t.replace(fieldRe, '');
     }
+    // The imports the binding ADDED (see insert*DataSetBinding) go too — `using System.Data;` always,
+    // `System.Collections.ObjectModel` for a DataGrid. They are dropped only when the rest of the file
+    // no longer names anything from them, so a second bound control or the user's own DataSet code keeps
+    // its import. This is the half that used to be missing: after an un-bind the code-behind still said
+    // `using System.Data;` for a binding that no longer existed.
+    t = dropImportIfUnused(t, language, 'System.Data',
+        /\bData(?:Set|Table|Row|Column|View|Relation|Adapter)\b|System\.Data\./);
+    t = dropImportIfUnused(t, language, 'System.Collections.ObjectModel',
+        /\b(?:ReadOnly)?ObservableCollection\b|System\.Collections\.ObjectModel\./);
     return t;
+}
+
+/** Removes `using X;` / `Imports X` from a code-behind when nothing that is LEFT names anything from
+ *  that namespace (`usedRe`). Returns the text unchanged when the import is absent or still needed. */
+function dropImportIfUnused(text: string, language: 'cs' | 'vb', ns: string, usedRe: RegExp): string {
+    const lineRe = language === 'cs'
+        ? new RegExp(`^[ \\t]*using\\s+${escapeRe(ns)}\\s*;\\r?\\n`, 'gmi')
+        : new RegExp(`^[ \\t]*Imports\\s+${escapeRe(ns)}\\s*\\r?\\n`, 'gmi');
+    const without = text.replace(lineRe, '');
+    if (without === text) return text;            // the binding never added it
+    return usedRe.test(without) ? text : without; // or something else still needs it
 }
 
 // ---------------- generic Items Source binding (code assets) ----------------

@@ -46,6 +46,14 @@ public class GridCellInfo
     public List<double> H { get; set; } = new();
 }
 
+/// <summary>One DataGrid that got design-time preview data: the columns it shows, with their header
+/// text (so a caller, or a test, can check the caption rule without reading pixels).</summary>
+public class GridPreviewApplied
+{
+    public string Control { get; set; } = "";
+    public string[] Headers { get; set; } = Array.Empty<string>();
+}
+
 public class FrameResult
 {
     public string PngBase64 { get; set; } = "";
@@ -54,6 +62,9 @@ public class FrameResult
     public List<ControlInfo> Controls { get; set; } = new();
     /// <summary>Per named Grid: its column/row boundary positions (window coords).</summary>
     public Dictionary<string, GridCellInfo> GridCells { get; set; } = new();
+    /// <summary>Per named DataGrid that got design-time preview data: the columns it now shows, with
+    /// their header text (so a caller can check the caption rule without reading pixels).</summary>
+    public List<GridPreviewApplied> GridPreviews { get; set; } = new();
     public string? Error { get; set; }
 }
 
@@ -103,7 +114,8 @@ public class XamlRenderer
             // Design-time data: a DataGrid bound to a DataSet table is populated at runtime by the
             // app's code-behind, which the headless preview doesn't run. When the extension supplies
             // rows for a named DataGrid, fill it (read-only) so the designer shows the same data.
-            ApplyGridRows(window, grids);
+            var appliedGrids = new List<GridPreviewApplied>();
+            ApplyGridRows(window, grids, appliedGrids);
 
             window.Measure(finalSize);
             window.Arrange(new Rect(new Point(0, 0), finalSize));
@@ -142,6 +154,7 @@ public class XamlRenderer
             var png = Convert.ToBase64String(ms.ToArray());
 
             var frame = new FrameResult { PngBase64 = png, Width = designW, Height = designH };
+            frame.GridPreviews = appliedGrids;
             CollectControls(window, frame);
 
             return frame;
@@ -476,11 +489,17 @@ public class XamlRenderer
     {
         public string Control { get; set; } = "";
         public string[] Columns { get; set; } = Array.Empty<string>();
+        /// <summary>What each column is LABELLED (the app writes `caption || name`). Empty means the
+        /// header is the column name, which is what a grid with no DataSet captions shows.</summary>
+        public string[] Headers { get; set; } = Array.Empty<string>();
         public object?[][] Rows { get; set; } = Array.Empty<object?[]>();
     }
 
-    /// <summary>Fills each named DataGrid with the supplied rows (read-only, design-time preview).</summary>
-    private static void ApplyGridRows(Window window, IReadOnlyList<GridPreviewData>? grids)
+    /// <summary>Fills each named DataGrid with the supplied rows (read-only, design-time preview).
+    ///  What each grid ended up with is written into <paramref name="applied"/> so a caller (and a
+    ///  test) can see the columns and their headers without reading pixels.</summary>
+    private static void ApplyGridRows(Window window, IReadOnlyList<GridPreviewData>? grids,
+        List<GridPreviewApplied> applied)
     {
         if (grids is null || grids.Count == 0) return;
         foreach (var gd in grids)
@@ -514,11 +533,15 @@ public class XamlRenderer
 
                 dg.AutoGenerateColumns = false;
                 dg.Columns.Clear();
-                foreach (var col in gd.Columns)
+                for (var i = 0; i < gd.Columns.Length; i++)
                 {
-                    dg.Columns.Add(new DataGridTextColumn { Header = col, Binding = new Avalonia.Data.Binding(col) });
+                    // The header is the CAPTION the DataSet gives the column, so the canvas reads the
+                    // same as the running app; the binding stays the column NAME.
+                    var header = i < gd.Headers.Length ? gd.Headers[i] : gd.Columns[i];
+                    dg.Columns.Add(new DataGridTextColumn { Header = header, Binding = new Avalonia.Data.Binding(gd.Columns[i]) });
                 }
                 dg.ItemsSource = items;
+                applied.Add(new GridPreviewApplied { Control = gd.Control, Headers = gd.Headers.Length == gd.Columns.Length ? gd.Headers : gd.Columns });
             }
             catch { /* design-time preview is best-effort — keep the empty grid */ }
         }
@@ -784,6 +807,17 @@ public class XamlRenderer
             var textAttr = child.Attributes().FirstOrDefault(a => a.Name.LocalName == "Text");
             sheet.SetCell(row, column, textAttr is null ? string.Empty : textAttr.Value);
 
+            // The border is ONE thing in THREE attributes, and SetBorder takes all of them at once: a cell
+            // whose BorderColor is written before its BorderEdges would otherwise lose the colour. So the
+            // three are read here and applied in one call, and a cell that names none of them is untouched.
+            var borderEdges = SheetEdgesOf(child, out var hasEdges);
+            var borderThickness = SheetDoubleOf(child, "BorderThickness", out var hasThickness);
+            var borderColour = SheetColourOf(child, "BorderColor", out var hasColour);
+            if (hasEdges || hasThickness || hasColour)
+            {
+                sheet.SetBorder(row, column, borderEdges, borderThickness, borderColour);
+            }
+
             foreach (var attr in child.Attributes())
             {
                 var name = attr.Name.LocalName;
@@ -826,9 +860,67 @@ public class XamlRenderer
                             sheet.SetTextAlign(row, column, align);
                         }
                         break;
+                    // The border's three attributes are ONE call — see above, where they are read together.
+                    case "BorderEdges":
+                    case "BorderThickness":
+                    case "BorderColor":
+                        break;
                 }
             }
         }
+    }
+
+    /// <summary>One of a cell's attributes as a number, for the ones the twins type as double.</summary>
+    private static double SheetDoubleOf(XElement cell, string name, out bool present)
+    {
+        present = false;
+        var attr = cell.Attributes().FirstOrDefault(a => a.Name.LocalName == name);
+        if (attr is null) return 0;
+        if (!double.TryParse(attr.Value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            return 0;                   // unparseable is skipped rather than guessed at, like every other one
+        }
+
+        present = true;
+        return value;
+    }
+
+    /// <summary>
+    /// A cell's border edges: the flag member names, comma separated, exactly as the XAML compiler reads
+    /// them. A name this does not know makes the whole attribute skip — drawing half a border would show a
+    /// picture the built app does not have.
+    /// </summary>
+    private static AvaloniaSpreadsheet.SheetBorderEdges SheetEdgesOf(XElement cell, out bool present)
+    {
+        present = false;
+        var attr = cell.Attributes().FirstOrDefault(a => a.Name.LocalName == "BorderEdges");
+        if (attr is null) return AvaloniaSpreadsheet.SheetBorderEdges.None;
+        var edges = AvaloniaSpreadsheet.SheetBorderEdges.None;
+        foreach (var part in attr.Value.Split(','))
+        {
+            var token = part.Trim();
+            if (token.Length == 0) continue;
+            if (!Enum.TryParse<AvaloniaSpreadsheet.SheetBorderEdges>(token, true, out var one))
+            {
+                return AvaloniaSpreadsheet.SheetBorderEdges.None;
+            }
+
+            edges |= one;
+        }
+
+        present = true;
+        return edges;
+    }
+
+    /// <summary>One of a cell's colour attributes, or null when it is absent or unreadable.</summary>
+    private static Color? SheetColourOf(XElement cell, string name, out bool present)
+    {
+        present = false;
+        var attr = cell.Attributes().FirstOrDefault(a => a.Name.LocalName == name);
+        if (attr is null) return null;
+        if (!Color.TryParse(attr.Value.Trim(), out var colour)) return null;
+        present = true;
+        return colour;
     }
 
     /// <summary>

@@ -225,6 +225,62 @@ module.exports = async (t) => {
         t.ok(!p.read().includes('Store.GetCustomers()'), 'dataset-bind', 'vb property removed');
     }
 
+    // --- un-bind puts the code-behind BACK, in every shape ---
+    // Asked for directly (2026-09-27): "Unbinding must also remove the code behind added by the binding
+    // process". The binding adds an import (`using System.Data;`, plus System.Collections.ObjectModel for
+    // a DataGrid) and the un-bind left it behind for ever — a plain form kept two usings it never had.
+    // So the assertion is the strongest one available: bind, un-bind, and the file is BYTE-IDENTICAL to
+    // what it was before. Anything the binding adds and the un-bind forgets breaks this.
+    for (const language of ['cs', 'vb']) {
+        for (const controlType of ['ListBox', 'DataGrid']) {
+            const p = tmpProject(language);
+            const before = p.read();
+            const b = { controlName: controlType === 'DataGrid' ? 'gridTest' : 'lstTest', controlType, tableName: 'Customers', datasetName: 'Store' };
+            await bindControlToDataSet(p.uri, b);
+            const bound = p.read();
+            const importLine = language === 'cs' ? 'using System.Data;' : 'Imports System.Data';
+            t.ok(bound.includes(importLine), 'dataset-unbind',
+                `${language}/${controlType}: the binding brought its import in`);
+            t.ok(bound !== before, 'dataset-unbind', `${language}/${controlType}: and the code-behind changed`);
+            await unbindControlFromDataSet(p.uri, b);
+            t.equal(p.read(), before, 'dataset-unbind',
+                `${language}/${controlType}: un-bind removes the binding's import along with its lines`);
+            t.ok(!p.read().includes(importLine), 'dataset-unbind',
+                `${language}/${controlType}: and does not leave the import behind`);
+        }
+    }
+    // ... but an import something else still needs is KEPT: the user's own code (or a second bound
+    // control in the same form) may be using it, and dropping it would break their build.
+    {
+        const p = tmpProject('cs');
+        const b = { controlName: 'lstTest', controlType: 'ListBox', tableName: 'Customers', datasetName: 'Store' };
+        // The form imports System.Data and uses DataView ITSELF: the un-bind must not take that import
+        // away just because the binding has gone.
+        const withDataView = `using Avalonia.Controls;
+using System.Data;
+namespace Proj;
+public partial class TestForm : Window
+{
+    private DataView? _mine;
+    public DataView? Mine => _mine;
+
+    public TestForm()
+    {
+        InitializeComponent();
+    }
+}
+`;
+        fs.writeFileSync(path.join(p.dir, 'TestForm.axaml.cs'), withDataView);
+        await bindControlToDataSet(p.uri, b);
+        t.ok(p.read().includes('lstTest.ItemsSource = Customers;'), 'dataset-unbind',
+            'cs: the form with its own DataView still binds');
+        await unbindControlFromDataSet(p.uri, b);
+        t.ok(p.read().includes('using System.Data;'), 'dataset-unbind',
+            'cs: `System.Data` stays when the form itself still uses DataView');
+        t.ok(!p.read().includes('lstTest.ItemsSource'), 'dataset-unbind', 'cs: while the binding is gone');
+        t.ok(p.read().includes('DataView? Mine'), 'dataset-unbind', 'cs: and the form\'s own code is untouched');
+    }
+
     // --- deleting one of the nine Toolbox controls added 2026-09-19 leaves nothing behind ---
     // Asked for directly: "check that all the added controls remove its code behind when deleted".
     // The delete path sweeps the handlers the XAML wired (removeHandlersFromCodeBehind) and any

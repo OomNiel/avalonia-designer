@@ -1,12 +1,18 @@
 /* T2 — dataSet model + generator: parse/serialize round-trip, unique table/column naming,
  * identifier sanitising, type mappings (cs/vb/xs), and C#/VB/XSD code generation. */
 'use strict';
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const {
   parseDataSet, serializeDataSet, defaultDataSetSpec, newTableSpec, newColumnSpec,
   isValidIdentifier, sanitizeName, csType, vbType, xsType, findTable
 } = require('../../out/dataSetModel.js');
 const { generateCs, generateVb, generateXsd, consolidateRuntimeHelpers, stripRuntimeHelpers }
   = require('../../out/dataSetGenerator.js');
+
+/** A source file's text, for the wiring pins (the same idiom the other layers use). */
+const read = (rel) => fs.readFileSync(path.join(__dirname, '..', '..', rel), 'utf8');
 
 const ADSET = `{
   "version": 1,
@@ -143,6 +149,43 @@ module.exports = async (t) => {
   t.ok(!generateCs(parseDataSet(plainSpec), 'Proj').includes('RuntimeStorage'), 'storage', 'cs: a DataSet that persists nothing omits the helper');
   t.ok(!generateVb(parseDataSet(plainSpec), 'Proj').includes('RuntimeStorage'), 'storage', 'vb: a DataSet that persists nothing omits the helper');
 
+  // --- the header must carry EVERY namespace the body uses (2026-09-27) ---
+  // The storage helper is emitted for any table that persists — including one stored in a DATABASE
+  // FILE that nothing is bound to. Its `Path`/`File`/`Directory` are unqualified, but `using
+  // System.IO;` used to hang off the grid binding, so un-binding a DataGrid through the Items Source
+  // picker (which clears boundTo and regenerates the class) produced a file that could not compile:
+  //   DemoDataSet.cs(41,46): error CS0103: The name 'Path' does not exist in the current context
+  //   (GrumpyDesignerDemo, 2026-09-27 — the table kept "sqlite": { "file": "DemoDataSet.db" }).
+  // So the rule is now "the header imports what the body calls", tested structurally rather than
+  // per-emitter, because the next helper that touches a file may be added anywhere.
+  const commentless = (text) => text.split('\n')
+    .filter((line) => !/^\s*(?:\/\/|\/\/\/|'''|')/.test(line)).join('\n');
+  const usesIoUnqualified = /(?<![\w.])(?:Path|File|Directory|FileStream|StreamReader|StreamWriter)\./;
+  const unboundSqlite = parseDataSet('{ "version": 1, "name": "Imgs", "tables": [ { "name": "Images",' +
+    ' "sqlite": { "file": "Imgs.db" }, "columns": [ { "name": "Id", "type": "Int32", "allowNull": false } ] } ] }');
+  t.ok(!!unboundSqlite.tables[0].sqlite, 'storage', 'the user\'s shape: a database-file table with NOTHING bound to it');
+  for (const [language, text, importLine] of [
+    ['C# un-bound', generateCs(unboundSqlite, 'Proj'), 'using System.IO;'],
+    ['C# with the grid still bound', generateCs(spec, 'Proj'), 'using System.IO;']
+  ]) {
+    t.ok(usesIoUnqualified.test(commentless(text)), 'storage',
+      `${language}: the generated body does call Path/File/Directory unqualified`);
+    t.ok(text.includes(importLine), 'storage',
+      `${language}: so the header imports ${importLine} — the storage helper outlives the binding that used to bring it in`);
+  }
+  // VB was never broken, and the pin says WHY: its storage class spells every call out
+  // (`System.IO.Path.Combine`), so nothing there leans on the Imports. It gets the import anyway, so
+  // the two headers stay mirrors — a twin that differs only by accident is how the last VB bug hid.
+  const vbUnbound = generateVb(unboundSqlite, 'Proj');
+  t.ok(!/(?<![\w.])(?:Path|File|Directory)\./.test(commentless(vbUnbound)), 'storage',
+    'vb: the storage class fully qualifies its IO, so it compiles even without the Imports');
+  t.ok(vbUnbound.includes('System.IO.Path.Combine(System.AppContext.BaseDirectory, name)'), 'storage',
+    'vb: including the legacy beside-the-exe fallback');
+  t.ok(vbUnbound.includes('Imports System.IO'), 'storage',
+    'vb: and the header still names it, member for member with the C# one');
+  t.ok(!generateCs(parseDataSet(plainSpec), 'Proj').includes('using System.IO;'), 'storage',
+    'cs: nothing to persist means no file IO, so the import is left out rather than always added');
+
   // Two DataSets in one project (2026-09-18, OptimisedCSTest: MyDataSet + dsTreeView). The helpers are
   // namespace-level classes, so a second copy is CS0101 (BC30179 in VB) — exactly one file may keep them.
   const sqliteSpec = parseDataSet(ADSET);
@@ -170,4 +213,71 @@ module.exports = async (t) => {
   const dflt = defaultDataSetSpec('Demo');
   t.equal(dflt.name, 'Demo', 'default', 'name sanitized');
   t.ok(dflt.tables.length >= 1, 'default', 'has a starter table');
+
+  // --- the DataSet's own database, now that the app keeps it PER USER (2026-09-27) ---
+  // Two places still assumed the database lived in or beside the project: the "a database with this name
+  // already exists" warning a new DataSet shows, and 'Remove DataSet', which deletes the DataSet's own
+  // auto-created `<DataSet>.db`. Once the app has run, the only copy is in the per-user data folder — so
+  // the warning stayed silent and Remove DataSet left the rows behind (which a NEW DataSet of the same
+  // name would then silently pick up again).
+  {
+    const { existingDefaultDb, defaultDbCopiesFor } = require('../../out/dataSetEditor.js');
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-defaultdb-'));
+    const savedHome = process.env.HOME;
+    const savedXdg = process.env.XDG_DATA_HOME;
+    try {
+      delete process.env.XDG_DATA_HOME;
+      process.env.HOME = temp;
+      const perUser = path.join(temp, '.local', 'share', 'MyApp');
+      fs.mkdirSync(perUser, { recursive: true });
+
+      t.equal(existingDefaultDb(temp, 'Store', 'MyApp'), undefined, 'per-user',
+        'nothing on disk: no clash to warn about');
+      const live = path.join(perUser, 'Store.db');
+      fs.writeFileSync(live, 'rows the running app wrote');
+      t.equal(existingDefaultDb(temp, 'Store', 'MyApp'), live, 'per-user',
+        'a database only in the PER-USER folder is a clash too — this is the one that used to be missed');
+      const beside = path.join(temp, 'Store.db');
+      fs.writeFileSync(beside, 'an older copy');
+      t.equal(existingDefaultDb(temp, 'Store', 'MyApp'), beside, 'per-user',
+        'with both present the project copy is the one named (it is the one a user can see)');
+      t.equal(existingDefaultDb(temp, 'Other', 'MyApp'), undefined, 'per-user',
+        'a different name is a different database');
+
+      // Remove DataSet deletes the DataSet's own default .db wherever it lives, INCLUDING that copy, and
+      // the warning names it properly: relative inside the project, absolute once it is not (the per-user
+      // path is not "…/../../…").
+      const binDir = path.join(temp, 'bin', 'Debug', 'net10.0');
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(path.join(binDir, 'Store.db'), 'a build output copy');
+      const copies = defaultDbCopiesFor(temp, 'Store', 'MyApp');
+      t.equal(copies.length, 3, 'per-user',
+        'Remove DataSet lists EVERY copy of its own database: project, build output, per-user', copies.join(' | '));
+      t.ok(copies.includes(live), 'per-user',
+        'the per-user copy is on the list the modal warning prints — so the user sees what goes');
+      t.equal(copies[0], beside, 'per-user', 'and the project copy is named first');
+      t.equal(defaultDbCopiesFor(temp, 'Other', 'MyApp').length, 0, 'per-user',
+        'while a name with no database anywhere deletes nothing');
+      // A user-browsed / per-table file is never in this list, however it is named.
+      fs.writeFileSync(path.join(temp, 'shared.db'), 'someone else\'s data');
+      t.ok(!defaultDbCopiesFor(temp, 'Store', 'MyApp').includes(path.join(temp, 'shared.db')), 'per-user',
+        'and a database the user pointed at by hand is never auto-deleted');
+
+      const editor = read('src/dataSetEditor.ts');
+      t.ok(/defaultDbCopiesFor\(projectFolder, base, proj \? proj\.assemblyName : ''\)/.test(editor), 'per-user',
+        'Remove DataSet takes that list from the shared function, and passes the app name it needs');
+      t.ok(/!rel\.startsWith\('\.\.'\)/.test(editor), 'per-user',
+        'a copy outside the project is shown by its real path, not as a walk out of the project');
+      t.ok(/runtimeDataFolder\(assemblyName\)/.test(editor), 'per-user',
+        'and both places take the folder from the generator module — one rule, as with the preview');
+      t.ok(!/\.local['"\/]|LOCALAPPDATA/.test(editor), 'per-user',
+        'with no second copy of the rule written by hand');
+    } finally {
+      if (savedXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = savedXdg;
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  }
 };

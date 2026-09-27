@@ -199,7 +199,10 @@ public class ControlFactory
             // The header row carries the phase-2 formatting — bold, shaded — which is also what makes the
             // T5 matrix a real test of it: that project's form is written from THIS snippet and compiled
             // by the real XAML compiler, so a colour or an enum the compiler cannot convert fails there.
-            ["GrumpySheet"] = n => $"<spread:GrumpySheet x:Name=\"{n}\" Width=\"560\" Height=\"320\">\n    <spread:SheetCell Row=\"1\" Column=\"1\" Text=\"Item\" Bold=\"True\" Fill=\"#DDE7F5\"/>\n    <spread:SheetCell Row=\"1\" Column=\"2\" Text=\"Qty\" Bold=\"True\" Fill=\"#DDE7F5\" TextAlign=\"Center\"/>\n    <spread:SheetCell Row=\"2\" Column=\"1\" Text=\"Widget\"/>\n    <spread:SheetCell Row=\"2\" Column=\"2\" Text=\"3\"/>\n</spread:GrumpySheet>"
+            // One header cell now carries a BORDER as well (the other a single bottom edge with its own
+            // colour), because `BorderEdges="All"` is a FLAGS enum: only a real build proves that the
+            // compiler turns that name into the member, in C# and in VB alike.
+            ["GrumpySheet"] = n => $"<spread:GrumpySheet x:Name=\"{n}\" Width=\"560\" Height=\"320\">\n    <spread:SheetCell Row=\"1\" Column=\"1\" Text=\"Item\" Bold=\"True\" Fill=\"#DDE7F5\" BorderEdges=\"All\" BorderThickness=\"1\"/>\n    <spread:SheetCell Row=\"1\" Column=\"2\" Text=\"Qty\" Bold=\"True\" Fill=\"#DDE7F5\" TextAlign=\"Center\" BorderEdges=\"Bottom\" BorderThickness=\"2\" BorderColor=\"#2D7DD2\"/>\n    <spread:SheetCell Row=\"2\" Column=\"1\" Text=\"Widget\"/>\n    <spread:SheetCell Row=\"2\" Column=\"2\" Text=\"3\"/>\n</spread:GrumpySheet>"
         };
     }
 

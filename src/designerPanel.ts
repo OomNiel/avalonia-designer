@@ -32,7 +32,7 @@ import { ensureDataGridAutoGenerateColumns, ensureSqlitePackages, defaultDbFile,
 import { backupProject } from './projectBackup';
 import { publishApp, installApp, packageState, watchForPackage, stopWatchingPackage, planPublish } from './projectPublisher';
 import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTableName } from './dataSetModel';
-import { readDataSetFiles } from './dataSetReader';
+import { readDataSetFiles, resolvePreviewDb, gridPreviewColumns, gridPreviewHeaders } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
 import { bundledComponentSpecs, isStaleBundledCopy, type BundledKind } from './bundledComponents';
 import { printSupportStateFor, addPrintSupport, PrintLanguage } from './printSupport';
@@ -4114,7 +4114,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
      * the FIRST row's image file from the owning table's .db and injects it as a render-only Source
      * (never saved) so the designer shows roughly what the Image will display.
      */
-    private async applyDataImagePreview(xaml: string, projectFolder: string | undefined): Promise<string> {
+    private async applyDataImagePreview(xaml: string, projectFolder: string | undefined,
+        assemblyName: string): Promise<string> {
         if (!projectFolder || !xaml.includes('<Image')) return xaml;
         try {
             for (const f of readDataSetFiles(projectFolder)) {
@@ -4122,16 +4123,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     if (!t.boundTo || t.boundToType !== 'DataGrid' || !t.sqlite || !t.sqlite.file) continue;
                     const imgs = t.boundImages || [];
                     if (!imgs.length) continue;
-                    // Resolve the table's .db like the DataSet designer's preview does.
-                    const file = t.sqlite.file;
-                    const candidates = [file];
-                    if (!path.isAbsolute(file)) {
-                        candidates.unshift(path.join(projectFolder, file));
-                        for (const cfg of ['Debug', 'Release']) {
-                            for (const tfm of ['net8.0', 'net9.0', 'net10.0']) candidates.push(path.join(projectFolder, 'bin', cfg, tfm, file));
-                        }
-                    }
-                    const dbPath = candidates.find((p) => fs.existsSync(p));
+                    // The same resolution the grid preview uses: where the RUNNING app keeps its data.
+                    const dbPath = resolvePreviewDb(projectFolder, t.sqlite.file, assemblyName);
                     if (!dbPath) continue;
                     let firstPath: string | null = null;
                     try {
@@ -4157,35 +4150,40 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         return xaml;
     }
 
-    /** Absolute path to a table's .db if it exists (design-time resolution, mirrors the runtime
-     *  "next to the app" rule by also probing bin/...). */
-    private resolvePreviewDb(projectFolder: string, file: string): string | undefined {
-        const candidates = [file];
-        if (!path.isAbsolute(file)) {
-            candidates.unshift(path.join(projectFolder, file));
-            for (const cfg of ['Debug', 'Release']) {
-                for (const tfm of ['net8.0', 'net9.0', 'net10.0']) candidates.push(path.join(projectFolder, 'bin', cfg, tfm, file));
-            }
-        }
-        return candidates.find((p) => fs.existsSync(p));
-    }
-
-    /** Rows for every DataGrid-bound DataSet table in the project, for the design-time canvas preview. */
+    /** Rows for every DataGrid-bound DataSet table in the project, for the design-time canvas preview.
+     *  The database is found by {@link resolvePreviewDb}, which follows the running app's own rule —
+     *  including the per-user data folder a generated `RuntimeStorage` writes to (an app that has run
+     *  keeps its rows there, not in the project folder). */
     private async designGridData(
         projectFolder: string,
+        assemblyName: string,
         client: { sqliteQuery(file: string, sql: string, limit?: number): Promise<{ columns: string[]; rows: unknown[][] }> }
-    ): Promise<{ control: string; columns: string[]; rows: (string | number | boolean | null)[][] }[]> {
-        const out: { control: string; columns: string[]; rows: (string | number | boolean | null)[][] }[] = [];
+    ): Promise<{ control: string; columns: string[]; headers: string[]; rows: (string | number | boolean | null)[][] }[]> {
+        const out: { control: string; columns: string[]; headers: string[]; rows: (string | number | boolean | null)[][] }[] = [];
         try {
             for (const f of readDataSetFiles(projectFolder)) {
                 for (const t of f.spec.tables) {
                     if (!t.boundTo || t.boundToType !== 'DataGrid' || !t.sqlite || !t.sqlite.file) continue;
-                    const dbPath = this.resolvePreviewDb(projectFolder, t.sqlite.file);
-                    if (!dbPath) continue;
-                    const res = await client.sqliteQuery(dbPath, `SELECT * FROM "${sqliteTableName(t)}" ORDER BY rowid LIMIT 8`, 8);
-                    if (res && res.columns && res.columns.length) {
-                        out.push({ control: t.boundTo, columns: res.columns, rows: res.rows as (string | number | boolean | null)[][] });
+                    // The database the RUNNING app would open. When it is not there yet — the app
+                    // creates it on its first run — the grid still gets its COLUMNS from the schema, so a
+                    // bound grid never looks unbound on the canvas; there are simply no rows to show.
+                    let columns: string[] = [];
+                    let rows: (string | number | boolean | null)[][] = [];
+                    const dbPath = resolvePreviewDb(projectFolder, t.sqlite.file, assemblyName);
+                    if (dbPath) {
+                        const res = await client.sqliteQuery(dbPath, `SELECT * FROM "${sqliteTableName(t)}" ORDER BY rowid LIMIT 8`, 8);
+                        if (res && res.columns && res.columns.length) {
+                            columns = res.columns.map(String);
+                            rows = res.rows as (string | number | boolean | null)[][];
+                        }
                     }
+                    if (!columns.length) columns = gridPreviewColumns(t);
+                    if (!columns.length) continue;                  // nothing to show at all
+                    out.push({
+                        control: t.boundTo, columns, rows,
+                        // The header text the app writes for these columns (`caption || name`).
+                        headers: gridPreviewHeaders(t, columns)
+                    });
                 }
             }
         } catch { /* design-time data is best-effort */ }
@@ -4232,13 +4230,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         // Design-time preview of Data-Image bound Images: inject the first row's image file into the
         // render-only XAML (never saved) so the Image isn't blank in the designer.
         const previewProj = findProject(doc.uri);
-        let grids: { control: string; columns: string[]; rows: (string | number | boolean | null)[][] }[] = [];
+        let grids: { control: string; columns: string[]; headers: string[]; rows: (string | number | boolean | null)[][] }[] = [];
         if (previewProj) {
             const folder = path.dirname(previewProj.projectUri.fsPath);
-            xaml = await this.applyDataImagePreview(xaml, folder);
+            xaml = await this.applyDataImagePreview(xaml, folder, previewProj.assemblyName);
             // Design-time data: feed each DataGrid-bound DataSet table's rows to the host so the grid
             // shows its data on the canvas (read-only) even though code-behind never runs.
-            grids = await this.designGridData(folder, host);
+            grids = await this.designGridData(folder, previewProj.assemblyName, host);
         }
         const size = this.designSize(doc.model.root);
         const proj = findProject(doc.uri);
@@ -7953,6 +7951,16 @@ ${publishButtons}      <span class="sep"></span>
             <button id="sheetTextColor" type="button" class="sheet-well" title="Pick any colour…"></button><button id="sheetTextColorNone" type="button" class="sheet-none" title="Use the sheet's own text colour">&times;</button></label>
           <label class="sheet-tool-field sheet-color" title="The selection's highlight — the × takes it away">Fill
             <button id="sheetFill" type="button" class="sheet-well" title="Pick any colour…"></button><button id="sheetFillNone" type="button" class="sheet-none" title="No highlight — the sheet's own paper colour">&times;</button></label>
+          <label class="sheet-tool-field" title="Draw border lines on the selection — the same spellings the sheet's own right-click menu offers. Outside is the rim of the block, Inside the lines between its cells, and each cell stores the edges that means for it.">Edges
+            <select id="sheetEdges"></select></label>
+          <label class="sheet-tool-field" title="How thick the border lines are. A border needs a width to be drawn at all, so the editor writes one with every set of edges.">Weight
+            <select id="sheetBorderWeight">
+              <option value="1">Thin</option>
+              <option value="2">Medium</option>
+              <option value="3">Thick</option>
+            </select></label>
+          <label class="sheet-tool-field sheet-color" title="The selection's border colour — the × puts it back on the sheet's own grid colour">Line
+            <button id="sheetBorderColor" type="button" class="sheet-well" title="Pick any colour…"></button><button id="sheetBorderColorNone" type="button" class="sheet-none" title="Use the sheet's own grid colour">&times;</button></label>
           <label class="sheet-tool-field" title="How the selection's text is lined up">Align
             <select id="sheetAlign">
               <option value="Auto">Auto</option>

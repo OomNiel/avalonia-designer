@@ -30,6 +30,7 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'sheetGrid', 'sheetGridWrap', 'sheetClear', 'sheetSave', 'sheetCancel',
     'sheetBold', 'sheetItalic', 'sheetSize', 'sheetFamily', 'sheetTextColor', 'sheetTextColorNone',
     'sheetFill', 'sheetFillNone', 'sheetAlign', 'sheetClearFormat',
+    'sheetEdges', 'sheetBorderWeight', 'sheetBorderColor', 'sheetBorderColorNone',
     'handlerModal', 'handlerTitle', 'handlerHint', 'handlerList', 'handlerAdd', 'handlerClose',
     'btnCodeSettings', 'settingsModal', 'settingsHint', 'settingsModes', 'settingsBadges', 'settingsSave', 'settingsCancel',
     // the dialog's own "still arriving" marker (2026-09-17), left of Cancel/Save
@@ -113,7 +114,8 @@ function setup(omit = []) {
         if (id.startsWith('dotGridSpacing') || id === 'dotGridDotSize') return 'input';
         // One colour control everywhere: a swatch BUTTON that shows the colour and opens the picker popup.
         // No native <input type="color"> (the platform places that picker's frame, not us).
-        if (id === 'dotGridColor' || id === 'chColor' || id === 'sheetTextColor' || id === 'sheetFill') return 'button';
+        if (id === 'dotGridColor' || id === 'chColor' || id === 'sheetTextColor' || id === 'sheetFill'
+            || id === 'sheetBorderColor') return 'button';
         if (id === 'gridAddRow' || id === 'gridAddCol' || id === 'gridSave' || id === 'gridCancel'
             || id === 'dotGridSave' || id === 'dotGridCancel'
             || id === 'chModeShort' || id === 'chModeLong'
@@ -132,9 +134,10 @@ function setup(omit = []) {
         if (id === 'sheetRows' || id === 'sheetCols' || id === 'sheetFormula') return 'input';
         if (id === 'sheetGrid') return 'table';
         if (id === 'sheetAddress') return 'span';
-        if (id === 'sheetBold' || id === 'sheetItalic' || id === 'sheetTextColorNone' || id === 'sheetFillNone' || id === 'sheetClearFormat') return 'button';
+        if (id === 'sheetBold' || id === 'sheetItalic' || id === 'sheetTextColorNone' || id === 'sheetFillNone'
+            || id === 'sheetBorderColorNone' || id === 'sheetClearFormat') return 'button';
         if (id === 'sheetSize' || id === 'sheetFamily') return 'input';
-        if (id === 'sheetAlign') return 'select';
+        if (id === 'sheetAlign' || id === 'sheetEdges' || id === 'sheetBorderWeight') return 'select';
         if (id === 'chShortLength' || id === 'chThickness' || id === 'chOpacity') return 'input';
         if (id.startsWith('btn') || id.startsWith('ctx')) return 'button';
         return 'div';
@@ -142,6 +145,16 @@ function setup(omit = []) {
     const make = (id) => {
         const el = window.document.createElement(tagFor(id));
         el.id = id;
+        // The button-map <select>s the extension writes into: sheetAlign's options come from the markup, and
+        // the weight's do too — the harness only has to give the elements something to hold.
+        if (id === 'sheetBorderWeight') {
+            ['1', '2', '3'].forEach((value) => {
+                const option = window.document.createElement('option');
+                option.value = value;
+                option.textContent = value;
+                el.appendChild(option);
+            });
+        }
         // The option rows carry a `.ai-hint` span in the real panel markup and the webview writes into it.
         // Without the child here, `applyKindToOptions` threw a TypeError on *every* state message — jsdom
         // reported it as uncaught and the rest of the state application was quietly skipped, so this whole
@@ -3826,6 +3839,121 @@ module.exports = async (t) => {
             'a cleared cell carries its text and nothing else — no defaults are sent');
         t.equal(cleared.findIndex((cell2) => cell2.row === 2 && cell2.column === 1), -1, 'sheet-format',
             'and a blank cell with no formatting left goes back to being nothing at all');
+
+        // ---- the border bar (2026-09-27) ------------------------------------------------------------
+        // Edges is the same whole-set choice the running sheet's own right-click menu offers, and Outside
+        // and Inside are about the SELECTION: each cell stores the edges the spelling means for IT. The
+        // weight travels WITH the edges, because a cell that names WHERE but not HOW THICK is not a border
+        // at all — the control draws nothing for it, so the editor must never write one.
+        //
+        // Save CLOSES the editor, so the checks along the way read the GRID (which draws the border it was
+        // given) and only the last one reads the payload.
+        const open3 = (cells) => {
+            sh.msg({
+                type: 'properties', name: 'Sheet3',
+                properties: [{ key: 'Cells', label: 'Edit cells…', kind: 'button', value: 'Edit cells…' }],
+                sheetInfo: { rows: 4, columns: 3, cells: cells }
+            });
+            sh.$('propsBody').querySelector('[data-prop-key="Cells"]')
+                .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        };
+        const sides = (r, c) => [
+            cell(r, c).style.borderTop, cell(r, c).style.borderRight,
+            cell(r, c).style.borderBottom, cell(r, c).style.borderLeft
+        ];
+        const select = (r1, c1, r2, c2) => {
+            fire(cell(r1, c1), 'mousedown');
+            fire(cell(r2, c2), 'mouseover');
+            fire(sh.window.document, 'mouseup');
+        };
+
+        open3([]);
+        t.equal(sh.$('sheetEdges').options.length, 8, 'sheet-format',
+            'the Edges list offers the eight spellings the sheet\u2019s own menu does');
+        t.equal(sh.$('sheetEdges').options[0].value, '', 'sheet-format', 'None is the empty value');
+        t.equal(sh.$('sheetEdges').value, '', 'sheet-format', 'and A1 has no border of its own');
+        t.equal(sh.$('sheetBorderWeight').value, '1', 'sheet-format',
+            'the weight shows the default (thin) for a cell with no border');
+        t.ok(sh.$('sheetBorderColor').classList.contains('on-sheet'), 'sheet-format',
+            'and the Line well reads as the sheet\u2019s own grid colour');
+
+        // OUTSIDE on a 2x2 block: each corner cell gets the two edges of the rim that meet there, and the
+        // INNER sides stay untouched — which is what tells Outside apart from All.
+        select(1, 1, 2, 2);
+        sh.$('sheetEdges').value = 'Outside';
+        change(sh.$('sheetEdges'));
+        t.equal(sides(1, 1).filter((s) => s.length > 0).length, 2, 'sheet-format',
+            'Outside draws two sides on the block\u2019s first cell', sides(1, 1).join(' | '));
+        t.equal(sides(1, 2)[0].length > 0 && sides(1, 2)[1].length > 0, true, 'sheet-format',
+            'top and right on the top-right one', sides(1, 2).join(' | '));
+        t.equal(sides(2, 1)[0], '', 'sheet-format',
+            'and the top of a bottom-row cell stays open — the rim, not every edge', sides(2, 1).join(' | '));
+        t.equal(sides(2, 2)[1].length > 0 && sides(2, 2)[2].length > 0, true, 'sheet-format',
+            'bottom and right on the last one', sides(2, 2).join(' | '));
+        // The bar cannot show `Top,Left` as one of its spellings, so it says what the cell IS rather than
+        // quietly showing something else.
+        t.equal(sh.$('sheetEdges').value, 'Top,Left', 'sheet-format',
+            'the Edges list reads back what the active cell actually carries');
+        t.ok([...sh.$('sheetEdges').options].some((o) => o.textContent.indexOf('(as set:') === 0), 'sheet-format',
+            'with an option of its own naming that combination');
+
+        // A single cell's Outside is its own box, and its Inside is nothing at all.
+        select(3, 3, 3, 3);
+        sh.$('sheetEdges').value = 'Outside';
+        change(sh.$('sheetEdges'));
+        t.equal(sides(3, 3).filter((s) => s.length > 0).length, 4, 'sheet-format',
+            'Outside on ONE cell is its own box — a block of one has no rim and no inside');
+        sh.$('sheetEdges').value = 'Inside';
+        change(sh.$('sheetEdges'));
+        t.equal(sides(3, 3).filter((s) => s.length > 0).length, 0, 'sheet-format',
+            'and Inside on one cell takes the border away again');
+
+        // ALL, then the weight, then the line colour — each step the way the control\u2019s own panels do it.
+        select(1, 1, 2, 2);
+        sh.$('sheetEdges').value = 'All';
+        change(sh.$('sheetEdges'));
+        t.equal(sides(1, 1).filter((s) => s.length > 0).length, 4, 'sheet-format', 'All boxes every cell');
+        sh.$('sheetBorderWeight').value = '3';
+        change(sh.$('sheetBorderWeight'));
+        t.ok(sides(1, 1)[0].indexOf('3px') >= 0, 'sheet-format',
+            'the weight reaches the cells that already have a border', sides(1, 1)[0]);
+        t.ok(pickWell('sheetBorderColor', '#003366'), 'sheet-format', 'the Line swatch opens the picker');
+        // jsdom normalises a hex colour to rgb(), which is what the grid's own style reports back.
+        t.ok(sides(1, 1)[0].indexOf('0, 51, 102') >= 0, 'sheet-format',
+            'and the line takes the colour', sides(1, 1)[0]);
+        fire(sh.$('sheetBorderColorNone'), 'click');
+        t.ok(sides(1, 1)[0].indexOf('0, 51, 102') < 0, 'sheet-format',
+            '× puts the line back on the sheet\u2019s own grid colour', sides(1, 1)[0]);
+        // A weight on its own must not invent a border: with the edges cleared it does nothing.
+        sh.$('sheetEdges').value = '';
+        change(sh.$('sheetEdges'));
+        t.equal(sides(1, 1).filter((s) => s.length > 0).length, 0, 'sheet-format',
+            'None takes the border away, colour and all');
+        sh.$('sheetBorderWeight').value = '2';
+        change(sh.$('sheetBorderWeight'));
+        t.equal(sides(1, 1).filter((s) => s.length > 0).length, 0, 'sheet-format',
+            'and a weight alone never invents one');
+        // Clear formatting drops the border with everything else.
+        sh.$('sheetEdges').value = 'All';
+        change(sh.$('sheetEdges'));
+        fire(sh.$('sheetClearFormat'), 'click');
+        t.equal(sides(1, 1).filter((s) => s.length > 0).length, 0, 'sheet-format',
+            'Clear formatting takes the border with it');
+
+        // And the payload: the three attributes, written together, on the cell that asked for them.
+        select(1, 1, 1, 1);
+        sh.$('sheetEdges').value = 'All';
+        change(sh.$('sheetEdges'));
+        sh.$('sheetBorderWeight').value = '3';
+        change(sh.$('sheetBorderWeight'));
+        pickWell('sheetBorderColor', '#003366');
+        const bordered = save();
+        const b1 = at(bordered, 1, 1);
+        t.equal(b1.borderEdges, 'All', 'sheet-format', 'Save carries the edges');
+        t.equal(b1.borderThickness, 3, 'sheet-format', 'the weight');
+        t.equal(b1.borderColor, '#003366', 'sheet-format', 'and the line colour, upper-cased as the writer wants it');
+        t.equal(bordered.findIndex((cell2) => cell2.row === 2 && cell2.column === 2), -1, 'sheet-format',
+            'while a cell that never asked for anything is still not written at all');
     }
 
     t.note('T3 done');

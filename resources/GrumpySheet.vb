@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.13.0
+' BUNDLED-COPY: 0.13.1
 ' GrumpySheet.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpySheet.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb / GrumpyCharts.vb.
 '
@@ -132,6 +132,43 @@ Namespace Global.AvaloniaSpreadsheet
     End Enum
 
     ''' <summary>
+    ''' Which of a cell's four edges carry a border line. <Flags>, because a corner cell can want Top
+    ''' and Left at once, and a boxed one wants all four.
+    '''
+    ''' A cell keeps only this, ONE thickness and ONE colour (see SheetCell.BorderEdges): four different
+    ''' line weights round one cell is not what this control is for, and a per-edge weight would
+    ''' quadruple the attributes a cell can carry for no picture anyone asked for.
+    '''
+    ''' The right-click menu also offers the whole-set spellings a spreadsheet user expects — All,
+    ''' Outside and Inside — but those are about a SELECTION, not a cell: Outside is the rim of the
+    ''' block and Inside is the lines between the cells in it, so the menu works out what that means for
+    ''' each cell and stores the answer here. On a single cell All and Outside are the same four edges,
+    ''' and Inside is None — a single cell has no inside.
+    ''' </summary>
+    <Flags>
+    Public Enum SheetBorderEdges
+
+        ''' <summary>No border on any edge — what a cell starts with.</summary>
+        None = 0
+
+        ''' <summary>A line along the cell's top edge.</summary>
+        Top = 1
+
+        ''' <summary>A line down the cell's right edge.</summary>
+        Right = 2
+
+        ''' <summary>A line along the cell's bottom edge.</summary>
+        Bottom = 4
+
+        ''' <summary>A line down the cell's left edge.</summary>
+        Left = 8
+
+        ''' <summary>All four edges: a box round the cell.</summary>
+        All = Top Or Right Or Bottom Or Left
+
+    End Enum
+
+    ''' <summary>
     ''' One cell of a <see cref="GrumpySheet"/>: where it is, what it holds, and how it is FORMATTED.
     ''' Cells are written as direct children of the sheet, in the order they should be read — order does
     ''' not matter for cells that do not overlap, because a later cell with the same address replaces an
@@ -173,6 +210,21 @@ Namespace Global.AvaloniaSpreadsheet
 
         ''' <summary>How the text is lined up. Auto = by content (numbers right, text left).</summary>
         Public Property TextAlign As SheetAlign = SheetAlign.Auto
+
+        ''' <summary>Which of the cell's edges are drawn with a border line. None (the default) means no
+        ''' border at all, which is what keeps a cell that was never boxed a short element.</summary>
+        Public Property BorderEdges As SheetBorderEdges = SheetBorderEdges.None
+
+        ''' <summary>How thick the cell's border lines are, in pixels — the same on every edge the cell
+        ''' has. 0 (the default) means the SHEET'S OWN line: one pixel, the width of the grid line itself,
+        ''' so a cell that says where its border goes but not how thick gets a line like every other line on
+        ''' the sheet rather than nothing at all. BorderEdges is what decides whether there is a border; the
+        ''' width only decides how heavy it is.</summary>
+        Public Property BorderThickness As Double
+
+        ''' <summary>The border's colour. Null means the sheet's own GridColor, so a border that was asked
+        ''' for but not coloured reads as the grid it sits on rather than vanishing.</summary>
+        Public Property BorderColor As Nullable(Of Color)
 
     End Class
 
@@ -1374,8 +1426,12 @@ Namespace Global.AvaloniaSpreadsheet
                         End If
 
                         Dim text As String = If(cell.Text, String.Empty)
-                        If text.Length = 0 AndAlso Not cell.Fill.HasValue Then
-                            Continue For            ' nothing to say and nothing to show
+                        If text.Length = 0 AndAlso Not cell.Fill.HasValue AndAlso
+                           cell.BorderEdges = SheetBorderEdges.None Then
+                            ' Nothing to say and nothing to show: no text, no highlight and no border. A
+                            ' BORDERED blank cell is the one that must not be dropped here — an empty box is
+                            ' exactly what someone draws a border FOR.
+                            Continue For
                         End If
 
                         written += 1
@@ -1424,7 +1480,10 @@ Namespace Global.AvaloniaSpreadsheet
 
                 ' Inline strings, not a shared table: the type attribute is what tells every reader these
                 ' characters are a STRING, and it is the one thing a hand-written cell part gets wrong.
-                Return "<c r=""" & address & """" & s & " t=""inlineStr""><is><t>" & Text(text) & "</t></is></c>"
+                ' XmlText, not Text: VB is case-INSENSITIVE, so a call to `Text(text)` binds to the String
+                ' PARAMETER `text` and indexes it (compiles clean, throws at run time) — the escaper has a
+                ' different name here for exactly that reason.
+                Return "<c r=""" & address & """" & s & " t=""inlineStr""><is><t>" & XmlText(text) & "</t></is></c>"
             End Function
 
             ''' <summary>The value text a cell draws as a number, as a double. Only ever called for text that
@@ -1481,18 +1540,24 @@ Namespace Global.AvaloniaSpreadsheet
             ''' share one entry — a 10 000-cell sheet of plain numbers still writes three entries.
             ''' </summary>
             Private NotInheritable Class StyleTable
+                Private Const EmptyBorder As String =
+                    "<border><left /><right /><top /><bottom /><diagonal /></border>"
+
                 Private ReadOnly _sheet As GrumpySheet
                 Private ReadOnly _fonts As New List(Of String)()
                 Private ReadOnly _fills As New List(Of String)()
+                Private ReadOnly _borders As New List(Of String)()
                 Private ReadOnly _formats As New List(Of String)()
                 Private ReadOnly _fontAt As New Dictionary(Of String, Integer)(StringComparer.Ordinal)
                 Private ReadOnly _fillAt As New Dictionary(Of String, Integer)(StringComparer.Ordinal)
+                Private ReadOnly _borderAt As New Dictionary(Of String, Integer)(StringComparer.Ordinal)
                 Private ReadOnly _formatAt As New Dictionary(Of String, Integer)(StringComparer.Ordinal)
 
                 Friend Sub New(sheet As GrumpySheet)
                     _sheet = sheet
                     _fills.Add("<fill><patternFill /></fill>")                          ' 0: no fill
                     _fills.Add("<fill><patternFill patternType=""gray125"" /></fill>")  ' 1: Excel's own
+                    _borders.Add(EmptyBorder)                                           ' 0: no border
                     _fonts.Add(FontXml(False, False, sheet.FontSize, If(sheet.FontFamilyName, String.Empty), Nothing))
                     _formats.Add("<xf numFmtId=""0"" fontId=""0"" fillId=""0"" borderId=""0"" xfId=""0"" />")
                 End Sub
@@ -1518,18 +1583,72 @@ Namespace Global.AvaloniaSpreadsheet
                             """ /><bgColor indexed=""64"" /></patternFill></fill>")
                     End If
 
+                    Dim borderLook As String = BorderKey(cell)
+                    Dim borderId As Integer = 0
+                    If borderLook.Length > 0 Then
+                        borderId = Intern(_borders, _borderAt, borderLook, BorderXml(cell))
+                    End If
+
                     Dim align As String = If(cell.TextAlign = SheetAlign.Left, "left",
                         If(cell.TextAlign = SheetAlign.Center, "center",
                         If(cell.TextAlign = SheetAlign.Right, "right", String.Empty)))
-                    If font = 0 AndAlso fillId = 0 AndAlso align.Length = 0 Then
+                    If font = 0 AndAlso fillId = 0 AndAlso borderId = 0 AndAlso align.Length = 0 Then
                         Return 0
                     End If
 
-                    Return Intern(_formats, _formatAt, font & "|" & fillId & "|" & align,
+                    Return Intern(_formats, _formatAt, font & "|" & fillId & "|" & borderId & "|" & align,
                         "<xf numFmtId=""0"" fontId=""" & font & """ fillId=""" & fillId &
-                        """ borderId=""0"" xfId=""0"" applyFont=""1"" applyFill=""1""" &
+                        """ borderId=""" & borderId & """ xfId=""0"" applyFont=""1"" applyFill=""1""" &
+                        If(borderId > 0, " applyBorder=""1""", String.Empty) &
                         If(align.Length = 0, " />",
                             " applyAlignment=""1""><alignment horizontal=""" & align & """ /></xf>"))
+                End Function
+
+                ''' <summary>The OOXML line style that stands for a width in pixels. Excel has three that mean
+                ''' anything at 100 % zoom — thin, medium, thick — and they are what anyone drawing these
+                ''' lines by hand picks. Everything below medium is thin, which is also what a cell's width
+                ''' of 0 means (the sheet's own one-pixel line).</summary>
+                Private Shared Function EdgeStyle(thickness As Double) As String
+                    If thickness >= 3 Then
+                        Return "thick"
+                    End If
+
+                    Return If(thickness >= 2, "medium", "thin")
+                End Function
+
+                ''' <summary>The borders table's key for this cell, or empty when it asked for none — which
+                ''' is what keeps a plain cell out of the table AND off the xf's borderId.</summary>
+                Private Function BorderKey(cell As SheetCell) As String
+                    If cell.BorderEdges = SheetBorderEdges.None Then
+                        Return String.Empty
+                    End If
+
+                    Dim ink As Color = If(cell.BorderColor.HasValue, cell.BorderColor.Value, _sheet.GridColor)
+                    Return EdgeStyle(cell.BorderThickness) & "|" & Rgb(ink) & "|" & CInt(cell.BorderEdges)
+                End Function
+
+                ''' <summary>One cell's border, in OOXML's own order (left, right, top, bottom, diagonal) —
+                ''' an edge the cell did not ask for is written as an empty element, which is how a border
+                ''' says which of its sides are bare.</summary>
+                Private Function BorderXml(cell As SheetCell) As String
+                    Dim weight As String = EdgeStyle(cell.BorderThickness)
+                    Dim ink As String = Rgb(If(cell.BorderColor.HasValue, cell.BorderColor.Value, _sheet.GridColor))
+                    Dim edges As SheetBorderEdges = cell.BorderEdges
+                    Return "<border>" &
+                           EdgeXml("left", (edges And SheetBorderEdges.Left) <> 0, weight, ink) &
+                           EdgeXml("right", (edges And SheetBorderEdges.Right) <> 0, weight, ink) &
+                           EdgeXml("top", (edges And SheetBorderEdges.Top) <> 0, weight, ink) &
+                           EdgeXml("bottom", (edges And SheetBorderEdges.Bottom) <> 0, weight, ink) &
+                           "<diagonal /></border>"
+                End Function
+
+                Private Shared Function EdgeXml(side As String, wanted As Boolean, weight As String,
+                    ink As String) As String
+                    If Not wanted Then
+                        Return "<" & side & " />"
+                    End If
+
+                    Return "<" & side & " style=""" & weight & """><color rgb=""" & ink & """ /></" & side & ">"
                 End Function
 
                 ''' <summary>The whole styles part, with each table's count beside it (Excel ignores the counts
@@ -1539,7 +1658,7 @@ Namespace Global.AvaloniaSpreadsheet
                            "<styleSheet xmlns=""" & Main & """>" &
                            "<fonts count=""" & _fonts.Count & """>" & String.Concat(_fonts) & "</fonts>" &
                            "<fills count=""" & _fills.Count & """>" & String.Concat(_fills) & "</fills>" &
-                           "<borders count=""1""><border><left /><right /><top /><bottom /><diagonal /></border></borders>" &
+                           "<borders count=""" & _borders.Count & """>" & String.Concat(_borders) & "</borders>" &
                            "<cellStyleXfs count=""1""><xf numFmtId=""0"" fontId=""0"" fillId=""0"" borderId=""0"" /></cellStyleXfs>" &
                            "<cellXfs count=""" & _formats.Count & """>" & String.Concat(_formats) & "</cellXfs>" &
                            "<cellStyles count=""1""><cellStyle name=""Normal"" xfId=""0"" builtinId=""0"" /></cellStyles>" &
@@ -1666,6 +1785,13 @@ Namespace Global.AvaloniaSpreadsheet
                             Dim built2 As SheetCell = CellFrom(cell, pool, formatTable)
                             If built2 Is Nothing Then
                                 Continue For
+                            End If
+
+                            ' A border colour that IS the sheet's own grid colour comes back as no colour at
+                            ' all: a workbook cannot tell "the grid colour" from "no colour chosen", and a
+                            ' form that grew an attribute per reloaded cell would be longer every time.
+                            If built2.BorderColor.HasValue AndAlso built2.BorderColor.Value = sheet.GridColor Then
+                                built2.BorderColor = Nothing
                             End If
 
                             lastRow = Math.Max(lastRow, built2.Row)
@@ -1887,8 +2013,9 @@ Namespace Global.AvaloniaSpreadsheet
                 End If
 
                 Dim format As CellFormat = If(styleAt >= 0 AndAlso styleAt < formatTable.Count, formatTable(styleAt), Nothing)
-                If text.Length = 0 AndAlso (format Is Nothing OrElse Not format.Fill.HasValue) Then
-                    Return Nothing                       ' neither a value nor a highlight: nothing to carry
+                If text.Length = 0 AndAlso (format Is Nothing OrElse
+                    (Not format.Fill.HasValue AndAlso format.Edges = SheetBorderEdges.None)) Then
+                    Return Nothing                       ' neither a value, a highlight nor a border: nothing
                 End If
 
                 Dim built As New SheetCell()
@@ -1903,6 +2030,9 @@ Namespace Global.AvaloniaSpreadsheet
                     built.TextColor = format.Text
                     built.Fill = format.Fill
                     built.TextAlign = format.Align
+                    built.BorderEdges = format.Edges
+                    built.BorderThickness = format.EdgeThickness
+                    built.BorderColor = format.EdgeColour
                 End If
 
                 Return built
@@ -1963,6 +2093,9 @@ Namespace Global.AvaloniaSpreadsheet
                 Friend Text As Nullable(Of Color)
                 Friend Fill As Nullable(Of Color)
                 Friend Align As SheetAlign = SheetAlign.Auto
+                Friend Edges As SheetBorderEdges = SheetBorderEdges.None
+                Friend EdgeThickness As Double
+                Friend EdgeColour As Nullable(Of Color)
             End Class
 
             ''' <summary>The styles part, as a lookup from a cell's `s` index to what it means.</summary>
@@ -1975,6 +2108,7 @@ Namespace Global.AvaloniaSpreadsheet
 
                 Dim fonts As New List(Of XElement)()
                 Dim fills As New List(Of XElement)()
+                Dim borders As New List(Of XElement)()
                 Dim xfs As New List(Of XElement)()
                 For Each element As XElement In styles.Descendants()
                     If element.Name.LocalName = "font" AndAlso element.Parent IsNot Nothing AndAlso
@@ -1983,6 +2117,9 @@ Namespace Global.AvaloniaSpreadsheet
                     ElseIf element.Name.LocalName = "fill" AndAlso element.Parent IsNot Nothing AndAlso
                            element.Parent.Name.LocalName = "fills" Then
                         fills.Add(element)
+                    ElseIf element.Name.LocalName = "border" AndAlso element.Parent IsNot Nothing AndAlso
+                           element.Parent.Name.LocalName = "borders" Then
+                        borders.Add(element)
                     ElseIf element.Name.LocalName = "xf" AndAlso element.Parent IsNot Nothing AndAlso
                            element.Parent.Name.LocalName = "cellXfs" Then
                         xfs.Add(element)
@@ -2019,6 +2156,36 @@ Namespace Global.AvaloniaSpreadsheet
                         Next
                     End If
 
+                    ' The border: which sides this format lines, how heavy, and in what colour. A side is
+                    ' bordered when its element names a style (an empty element, or style="none", is a bare
+                    ' side) — that is the whole of OOXML's answer to the same question this control asks.
+                    Dim border As XElement = Nth(borders, Attr(xf, "borderId"))
+                    If border IsNot Nothing Then
+                        For Each child As XElement In border.Elements()
+                            Dim side As String = child.Name.LocalName
+                            Dim picked As SheetBorderEdges = If(side = "left", SheetBorderEdges.Left,
+                                If(side = "right", SheetBorderEdges.Right,
+                                If(side = "top", SheetBorderEdges.Top,
+                                If(side = "bottom", SheetBorderEdges.Bottom, SheetBorderEdges.None))))
+                            Dim weight As String = Attr(child, "style")
+                            If picked = SheetBorderEdges.None OrElse weight Is Nothing OrElse weight = "none" Then
+                                Continue For
+                            End If
+
+                            format.Edges = format.Edges Or picked
+                            Dim edges As Double = StyleThickness(weight)
+                            If edges > format.EdgeThickness Then
+                                format.EdgeThickness = edges
+                            End If
+
+                            For Each ink As XElement In child.Elements()
+                                If ink.Name.LocalName = "color" AndAlso Not format.EdgeColour.HasValue Then
+                                    format.EdgeColour = Colour(ink)
+                                End If
+                            Next
+                        Next
+                    End If
+
                     For Each child As XElement In xf.Descendants()
                         If child.Name.LocalName <> "alignment" Then
                             Continue For
@@ -2043,6 +2210,18 @@ Namespace Global.AvaloniaSpreadsheet
                 End If
 
                 Return If(slot >= 0 AndAlso slot < list.Count, list(slot), Nothing)
+            End Function
+
+            ''' <summary>An OOXML line style as a width in pixels — the inverse of what the writer chooses.
+            ''' Everything Excel can draw that this control cannot is read as a one-pixel line, which keeps
+            ''' the borrowed border visible rather than dropping it.</summary>
+            Private Shared Function StyleThickness(weight As String) As Double
+                Dim name As String = weight.Trim().ToLowerInvariant()
+                If name = "thick" OrElse name = "double" Then
+                    Return 3
+                End If
+
+                Return If(name = "medium" OrElse name = "mediumdashed", 2, 1)
             End Function
 
             ''' <summary>Does this element have a child of that name? (A loop, not LINQ: a bundled file must
@@ -2148,6 +2327,28 @@ Namespace Global.AvaloniaSpreadsheet
         Private _menuX As Double
         Private _menuY As Double
         Private _menuHot As Integer = -1
+
+        ' Where the panel CHAIN opened — the right-click point. A line of the menu can open another panel (the
+        ' palette is not the picker, and Borders is three choices), and every panel updates this, so a chain
+        ' stacks in one place the user is already looking at instead of walking across the sheet.
+        Private _chainX As Double
+        Private _chainY As Double
+
+        ' What the colour and border panels are working with. The border choices are REMEMBERED on the sheet
+        ' because each line applies on its own — choosing a thickness after choosing the edges has to know
+        ' which thickness the edges were drawn with, and the next edge choice uses the last colour.
+        Private _borderChoice As BorderChoice = BorderChoice.None
+        Private _borderThickness As Double = BorderThin
+        Private _borderColour As Nullable(Of Color)
+
+        ''' <summary>The colour the picker is mixing, and the two lines that have to follow it.</summary>
+        Private _pick As Color = Colors.Black
+        Private _pickPreview As SheetMenuItem
+        Private _pickUse As SheetMenuItem
+
+        ''' <summary>The slider being dragged, or -1. The pointer is captured for it, so the knob follows
+        ''' past the edge of the panel.</summary>
+        Private _slider As Integer = -1
 
         ''' <summary>Where in the editor text the '=' that opened the macro list sits, or -1.</summary>
         Private _macroStart As Integer = -1
@@ -2915,6 +3116,42 @@ Namespace Global.AvaloniaSpreadsheet
             InvalidateVisual()
         End Sub
 
+        ''' <summary>
+        ''' Sets one cell's border: which of its edges are lined, how thick, and in what colour. The whole
+        ''' border goes in one call because a cell keeps one thickness and one colour for every edge it has
+        ''' (SheetCell.BorderEdges).
+        '''
+        ''' edges = None is what TURNS THE BORDER OFF, colour and width included: leaving either behind would
+        ''' mean a cell that looks plain remembering a border the moment edges came back, which is not what
+        ''' "no border" means to anyone. A thickness of 0 or less is NOT "no border" — it is the sheet's own
+        ''' one-pixel line, so the edges alone are enough to ask for one.
+        '''
+        ''' A thickness of 1 px drawn exactly on the cell's edge covers the 1 px grid line under it, so a
+        ''' default-coloured thin border looks like the grid — that is the point of BorderColor's null.
+        ''' </summary>
+        Public Sub SetBorder(row As Integer, column As Integer, edges As SheetBorderEdges,
+                             thickness As Double, color As Nullable(Of Color))
+            Dim cell As SheetCell = EnsureCell(row, column)
+            If cell Is Nothing Then
+                Return
+            End If
+
+            If edges = SheetBorderEdges.None Then
+                thickness = 0
+                color = Nothing
+            End If
+
+            If cell.BorderEdges = edges AndAlso Math.Abs(cell.BorderThickness - thickness) < 0.001 AndAlso
+                cell.BorderColor = color Then
+                Return
+            End If
+
+            cell.BorderEdges = edges
+            cell.BorderThickness = thickness
+            cell.BorderColor = color
+            InvalidateVisual()
+        End Sub
+
         ''' <summary>Drops every formatting decision from one cell, leaving what it holds.</summary>
         Public Sub ClearFormatting(row As Integer, column As Integer)
             Dim cell As SheetCell = FindCell(row, column)
@@ -2929,6 +3166,9 @@ Namespace Global.AvaloniaSpreadsheet
             cell.TextColor = Nothing
             cell.Fill = Nothing
             cell.TextAlign = SheetAlign.Auto
+            cell.BorderEdges = SheetBorderEdges.None
+            cell.BorderThickness = 0
+            cell.BorderColor = Nothing
             InvalidateVisual()
         End Sub
 
@@ -3779,6 +4019,27 @@ Namespace Global.AvaloniaSpreadsheet
 
             ''' <summary>What choosing it does.</summary>
             Public Run As Action
+
+            ''' <summary>The colours on this line, drawn as a row of squares — empty for an ordinary line,
+            ''' whose label is its text. A swatch row has no label: the squares ARE the line.</summary>
+            Public Swatches As New List(Of Color)()
+
+            ''' <summary>Which swatch of the row is the current one (-1 for none), drawn with a ring round it
+            ''' so a panel says what the selection already is.</summary>
+            Public TickedSwatch As Integer = -1
+
+            ''' <summary>What picking a swatch of this row does — it is handed the colour.</summary>
+            Public SwatchRun As Action(Of Color)
+
+            ''' <summary>Draw this line as a SOLID BAR of the colour instead of a label — the colour picker's
+            ''' preview, which has to be big enough to judge.</summary>
+            Public Preview As Nullable(Of Color)
+
+            ''' <summary>This line is a SLIDER for one channel of the colour being mixed (0 = red, 1 = green,
+            ''' 2 = blue), or -1 for a line that is not a slider at all. A slider is dragged like a
+            ''' scrollbar's thumb — the pattern this control already has — and Enter must not throw the panel
+            ''' away, so it is not a command.</summary>
+            Public Channel As Integer = -1
         End Class
 
         ''' <summary>The ink a warning line is drawn in — the one colour in this file that is deliberately NOT
@@ -3786,14 +4047,16 @@ Namespace Global.AvaloniaSpreadsheet
         Private Shared ReadOnly WarningColor As Color = Color.Parse("#B3261E")
 
         ''' <summary>Which of the things a menu can be: the right-click menu, a toolbar button's menu, the
-        ''' macro list a '=' opens, the print-area warning, or the page question. They share the drawing, the
-        ''' hover and the keys; the kind is what tells Tab (and the painters) which one is showing.</summary>
+        ''' macro list a '=' opens, the print-area warning, the page question, or one of the colour and
+        ''' border PANELS a right-click line leads to. They share the drawing, the hover and the keys; the
+        ''' kind is what tells Tab (and the painters) which one is showing.</summary>
         Private Enum MenuKind
             Context
             Toolbar
             Macro
             Warning
             Setup
+            Panel
         End Enum
 
         ''' <summary>How wide the menu is, and how tall one of its lines is.</summary>
@@ -3801,6 +4064,23 @@ Namespace Global.AvaloniaSpreadsheet
         Private Const MenuItemHeight As Double = 24.0
         Private Const MenuSeparatorHeight As Double = 9.0
         Private Const MenuPad As Double = 5.0
+
+        ''' <summary>A swatch: a 16 px square with 4 px between them, eight to a line — 156 px of a 200 px
+        ''' panel, so the grid is the same whatever the panel is over.</summary>
+        Private Const MenuSwatchSize As Double = 16.0
+        Private Const MenuSwatchGap As Double = 4.0
+        Private Const MenuSwatchLeft As Double = 9.0
+        Private Const MenuSwatchPerRow As Integer = 8
+
+        ''' <summary>The three line weights the borders panel offers, in pixels. 1 px lands exactly on the grid
+        ''' line and covers it; 2 and 3 read as a line someone chose.</summary>
+        Private Const BorderThin As Double = 1.0
+        Private Const BorderMedium As Double = 2.0
+        Private Const BorderThick As Double = 3.0
+
+        ''' <summary>The width of the sheet's OWN line, which is what a cell's 0 means: one pixel, the same
+        ''' width the grid itself is drawn at.</summary>
+        Private Const BorderOwnThickness As Double = 1.0
 
         ''' <summary>The macro list is wider than a command menu: it draws each function's syntax as well as
         ''' its name, and a name with no room for its hint is just a name.</summary>
@@ -3810,6 +4090,13 @@ Namespace Global.AvaloniaSpreadsheet
         ''' the SELECTION — a whole column lines up in one gesture, which is the point of having it.</summary>
         Private Function BuildMenuItems() As List(Of SheetMenuItem)
             Dim align As Nullable(Of SheetAlign) = SelectionTextAlign()
+            ' SelectionFlag answers Nothing when the selection holds no CELL ELEMENT at all — a blank cell, or
+            ' a whole block of them. In VB `Nothing = True` is Nothing, and assigning THAT to a plain Boolean
+            ' is not a conversion but a THROW (InvalidOperationException: "Nullable object must have a value"),
+            ' so right-clicking a blank cell crashed the menu outright. The C# twin's `== true` is false
+            ' there, which is why only this twin ever had it: read them once, and keep the Nothing out.
+            Dim allBold As Boolean = SelectionFlag(True).GetValueOrDefault()
+            Dim allItalics As Boolean = SelectionFlag(False).GetValueOrDefault()
             Dim items As New List(Of SheetMenuItem)()
             items.Add(AlignItem("Align left", SheetAlign.Left, align))
             items.Add(AlignItem("Align centre", SheetAlign.Center, align))
@@ -3818,12 +4105,27 @@ Namespace Global.AvaloniaSpreadsheet
             items.Add(New SheetMenuItem With {.IsSeparator = True})
             items.Add(New SheetMenuItem With {
                 .Label = "Bold",
-                .Ticked = SelectionFlag(True) = True,
+                .Ticked = allBold,
                 .Run = AddressOf ToggleBoldSelection})
             items.Add(New SheetMenuItem With {
                 .Label = "Italics",
-                .Ticked = SelectionFlag(False) = True,
+                .Ticked = allItalics,
                 .Run = AddressOf ToggleItalicSelection})
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(New SheetMenuItem With {
+                .Label = "Fill colour…",
+                .Hint = "the cell's highlight",
+                .Run = Sub() OpenColourPanel("Fill colour", "No fill", "the sheet's own paper",
+                    SelectionColour(Function(c As SheetCell) c.Fill), CellBackColor, AddressOf ChooseFillColour)})
+            items.Add(New SheetMenuItem With {
+                .Label = "Text colour…",
+                .Hint = "the ink the text is drawn in",
+                .Run = Sub() OpenColourPanel("Text colour", "Automatic", "the sheet's own text colour",
+                    SelectionColour(Function(c As SheetCell) c.TextColor), TextColor, AddressOf ChooseTextColour)})
+            items.Add(New SheetMenuItem With {
+                .Label = "Borders…",
+                .Hint = "lines round the cells",
+                .Run = AddressOf OpenBordersPanel})
             items.Add(New SheetMenuItem With {.IsSeparator = True})
             items.Add(New SheetMenuItem With {.Label = "Clear formatting", .Run = AddressOf ClearSelectionFormatting})
             items.Add(New SheetMenuItem With {.Label = "Clear cells", .Run = AddressOf ClearSelection})
@@ -3957,6 +4259,584 @@ Namespace Global.AvaloniaSpreadsheet
             Return items
         End Function
 
+        ' ---------------------------------------------------------------------------------------------
+        ' THE COLOUR AND BORDER PANELS.
+        '
+        ' A cell's look is chosen in STEPS, because a menu here is a flat list of lines and a Control has no
+        ' dialog to put OK and Cancel in. The precedent is the print-area warning that leads to the page
+        ' question: one panel opens the next. So Fill colour… offers the palette, one of its lines opens the
+        ' picker for a colour the palette does not hold, and Borders… is a hub whose lines open the edges,
+        ' the single edges and the thickness.
+        '
+        ' Every pick APPLIES at once, exactly like Bold and the alignment lines — there is no OK to press,
+        ' which is why the picker has a Use line of its own. And every panel acts on the SELECTION.
+        ' ---------------------------------------------------------------------------------------------
+
+        ''' <summary>The whole-set border spellings the hub offers, in the order a user thinks of them. NOT the
+        ''' same thing as SheetBorderEdges, which is what ONE CELL stores: Outside and Inside are about the
+        ''' BLOCK, so what they mean is worked out per cell as the choice is applied — Outside is the rim of the
+        ''' block and Inside is the lines between the cells in it. On a single cell All and Outside are the same
+        ''' four edges, and Inside is None: one cell has no inside.</summary>
+        Private Enum BorderChoice
+            All
+            Outside
+            Inside
+            Top
+            Bottom
+            Left
+            Right
+            None
+        End Enum
+
+        ''' <summary>
+        ''' The palette the colour panels offer: five lines of eight — greys, the hues at full strength, the
+        ''' same hues deep, then two lines of tints for a highlight that has to stay readable. Forty is enough
+        ''' to work in and few enough to read as squares with no hover preview, and anything it does not hold is
+        ''' what the picker is for.
+        ''' </summary>
+        Private Shared ReadOnly MenuPaletteText As String() = {
+            "#FFFFFF", "#F2F2F2", "#D9D9D9", "#BFBFBF", "#808080", "#404040", "#262626", "#000000",
+            "#FF0000", "#FF8000", "#FFC000", "#FFFF00", "#92D050", "#00B050", "#00B0F0", "#0070C0",
+            "#C00000", "#C55A11", "#BF8F00", "#548235", "#2E75B6", "#1F4E79", "#7030A0", "#5B2C6F",
+            "#FFCCCC", "#FFE5CC", "#FFF2CC", "#FFFFCC", "#E2EFDA", "#DDEBF7", "#E4DFEC", "#EDEDED",
+            "#FF9999", "#FFCC99", "#FFE699", "#FFFF99", "#C6E0B4", "#BDD7EE", "#D9C2E9", "#E7E6E6"
+        }
+
+        Private Shared ReadOnly MenuPalette As Color() = BuildMenuPalette()
+
+        Private Shared Function BuildMenuPalette() As Color()
+            Dim colours As Color() = New Color(MenuPaletteText.Length - 1) {}
+            For i As Integer = 0 To colours.Length - 1
+                colours(i) = Color.Parse(MenuPaletteText(i))
+            Next
+
+            Return colours
+        End Function
+
+        ''' <summary>The hex a colour is written as in the menu — the picker's preview and its Use line, so the
+        ''' number the user reads is the number they are about to accept.</summary>
+        Private Shared Function HexOf(colour As Color) As String
+            Return "#" & colour.R.ToString("X2", CultureInfo.InvariantCulture) &
+                colour.G.ToString("X2", CultureInfo.InvariantCulture) &
+                colour.B.ToString("X2", CultureInfo.InvariantCulture)
+        End Function
+
+        ''' <summary>Ink that stays readable ON a colour: black on a light one, white on a dark one.</summary>
+        Private Shared Function ContrastInk(colour As Color) As IBrush
+            Dim luminance As Double = (0.299 * colour.R + 0.587 * colour.G + 0.114 * colour.B) / 255.0
+            Return New SolidColorBrush(If(luminance > 0.6, Colors.Black, Colors.White))
+        End Function
+
+        ''' <summary>
+        ''' Walks the selected cells and hands each one over. A BOUNDED selection — a block of cells — has
+        ''' cells CREATED where it has none, exactly as AlignSelection does, so "select a block, right-click,
+        ''' pick a highlight, then type" does the obvious thing. A whole column, a whole row, or the whole
+        ''' sheet only gets the cells that ALREADY exist: creating them would write an empty element per row
+        ''' into the form for a highlight with nothing in it.
+        ''' </summary>
+        Private Sub ForEachSelectedCell(apply As Action(Of Integer, Integer, SheetCell))
+            Dim bounded As Boolean = Not _wholeColumns AndAlso Not _wholeRows AndAlso Not _selectAll
+            Dim first As Integer = SelectionFirstRow()
+            Dim last As Integer = SelectionLastRow()
+            Dim left As Integer = SelectionFirstColumn()
+            Dim right As Integer = SelectionLastColumn()
+            For row As Integer = first To last
+                For column As Integer = left To right
+                    Dim cell As SheetCell = If(bounded, EnsureCell(row, column), FindCell(row, column))
+                    If cell Is Nothing Then
+                        Continue For
+                    End If
+
+                    apply(row, column, cell)
+                Next
+            Next
+        End Sub
+
+        ''' <summary>
+        ''' The colour every selected cell already has, or null when they disagree or none has one — what a
+        ''' panel ticks and what the picker starts from. Cells that do not exist are ignored, for the reason in
+        ''' SelectionTextAlign.
+        ''' </summary>
+        Private Function SelectionColour(colourOf As Func(Of SheetCell, Nullable(Of Color))) As Nullable(Of Color)
+            Dim first As Integer = SelectionFirstRow()
+            Dim last As Integer = SelectionLastRow()
+            Dim left As Integer = SelectionFirstColumn()
+            Dim right As Integer = SelectionLastColumn()
+            Dim agreed As Nullable(Of Color) = Nothing
+            Dim seen As Boolean = False
+            For row As Integer = first To last
+                For column As Integer = left To right
+                    Dim cell As SheetCell = FindCell(row, column)
+                    If cell Is Nothing Then
+                        Continue For
+                    End If
+
+                    Dim colour As Nullable(Of Color) = colourOf(cell)
+                    If Not seen Then
+                        agreed = colour
+                        seen = True
+                    ElseIf agreed <> colour Then
+                        Return Nothing
+                    End If
+                Next
+            Next
+
+            Return agreed
+        End Function
+
+        ''' <summary>Which of ONE cell's edges a whole-set choice means. See BorderChoice.</summary>
+        Private Shared Function EdgesFor(choice As BorderChoice, row As Integer, column As Integer,
+                                         firstRow As Integer, lastRow As Integer,
+                                         firstColumn As Integer, lastColumn As Integer) As SheetBorderEdges
+            Select Case choice
+                Case BorderChoice.All
+                    Return SheetBorderEdges.All
+                Case BorderChoice.None
+                    Return SheetBorderEdges.None
+                Case BorderChoice.Top
+                    Return SheetBorderEdges.Top
+                Case BorderChoice.Bottom
+                    Return SheetBorderEdges.Bottom
+                Case BorderChoice.Left
+                    Return SheetBorderEdges.Left
+                Case BorderChoice.Right
+                    Return SheetBorderEdges.Right
+            End Select
+
+            Dim edges As SheetBorderEdges = SheetBorderEdges.None
+            If choice = BorderChoice.Outside Then
+                If row = firstRow Then
+                    edges = edges Or SheetBorderEdges.Top
+                End If
+
+                If row = lastRow Then
+                    edges = edges Or SheetBorderEdges.Bottom
+                End If
+
+                If column = firstColumn Then
+                    edges = edges Or SheetBorderEdges.Left
+                End If
+
+                If column = lastColumn Then
+                    edges = edges Or SheetBorderEdges.Right
+                End If
+
+                Return edges
+            End If
+
+            ' Inside: only the edges SHARED with another selected cell, so each line between two cells is drawn
+            ' once from each side of it and the rim is left alone.
+            If row > firstRow Then
+                edges = edges Or SheetBorderEdges.Top
+            End If
+
+            If row < lastRow Then
+                edges = edges Or SheetBorderEdges.Bottom
+            End If
+
+            If column > firstColumn Then
+                edges = edges Or SheetBorderEdges.Left
+            End If
+
+            If column < lastColumn Then
+                edges = edges Or SheetBorderEdges.Right
+            End If
+
+            Return edges
+        End Function
+
+        ''' <summary>The right-click menu's answer to "fill colour": the whole selection takes the colour, or the
+        ''' sheet's own paper again when it is null.</summary>
+        Private Sub ChooseFillColour(colour As Nullable(Of Color))
+            ForEachSelectedCell(Sub(row As Integer, column As Integer, cell As SheetCell)
+                                    SetFill(row, column, colour)
+                                End Sub)
+        End Sub
+
+        ''' <summary>The same for the text's ink.</summary>
+        Private Sub ChooseTextColour(colour As Nullable(Of Color))
+            ForEachSelectedCell(Sub(row As Integer, column As Integer, cell As SheetCell)
+                                    SetTextColor(row, column, colour)
+                                End Sub)
+        End Sub
+
+        ''' <summary>Applies a whole-set border choice to every selected cell, with the thickness and colour the
+        ''' borders panels are holding. This is the step that turns Outside and Inside into the four edges a
+        ''' cell can actually store.</summary>
+        Private Sub ApplyBorderChoice(choice As BorderChoice)
+            _borderChoice = choice
+            Dim first As Integer = SelectionFirstRow()
+            Dim last As Integer = SelectionLastRow()
+            Dim left As Integer = SelectionFirstColumn()
+            Dim right As Integer = SelectionLastColumn()
+            ForEachSelectedCell(Sub(row As Integer, column As Integer, cell As SheetCell)
+                                    SetBorder(row, column, EdgesFor(choice, row, column, first, last, left, right),
+                                        _borderThickness, _borderColour)
+                                End Sub)
+        End Sub
+
+        ''' <summary>
+        ''' Remembers a line thickness and puts it on the selection. Only the cells that ALREADY have a border
+        ''' are touched: a thickness on its own cannot invent one — there would be no edges to draw — so on a
+        ''' borderless selection this only remembers the choice for the next edge.
+        ''' </summary>
+        Private Sub ApplyBorderThickness(thickness As Double)
+            _borderThickness = thickness
+            ForEachSelectedCell(Sub(row As Integer, column As Integer, cell As SheetCell)
+                                    If cell.BorderEdges <> SheetBorderEdges.None Then
+                                        SetBorder(row, column, cell.BorderEdges, thickness, cell.BorderColor)
+                                    End If
+                                End Sub)
+        End Sub
+
+        ''' <summary>The line colour, by the same rule as the thickness: it goes on the cells that already have
+        ''' a border, and is remembered for the next one.</summary>
+        Private Sub ChooseBorderColour(colour As Nullable(Of Color))
+            _borderColour = colour
+            ForEachSelectedCell(Sub(row As Integer, column As Integer, cell As SheetCell)
+                                    If cell.BorderEdges <> SheetBorderEdges.None Then
+                                        SetBorder(row, column, cell.BorderEdges, cell.BorderThickness, colour)
+                                    End If
+                                End Sub)
+        End Sub
+
+        ''' <summary>The hub's own hint for the line colour: the colour it would use, or the grid's.</summary>
+        Private Function BorderColourHint() As String
+            If _borderColour.HasValue Then
+                Return HexOf(_borderColour.Value)
+            End If
+
+            Return "the grid colour"
+        End Function
+
+        ''' <summary>The hub's own hint for the thickness: which of the three it is holding.</summary>
+        Private Function ThicknessHint() As String
+            If Math.Abs(_borderThickness - BorderThin) < 0.01 Then
+                Return "thin"
+            End If
+
+            If Math.Abs(_borderThickness - BorderMedium) < 0.01 Then
+                Return "medium"
+            End If
+
+            Return "thick"
+        End Function
+
+        ''' <summary>One line of the borders hub or the single-edge panel: a whole-set choice, ticked when it is
+        ''' the one the sheet last applied.</summary>
+        Private Function BorderChoiceItem(label As String, choice As BorderChoice, hint As String) As SheetMenuItem
+            Dim item As New SheetMenuItem()
+            item.Label = label
+            item.Hint = hint
+            item.Ticked = _borderChoice = choice
+            item.Run = Sub() ApplyBorderChoice(choice)
+            Return item
+        End Function
+
+        ''' <summary>
+        ''' The borders hub: the whole-set spellings first, then the three lines that lead to the single edges,
+        ''' the thickness and the colour, then the line that takes a border away again. Thirteen lines in one
+        ''' flat panel would be taller than a small sheet, so the four single edges are the one thing that gets
+        ''' its own panel.
+        ''' </summary>
+        Private Sub OpenBordersPanel()
+            Dim items As New List(Of SheetMenuItem)()
+            Dim heading As New SheetMenuItem()
+            heading.Label = "Borders"
+            heading.Hint = "round the selected cells"
+            heading.Enabled = False
+            items.Add(heading)
+            items.Add(BorderChoiceItem("All edges", BorderChoice.All, "a box round every cell"))
+            items.Add(BorderChoiceItem("Outside edges only", BorderChoice.Outside, "the rim of the block"))
+            items.Add(BorderChoiceItem("Inside lines only", BorderChoice.Inside, "between the cells"))
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            Dim oneEdge As New SheetMenuItem()
+            oneEdge.Label = "Single edges…"
+            oneEdge.Hint = "one side at a time"
+            oneEdge.Run = AddressOf OpenBorderEdgesPanel
+            items.Add(oneEdge)
+            Dim weights As New SheetMenuItem()
+            weights.Label = "Line thickness…"
+            weights.Hint = ThicknessHint()
+            weights.Run = AddressOf OpenBorderThicknessPanel
+            items.Add(weights)
+            Dim ink As New SheetMenuItem()
+            ink.Label = "Line colour…"
+            ink.Hint = BorderColourHint()
+            ink.Run = Sub() OpenColourPanel("Line colour", "Grid colour", "the sheet's own line colour",
+                _borderColour, GridColor, AddressOf ChooseBorderColour)
+            items.Add(ink)
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(BorderChoiceItem("No border", BorderChoice.None, "take the lines away"))
+            OpenPanel(items)
+        End Sub
+
+        ''' <summary>One side at a time — the four lines the hub keeps out of the way.</summary>
+        Private Sub OpenBorderEdgesPanel()
+            Dim items As New List(Of SheetMenuItem)()
+            Dim heading As New SheetMenuItem()
+            heading.Label = "Single edges"
+            heading.Hint = "one side at a time"
+            heading.Enabled = False
+            items.Add(heading)
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(BorderChoiceItem("Top edge", BorderChoice.Top, "along the top"))
+            items.Add(BorderChoiceItem("Bottom edge", BorderChoice.Bottom, "under the cells"))
+            items.Add(BorderChoiceItem("Left edge", BorderChoice.Left, "down the left"))
+            items.Add(BorderChoiceItem("Right edge", BorderChoice.Right, "down the right"))
+            OpenPanel(items)
+        End Sub
+
+        ''' <summary>The three line weights. Each is applied to the cells that already have a border, and
+        ''' remembered for the ones that do not, yet — the panel has a line saying so, because a thickness that
+        ''' appears to do nothing on an unbordered selection needs explaining.</summary>
+        Private Sub OpenBorderThicknessPanel()
+            Dim items As New List(Of SheetMenuItem)()
+            Dim heading As New SheetMenuItem()
+            heading.Label = "Line thickness"
+            heading.Hint = "in pixels"
+            heading.Enabled = False
+            items.Add(heading)
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(ThicknessItem("Thin", BorderThin, "one pixel"))
+            items.Add(ThicknessItem("Medium", BorderMedium, "two pixels"))
+            items.Add(ThicknessItem("Thick", BorderThick, "three pixels"))
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            Dim note As New SheetMenuItem()
+            note.Label = "Applies to cells that already"
+            note.Hint = "have a border"
+            note.Enabled = False
+            items.Add(note)
+            OpenPanel(items)
+        End Sub
+
+        Private Function ThicknessItem(label As String, thickness As Double, hint As String) As SheetMenuItem
+            Dim item As New SheetMenuItem()
+            item.Label = label
+            item.Hint = hint
+            item.Ticked = Math.Abs(_borderThickness - thickness) < 0.01
+            item.Run = Sub() ApplyBorderThickness(thickness)
+            Return item
+        End Function
+
+        ''' <summary>
+        ''' A colour panel: the "no colour" line first (named for what it means in the panel it was opened
+        ''' from), then the palette as rows of squares, then the line that opens the picker for anything the
+        ''' palette does not hold. current is what the selection already is, so the swatch it came from wears a
+        ''' ring and the picker starts from it.
+        ''' </summary>
+        Private Sub OpenColourPanel(heading As String, noneLabel As String, noneHint As String,
+                                    current As Nullable(Of Color), seed As Color,
+                                    choose As Action(Of Nullable(Of Color)))
+            Dim items As New List(Of SheetMenuItem)()
+            Dim title As New SheetMenuItem()
+            title.Label = heading
+            title.Hint = "the whole selection"
+            title.Enabled = False
+            items.Add(title)
+            Dim none As New SheetMenuItem()
+            none.Label = noneLabel
+            none.Hint = noneHint
+            none.Ticked = Not current.HasValue
+            none.Run = Sub() choose(Nothing)
+            items.Add(none)
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+
+            For at As Integer = 0 To MenuPalette.Length - 1 Step MenuSwatchPerRow
+                Dim line As New SheetMenuItem()
+                Dim picked As Nullable(Of Color) = current
+                line.SwatchRun = Sub(colour As Color) choose(colour)
+                For i As Integer = at To Math.Min(at + MenuSwatchPerRow, MenuPalette.Length) - 1
+                    line.Swatches.Add(MenuPalette(i))
+                    If picked.HasValue AndAlso MenuPalette(i) = picked.Value Then
+                        line.TickedSwatch = line.Swatches.Count - 1
+                    End If
+                Next
+
+                items.Add(line)
+            Next
+
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            Dim more As New SheetMenuItem()
+            more.Label = "More colours…"
+            more.Hint = "mix one"
+            more.Run = Sub() OpenColourPickerPanel(heading, current, seed, choose)
+            items.Add(more)
+            OpenPanel(items)
+        End Sub
+
+        ''' <summary>
+        ''' The picker: three sliders over a preview — for a colour the palette does not hold. A slider is a
+        ''' line of the panel, dragged like a scrollbar's thumb (a pattern this control already has), and the
+        ''' preview line shows the mix and its hex. Nothing reaches the cells until Use this colour, so a
+        ''' half-mixed colour never lands on a block of them by accident.
+        ''' </summary>
+        Private Sub OpenColourPickerPanel(heading As String, current As Nullable(Of Color), seed As Color,
+                                          choose As Action(Of Nullable(Of Color)))
+            _pick = If(current.HasValue, current.Value, seed)
+            ' The preview is a LINE THAT CAN BE CHOSEN, not just a picture: clicking the bar of colour you have
+            ' just mixed is the obvious way to accept it, and it gives the keyboard a second way in.
+            _pickPreview = New SheetMenuItem()
+            _pickPreview.Preview = _pick
+            _pickPreview.Run = Sub() choose(_pick)
+            _pickUse = New SheetMenuItem()
+            _pickUse.Label = "Use this colour"
+            _pickUse.Hint = HexOf(_pick)
+            _pickUse.Run = Sub() choose(_pick)
+
+            Dim items As New List(Of SheetMenuItem)()
+            Dim title As New SheetMenuItem()
+            title.Label = heading & " — mix one"
+            title.Enabled = False
+            items.Add(title)
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(SliderItem("Red", 0))
+            items.Add(SliderItem("Green", 1))
+            items.Add(SliderItem("Blue", 2))
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(_pickPreview)
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(_pickUse)
+            OpenPanel(items)
+
+            ' Enter takes the colour the mix ended on, so the highlight starts on the line that applies it.
+            _menuHot = items.Count - 1
+        End Sub
+
+        Private Function SliderItem(label As String, channel As Integer) As SheetMenuItem
+            Dim item As New SheetMenuItem()
+            item.Label = label
+            item.Channel = channel
+            Return item
+        End Function
+
+        ''' <summary>Opens one of the panels a context-menu line leads to, at the point the chain opened.</summary>
+        Private Sub OpenPanel(items As List(Of SheetMenuItem))
+            OpenMenu(MenuKind.Panel, items, New Point(_chainX, _chainY), MenuWidth)
+        End Sub
+
+        ''' <summary>How tall a panel line is — a separator is shorter than everything else. (Not RowHeight:
+        ''' that is the sheet's own row size, and a menu line has nothing to do with it.)</summary>
+        Private Shared Function MenuRowHeight(item As SheetMenuItem) As Double
+            Return If(item.IsSeparator, MenuSeparatorHeight, MenuItemHeight)
+        End Function
+
+        ''' <summary>The top of a line, in the control's coordinates. Every panel's geometry comes from this one
+        ''' walk, so the drawing and the hit tests cannot disagree about where a line is.</summary>
+        Private Function RowTop(index As Integer) As Double
+            Dim y As Double = _menuY + MenuPad
+            For i As Integer = 0 To Math.Min(index, _menuItems.Count) - 1
+                y += MenuRowHeight(_menuItems(i))
+            Next
+
+            Return y
+        End Function
+
+        ''' <summary>The square of one swatch of one line.</summary>
+        Private Function SwatchRect(index As Integer, swatch As Integer) As Rect
+            Return New Rect(_menuX + MenuSwatchLeft + swatch * (MenuSwatchSize + MenuSwatchGap),
+                            RowTop(index) + (MenuItemHeight - MenuSwatchSize) / 2,
+                            MenuSwatchSize, MenuSwatchSize)
+        End Function
+
+        ''' <summary>The track a slider's knob travels along, and the span a click on the line maps to. It starts
+        ''' past the channel's name and stops short of the value printed at the right.</summary>
+        Private Function SliderTrackRect(index As Integer) As Rect
+            Return New Rect(_menuX + 66, RowTop(index) + 4, _menuWidth - 112, MenuItemHeight - 8)
+        End Function
+
+        ''' <summary>One channel of the colour being mixed, 0–255.</summary>
+        Private Function ChannelValue(channel As Integer) As Integer
+            If channel = 0 Then
+                Return CInt(_pick.R)
+            End If
+
+            If channel = 1 Then
+                Return CInt(_pick.G)
+            End If
+
+            Return CInt(_pick.B)
+        End Function
+
+        ''' <summary>Sets one channel, and lets the two lines that show the mix catch up.</summary>
+        Private Sub SetChannel(channel As Integer, value As Integer)
+            value = Math.Max(0, Math.Min(255, value))
+            _pick = Color.FromRgb(CByte(If(channel = 0, value, CInt(_pick.R))),
+                                  CByte(If(channel = 1, value, CInt(_pick.G))),
+                                  CByte(If(channel = 2, value, CInt(_pick.B))))
+            If _pickPreview IsNot Nothing Then
+                _pickPreview.Preview = _pick
+            End If
+
+            If _pickUse IsNot Nothing Then
+                _pickUse.Hint = HexOf(_pick)
+            End If
+
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>Moves a channel to where the pointer is on its track. The whole line counts, so a drag that
+        ''' wanders off the track sideways keeps working — it clamps at the ends.</summary>
+        Private Sub SetChannelFromPoint(index As Integer, point As Point)
+            Dim track As Rect = SliderTrackRect(index)
+            SetChannel(_menuItems(index).Channel,
+                CInt(Math.Round((point.X - track.X) / track.Width * 255.0)))
+        End Sub
+
+        ''' <summary>Which slider line a point is on, or -1.</summary>
+        Private Function SliderAt(point As Point) As Integer
+            If Not _menuOpen OrElse Not MenuRect().Contains(point) Then
+                Return -1
+            End If
+
+            For i As Integer = 0 To _menuItems.Count - 1
+                If _menuItems(i).Channel >= 0 AndAlso point.Y >= RowTop(i) AndAlso
+                    point.Y < RowTop(i) + MenuItemHeight Then
+                    Return i
+                End If
+            Next
+
+            Return -1
+        End Function
+
+        ''' <summary>Which swatch of which line a point is on, or Nothing when it is not on a swatch at all —
+        ''' the squares are the only part of a swatch row that can be picked.</summary>
+        Private Function SwatchAt(point As Point, ByRef swatch As Integer) As SheetMenuItem
+            swatch = -1
+            If Not _menuOpen OrElse Not MenuRect().Contains(point) Then
+                Return Nothing
+            End If
+
+            For i As Integer = 0 To _menuItems.Count - 1
+                Dim item As SheetMenuItem = _menuItems(i)
+                For s As Integer = 0 To item.Swatches.Count - 1
+                    If SwatchRect(i, s).Contains(point) Then
+                        swatch = s
+                        Return item
+                    End If
+                Next
+            Next
+
+            Return Nothing
+        End Function
+
+        ''' <summary>True when a point is on a line that holds swatches — whether or not it landed on one of the
+        ''' squares. See ChooseMenuItem: a near miss must not close the panel.</summary>
+        Private Function OnSwatchRow(point As Point) As Boolean
+            If Not _menuOpen OrElse Not MenuRect().Contains(point) Then
+                Return False
+            End If
+
+            For i As Integer = 0 To _menuItems.Count - 1
+                If _menuItems(i).Swatches.Count > 0 AndAlso point.Y >= RowTop(i) AndAlso
+                    point.Y < RowTop(i) + MenuItemHeight Then
+                    Return True
+                End If
+            Next
+
+            Return False
+        End Function
+
         ''' <summary>Opens a menu of items at a point, kept inside the control. The context menu has its own
         ''' opener — it moves the selection onto what was right-clicked first — and everything else comes
         ''' through here.</summary>
@@ -3977,6 +4857,10 @@ Namespace Global.AvaloniaSpreadsheet
                 _menuY = Math.Max(0, size.Height - height)
             End If
 
+            ' Where a panel opened from one of these lines will open: the same place, so a chain of panels
+            ' stacks in one spot rather than walking across the sheet.
+            _chainX = _menuX
+            _chainY = _menuY
             InvalidateVisual()
         End Sub
 
@@ -4094,6 +4978,8 @@ Namespace Global.AvaloniaSpreadsheet
             Dim height As Double = MenuRect().Height
             _menuX = Math.Max(0, Math.Min(point.X, size.Width - MenuWidth))
             _menuY = Math.Max(0, Math.Min(point.Y, size.Height - height))
+            _chainX = _menuX
+            _chainY = _menuY
             InvalidateVisual()
         End Sub
 
@@ -4104,12 +4990,46 @@ Namespace Global.AvaloniaSpreadsheet
 
             _menuOpen = False
             _menuHot = -1
+            _slider = -1                    ' a panel closing lets go of the knob it was dragging
+            _pickPreview = Nothing
+            _pickUse = Nothing
             _macroStart = -1               ' any menu closing ends the macro list's claim on the text
             InvalidateVisual()
         End Sub
 
         ''' <summary>Runs the line a point is on, if any, and closes. Always True: the press was the menu's.</summary>
         Private Function ChooseMenuItem(point As Point) As Boolean
+            ' A swatch row is picked by its SQUARES: a press between two of them is a press on the panel's own
+            ' furniture, so the panel stays up rather than closing as if a line had been chosen.
+            Dim swatch As Integer = -1
+            Dim swatchRow As SheetMenuItem = SwatchAt(point, swatch)
+            If swatchRow IsNot Nothing Then
+                Dim pick As Color = swatchRow.Swatches(swatch)
+                Dim pickRun As Action(Of Color) = swatchRow.SwatchRun
+                CloseContextMenu()
+                If pickRun IsNot Nothing Then
+                    pickRun(pick)
+                End If
+
+                Return True
+            End If
+
+            ' A slider line starts a DRAG and keeps the panel open — it is not a command, and closing here
+            ' would throw away the colour being mixed.
+            Dim slider As Integer = SliderAt(point)
+            If slider >= 0 Then
+                _slider = slider
+                SetChannelFromPoint(slider, point)
+                Return True
+            End If
+
+            ' A press on a swatch ROW that missed the squares — the 4 px between two of them — is a press on the
+            ' panel's own furniture, exactly like a click on the warning text. Closing on it would throw the
+            ' whole palette away for a near miss.
+            If OnSwatchRow(point) Then
+                Return True
+            End If
+
             Dim index As Integer = MenuItemAt(point)
             If index < 0 AndAlso OnWarningLine(point) Then
                 ' A click on the WARNING text itself. It is not a command, and closing on it would read as a
@@ -4117,10 +5037,10 @@ Namespace Global.AvaloniaSpreadsheet
                 Return True
             End If
 
-            Dim run As Action = If(index >= 0, _menuItems(index).Run, Nothing)
+            Dim rowRun As Action = If(index >= 0, _menuItems(index).Run, Nothing)
             CloseContextMenu()
-            If run IsNot Nothing Then
-                run()
+            If rowRun IsNot Nothing Then
+                rowRun()
             End If
 
             Return True
@@ -4176,6 +5096,50 @@ Namespace Global.AvaloniaSpreadsheet
                 Dim ink As IBrush = If(item.Warning, warn, If(item.Enabled, text, faded))
                 If i = _menuHot AndAlso item.Enabled Then
                     context.FillRectangle(hot, New Rect(_menuX + 1, y, _menuWidth - 2, MenuItemHeight))
+                End If
+
+                ' A row of swatches: the squares ARE the line, and the one the selection already is wears a
+                ' ring round it — which is the only way a panel of colours can say what is set.
+                If item.Swatches.Count > 0 Then
+                    For s As Integer = 0 To item.Swatches.Count - 1
+                        Dim square As Rect = SwatchRect(i, s)
+                        context.FillRectangle(New SolidColorBrush(item.Swatches(s)), square)
+                        context.DrawRectangle(Nothing, New Pen(edge, 1.0), square)
+                        If s = item.TickedSwatch Then
+                            context.DrawRectangle(Nothing, New Pen(text, 1.5), square.Inflate(1.5))
+                        End If
+                    Next
+
+                    y += MenuItemHeight
+                    Continue For
+                End If
+
+                ' A slider: a track with a knob, the channel's name at the left and its value at the right —
+                ' the value is the number being mixed, so it is drawn rather than saved for a tooltip.
+                If item.Channel >= 0 Then
+                    Dim track As Rect = SliderTrackRect(i)
+                    context.FillRectangle(edge, New Rect(track.X, track.Center.Y - 1.0, track.Width, 2.0))
+                    Dim at As Double = track.X + track.Width * ChannelValue(item.Channel) / 255.0
+                    context.FillRectangle(text, New Rect(at - 3.0, track.Y, 6.0, track.Height))
+                    DrawCellText(context, item.Label, New Rect(_menuX + 17, y, 46, MenuItemHeight), ink,
+                        False, TextAlignment.Left)
+                    DrawCellText(context, ChannelValue(item.Channel).ToString(CultureInfo.InvariantCulture),
+                        New Rect(_menuX + _menuWidth - 40, y, 32, MenuItemHeight), ink, False,
+                        TextAlignment.Right)
+                    y += MenuItemHeight
+                    Continue For
+                End If
+
+                ' The picker's preview: a bar of the colour being mixed, wide enough to judge, with its hex
+                ' written on it in whichever of black or white can be read there.
+                If item.Preview.HasValue Then
+                    Dim bar As New Rect(_menuX + 9, y + 3, _menuWidth - 18, MenuItemHeight - 6)
+                    context.FillRectangle(New SolidColorBrush(item.Preview.Value), bar)
+                    context.DrawRectangle(Nothing, New Pen(edge, 1.0), bar)
+                    DrawCellText(context, HexOf(item.Preview.Value), bar, ContrastInk(item.Preview.Value),
+                        False, TextAlignment.Center)
+                    y += MenuItemHeight
+                    Continue For
                 End If
 
                 If item.Ticked Then
@@ -4260,6 +5224,27 @@ Namespace Global.AvaloniaSpreadsheet
 
                 _menuHot = at
                 InvalidateVisual()
+                Return True
+            End If
+
+            ' Left and Right nudge the channel the highlight is on — a slider that could only be dragged would
+            ' leave the keyboard with no way to mix a colour at all. Shift moves it by ten.
+            If (e.Key = Key.Left OrElse e.Key = Key.Right) AndAlso _menuHot >= 0 AndAlso
+                _menuHot < _menuItems.Count AndAlso _menuItems(_menuHot).Channel >= 0 Then
+                Dim channel As Integer = _menuItems(_menuHot).Channel
+                Dim nudge As Integer = If(e.Key = Key.Right, 1, -1)
+                If e.KeyModifiers.HasFlag(KeyModifiers.Shift) Then
+                    nudge *= 10
+                End If
+
+                SetChannel(channel, ChannelValue(channel) + nudge)
+                Return True
+            End If
+
+            ' A slider is not a command: Enter must not throw the panel away, or the colour being mixed would
+            ' go with it.
+            If (e.Key = Key.Enter OrElse e.Key = Key.Tab) AndAlso _menuHot >= 0 AndAlso
+                _menuHot < _menuItems.Count AndAlso _menuItems(_menuHot).Channel >= 0 Then
                 Return True
             End If
 
@@ -4679,7 +5664,7 @@ Namespace Global.AvaloniaSpreadsheet
                 context.FillRectangle(selectionFill, visibleSelection)
             End If
 
-            ' Cells: the grid lines, then the text.
+            ' Cells: the grid lines, the borders, then the text.
             Using context.PushClip(grid)
                 Dim gridPen As New Pen(gridBrush, 1.0)
                 For row As Integer = firstRow To lastRow + 1
@@ -4694,6 +5679,16 @@ Namespace Global.AvaloniaSpreadsheet
                     If x >= grid.X - 0.5 AndAlso x <= grid.Right + 0.5 Then
                         context.DrawLine(gridPen, New Point(x, grid.Y), New Point(x, grid.Bottom))
                     End If
+                Next
+
+                ' A cell that was given a border draws it OVER the grid line it sits on, and this pass runs
+                ' before the text so the text keeps its own colour on top. It is deliberately NOT skipped on
+                ' a page: a border is something the cell was told to be, so it prints (unlike the wash and
+                ' the outline, which are about SELECTING).
+                For row As Integer = firstRow To lastRow
+                    For column As Integer = firstColumn To lastColumn
+                        DrawCellBorder(context, CellRect(row, column), FindCell(row, column))
+                    Next
                 Next
 
                 For row As Integer = firstRow To lastRow
@@ -4891,6 +5886,61 @@ Namespace Global.AvaloniaSpreadsheet
 
             ' A light border on the address box is the cue that it can be clicked to type there.
             context.DrawRectangle(Nothing, New Pen(accent, 1.0), New Rect(0.5, bar.Y + 0.5, name.Width, name.Height - 1))
+        End Sub
+
+        ''' <summary>
+        ''' Draws one cell's border — which of its edges were asked for, at the cell's own thickness and
+        ''' colour, or a null BorderColor for the sheet's GridColor (so a border that was asked for but not
+        ''' coloured reads as the grid line it covers, rather than vanishing).
+        '''
+        ''' A cell with no border, a thickness of 0, or no cell element at all draws nothing. The lines are
+        ''' CENTRED on the cell's edges, which is what lets a 1 px border sit exactly on the grid line and
+        ''' cover it.
+        '''
+        ''' Each end is LENGTHENED by half the thickness wherever the edge it meets at that corner is drawn
+        ''' too: stroking two single lines that stop at the corner leaves a small square notch on the OUTSIDE
+        ''' of it (half the thickness each way) — invisible at 1 px, an obvious chip out of a 3 px box.
+        ''' </summary>
+        Private Sub DrawCellBorder(context As DrawingContext, rect As Rect, cell As SheetCell)
+            If cell Is Nothing OrElse cell.BorderEdges = SheetBorderEdges.None Then
+                Return
+            End If
+
+            Dim edges As SheetBorderEdges = cell.BorderEdges
+            Dim hasTop As Boolean = (edges And SheetBorderEdges.Top) <> 0
+            Dim hasRight As Boolean = (edges And SheetBorderEdges.Right) <> 0
+            Dim hasBottom As Boolean = (edges And SheetBorderEdges.Bottom) <> 0
+            Dim hasLeft As Boolean = (edges And SheetBorderEdges.Left) <> 0
+            ' 0 = the sheet's own line, which is one pixel — the width the grid is drawn at. The EDGES are what
+            ' asked for the border, so a cell that named them gets a line like every other line on the sheet
+            ' rather than nothing.
+            Dim weight As Double = If(cell.BorderThickness > 0, cell.BorderThickness, BorderOwnThickness)
+            Dim half As Double = weight / 2
+            Dim ink As Color = GridColor
+            If cell.BorderColor.HasValue Then
+                ink = cell.BorderColor.Value
+            End If
+
+            Dim pen As New Pen(New SolidColorBrush(ink), weight)
+            If hasTop Then
+                context.DrawLine(pen, New Point(rect.X - If(hasLeft, half, 0.0), rect.Y),
+                    New Point(rect.Right + If(hasRight, half, 0.0), rect.Y))
+            End If
+
+            If hasBottom Then
+                context.DrawLine(pen, New Point(rect.X - If(hasLeft, half, 0.0), rect.Bottom),
+                    New Point(rect.Right + If(hasRight, half, 0.0), rect.Bottom))
+            End If
+
+            If hasLeft Then
+                context.DrawLine(pen, New Point(rect.X, rect.Y - If(hasTop, half, 0.0)),
+                    New Point(rect.X, rect.Bottom + If(hasBottom, half, 0.0)))
+            End If
+
+            If hasRight Then
+                context.DrawLine(pen, New Point(rect.Right, rect.Y - If(hasTop, half, 0.0)),
+                    New Point(rect.Right, rect.Bottom + If(hasBottom, half, 0.0)))
+            End If
         End Sub
 
         ''' <summary>
@@ -5201,6 +6251,12 @@ Namespace Global.AvaloniaSpreadsheet
             ' closes. Either way the press does not also start a selection or a drag.
             If _menuOpen AndAlso Not point.Properties.IsRightButtonPressed Then
                 ChooseMenuItem(point.Position)
+                If _menuOpen AndAlso _slider >= 0 Then
+                    ' A slider is being dragged: keep the pointer, so the knob follows it out of the panel the
+                    ' way a scrollbar's thumb does.
+                    e.Pointer.Capture(Me)
+                End If
+
                 e.Handled = True
                 Return
             End If
@@ -5356,8 +6412,15 @@ Namespace Global.AvaloniaSpreadsheet
             Dim column As Integer
             Dim hit As Integer = HitTest(point, row, column)
 
-            ' While the menu is open a move only highlights the line under the pointer.
+            ' While the menu is open a move only highlights the line under the pointer — unless a slider is
+            ' being dragged, when it moves that channel instead and the panel stays exactly as it is.
             If _menuOpen Then
+                If _slider >= 0 Then
+                    SetChannelFromPoint(_slider, point)
+                    e.Handled = True
+                    Return
+                End If
+
                 Dim hot As Integer = MenuItemAt(point)
                 If hot <> _menuHot Then
                     _menuHot = hot
@@ -5452,6 +6515,7 @@ Namespace Global.AvaloniaSpreadsheet
             _resizeColumn = 0
             _resizeRow = 0
             _scrollDragging = False
+            _slider = -1
             e.Pointer.Capture(Nothing)
             If wasFill Then
                 ApplyFill()

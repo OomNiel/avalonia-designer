@@ -9,8 +9,9 @@ import {
     DataSetSpec, DataTableSpec, DataColumnSpec, ColumnType, parseDataSet, parseDataSetChecked, serializeDataSet, defaultDataSetSpec,
     isValidIdentifier, findTable, newTableSpec, newColumnSpec, COLUMN_TYPES, isSqliteTable, sanitizeName, sqliteTableName
 } from './dataSetModel';
-import { generateCs, generateVb, generateXsd, consolidateRuntimeHelpers } from './dataSetGenerator';
-import { findProject, ProjectInfo } from './projectParser';
+import { generateCs, generateVb, generateXsd, consolidateRuntimeHelpers, runtimeDataFolder } from './dataSetGenerator';
+import { findProject, findProjectForFolder, ProjectInfo } from './projectParser';
+import { resolvePreviewDb } from './dataSetReader';
 import { PreviewerHostManager } from './hostClient';
 
 /** Control types that can display a DataSet table (they take an ItemsSource). */
@@ -111,29 +112,46 @@ export function defaultDbFile(spec: DataSetSpec): string {
     return `${spec.name}.db`;
 }
 
-/** True when `<name>.db` already exists under `folder` (project root). A new or renamed DataSet with
- *  that name would silently read/write an EXISTING database, so the caller warns before proceeding. */
-function defaultDbExists(folder: string, name: string): boolean {
-    return fs.existsSync(path.join(folder, `${name}.db`));
+/** The default database `<name>.db` if one already EXISTS — under `folder` (the project root) or in the
+ *  per-user data folder the generated `RuntimeStorage` helper writes to. Either way a new or renamed
+ *  DataSet with that name would silently read/write that EXISTING file, so the caller warns (naming the
+ *  file it found) before proceeding. The per-user copy is the one that matters once the app has run:
+ *  it is where the rows actually are, even though it is nowhere near the project. */
+export function existingDefaultDb(folder: string, name: string, assemblyName: string): string | undefined {
+    const beside = path.join(folder, `${name}.db`);
+    if (fs.existsSync(beside)) return beside;
+    const perUser = runtimeDataFolder(assemblyName);
+    return perUser ? (fs.existsSync(path.join(perUser, `${name}.db`)) ? path.join(perUser, `${name}.db`) : undefined) : undefined;
 }
 
-/** Resolves a (possibly relative) sqlite.file to an existing path for design-time preview.
- *  The generated app resolves relative files next to the EXE (bin/...), so try the project
- *  folder first, then the bin folders. Falls back to the project-folder path. */
-function resolveDbPath(projectDir: string | undefined, file: string): string {
-    if (path.isAbsolute(file)) return file;
-    const candidates: string[] = [];
-    if (projectDir) {
-        candidates.push(path.join(projectDir, file));
-        for (const cfg of ['Debug', 'Release']) {
-            for (const tfm of ['net10.0', 'net8.0']) {
-                candidates.push(path.join(projectDir, 'bin', cfg, tfm, file));
-            }
-        }
+/** Every existing copy of a DataSet's OWN auto-created default database (`<DataSet>.db`): beside the
+ *  project, in a Debug/Release build output, and in the PER-USER data folder a generated
+ *  `RuntimeStorage` uses — the last one is where the rows really are once the app has run, and the
+ *  reason 'Remove DataSet' used to leave them behind (a new DataSet of the same name would then
+ *  silently pick them up again). A user-browsed / per-table / external `.db` is never in this list. */
+export function defaultDbCopiesFor(projectFolder: string, base: string, assemblyName: string): string[] {
+    const name = `${base}.db`;
+    const out: string[] = [];
+    const addIfExists = (dir: string): void => {
+        if (!dir) return;
+        const p = path.join(dir, name);
+        if (fs.existsSync(p)) out.push(p);
+    };
+    addIfExists(projectFolder);
+    for (const cfg of ['Debug', 'Release']) {
+        for (const tfm of ['net8.0', 'net9.0', 'net10.0']) addIfExists(path.join(projectFolder, 'bin', cfg, tfm));
     }
-    candidates.push(file);
-    for (const c of candidates) { if (fs.existsSync(c)) return c; }
-    return candidates[0] ?? file;
+    addIfExists(runtimeDataFolder(assemblyName));
+    return out;
+}
+
+/** Resolves a (possibly relative) sqlite.file for the design-time row preview. Delegates to the shared
+ *  resolver, so the DataSet panel and the DataGrid preview on the canvas look in the SAME places —
+ *  including the per-user data folder a generated `RuntimeStorage` writes to, which is where an app
+ *  that has run keeps its rows. Falls back to the plain path so a caller can still say WHERE it looked. */
+function resolveDbPath(projectDir: string | undefined, file: string, assemblyName: string): string {
+    return resolvePreviewDb(projectDir ?? '', file, assemblyName)
+        ?? (path.isAbsolute(file) ? file : path.join(projectDir ?? '', file));
 }
 
 
@@ -665,7 +683,7 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
                     if (t && isSqliteTable(t)) {
                         const proj = findProject(doc.uri);
                         const projectDir = proj ? path.dirname(proj.projectUri.fsPath) : undefined;
-                        const dbPath = resolveDbPath(projectDir, t.sqlite!.file);
+                        const dbPath = resolveDbPath(projectDir, t.sqlite!.file, proj?.assemblyName ?? '');
                         if (!fs.existsSync(dbPath)) {
                             await panel.webview.postMessage({ type: 'sqliteResult', table: t.name, ok: false, error: `Database file not found: ${dbPath}` });
                             return;
@@ -898,9 +916,10 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
 
     /** 'Remove DataSet': after a modal warning, strips every code-behind binding this DataSet's
      *  tables created, deletes the .adset + generated class/.xsd, deletes the DataSet's OWN
-     *  auto-created default .db (project + bin/Debug + bin/Release copies — never a user-browsed /
-     *  per-table / external .db, those are only listed for the user to delete by hand), then closes
-     *  the designer panel. */
+     *  auto-created default .db wherever it lives — project folder, bin/Debug + bin/Release, and the
+     *  PER-USER data folder the generated RuntimeStorage uses (the copy that actually holds the rows
+     *  once the app has run) — never a user-browsed / per-table / external .db, those are only listed
+     *  for the user to delete by hand, then closes the designer panel. */
     private async removeDataSet(doc: DataSetDocument, panel: vscode.WebviewPanel): Promise<void> {
         try {
             const folder = path.dirname(doc.uri.fsPath);
@@ -918,19 +937,11 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
             const xsd = path.join(folder, `${base}.xsd`);
             if (fs.existsSync(xsd)) filesToDelete.push(xsd);
 
-            // The DataSet's OWN auto-created default db (<DataSet>.db): delete existing copies in the
-            // project folder and under bin/... (the app creates the file next to the exe on first run).
+            // The DataSet's OWN auto-created default db (<DataSet>.db): every copy that exists — the
+            // project folder, a bin/... build output, and the per-user data folder the app writes to.
             const defaultDb = `${base}.db`;
-            const defaultDbCopies: string[] = [];
-            const addIfExists = (dir: string): void => {
-                if (!dir) return;
-                const p = path.join(dir, defaultDb);
-                if (fs.existsSync(p)) { defaultDbCopies.push(p); filesToDelete.push(p); }
-            };
-            addIfExists(projectFolder);
-            for (const cfg of ['Debug', 'Release']) {
-                for (const tfm of ['net8.0', 'net9.0', 'net10.0']) addIfExists(path.join(projectFolder, 'bin', cfg, tfm));
-            }
+            const defaultDbCopies = defaultDbCopiesFor(projectFolder, base, proj ? proj.assemblyName : '');
+            for (const p of defaultDbCopies) filesToDelete.push(p);
 
             // User-browsed / per-table .db files are NEVER auto-deleted (they may be shared with
             // other apps or datasets) — list them so the user can delete them manually if they want.
@@ -957,8 +968,13 @@ export class DataSetEditorProvider implements vscode.CustomEditorProvider<DataSe
             lines.push(`  • schema  ${path.basename(doc.uri.fsPath)}`);
             if (generated.length) lines.push(`  • code    ${generated.map((p) => path.basename(p)).join(', ')}`);
             if (defaultDbCopies.length) {
-                const rel = defaultDbCopies.map((p) => path.relative(projectFolder, p) || p).join(', ');
-                lines.push(`  • database ${defaultDb}  (${rel})`);
+                // Relative while the file is inside the project, ABSOLUTE once it is not: the per-user
+                // copy has to be shown as where it really is, not as a ../../.. walk out of the project.
+                const shown = defaultDbCopies.map((p) => {
+                    const rel = path.relative(projectFolder, p);
+                    return rel && !rel.startsWith('..') ? rel : p;
+                }).join('\n    ');
+                lines.push(`  • database ${defaultDb}  (${shown})`);
             } else {
                 lines.push(`  • database ${defaultDb}  (none found on disk)`);
             }
@@ -1122,10 +1138,14 @@ export async function newDataSet(context: vscode.ExtensionContext): Promise<void
     }
     if (!folder) return;
 
-    // If a database file with this name already exists, warn that bound tables will write to it.
-    if (defaultDbExists(folder.fsPath, clean)) {
+    // If a database file with this name already exists, warn that bound tables will write to it. It may
+    // have been left by an earlier app run in the per-user data folder, not only in the project.
+    const owner = findProjectForFolder(folder.fsPath);
+    const appName = owner ? owner.assemblyName : path.basename(folder.fsPath);
+    const clash = existingDefaultDb(folder.fsPath, clean, appName);
+    if (clash) {
         const go = await vscode.window.showWarningMessage(
-            `A database file "${clean}.db" already exists in this folder. Tables you bind to this DataSet will read/write that EXISTING file. Continue?`,
+            `A database file "${clean}.db" already exists:\n\n${clash}\n\nTables you bind to this DataSet will read/write that EXISTING file. Continue?`,
             { modal: true }, 'Continue', 'Cancel');
         if (go !== 'Continue') return;
     }

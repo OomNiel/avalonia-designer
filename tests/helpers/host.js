@@ -37,11 +37,18 @@ async function startHost(port) {
         if (cb) { pending.delete(f.id); cb(f); }
     });
 
-    const render = (xaml, width = 800, height = 450, projectPath, theme) => new Promise((res) => {
+    const render = (xaml, width = 800, height = 450, projectPath, theme, grids) => new Promise((res) => {
         const myId = ++id;
         pending.set(myId, res);
-        // JSON.stringify drops undefined keys, so older callers (no theme) are unchanged.
-        ws.send(JSON.stringify({ id: myId, type: 'render', xaml, width, height, projectPath, theme }));
+        // JSON.stringify drops undefined keys, so older callers (no theme/grids) are unchanged.
+        ws.send(JSON.stringify({ id: myId, type: 'render', xaml, width, height, projectPath, theme, grids }));
+    });
+
+    /** Design-time SQLite access, the same RPC the designer uses for the DataGrid preview. */
+    const sqlite = (file, sql, limit = 200) => new Promise((res) => {
+        const myId = ++id;
+        pending.set(myId, res);
+        ws.send(JSON.stringify({ id: myId, type: 'sqlite', file, op: 'query', sql, limit }));
     });
 
     // Fetches the production toolbox snippet for a control tag (same path the extension uses).
@@ -54,13 +61,14 @@ async function startHost(port) {
     return {
         render,
         snippet,
+        sqlite,
         close: () => { try { ws.close(); } catch { } try { child.kill(); } catch { } }
     };
 }
 
 /** Renders XAML and resolves a frame with the PNG decoded (convenience for T1 tests). */
-async function renderPng(host, xaml, width, height, projectPath, theme) {
-    const frame = await host.render(xaml, width, height, projectPath, theme);
+async function renderPng(host, xaml, width, height, projectPath, theme, grids) {
+    const frame = await host.render(xaml, width, height, projectPath, theme, grids);
     if (frame.error) throw new Error('render error: ' + String(frame.error).slice(0, 300));
     const { decodePng } = require('./png');
     return { frame, img: decodePng(Buffer.from(frame.png, 'base64')) };
