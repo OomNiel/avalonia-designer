@@ -47,7 +47,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.12.15`**, so the command above installs it (add `-force` to reinstall, or to
+The current version is **`0.13.0`**, so the command above installs it (add `-force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -56,11 +56,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.12.15.vsix --force
+code --install-extension avalonia-designer-0.13.0.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.12.15` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.13.0` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -223,8 +223,20 @@ navigation, Ctrl+B/Ctrl+I, a right-click menu the control draws itself (align, b
 **formulas** — a cell starting with `=` is worked out (`SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`,
 `ABS`, `ROUND`, `INT`, `SQRT`, `MOD`, `IF`, `AND`, `OR`, `NOT`, `LEN`, `UPPER`, `LOWER`, `TRIM`, ranges, and
 comparisons), with the text kept in the fx box and the **result drawn in the grid**; what cannot be worked out
-is named (`#DIV/0!`, `#VALUE!`, `#NAME?`, `#REF!`, `#CYCLE!`) rather than drawn blank. It is **dockable** like
-any panel child, so a sheet can be one region of a form. The walkthrough is **USER_MANUAL §20**.
+is named (`#DIV/0!`, `#VALUE!`, `#NAME?`, `#REF!`, `#CYCLE!`) rather than drawn blank. A **File/Print
+toolbar** the control draws itself saves the page as a real **`.xlsx`** workbook and loads one back (formulas,
+per-cell formatting and the track sizes, one page at a time), offers the whole function set in an `=` popup
+that filters as you type, and pictures or prints **the print area — the cells you selected** on a real **A4
+page**, portrait or landscape, asking which way round before every job and remembering the answer, with the
+warning that stops a fifty-row sheet going to paper by accident. It is **dockable** like any panel child, so a sheet
+can be one region of a form. The walkthrough is **USER_MANUAL §20**.
+
+> **A sheet, not a spreadsheet application.** The spreadsheet control is deliberately **limited but
+> functional** — one page, no charts, pivot tables, merged cells, number formats or macros — and its `.xlsx`
+> support runs **one way**: a file it wrote opens in Excel, LibreOffice Calc and Google Sheets, while loading
+> a workbook a *full* spreadsheet application produced may work, may load only partly, or may break. Treat
+> **Load…** as *"bring the numbers in"* and keep the original workbook as your master. See
+> [USER_MANUAL §20](https://github.com/OomNiel/avalonia-designer/blob/main/USER_MANUAL.md#20-the-spreadsheet-grumpysheet).
 
 ## 8. A property grid that behaves like a real one
 

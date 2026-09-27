@@ -4516,3 +4516,102 @@ would have overruled exactly what the handles set), and the habit of measuring a
 (the spreadsheet, and the assertion/doc line counts), USER_MANUAL **§20** (the whole chapter, plus the TOC and
 the revision date), CONTROLS (a Spreadsheet section), SESSION hand-off, PUBLISHING's record. Version
 **0.12.15** with all 18 bundled stamps; suite **9,148 passed / 0 failed**.
+
+### §162 — a page is the cells you chose, and a formula that knows where it is (2026-09-27, 0.12.16 → 0.13.0)
+
+**The spreadsheet got its file side, then its arithmetic, then its paper.** Three asks in one session: add a
+cell-edit-box colour, a **File/Print toolbar** and `=Sum(A1..A15)`-style macros in a popup; then *"when copy
+dragging a cell with a formula, the cell address should update accordingly"*; then *"the user must select the
+print area before printing … if the print area is not selected a warning must be issued (with an abort
+choice)"*. All of it landed in both twins, in the designer's own Cells editor where it applies, and in the docs.
+
+**The toolbar, the workbook and the `=` list (0.12.16).** `SaveWorkbook`/`LoadWorkbook`/`WorkbookPages` write
+and read real `.xlsx` **by hand** — six parts, inline strings, a styles table, and a formula written twice
+(`<f>` **and** the value it worked out, so a reader that does not calculate still shows the answer). Loading is
+**one page at a time** (the page list appears when a workbook has more than one) and a bigger page **grows**
+`Rows`/`Columns`, never shrinks them. The `=` popup filters as you type and **prefills the last block
+selected**, which is why selecting the figures first and then typing `=sum` is the habit it teaches. New rows:
+`Toolbar`, `EditBoxBack`, `EditBoxText`; new read-only `StatusText` the strip narrates into.
+
+**A copied formula now travels (0.13.0).** `ShiftFormula(body, rowDelta, columnDelta)` walks the body, steps
+over `"…"` literals (doubled quotes included) untouched, and rewrites whole addresses — `$` anchoring exactly
+as Excel means it (`$B$2` never moves, `B$2` keeps its row, `$B2` its column), and **`#REF!` written in place**
+of an address pushed off the sheet. `ApplyFill` went from two directions to four and became **per cell**: the
+source cell a destination copies is `_fillSourceFirstRow + i % blockHeight`, so one drag can shift a formula in
+one column and predict a series in the next. A **second fill handle** at the selection's **top-left** is what
+makes up/left something you can see rather than something you have to know. A range is now **written** with a
+colon (`SelectedRangeText`) while the older two dots still read.
+
+**A page is the print area (0.13.0).** All three Print entries use the **selection**: `PrintArea` returns it,
+`PrintPage` (the old `ChromeForPrinting`) switches the chrome off **and** sets `_printRange` + the size +
+the scroll, and `GridRect` returns the *area's* extent while a page is being drawn — which is the one line that
+stops a page from growing to whatever the parent measured and printing the rest of the sheet underneath. The
+area is reached by **scrolling to its first cell** rather than by translating the drawing, so the real column
+letters and row numbers sit beside it (translating would have renumbered the headers). With a single cell
+selected (the resting state) `RequestPrint` shows a **warning**: three lines in `#B3261E` (the one colour in
+this file deliberately outside the sheet's palette), an **Abort** line first — so `Enter` and `Esc` both mean
+no — and "Print the whole sheet" for the deliberate choice. Clicking the corner (or Ctrl+A) counts as chosen:
+that is a deliberate "all of it".
+
+**Two bugs the probe found in the new code**, both worth remembering:
+1. A **warning line was still choosable** — `Enabled` defaults to true, so `MenuItemAt` returned it, `Run` was
+   null, and `ChooseMenuItem` closed the panel for a click that landed on *text*. Fixed at both ends: the
+   warning items are built with `Enabled = false`, and `MenuItemAt`/`ChooseMenuItem` now skip `Warning` lines
+   (`OnWarningLine` swallows the click so the panel stays up).
+2. The warning was anchored **one toolbar-height too low**: `ToolbarStrip` is already where the strip *ends*
+   (it is the formula bar's top edge), so `ToolbarStrip + ToolbarHeight` hung the panel under the *formula bar*.
+
+**Probe lessons (a probe is only as good as its geometry):** read the real `ColumnWidth`/`RowHeight`/
+`HeaderWidth`/`HeaderHeight` from the control instead of assuming them (they are 72 × 22 and 44 × 24, not the
+72 × 22 headers-40 I first wrote down — every size assertion was off by the same 4 px and looked like a
+layout bug); take the **ink** measurements at **scale 1**, because this headless Skia build draws **no glyphs
+at 2× device scale** (a window render at 192 dpi: 0 ink; the same at 96 dpi: 639) while the *size* assertions
+can stay at 2×; and when a probe drives a drawn menu, assert with **the menu's own colour** rather than "dark
+pixels in a band" — the sheet's own text is dark too, and the band overlaps it.
+
+**Found by a build warning, not a test:** `MaskedTextBox` still offered **`Watermark`**, removed in Avalonia 12
+(`AVLN5001` → `PlaceholderText`). The 2026-08-31 sweep fixed the `TextBox` row and missed this one, so the
+designer's *Hint text* box wrote an obsolete attribute into every generated project — and the **property audit
+could never catch it**, because it only proves a row ROUND-TRIPS into XAML, which an obsolete property does
+perfectly. Lesson: read the build output of a generated project, not just the suite.
+
+**Docs, at the user's request.** The manual and the README now say what the control is: **limited but
+functional** (one page; no charts, pivots, merged cells, number formats or macros) and saving its page as a
+real **`.xlsx`**, with the **one-way warning** spelled out — a workbook from a *full* spreadsheet application
+may work, may load partly, or may break, so `Load…` is "bring the numbers in" and the original stays master.
+USER_MANUAL §20 gained the warning box, §20.7 *the toolbar, the workbook and the `=` list* (with the print
+area) and §20.8 tips; CHANGELOG `[0.13.0]`; CONTROLS two new bullets; TEST_PLAN the status, the log entry and
+the probe notes; SESSION the fifteenth hand-off; PUBLISHING the artefact. Version **0.13.0**, all 18 stamps,
+suite **9,281 / 0**, both twins building 0 errors / 0 warnings in the T5 matrix.
+
+### §163 — the page got its shape, and CUPS was told about it (2026-09-27, still 0.13.0)
+
+Two asks arrived while the release candidate was being prepared: *"we do not have print preview or page setup
+features yet — before printing, offer the options to select the page orientation and implement the choice"* and,
+from real paper, *"print to PDF is working … choosing landscape mode does not rotate the printed text on the
+page."*
+
+**The page.** Every job (PNG included) is composed on **A4** — `595 × 842` pt, or `842 × 595` when the new
+**`PrintOrientation`** says landscape — painted white with the print area scaled to **fit** inside an 18 pt
+margin, through the same `VisualBrush` a chart's page uses (`SheetPrintPage`, nested, both twins). The question
+is a menu the control draws itself (`MenuKind.Setup`): the current answer ticked **and** highlighted, so `Enter`
+takes the page the sheet already has, while `Esc` or Cancel produce nothing; the answer is remembered on the
+sheet, so the designer's *Orientation* row and a form's own XAML set the same thing. Direct API calls
+(`ExportPng` / `WritePdf` / `PrintAsync`) never open the menu.
+
+**The hardcopy was the JOB, not the page.** The file CUPS received was provably right — `MediaBox 0 0 842 595`,
+one page, no `/Rotate` — and came from the same `Print.ToFileAsync` call the working PDF export uses. But `lp`
+was given **no options at all**, and CUPS's `pdftopdf` transforms a page according to the **job's** options, so
+the user's saved `~/.cups/lpoptions` (`orientation-requested=3`, portrait) won. Two sheets on a Canon MF230
+settled it: no options → wrong, `-o orientation-requested=4 -o PageSize=A4 -o number-up=1` → right.
+`GrumpyPrint` now takes opt-in **`PrintPageSettings { Landscape, PaperSize }`** and builds its argument list in
+a testable `CupsArguments(...)`; **null settings send exactly the old three arguments**, so the charts'
+hardcopy is untouched. T4 proves it without paper: a stub `lp` on the `PATH` records both jobs' arguments.
+
+**Also fixed:** a page no longer carries the selection **wash** (or the lit-up header of a whole-column area) —
+found by the rewritten probe, which marks a cell inside and one outside the area with fills and measures where
+they land. And a **driver-side** trap: blocking `.GetAwaiter().GetResult()` on the *second* print of a process
+deadlocks, because the continuations are posted to the dispatcher thread the driver is blocking — the driver
+pumps with `Dispatcher.UIThread.RunJobs()` now (an app's message loop is always pumping, so it was never a
+product bug). Suite **9,391 / 0**; `/tmp/sheetprint` 49 checks, `RESULT PASS`; artefact
+`avalonia-designer-0.13.0.vsix` (124 files, 1,484,712 B, sha256 `2c0fd65f…`).

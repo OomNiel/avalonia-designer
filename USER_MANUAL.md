@@ -12,7 +12,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-26)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-27)
 
 ---
 
@@ -67,7 +67,7 @@
     - [The waterfall chart (since 0.11.12)](#1912-the-waterfall-chart-since-01112)
     - [The surface chart 3D (since 0.11.14)](#1913-the-surface-chart-3d-since-01114)
     - [Printing a chart — hardcopy and PDF (since 0.12.0; page, PNG and Ctrl+P since 0.12.1; Linux printing and Print Legend since 0.12.2; Print Ink since 0.12.7)](#1914-printing-a-chart--hardcopy-and-pdf-since-0120)
-20. [The spreadsheet (GrumpySheet)](#20-the-spreadsheet-grumpysheet) (since 0.12.9; formatting 0.12.10; fixes + Ctrl+Arrow 0.12.11; right-click menu 0.12.12; formulas, Dock and the sizing handles 0.12.15)
+20. [The spreadsheet (GrumpySheet)](#20-the-spreadsheet-grumpysheet) (since 0.12.9; formatting 0.12.10; fixes + Ctrl+Arrow 0.12.11; right-click menu 0.12.12; formulas, Dock and the sizing handles 0.12.15; toolbar, .xlsx load/save and the formula list 0.12.16; addresses that move with a fill 0.13.0)
     - [Placing a sheet](#201-placing-a-sheet)
     - [Typing the cells in: the Cells editor](#202-typing-the-cells-in-the-cells-editor)
     - [What the cells look like in the form](#203-what-the-cells-look-like-in-the-form)
@@ -2461,11 +2461,30 @@ entries, and the designer's offer above is the shortcut.
 
 > New in **0.12.9** (the grid), **0.12.10** (per-cell formatting), **0.12.11** (the fixes from running it, plus
 > Ctrl+Arrow navigation), **0.12.12** (the right-click menu), **0.12.15** (formulas, docking and the sizing
-> handles).
+> handles), **0.12.16** (the File/Print toolbar, `.xlsx` load and save, and the `=` formula list) and
+> **0.13.0** (a copied formula's addresses move with the fill, in all four directions).
 
 A **spreadsheet control of our own** — 26 columns (A…Z) and 50 rows out of the box, both settable — that
 draws itself: no NuGet package, no template, no assets. It is on the Toolbox under **Spreadsheet**, and it is
 handy whenever a form needs a grid of numbers the user can edit *or* just read.
+
+> **A sheet — not a spreadsheet application.** This control is deliberately **limited but functional**. It is
+> the place for a *small* grid of numbers inside a form: **one page**, **no charts, pivot tables, merged cells,
+> number formats, named ranges or macros**, and a formula set of about thirty functions. What it does, it does
+> properly — typing, selection, series fill, per-cell formatting, per-column and per-row sizes, a working
+> formula engine and a File/Print toolbar.
+>
+> **It saves its page as a real `.xlsx` workbook** (**File ▸ Save…**) and loads one back (**File ▸ Load…**),
+> carrying formulas, per-cell formatting and the column/row sizes, **one page at a time**. A file it wrote opens
+> in Excel, LibreOffice Calc and Google Sheets.
+>
+> **⚠ Compatibility runs one way.** Taking a workbook that a *full* spreadsheet application produced and
+> loading it here **may work, may load only partly, or may break**. Only the chosen page is read. A formula
+> that uses functions or syntax outside this control's set arrives as its last saved result or as an error
+> name. Number formats are not interpreted, so a percentage can arrive as `0.25` and a date as the serial
+> number Excel stores underneath. Merged cells, pictures, charts, conditional formatting, data validation,
+> comments and pivot tables are ignored. Treat **Load…** as *"bring the numbers in"* and keep the original
+> workbook as your master copy.
 
 ### 20.1 Placing a sheet
 
@@ -2487,8 +2506,13 @@ a form's contents are written:
   the Rows/Columns line, and typing there writes the active cell (the same habit the running sheet teaches).
 - **Drag across cells** to select a range, **click a column letter or a row number** to select that whole
   line, click the top-left corner for the whole sheet.
-- **Drag the small square** at the selection's bottom-right corner to **continue a series**: `1, 2` becomes
-  `3, 4, 5 …`, `2, 4` becomes `6, 8 …`, `Item1, Item2` becomes `Item3`, and anything else repeats.
+- **Drag the small square** at the selection's bottom-right corner — or the one at its top-left — to
+  **continue a series** in any of the four directions: `1, 2` becomes `3, 4, 5 …`, `2, 4` becomes `6, 8 …`,
+  `Item1, Item2` becomes `Item3`, and anything else repeats. Filled *up* or *left* the same series runs
+  backwards (`3, 4` becomes `1, 2`). A cell holding a **formula** is *copied* rather than predicted, with every
+  relative address moved by the distance it travelled — `=SUM(B2:B9)` dragged one row down reads
+  `=SUM(B3:B10)` — a `$` holds the part it is in front of, a reference pushed off the sheet becomes `#REF!`,
+  and text in quotes (`="A1"`) is never touched.
 - **Rows** and **Columns** set how big the sheet is. They live here because this dialog is the thing that draws
   the grid those two numbers describe.
 - The **formatting bar** applies bold, italics, size, font, text colour, highlight and alignment to everything
@@ -2526,11 +2550,13 @@ everywhere the form runs.
 
 - **Operators:** `+`, `-`, `*`, `/`, `^` (power), `&` (join text), and comparisons `=`, `<>`, `<`, `>`, `<=`,
   `>=` — which draw as `TRUE` / `FALSE`. Brackets work as you would expect.
-- **References:** `B2`, `$B$2` (the `$` is accepted and ignored — there is no copy/paste yet), and ranges like
-  `B2:B6`.
-- **Functions:** `SUM`, `AVERAGE` (or `AVG`), `MIN`, `MAX`, `COUNT`, `COUNTA`, `ABS`, `ROUND`, `INT`, `SQRT`,
-  `MOD`, `IF`, `AND`, `OR`, `NOT`, `LEN`, `UPPER`, `LOWER`, `TRIM`. Names are not case-sensitive, so `=sum(…)`
-  is fine.
+- **References:** `B2`, `$B$2`, and ranges like `B2:B6` — or the older `B2..B6`. **Both spellings are read;
+  `:` is what the sheet writes.** A **`$` anchors**, exactly as it does in Excel: fill a cell that contains one
+  and the part it precedes stays put, while an undollared address moves with the copy.
+- **Functions:** `SUM`, `AVERAGE` (or `AVG`), `STDEV` (or `STDDEV`, the *sample* spread), `STDEVP` (or
+  `STDDEVP`, the *population* spread), `MIN`, `MAX`, `COUNT`, `COUNTA`, `ABS`, `ROUND`, `INT`, `SQRT`, `MOD`,
+  `IF`, `AND`, `OR`, `NOT`, `LEN`, `UPPER`, `LOWER`, `TRIM`. Names are not case-sensitive, so `=sum(…)` is fine.
+  The same list is offered by the **`=` formula list** in the sheet's toolbar (see §20.7).
 - **`IF` only works out the branch it takes**, which is what makes the classic guard work:
   `=IF(A1=0, 0, 1/A1)` does *not* divide by zero on the path it never takes.
 - **A range is clipped to the sheet**: `=SUM(B2:B999)` on a 50-row sheet means that column. A *single*
@@ -2580,16 +2606,93 @@ what makes "select A1, right-click, centre, then type" do the obvious thing.
 | **Font Family** / **Font Size** | The cell text's own font |
 | **Grid Colour**, **Cell Back**, **Text Colour**, **Header Back**, **Header Text**, **Selection**, **Selection Fill** | The sheet's palette |
 | **Show Headers** / **Formula Bar** / **Scrollbars** | The three switches for what it offers |
+| **Toolbar** | *True* by default: the File/Print strip above the fx box (§20.7). *False* gives its height back to the grid |
+| **Orientation** | Which way round the printed page is — *Portrait* (the default) or *Landscape*. Every Print entry asks as well, and starts on this value (§20.7) |
+| **Edit Box Back** / **Edit Box Text** | The colours of the fx box at the top, so it can sit on any theme |
 | **Allow Editing** | *False* makes it a read-only results grid — good for showing numbers a formula worked out |
 
-### 20.7 Tips and limits
+### 20.7 The toolbar, the workbook and the `=` list
 
+Above the fx box is a strip the control draws itself, and it is where the file side of a sheet lives.
+
+- **File ▸ Save…** writes the sheet as a **`.xlsx`** workbook — formulas (with the values they work out, so a
+  reader that does not calculate still shows the answer), per-cell formatting (bold, italics, size, font,
+  colours, alignment) and the column/row sizes. **The file is a real spreadsheet file, not a private format.**
+- **File ▸ Load…** brings a page back, after asking **which page** of the workbook to read when there is more
+  than one. A page bigger than the sheet **grows** `Rows` / `Columns`; it never shrinks them.
+  **Load is the one-way door** — see the compatibility warning at the top of §20.
+- **Print ▸ Save as PNG…** always works (no packages needed). **Save as PDF…** and **Print…** are compiled in
+  when the project carries the **`PRINT_SUPPORT`** symbol and the two printer packages the designer offers —
+  the same wiring a chart's hardcopy uses (§19.14). `Print…` uses the platform's print dialog, or, on a Linux
+  desktop, the bundled **`GrumpyPrint`** helper driving **CUPS**; with neither it is disabled and its tooltip
+  says which call is missing. A form generated from 0.12.0 on has all of it. On the CUPS path the **job states
+  the page it carries** (`orientation-requested`, `PageSize`, one page per sheet), because CUPS's PDF filter
+  follows the *job's* options rather than the file's own page box — that is what fixed landscape hardcopy.
+- The line under the strip reports what just happened (*"Saved B4:D9 to D:\books\parts.xlsx"*, or why a load
+  said no), and code can read the same text from **`StatusText`**.
+
+> **A page is the PRINT AREA — the cells you selected.** All three entries under **Print** (Save as PNG…,
+> Save as PDF…, Print…) put the **selection** on the page, with the **real column letters and row numbers**
+> beside it (so `B4:D9` still reads `B4:D9` on paper). A column or row you dragged to its own width keeps that
+> width too. The page itself is **A4** — the area is scaled to **fit** inside an 18 pt margin, never stretched,
+> and the picture is a page as well. With **one cell** selected — the resting state of a sheet — there is
+> nothing chosen to print, so a small **warning** appears first:
+>
+> ```
+> Nothing is selected to print.
+> Select the cells that make the page,
+> or print the whole sheet.
+> ───────────────────────────────────
+> ✓ Abort                    print nothing
+>   Print the whole sheet    every row and column
+> ```
+>
+> **Abort is the first line**, so both `Enter` and `Esc` mean *no* — printing fifty rows by accident costs
+> paper and ink, and the whole sheet has to be asked for a second time. (Clicking the corner above the row
+> numbers, or `Ctrl+A`, selects everything: that is a deliberate "all of it", and prints without asking.)
+> A page never carries the selection outline, the fill handles or the selection wash, and the picture no longer
+> depends on where the sheet happened to be scrolled.
+>
+> **Then the sheet asks which way round the page is** — the sheet has no page setup of its own yet, so this is
+> the one page question there is. The answer the sheet already has is ticked and the highlight starts on it, so
+> `Enter` takes it, and `Esc` or **Cancel** produces nothing:
+>
+> ```
+> Page orientation (A4)     the area is fitted to it
+> ✓ Portrait                          taller than wide
+>   Landscape                          wider than tall
+> ───────────────────────────────────
+>   Cancel                              print nothing
+> ```
+>
+> The answer is remembered in **`PrintOrientation`** — the *Orientation* row in the Properties panel sets the
+> same thing — so a landscape sheet prints landscape without a click, and code that calls the export methods
+> directly is never interrupted by the question.
+
+**The `=` formula list.** Type `=` in a cell (or in the fx box) and a popup lists every function the sheet can
+work out, each with a few words about it. Keep typing to **filter** the list (`=st` narrows it to `StdDev`);
+`Up`/`Down` walk it, `Enter` picks, and the function is placed in the **fx box** with **the last block you
+selected** already inside the brackets — so *select the figures, click where the total goes, type `=sum`,
+`Enter`, `Enter`* is a total in four keystrokes. The first `Enter` fills the box (nothing is committed yet —
+edit the range if you want), the second commits it. The sheet keeps to **`:`** when it writes a range, and
+still reads the older `..` form.
+
+### 20.8 Tips and limits
+
+- **The page is A4, portrait or landscape, with a fixed 18 pt margin.** Paper size and margin are the next
+  step of page setup and are not offered yet; the *Orientation* row — and the question every Print entry asks —
+  is what there is today. On Linux the job goes to the **default CUPS queue**; choosing the queue belongs to
+  the same next step.
 - **Saving a form re-reads the sheet as it is**, so if you edit the XAML by hand keep the `Row` / `Column`
   values 1-based and inside `Rows` / `Columns` — a cell outside the sheet is ignored by the control, and the
   editor will not show it.
 - **Formulas are not a calculator language.** There are no lookup functions (`VLOOKUP`, `INDEX`), no dates, no
-  text-to-number coercion beyond what a plain reference gives, and no `$` relative/absolute behaviour yet —
-  the sheet stores and evaluates the text it is given.
+  text-to-number coercion beyond what a plain reference gives, and nothing recalculates behind your back — the
+  sheet stores and evaluates the text it is given.
+- **A loaded workbook is not always a friendly one.** See the warning at the top of §20: a file written by a
+  full spreadsheet application can load partly or break, and there are no number formats, merged cells, charts
+  or extra pages here. Keep the original file as the master, and treat this control as the place to build a
+  small sheet inside a form.
 - **The preview shows what the app shows**: formulas are evaluated in the design preview too, because the
   preview renders the real control.
 - Numbers are drawn right-aligned while text is left-aligned, unless the cell's own alignment says otherwise;

@@ -1,6 +1,28 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-26 · Status: **full suite green on this machine — 9,148 passed / 0 failed / 0 skipped (69 s)**
+Date: 2026-09-27 · Status: **full suite green on this machine — 9,391 passed / 0 failed / 0 skipped (73 s)**
+
+> 2026-09-27: **`0.12.16` … `0.13.0`** — the spreadsheet got its file side and its page. `0.12.16` added the
+> control's own **File/Print toolbar**, a hand-written **`.xlsx` reader and writer** (one page at a time,
+> growing `Rows`/`Columns`, formulas carrying the value they worked out), an **`=` formula list** that prefills
+> the last block selected, `STDEV`/`STDEVP`, and the `Toolbar` / `EditBoxBack` / `EditBoxText` / `StatusText`
+> rows behind them (suite **9,281**, the VB matrix compiling every new row into a real form). `0.13.0` moved
+> the spreadsheet's arithmetic: **a copied formula's addresses travel with the fill** (with `$` anchors, `#REF!`
+> off the sheet, quoted text untouched), the **fill runs all four ways** with a **second handle** at the
+> selection's top-left, a range is **written with a colon** while the old two-dot form still reads, and
+> **a page is the print area** — with a warning, and an Abort the keyboard reaches first, when only a single
+> cell is selected. Later the same day the page got its own shape and its own question: **A4, portrait or
+> landscape** (`PrintOrientation`, asked before every job and remembered), the area scaled to fit an 18 pt
+> margin, and — after a landscape hardcopy printed portrait on a Canon MF230 — the **job options** that tell
+> CUPS which way round the page is (`-o orientation-requested=4 -o PageSize=A4 -o number-up=1`, asserted in T4
+> against a **stub `lp`** that records its command line, while the chart's own job still sends three arguments
+> and nothing else). Two probes carry what no unit test can: **`/tmp/sheetfill`** (40 checks — real pointer
+> drags in all four directions) and **`/tmp/sheetprint`** (**49** — it exports the page, **decodes the PNG**,
+> measures the A4 shape, the margin, and a colour marker inside versus outside the area, then drives the real
+> toolbar menu to prove what the warning and the page question do). One real bug came out of a **build
+> warning** rather than a test:
+> `MaskedTextBox.Watermark` (AVLN5001) — the audit only proves a property round-trips, which an obsolete one
+> does perfectly.
 
 > 2026-09-26, later: **`0.12.9` … `0.12.15`** — the spreadsheet control, in seven releases, and the suite grew
 > **8,630 → 9,148** with them. `0.12.9` added the control itself (both twins) with the designer's Cells editor;
@@ -538,6 +560,30 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.13.0 (2026-09-27) — the print area, and a formula that travels
+
+- **New probe `/tmp/sheetprint`** (31 checks, `RESULT PASS`) drives the real control in a headless window.
+  It selects `B2:C3`, exports it at scale 2, asserts the picture is **the area plus its headers** (`376x136`),
+  then exports at scale 1 and **reads the PNG back** to count ink per quadrant: the first cell carries a value
+  (one digit, not A1's long text), the empty cells beside and below it are blank, the column headers carry a
+  letter each and the row header its number. A column given a width of its own widens the page; "print the
+  whole sheet" gives `1240x576` rather than the `640x340` window; the screen is pixel-for-pixel unchanged
+  afterwards. Then the warning: the toolbar menu, the warning colour (`#B3261E`, 266 px), its two commands,
+  **no file written while it is up**, a click on the warning text choosing nothing, `Esc` closing it, `Enter`
+  taking **Abort** ("Nothing was printed — …") — and the whole-sheet line, a second explicit choice.
+- **Probe trap worth remembering:** the ink checks must be taken at **scale 1**. This headless Skia build
+  draws **no glyphs at 2× device scale** (measured: a window render at 192 dpi has 0 ink, the same at 96 dpi
+  has 639), so a 2× picture is blank for a reason that has nothing to do with the page. The *size* assertions
+  still use the 2× default, which is what a form gets.
+- **Two bugs the probe found in the new code:** a warning line was still *choosable* (so `Enter` picked a line
+  with no action and a click on the text closed the panel), and the warning was anchored one toolbar-height
+  too low (it hung below the *formula bar* instead of under the strip).
+- **T2 pins both twins** for every new member (`ShiftFormula`, `TryReadAnchoredAddress`, `WholeToken`,
+  `IsNameChar`, `TopHandleRect`, `OnHandle`, the direction-aware prediction, the four-direction `ApplyFill`,
+  the per-cell rule, the `:` writer, the print-area helpers and the warning), plus the designer's side
+  (`media/designer.js` carries the same shifter and handles, and the `MaskedTextBox` row no longer offers
+  `Watermark`). The bundled marker moved `ShowToolbarProperty` → **`ShiftFormula`**.
 
 ### 0.12.2 (2026-09-25) — printing on Linux, and a legend row only the paper sees
 

@@ -17,6 +17,83 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-09-27, sixteenth session — 0.13.0 packaged, and the page has a shape)
+
+The user ran the release candidate and reported two things in a row: *"we do not have print preview or page
+setup features yet. Before printing, offer the options to select the page orientation and implement the
+choice"* — and then, from real paper, *"print to PDF is working. There is a problem with printing hardcopy
+directly. Choosing landscape mode does not rotate the printed text on the page."*
+
+- **The page is real now.** Every job (PNG included) is composed on **A4** — `595 × 842` pt portrait,
+  `842 × 595` landscape, white, with the print area scaled to **fit** inside an 18 pt margin, the same page
+  and the same `VisualBrush` trick the charts use. The new **`PrintOrientation`** property (Properties panel:
+  *Orientation*) is what it follows.
+- **Every Print entry asks first**, with a menu the control draws itself: a heading, *Portrait* / *Landscape*
+  with the current one ticked and highlighted (so `Enter` takes it), and **Cancel**. The answer is remembered,
+  and code calling `ExportPng` / `WritePdf` / `PrintAsync` directly is never interrupted.
+- **The hardcopy bug was the JOB, not the page.** The file CUPS received was provably A4 landscape
+  (`MediaBox 0 0 842 595`, no rotation) — but `lp` was given **no options**, and CUPS's `pdftopdf` transforms
+  the page according to the job's options, so the user's saved `~/.cups/lpoptions` (`orientation-requested=3`,
+  portrait) won. Two sheets proved it on a Canon MF230: no options → wrong, `-o orientation-requested=4` →
+  right. The bundled **`GrumpyPrint`** helper now takes opt-in **`PrintPageSettings`** (`Landscape`,
+  `PaperSize`) and builds the argument list in a testable `CupsArguments`; the sheet passes them, and a caller
+  that passes nothing sends exactly the old three arguments (the charts are untouched).
+- **A page no longer carries the selection wash** (or a lit-up header for a whole-column area) — found by the
+  rewritten probe, which marks cells with fills and measures where they land.
+- **Tests:** suite **9,391/0**; T4 builds a net10 harness with the real printer packages plus a **stub `lp`**
+  and asserts both command lines argument by argument (3 for a chart, 9 for a described page);
+  `/tmp/sheetprint` is now 49 checks and `RESULT PASS`. A driver-side trap was fixed on the way: blocking
+  `.GetAwaiter().GetResult()` on the *second* print of a process deadlocks, because the continuations need the
+  dispatcher thread the driver blocks — the driver pumps now.
+- **Artefact:** `avalonia-designer-0.13.0.vsix`, 124 files, **1,484,712 B**, sha256 `2c0fd65f…`. Docs updated
+  in the same pass (CHANGELOG `[0.13.0]`, USER_MANUAL §20.6–§20.8, README, CONTROLS, TEST_PLAN, NOTES §163,
+  PUBLISHING, this file).
+
+**Still open for the user:** the **Marketplace upload** of `avalonia-designer-0.13.0.vsix` (the listing still
+carries `0.11.0`, so one upload spans `0.12.0`…`0.13.0`), and the next step of page setup — paper size, margin
+and a printer chooser — which the helper now has the seam for.
+
+## Where the last session left off (2026-09-27, fifteenth session — 0.13.0 packaged, ready to upload)
+
+The user finished the spreadsheet control and prepared the release in one go: *"we need to describe the
+Spreadsheet control as a limited but functional tool, which saves its page in xlsx formatted files. Uploading
+spreadsheet files from fully fledged spreadsheet applications may break compatibility … enter it into the user
+manual and readme docs. Then update all docs and bump the version to 0.13.0, make it ready for publication in
+the Marketplace."* — and, before finalising, *"when printing the spreadsheet, the user must select the print
+area before printing … if the print area is not selected a warning must be issued (with an abort choice)"*.
+
+**What `0.12.16` … `0.13.0` did** (full detail in `CHANGELOG.md`, `NOTES.md` §162, `TEST_PLAN.md`):
+
+- **The file side of the sheet.** A toolbar the control draws itself, above the formula bar: **File ▸
+  Load…/Save…** in real **`.xlsx`** (written by hand, one page at a time, a bigger page grows
+  `Rows`/`Columns`), **Print ▸ Save as PNG… / Save as PDF… / Print…** (the last two behind `PRINT_SUPPORT`,
+  and on a Linux desktop through the bundled **`GrumpyPrint`** CUPS helper). New rows: `Toolbar`,
+  `EditBoxBack`, `EditBoxText`, and the read-only **`StatusText`** the strip narrates into.
+- **The `=` list.** Typing `=` (in a cell or the fx box) lists every function with a hint, filters as you
+  type, and `Enter` puts it in the fx box with **the last block you selected** already in the brackets — the
+  "select the figures, click the total cell, type `=sum`, `Enter`, `Enter`" habit. `STDEV`/`STDEVP` joined.
+- **A copied formula now travels.** `ShiftFormula` moves every relative address by the fill's offset, `$`
+  anchors as in Excel, an address pushed off the sheet is written `#REF!`, quoted text is left alone, and the
+  **per-cell rule** lets one drag shift a formula in one column and predict a series in the next. Filling
+  **up and left** works too — there is a **second fill handle** at the selection's top-left — and a range is
+  now **written with a colon** (the old `..` still reads).
+- **A page is the print area.** All three Print entries use the **selection**, at its own size, with the real
+  column letters and row numbers; a **single selected cell warns first** (Abort on `Enter`/`Esc`, or "Print
+  the whole sheet"), and nothing is written until a choice is made. The picture no longer depends on the
+  scroll position.
+- **A real bug found by a build warning:** `MaskedTextBox` still offered `Watermark`, removed in Avalonia 12
+  (`AVLN5001`). The property audit only proves a row round-trips into XAML, which an obsolete one does — it
+  is `PlaceholderText` now.
+- **Docs, at the user's request:** the **limited-tool / `.xlsx` / one-way compatibility** warning in
+  USER_MANUAL §20 and the README, the toolbar and print-area sections, CHANGELOG `[0.13.0]`, CONTROLS,
+  TEST_PLAN (status + log), NOTES §162, this file and PUBLISHING. Version **0.13.0** with all 18 bundled
+  stamps; suite **9,281 passed / 0 failed**; probes `/tmp/sheetfill` (40) and `/tmp/sheetprint` (31) both
+  `RESULT PASS`; the VB twin compiles in the T5 matrix with **0 errors / 0 warnings**.
+
+**Still open for the user:** the **Marketplace upload** of `avalonia-designer-0.13.0.vsix` — the listing still
+carries **`0.11.0`**, so this one upload spans `0.12.0`…`0.13.0`. The publisher `grumpy` has no `vsce`
+login/PAT on this machine, so the portal (or a PAT) is the last step; nothing is committed or tagged yet.
+
 ## Where the last session left off (2026-09-26, fourteenth session — 0.12.15 released, docs done)
 
 **The spreadsheet control was built, run, corrected and finished — and it took seven releases.**

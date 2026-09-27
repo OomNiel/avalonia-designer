@@ -284,7 +284,10 @@ itself: no NuGet package, no template, no assets. It arrived in **0.12.9** (grid
 autofill, fx box), gained per-cell formatting in **0.12.10**, the reported fixes plus Ctrl+Arrow navigation in
 **0.12.11**, a right-click menu the control draws itself in **0.12.12**, **formulas** and **`Dock`** in
 **0.12.15**, and the designer's Cells editor can size a column or row by dragging a header border since the
-same release.
+same release. **0.12.16** added a **File/Print toolbar** with `.xlsx` load/save and the `=` formula list, and
+**0.13.0** the **print area** (a page is the selected cells, and a single selected cell warns first),
+**formulas whose addresses move with a fill**, and a **real A4 page whose orientation is asked for** before
+each job — `PrintOrientation`, offered in the Properties panel as *Orientation*.
 
 - **Cells are child elements, not properties**: `<spread:GrumpySheet>` takes
   `<spread:SheetCell Row="1" Column="1" Text="x"/>` directly, and a cell may also carry `Bold`, `Italic`,
@@ -322,6 +325,27 @@ same release.
   `SelectCell` / `SelectRange` / `SelectAll` / `SelectColumn` / `SelectRow`, `BeginEdit` / `CommitEditNow` /
   `CancelEditNow`, `SelectedFirst/LastRow`, `SelectedFirst/LastColumn`, the statics `CellName` / `ColumnName` /
   `ParseCellName`, and the `CellChanged`, `SelectionChanged` and `SheetSizeChanged` events.
+- **The workbook and the page (0.12.16 / 0.13.0):** the toolbar carries **File** (Load… / Save…, `.xlsx`, one
+  page at a time, a bigger page GROWS `Rows`/`Columns`) and **Print** (Save as PNG… always, and inside the
+  `PRINT_SUPPORT` symbol Save as PDF… and Print… — the platform's service, or the CUPS `GrumpyPrint` helper on a
+  Linux desktop). `ExportPng` / `WritePdf` / `PrintAsync` take an optional `wholeSheet`; by default the page is
+  the **PRINT AREA — the selected cells**, with the area's real headers. With a single cell selected the menu
+  entries **warn first** (Abort / Print the whole sheet, Abort on `Enter` and `Esc`), because a 50-row sheet
+  reaching paper by accident costs real ink — and with an area chosen they ask **which way round the page is**
+  (`PrintOrientation`: *Portrait* / *Landscape*, remembered on the sheet; `Enter` takes the current answer,
+  `Esc` or Cancel produce nothing).
+- **The page is A4** (0.12.16 onward, and this shape since 0.13.0): `595 × 842` pt portrait, `842 × 595`
+  landscape, painted white, with the area scaled to **fit** inside a fixed **18 pt** margin — the same page,
+  margin and `VisualBrush` trick the charts use, so a sheet and a chart printed from one form look alike, and
+  the PNG export is a page too. On the CUPS path the **job states the page** (`-o orientation-requested`,
+  `PageSize`, `number-up=1`), because CUPS's `pdftopdf` follows the job's options rather than the file's page
+  box — which is why a landscape hardcopy used to come out portrait. Paper size, margin and a printer chooser
+  are still to come.
+- **`.xlsx` runs one way.** A file this control wrote opens in Excel, LibreOffice Calc and Google Sheets, but
+  loading a workbook produced by a *full* spreadsheet application may work partly or break: **one page** is
+  read, a formula outside this dialect arrives as its last saved result or an error name, number formats are
+  not interpreted (a percentage can arrive as `0.25`), and merged cells, pictures, charts, validation and
+  pivots are ignored. Treat **Load…** as *"bring the numbers in"* and keep the original as the master.
 
 ## Layout panels
 

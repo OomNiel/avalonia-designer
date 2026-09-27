@@ -6,11 +6,119 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.12.15` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.13.0` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.13.0] - 2026-09-27 · *the spreadsheet gets its toolbar, its workbook, its addresses — and its page*
+
+The spreadsheet control, finished: the file side (a toolbar with **File** and **Print**), a real `.xlsx`
+reader and writer, an `=` formula list, formulas whose **addresses move when they are copied**, a **print
+area** so that a page is the cells you chose, and a **real A4 page whose orientation is asked for** before
+every job. Asked for across the session as *"add a property for the cell
+edit box background, add a toolbar with File and Print, and add `=Sum(A1..A15)` style formulas in a popup"*,
+then *"when copy dragging a cell with a formula, the cell address should update accordingly"*, then *"change
+the current cell range specifier (`..`) to `:`"*, and lastly *"before printing, offer the options to select the
+page orientation and implement the choice"* (the print-area warning was the ask before it: *"the user must
+select the print area before printing … if the print area is not selected a warning must be issued (with an
+abort choice)"*).
+
+### Added — the toolbar, the workbook and the `=` list (0.12.16)
+
+- **A toolbar the control draws itself**, above the formula bar and shown by default (`Toolbar = False`
+  removes it and gives its height back to the grid): **File ▸ Load… / Save…** and
+  **Print ▸ Save as PNG… / Save as PDF… / Print…**.
+- **`.xlsx` in both directions, written by hand** — no package, no writer library. Formulas travel with the
+  value they worked out, per-cell formatting and the column/row sizes as well; **one page is loaded at a
+  time** (the page list is offered when a workbook holds more than one) and a page bigger than the sheet
+  **grows** `Rows` / `Columns` — it never shrinks them. Verified with an independent reader (openpyxl) *and*
+  against the real `GrumpyCharts.xlsx` sample (10 202 cells, 102 × 101 on load).
+- **The `=` list**: typing `=` in a cell or in the fx box lists every function with a few words about it,
+  filtered as you type; `Enter` puts it in the **fx box** with **the last block you selected** already inside
+  the brackets, and the second `Enter` commits. **STDEV** / **STDEVP** (and `STDDEV` / `STDDEVP`) joined the
+  function set.
+- **Three new property rows:** `Toolbar`, and the fx box's own `EditBoxBack` / `EditBoxText` colours — plus the
+  read-only **`StatusText`** line the toolbar narrates into.
+
+### Changed — a copied formula's addresses move with the fill (0.13.0)
+
+- **A formula filled into other cells is COPIED, not predicted.** Every relative address moves by the distance
+  travelled — `=SUM(B2:B9)` dragged one row down reads `=SUM(B3:B10)` — and a **`$` anchors** exactly as it
+  does in Excel: `$B$2` never moves, `B$2` keeps its row, `$B2` its column. A reference pushed off the sheet is
+  written as **`#REF!`**, text in quotes (`="A1"`) is never touched, and a name that merely looks like an
+  address (`A1B`, `COUNT1`) is left alone. Everything else in the fill keeps the series prediction it had —
+  **per cell**, in one gesture, so a column of totals beside a column of figures fills in one drag.
+- **Filling runs all four ways now.** The selection has **two fill handles**: the familiar square at its
+  bottom-right, and a new one at its **top-left**. Dragging either one **up or left** continues a series
+  backwards (`3, 4` becomes `1, 2`) as well as forwards (`10, 12` down becomes `14`).
+- **A range is WRITTEN with a colon** (`=Sum(A1:A3)` — the spelling every spreadsheet uses) while the older
+  two-dot form still **reads**, so a formula typed before this keeps working and keeps its own spelling.
+- `$` used to be accepted and ignored, because there was no copy/paste for it to mean anything; it **anchors**
+  now, which is what the manual had listed as still to come.
+
+### Added — the print area (0.13.0)
+
+- **A page is the PRINT AREA: the cells you selected.** All three entries under **Print** picture or print the
+  selection, with the **real column letters and row numbers** beside it — and a column with a width of its own
+  keeps it on the page. A page carries no selection outline, no fill handles and no selection wash.
+- **Every job is composed on an A4 page** (595 × 842 pt, portrait or landscape) with the area scaled to **fit**
+  inside an 18 pt margin — the same page and the same margin the bundled charts use, so a sheet and a chart
+  printed from one form look like they came from one printer. The PNG export is a page too.
+- **Before each job the sheet asks which way round the page is.** It draws the question itself — a heading, the
+  two ways round with the current one ticked, and **Cancel** — with the highlight starting on the answer the
+  sheet already has, so `Enter` takes it and `Esc` or Cancel produces nothing. The answer is remembered in the
+  new **`PrintOrientation`** property, which the designer's Properties panel offers as *Orientation* too, so a
+  form can be authored landscape and print landscape with no click. Code that calls the export methods directly
+  (`ExportPng`, `WritePdf`, `PrintAsync`) is never interrupted by the question.
+- **"Print the whole sheet" means the whole sheet.** The picture used to be the *window that was on screen*,
+  scrolled where you had left it; now the whole sheet is every row and column, and the scroll position
+  no longer leaks onto the paper.
+- **With a single cell selected — the resting state — the sheet WARNS first**, in the small panel it draws for
+  itself: what is about to happen, an **Abort** line that `Enter` and `Esc` both take, and a **Print the whole
+  sheet** line for the deliberate choice. Nothing is written until one of them is chosen, a click on the
+  warning text itself chooses nothing, and clicking the corner (or `Ctrl+A`) counts as a deliberate "all of
+  it", so it prints without asking.
+
+### Fixed
+
+- **A landscape hardcopy came out the wrong way round.** Not the page — the file the printer received was
+  provably A4 landscape (`842 × 595`, no rotation) — but the **job**: on Linux the page reaches CUPS as a PDF,
+  and CUPS's `pdftopdf` filter transforms it according to the **job's** options rather than the file's page box,
+  so a queue whose saved defaults say portrait (a user's `~/.cups/lpoptions` can pin that) printed a landscape
+  page portrait. The sheet now states the page on the job itself —
+  `-o orientation-requested=4 -o PageSize=A4 -o number-up=1` — measured on a Canon MF230: one and the same PDF
+  came out wrong with no options and right with them. A caller that passes no page settings sends exactly the
+  argument list it always did, so the charts' hardcopy is untouched.
+- **A page no longer carries the selection wash** (or the lit-up header of a whole-column area): the tint would
+  have printed as a pale block in a colour the sheet never uses. The probe's colour markers caught it.
+- **`MaskedTextBox` still offered `Watermark`**, which Avalonia 12 removed (`AVLN5001` — use
+  `PlaceholderText`). The 2026-08-31 sweep fixed the `TextBox` row and missed this one, so the designer's
+  *Hint Text* box wrote an obsolete attribute into every generated project. Found by reading a **build
+  warning**: the property audit only proves a row ROUND-TRIPS into XAML, which an obsolete one does perfectly.
+
+### Documented
+
+- **What the spreadsheet is, and is not.** The manual and the README now say it plainly: a **limited but
+  functional** sheet — one page, and no charts, pivot tables, merged cells, number formats or macros — which
+  **saves its page as a real `.xlsx`**. Its loading side **runs one way**: a workbook produced by a *full*
+  spreadsheet application may work, may load only partly, or may break, so **Load…** is *"bring the numbers
+  in"* and the original stays the master copy.
+
+### Tests
+
+- **The suite grew to 9,391 checks** (from 9,148), and the twins are pinned for every new member: the
+  shifter, the anchored address reader, the four-direction fill, the second handle, the print-area helpers,
+  the warning and its ink, the A4 page with its orientation question, and the page options handed to CUPS.
+- **The hardcopy's command line is asserted, not assumed**: the T4 driver builds a net10 harness with the real
+  printer packages, puts a **stub `lp`** on the `PATH` and reads both jobs' arguments back — three for a chart's
+  own page, nine for a page that describes itself.
+- **The probe `/tmp/sheetprint`** (49 checks, `RESULT PASS`) drives the real control headlessly: it exports the
+  page, **decodes the PNG** and measures it — A4 portrait or landscape, the area fitted inside the margin and
+  never stretched, a cell filled red just OUTSIDE the area absent from the page while a green one inside it is
+  there — then opens the warning and the page question through the real toolbar menu and asserts what each one
+  writes.
 
 ## [0.12.15] - 2026-09-26 · *the spreadsheet works itself out, and it docks*
 
