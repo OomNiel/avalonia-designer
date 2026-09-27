@@ -47,7 +47,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.13.0`**, so the command above installs it (add `-force` to reinstall, or to
+The current version is **`0.13.1`**, so the command above installs it (add `-force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -56,11 +56,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.13.0.vsix --force
+code --install-extension avalonia-designer-0.13.1.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.13.0` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.13.1` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -163,6 +163,14 @@ It also supports **“follow a column of a bound grid”**: a ComboBox or ListBo
 column of a table a DataGrid owns and update **live** as you add, edit or delete rows in the grid —
 without taking the table away from the grid's own editing, undo and save-back.
 
+The canvas draws the **real rows** of a bound DataGrid: the designer looks for the database **where the
+running app keeps it** (a relative file name means the per-user data folder — `~/.local/share/<App>/`,
+`%LOCALAPPDATA%\<App>\` — then a build output, then beside the form; an absolute path is used as it
+stands), uses the column **captions** the app itself shows, and with no database yet falls back to the
+table's columns so a bound grid is never an unbound-looking box. Bindings are added and removed
+symmetrically: **un-binding** takes the property, the wiring **and the `using`s** the binding added back
+out again, leaving the file exactly as it was.
+
 ## 7. Bundled helper controls and charts, copied in and kept in sync
 
 File and Folder **path pickers** (platform dialog via `TopLevel.StorageProvider`, no extra package),
@@ -216,16 +224,21 @@ package, template or asset behind it — it draws itself, so it previews in the 
 runs. In the designer, the **Cells** row opens a real grid: type in the cells, drag a range, drag the
 selection's bottom-right handle to **continue a series** (`1, 2` → `3, 4, 5 …`, `2, 4` → `6, 8 …`, `Item1,
 Item2` → `Item3`), set Rows and Columns, style the selection from the formatting bar (bold, italics, size,
-font, text colour, highlight, alignment) and **drag a header border** to give a column or row a size of its
+font, text colour, highlight, alignment — and the cell's **edges**, line weight and line colour) and **drag
+a header border** to give a column or row a size of its
 own. The cells are child elements — `<spread:SheetCell Row="1" Column="1" Text="x"/>` — so what you type
 is what the form carries. At run time it is live: typing, ranges, whole-line selection, autofill, Ctrl+Arrow
-navigation, Ctrl+B/Ctrl+I, a right-click menu the control draws itself (align, bold, italics, clear), and
+navigation, Ctrl+B/Ctrl+I, a right-click menu the control draws itself (align, bold, italics, clear,
+**fill colour…**, **text colour…**, **borders…** — a border per edge, all four at once, the block's
+outside rim or only the lines between the selected cells, with a thickness and a line colour), and
 **formulas** — a cell starting with `=` is worked out (`SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`,
 `ABS`, `ROUND`, `INT`, `SQRT`, `MOD`, `IF`, `AND`, `OR`, `NOT`, `LEN`, `UPPER`, `LOWER`, `TRIM`, ranges, and
 comparisons), with the text kept in the fx box and the **result drawn in the grid**; what cannot be worked out
 is named (`#DIV/0!`, `#VALUE!`, `#NAME?`, `#REF!`, `#CYCLE!`) rather than drawn blank. A **File/Print
 toolbar** the control draws itself saves the page as a real **`.xlsx`** workbook and loads one back (formulas,
-per-cell formatting and the track sizes, one page at a time), offers the whole function set in an `=` popup
+per-cell formatting and the track sizes, **cell borders among them** — a bordered empty cell survives the
+round trip, and a border of no stated width means the sheet's own one-pixel line), offers the whole function
+set in an `=` popup
 that filters as you type, and pictures or prints **the print area — the cells you selected** on a real **A4
 page**, portrait or landscape, asking which way round before every job and remembering the answer, with the
 warning that stops a fifty-row sheet going to paper by accident. It is **dockable** like any panel child, so a sheet

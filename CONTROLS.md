@@ -287,17 +287,23 @@ autofill, fx box), gained per-cell formatting in **0.12.10**, the reported fixes
 same release. **0.12.16** added a **File/Print toolbar** with `.xlsx` load/save and the `=` formula list, and
 **0.13.0** the **print area** (a page is the selected cells, and a single selected cell warns first),
 **formulas whose addresses move with a fill**, and a **real A4 page whose orientation is asked for** before
-each job — `PrintOrientation`, offered in the Properties panel as *Orientation*.
+each job — `PrintOrientation`, offered in the Properties panel as *Orientation* — and **0.13.1** cell
+**borders**, **fill colours** and **text colours**, set from a right-click menu the control draws (or the
+Cells dialog's Edges/Weight/Line) and **carried in the `.xlsx`**.
 
 - **Cells are child elements, not properties**: `<spread:GrumpySheet>` takes
   `<spread:SheetCell Row="1" Column="1" Text="x"/>` directly, and a cell may also carry `Bold`, `Italic`,
-  `FontSize`, `FontFamily`, `TextColor`, `Fill` and `TextAlign`. A blank cell *with* formatting is written too
+  `FontSize`, `FontFamily`, `TextColor`, `Fill`, `TextAlign` and the border trio `BorderEdges` /
+  `BorderThickness` / `BorderColor`. A blank cell *with* formatting is written too
   — an empty highlighted box is a real thing to want.
 - **Where the cells are edited:** the **Cells** row in the Properties panel opens a real grid (an HTML table,
   not a canvas). Rows and Columns are set there as well, because it is the thing that draws the grid they
   describe. Type in a cell, drag across cells for a range, click a letter or a number to select that line, drag
-  the selection's bottom-right handle to continue a series, and **drag a header border** to give a column or
-  row its own size (double-click that border to put it back on `ColumnWidth` / `RowHeight`).
+  the selection's bottom-right handle to continue a series, style the selection from the formatting bar (which
+  since **0.13.1** also carries **Edges**, **Weight** and **Line** for borders, writing the width together
+  with the edges and offering *"(as set: …)"* for a combination no single spelling means), and **drag a
+  header border** to give a column or row its own size (double-click that border to put it back on
+  `ColumnWidth` / `RowHeight`).
 - **At run time:** type to replace, F2 or a double click to edit, Enter / Tab commits and moves, Esc abandons,
   Delete clears, Ctrl+A selects everything, Shift+arrows extend, Ctrl+Arrow runs to the end of the block of
   filled cells in that direction, Ctrl+End goes to the bottom-right of what is in the sheet, Ctrl+B / Ctrl+I
@@ -313,6 +319,21 @@ each job — `PrintOrientation`, offered in the Properties panel as *Orientation
   `Right` / `Bottom`), so a sheet can be one region of a form — docked Bottom under a body, or Left beside it.
   The designer wraps the sheet in a `DockPanel` when it is not already in one and clears the free-axis size so
   it stretches to that edge; the control needs no property of its own for this.
+- **Cell borders and colours (0.13.1):** a cell carries `BorderEdges` (flags: `None` / `Top` / `Right` /
+  `Bottom` / `Left` / `All`, so `Top,Bottom` is a legal rule pair), `BorderThickness` and `BorderColor` —
+  and **`BorderThickness` of `0` means the sheet's own one-pixel line**, while the *edges* are what decide
+  whether a line exists at all. `SetBorder(row, column, edges, thickness, color)` sets all three at once and
+  `ClearFormatting` drops them. The right-click menu the control draws itself carries **Fill colour…**,
+  **Text colour…** (a *no colour* line, the 40-colour palette, and a slider picker that only writes on
+  *Use this colour*) and **Borders…** — a hub of **All** / **Outside** / **Inside** (selection spellings,
+  expanded per cell: the rim of the block and the lines *between* its cells, because a cell only stores four
+  edges), **Single edges…**, **Line thickness…**, **Line colour…** and **No border**. A chosen thickness or
+  line colour is remembered for the next edge but only ever applied to cells that already have a border.
+  **Borders print** (the selection wash and the fill handles do not), a corner shared by two drawn edges is
+  lengthened by half the thickness so the join has no chip out of it, and the **`.xlsx` carries them**: a real
+  border table, one entry per distinct border, read back with `thick` / `double` → 3 px, `medium` → 2, else
+  1. A bordered **blank** cell survives both directions; a line whose colour equals the sheet's own comes back
+  as *no colour chosen*, because a workbook cannot express the difference.
 - **Sizes:** `ColumnWidth` / `RowHeight` for every track, and **`ColumnWidths` / `RowHeights`** for the ones
   that have their own — sparse `Column:Width` pairs like `"3:120,7:60"`, which is exactly what a dragged
   border writes (in the running app **and** in the editor). `SheetSizeChanged` fires once per drag, on release,
@@ -345,7 +366,7 @@ each job — `PrintOrientation`, offered in the Properties panel as *Orientation
   loading a workbook produced by a *full* spreadsheet application may work partly or break: **one page** is
   read, a formula outside this dialect arrives as its last saved result or an error name, number formats are
   not interpreted (a percentage can arrive as `0.25`), and merged cells, pictures, charts, validation and
-  pivots are ignored. Treat **Load…** as *"bring the numbers in"* and keep the original as the master.
+  pivots are ignored. Cell borders *are* carried (0.13.1). Treat **Load…** as *"bring the numbers in"* and keep the original as the master.
 
 ## Layout panels
 
@@ -774,6 +795,17 @@ strongly-typed codegen):
   updates it, values replaced in place), keeps the grid's row order and skips the “+ Add row…”
   placeholder. The binding is recorded on the table's `.adset` (`followers`). A control that still has
   inline **items** must be cleared first — Avalonia refuses an `ItemsSource` while they exist.
+- **Un-bind removes what bind added** — the `ItemsSource` line, the property/field, the `Load`/`Wire`
+  wiring **and** the `using`s the binding added (`System.Data`, `System.Collections.ObjectModel`),
+  unless the form still needs them; a bind → un-bind round trip leaves the file byte-identical. Since
+  **0.13.1** a generated file's imports follow the code that needs them (a table stored in a database
+  file no longer loses `using System.IO;` just because nothing is bound).
+- **The canvas draws the real rows** (0.13.1): a bound DataGrid shows the table's rows at design time,
+  read from the database **where the running app writes it** — a relative `sqlite.file` resolves to the
+  per-user data folder (`~/.local/share/<App>/`, `%LOCALAPPDATA%\<App>\`), then a Debug/Release build
+  output, then beside the form; an absolute path is used as it stands. The **captions** the generated
+  columns use become the headers, an image (`Byte[]`) column is skipped, and with no database yet the
+  schema's columns are shown with no rows, so a bound grid is never an unbound-looking box.
 - v1 is **schema-only** — no `DataRelation`s yet.
 
 ### Code Fix… (designer toolbar)

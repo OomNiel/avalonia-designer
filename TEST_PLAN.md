@@ -1,6 +1,6 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-27 · Status: **full suite green on this machine — 9,391 passed / 0 failed / 0 skipped (73 s)**
+Date: 2026-09-27 · Status: **full suite green on this machine — 9,660 passed / 0 failed / 0 skipped (73 s)**
 
 > 2026-09-27: **`0.12.16` … `0.13.0`** — the spreadsheet got its file side and its page. `0.12.16` added the
 > control's own **File/Print toolbar**, a hand-written **`.xlsx` reader and writer** (one page at a time,
@@ -23,6 +23,25 @@ Date: 2026-09-27 · Status: **full suite green on this machine — 9,391 passed 
 > warning** rather than a test:
 > `MaskedTextBox.Watermark` (AVLN5001) — the audit only proves a property round-trips, which an obsolete one
 > does perfectly.
+
+> 2026-09-27, later: **`0.13.1`** — the spreadsheet got its **cell borders** (and the `.xlsx` learned to
+> carry them), and the DataSet half got four fixes found while doing it. Suite **9,660**. New pins:
+> the writer's skip filter and the reader's filter both keep a **bordered empty cell**; the border table is
+> **interned** and written in the schema order Excel demands; the flags enum round-trips through the VB
+> matrix; `SetBorder` / `ClearFormatting`/ `BorderEdges` are covered on both twins; the **bind → un-bind
+> round trip is byte-identical** (cs/vb × DataGrid/ListBox), including the case where the form still needs
+> `System.Data` for its own `DataView`; a generated class for a **file-stored table with nothing bound**
+> carries `System.IO`; the per-user database rule is pinned per platform and with `$XDG_DATA_HOME`, in the
+> generator's own module; the preview's candidate order (per-user → build output → beside the form, absolute
+> taken as it stands) and the header rule (**caption || name**, `Byte[]` skipped) are asserted against a real
+> SQLite file; and the packaging test now demands exactly `["workspaceContains:**/*.axaml"]` while still
+> forbidding `onStartupFinished`. Probes: `/tmp/sheetborders` + `/tmp/sheetbordersvb` (20 checks each, the
+> same numbers from both twins — the VB probe is the one that caught the missing border pass), `/tmp/sheetpanels`
+> + `/tmp/sheetpanelsvb` (26 each — the three panels, their hit boxes and *nothing written before Use this
+> colour*), `/tmp/sheetbook` + `/tmp/sheetbookvb` (save → read back → **openpyxl** agrees, and the VB twin's
+> `Text(text)` escaper bug showing as `InvalidCastException` before the fix), `/tmp/gridpreview` (a real form,
+> a real database, **0** light pixels where the grid was dark and **6,782** with the rows) and
+> `/tmp/unbindcheck` (bind, un-bind, compare, build).
 
 > 2026-09-26, later: **`0.12.9` … `0.12.15`** — the spreadsheet control, in seven releases, and the suite grew
 > **8,630 → 9,148** with them. `0.12.9` added the control itself (both twins) with the designer's Cells editor;
@@ -560,6 +579,34 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.13.1 (2026-09-27) — cell borders, a workbook that keeps them, and a designer that lands you in the form
+
+- **New pins in `t2-logic/sheet`:** a cell border is `Edges` + `Thickness` + `Colour`, and **`Thickness = 0`
+  means the sheet's own one-pixel line** (the edges are what decide whether there is a line at all);
+  `SetBorder` and `ClearFormatting` on both twins; the writer keeps a cell whose only feature is a border and
+  the reader keeps a bordered empty one; the `<borders>` table is interned and written in schema order; and
+  `borderId` + `applyBorder="1"` reach the cell format — while a workbook written by 0.13.0 (no borders table)
+  still loads.
+- **New pins in `t2-logic/codeBehind`:** bind → un-bind is **byte-identical** for cs and vb across DataGrid and
+  ListBox, and the `using`s added by the binding go with it — except one the form still needs (its own
+  `DataView`, a second bound control). New pins in `t2-logic/dataSet`: a file-stored table with **nothing bound**
+  still gets `using System.IO;` / `Imports System.IO`.
+- **New pins in `t2-logic/dataSetReader`:** the per-user folder rule per platform and with `$XDG_DATA_HOME`
+  set, the candidate order, per-user winning over a build output, an absolute path passing straight through,
+  the generator importing its own module's helper (so the two rules cannot drift again), and the grid's column
+  and header rules (`caption || name`, `Byte[]` dropped).
+- **New pins in `t2-logic/firstOpen` (15):** a created project builds **once** and the Form Designer opens on
+  the marker; the marker is consumed when the editor opens and **survives a failed attempt** (the retry is
+  what makes the feature work on a slow machine); an unrelated workspace is untouched. `t2-logic/packaging`
+  now asserts `activationEvents` is exactly `["workspaceContains:**/*.axaml"]` — the hook could not run in a
+  fresh window without it — while still forbidding `onStartupFinished`.
+- **Probes (throwaway, `/tmp`):** `sheetborders` / `sheetbordersvb` (20 each), `sheetpanels` / `sheetpanelsvb`
+  (26 each), `sheetbook` / `sheetbookvb` (+ openpyxl on the C# file), `gridpreview` (real rows, real database,
+  plus the empty-table case), `gencheck`, `unbindcheck`. All `RESULT PASS`.
+- **One bug only a probe found:** the VB twin's `Text(text)` — VB is case-insensitive, so the escaper call bound
+  to the String parameter and indexed it, and the twin could not save a workbook holding a text cell at all.
+  Nothing had caught it because the VB matrix **compiles** the twin but never runs it.
 
 ### 0.13.0 (2026-09-27) — the print area, and a formula that travels
 

@@ -6,11 +6,113 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.13.0` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.13.1` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.13.1] - 2026-09-27 · *cell borders, a workbook that keeps them — and a designer that lands you in the form*
+
+The spreadsheet's **cell borders and colours** (asked for as *"polish the spreadsheet appearance: when
+right-clicking a selected cell (or multiple cells), add the option to set the cell's fill colour and text
+colour, and the option to add border lines to the cells, or group of selected cells, with a choice of which
+edge, the thickness and the colour"*), the **`.xlsx` round trip for those borders**, and a batch of fixes found
+while doing it: the DataSet designer's generated code, its **live design-time preview**, and **creating a
+project now lands you in the Form Designer** instead of an empty window.
+
+### Added — borders on a cell, and the three panels that set them
+
+- **A cell can be given a border**: `SheetCell.BorderEdges` (a flags enum — `None` / `Top` / `Right` /
+  `Bottom` / `Left` / `All`), `BorderThickness` and `BorderColor`, with
+  `SetBorder(row, column, edges, thickness, color)` beside the other `Set*`, in **both twins**.
+  `ClearFormatting` drops all three. **`BorderThickness` of `0` means the sheet's own one-pixel line**, not
+  “no border”: the edges decide whether there is a border at all, so `BorderEdges="All"` alone draws a
+  grid-coloured box.
+- **The control draws them**: a pass after the grid lines and before the text, so a border covers the line it
+  sits on and the text stays on top. Each end is **lengthened by half the thickness** where the edge that meets
+  there is drawn too — without it every corner of a box has a chip out of its outside (invisible at 1 px,
+  obvious at 3). **Borders print** (a page keeps them, unlike the selection wash and the fill handles).
+- **The right-click menu grew three entries** — **Fill colour…**, **Text colour…** and **Borders…** — each
+  opening a panel the control draws itself (the same idiom as the print warning and the page question): a
+  **swatch panel** (a “no colour” line, then the 40-colour palette as five rows of eight, then **More
+  colours…**), a **picker** (three sliders over a preview bar that is itself choosable, plus *Use this
+  colour* — nothing reaches the cells before that), and a **Borders hub** (All / Outside / Inside, *Single
+  edges…*, *Line thickness…*, *Line colour…*, *No border*). **Outside and Inside are selection spellings**,
+  expanded per cell: Outside is the block's rim, Inside only the lines shared with another selected cell — a
+  cell stores the four edges and nothing else. Thickness and line colour touch only cells that **already** have
+  a border (and are remembered for the next edge choice).
+- **The Cells dialog's formatting bar** gained **Edges**, **Weight** and **Line**, so a border can be set in
+  the designer too; the editor's grid draws it, always writes the width together with the edges, and offers an
+  *“(as set: …)”* entry rather than lying about a combination no single spelling means. The toolbox snippet
+  ships `BorderEdges="All"`, so the VB matrix proves the flags enum converts in a real build.
+
+### Added — the `.xlsx` carries the borders
+
+- **A real `<borders>` table**, interned like the fonts and the fills: `EmptyBorder` at index 0, one entry per
+  distinct border, `borderId` plus `applyBorder="1"` in the cell format, and the tables written in the one
+  order Excel accepts. The reader maps a side's `style` back to a width (`thick`/`double` → 3, `medium` → 2,
+  everything else → 1) and a colour equal to the sheet's `GridColor` comes back as **no colour** — a workbook
+  cannot tell “the grid colour” from “no colour chosen”, and a form must not grow an attribute per reload.
+- **A bordered blank cell survives both directions.** An empty box is exactly what someone draws a border
+  *for*, so the writer no longer drops a cell whose only feature is a border, and the reader no longer calls it
+  “nothing”. Verified against **openpyxl** as well as our own reader — the two twins save **byte-identical**
+  styles parts.
+
+### Fixed — the DataSet designer's generated code
+
+- **Un-binding now removes the code the binding added, all of it.** It stripped the `ItemsSource` line, the
+  property/field and the `Load`/`Wire` wiring, but left `using System.Data;` (and, for a DataGrid,
+  `System.Collections.ObjectModel;`) in the form for ever — a plain form kept two usings it never had. Pinned by
+  a bind → un-bind **byte-identical round trip**. An import the form still needs (its own `DataView`, a second
+  bound control) is kept.
+- **A generated file's imports follow the code that needs them.** `using System.IO;` hung off the DataGrid
+  binding, but the file-IO helpers are emitted for *any* table that persists — so a table stored in a
+  **database file** with nothing bound to it produced a file that no longer compiled
+  (`error CS0103: The name 'Path' does not exist in the current context`). A ListBox/ComboBox-bound table hit
+  the same wall from the start. Fixed in both languages.
+- **The VB twin could not save a workbook containing a text cell at all** — `InvalidCastException: Conversion
+  from string … to type 'Integer'`. VB is case-insensitive, so the escaper call `Text(text)` bound to the
+  String *parameter* and indexed it; the twin's escaper is `XmlText`. Nothing had caught it because the VB
+  matrix only ever *compiled* the twin. Also fixed: the VB field/property insert used to swallow the
+  indentation of `End Class`.
+
+### Fixed — the live design-time preview of a bound DataGrid
+
+- **The preview looks where the running app writes.** A relative `sqlite.file` resolves into the app's
+  **per-user data folder** (`~/.local/share/<App>/` on Linux, `%LOCALAPPDATA%\<App>\` on Windows) — where the
+  generated `RuntimeStorage` keeps it, and the only copy that exists once the app has run — then a
+  Debug/Release build output, then beside the form; an **absolute** path (a database you picked) is used as it
+  stands. One rule, in the module that emits the helper, shared by all three preview paths, so the canvas
+  cannot drift away from the app again. *Reported as “why don't I have a live preview of the bound dataset
+  table in the DataGrid at design time, as I did have before. Runtime is working correctly.”*
+- **The canvas grid shows the app's own columns and headers**: each header is the column's **Caption** (the
+  generated columns write `caption || name`), an image (`Byte[]`) column is skipped because the app has no
+  column for it, and with **no database yet** the schema's columns are drawn with no rows — a bound grid is
+  never an unbound-looking box.
+- **“Remove DataSet”** deletes the DataSet's own `<DataSet>.db` wherever it lives, **including the per-user
+  copy**, and the confirmation names every path it will delete (relative inside the project, absolute outside).
+  The “a database file with this name already exists” warning a new DataSet shows checks that copy too — before,
+  a new DataSet could silently inherit the rows of a removed one.
+
+### Added — creating a project lands you in the Designer
+
+- **A new project opens its form in the Form Designer.** With the **Open Project** button (or the first time the
+  folder is opened after that) the window comes up in the designer on `MainWindow.axaml`, with the first
+  `dotnet build` running in a terminal, instead of an empty window and a text editor — for **C# and VB.NET**
+  alike. The open is **retried**, and the pending marker is only given up once the editor really opened (a
+  failed attempt used to consume it, which made the feature silently do nothing for that project for ever).
+- **The extension now activates in a window whose workspace contains a form**
+  (`activationEvents: ["workspaceContains:**/*.axaml"]`). Until this, the first-open hook could never run there:
+  no command, view or custom editor had been touched yet, and activating on **every** window start stays
+  rejected on purpose (it loaded for every user at every window start).
+
+**Suite 9,660 passed / 0 failed** (`node tests/runner.js`, 73 s), the previewer host builds 0 warnings /
+0 errors, and the probes that carry what no unit test can were re-run: `/tmp/sheetborders` + `/tmp/sheetbordersvb`
+(20 checks each — identical numbers), `/tmp/sheetpanels` + `/tmp/sheetpanelsvb` (26 each), `/tmp/sheetbook` +
+`/tmp/sheetbookvb` (the workbook round trip, cross-checked with **openpyxl**), `/tmp/gridpreview` (a real form
+with the real rows: 0 light pixels where the grid was dark, 6,782 with them) and `/tmp/unbindcheck`
+(bind → un-bind leaves nothing behind and the project still builds).
 
 ## [0.13.0] - 2026-09-27 · *the spreadsheet gets its toolbar, its workbook, its addresses — and its page*
 

@@ -17,6 +17,47 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-09-27, seventeenth session — 0.13.1: cell borders, and a designer that lands you in the form)
+
+The session opened with the spreadsheet's last cosmetic gap — *“polish the spreadsheet appearance … when
+right-clicking a selected cell (or multiple cells), add the option to set the cell's fill colour and text
+colour, and the option to add border lines …, with a choice of which edge, the thickness and the colour”* —
+and then followed four user reports that came in while the border work was being tested.
+
+- **Cell borders exist.** `BorderEdges` (flags: `None` / `Top` / `Right` / `Bottom` / `Left` / `All`),
+  `BorderThickness`, `BorderColor`, one call `SetBorder(row, column, edges, thickness, color)`, dropped again
+  by *Clear formatting*. **`BorderThickness = 0` means the sheet's own one-pixel line**, not “no border” —
+  the edges are what turn a line on. Drawn in one pass (after the grid lines, before the text), printed, and
+  a shared corner is lengthened by half the thickness so the join has no chip out of it.
+- **The right-click menu carries the three panels**, drawn by the control itself (so the preview matches the
+  app): **Fill colour…** / **Text colour…** (a “no colour” line, the 40 swatches, *More colours…* → a slider
+  picker that writes only on *Use this colour*) and **Borders…** (*All* / *Outside* / *Inside*, *Single
+  edges…*, *Line thickness…*, *Line colour…*, *No border*). Outside/Inside are selection spellings expanded
+  per cell; a thickness or line colour only touches cells that already have a border. The designer's Cells
+  dialog gained **Edges / Weight / Line** to match.
+- **The `.xlsx` carries the borders** — a real interned `<borders>` table, `borderId` + `applyBorder="1"`,
+  widths read back from the side's `style`, and a **bordered empty cell now survives both ways** (that alone
+  was three separate places to fix).
+- **`error CS0103: The name 'Path' does not exist in the current context`** — a table stored in a **database
+  file** with nothing bound produced a class whose `using System.IO;` had not been emitted. Fixed; the import
+  now follows the code that needs it.
+- **Un-binding removes what binding added**, imports included, and a bind → un-bind round trip is
+  **byte-identical**.
+- **The design-time preview reads the per-user database** (`~/.local/share/<App>/`, `%LOCALAPPDATA%\<App>\`,
+  then a build output, then beside the form; absolute as given) — three drifted copies of that rule became
+  one — and the canvas shows the app's **captions** as headers, falling back to the schema's columns while
+  there is no database yet. *Remove DataSet* deletes every copy of the data file, including that one.
+- **A new project now opens in the Form Designer.** It never did: `activationEvents` was `[]`, so the hook
+  could not run in a fresh window. Now `["workspaceContains:**/*.axaml"]` (still no `onStartupFinished`), with
+  a retry that only drops its marker once the editor really opened.
+- **State:** suite **9,660 passed / 0 failed**, host builds 0 warnings / 0 errors, `CHANGELOG.md` `[0.13.1]`,
+  `NOTES.md` §164, `TEST_PLAN.md`'s 0.13.1 entry and `PUBLISHING.md`'s new record all written; committed,
+  tagged **`v0.13.1`** and released on GitHub with the VSIX attached.
+- **Open for the user:** the **Marketplace upload** is still theirs to do (publisher `grumpy`, portal →
+  *Update* → `avalonia-designer-0.13.1.vsix`, *Pre-release* unchecked) — the listing has carried `0.11.0`
+  since 2026-09-20, so one upload brings it up to date. Remember to **reload the window** after installing
+  locally.
+
 ## Where the last session left off (2026-09-27, sixteenth session — 0.13.0 packaged, and the page has a shape)
 
 The user ran the release candidate and reported two things in a row: *"we do not have print preview or page

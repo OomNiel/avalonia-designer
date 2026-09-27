@@ -67,13 +67,16 @@
     - [The waterfall chart (since 0.11.12)](#1912-the-waterfall-chart-since-01112)
     - [The surface chart 3D (since 0.11.14)](#1913-the-surface-chart-3d-since-01114)
     - [Printing a chart — hardcopy and PDF (since 0.12.0; page, PNG and Ctrl+P since 0.12.1; Linux printing and Print Legend since 0.12.2; Print Ink since 0.12.7)](#1914-printing-a-chart--hardcopy-and-pdf-since-0120)
-20. [The spreadsheet (GrumpySheet)](#20-the-spreadsheet-grumpysheet) (since 0.12.9; formatting 0.12.10; fixes + Ctrl+Arrow 0.12.11; right-click menu 0.12.12; formulas, Dock and the sizing handles 0.12.15; toolbar, .xlsx load/save and the formula list 0.12.16; addresses that move with a fill 0.13.0)
+20. [The spreadsheet (GrumpySheet)](#20-the-spreadsheet-grumpysheet) (since 0.12.9; formatting 0.12.10; fixes + Ctrl+Arrow 0.12.11; right-click menu 0.12.12; formulas, Dock and the sizing handles 0.12.15; toolbar, .xlsx load/save and the formula list 0.12.16; addresses that move with a fill 0.13.0; cell borders and colours 0.13.1)
     - [Placing a sheet](#201-placing-a-sheet)
     - [Typing the cells in: the Cells editor](#202-typing-the-cells-in-the-cells-editor)
     - [What the cells look like in the form](#203-what-the-cells-look-like-in-the-form)
     - [Formulas](#204-formulas)
     - [Using the sheet at run time](#205-using-the-sheet-at-run-time)
     - [The properties you set](#206-the-properties-you-set)
+    - [The toolbar, the workbook and the `=` list](#207-the-toolbar-the-workbook-and-the--list)
+    - [Tips and limits](#208-tips-and-limits)
+    - [Cell borders, fill colours and text colours (since 0.13.1)](#209-cell-borders-fill-colours-and-text-colours-since-0131)
     - [Tips and limits](#207-tips-and-limits)
 
 ---
@@ -168,7 +171,7 @@ search for *Grumpy's WYSIWYG Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.12.2`**, so the command above installs it; add `--force` to
+The current version is **`0.13.1`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -180,7 +183,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.12.2` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.13.1` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -2462,7 +2465,9 @@ entries, and the designer's offer above is the shortcut.
 > New in **0.12.9** (the grid), **0.12.10** (per-cell formatting), **0.12.11** (the fixes from running it, plus
 > Ctrl+Arrow navigation), **0.12.12** (the right-click menu), **0.12.15** (formulas, docking and the sizing
 > handles), **0.12.16** (the File/Print toolbar, `.xlsx` load and save, and the `=` formula list) and
-> **0.13.0** (a copied formula's addresses move with the fill, in all four directions).
+> **0.13.0** (a copied formula's addresses move with the fill, in all four directions) and **0.13.1** (cell
+> borders, fill colours and text colours — set from the right-click menu or the Cells dialog, drawn, printed,
+> and carried in the `.xlsx`).
 
 A **spreadsheet control of our own** — 26 columns (A…Z) and 50 rows out of the box, both settable — that
 draws itself: no NuGet package, no template, no assets. It is on the Toolbox under **Spreadsheet**, and it is
@@ -2517,7 +2522,8 @@ a form's contents are written:
   the grid those two numbers describe.
 - The **formatting bar** applies bold, italics, size, font, text colour, highlight and alignment to everything
   selected. It shows the **active cell's own** settings, and a setting left on the sheet's own is not written
-  into the form at all — *Clear formatting* drops the lot.
+  into the form at all — *Clear formatting* drops the lot. Beside them sit **Edges**, **Weight** and **Line**
+  for borders (see §20.9).
 - **Drag a border between two column letters** — or between two row numbers — to give that column or row a
   size of its own, exactly as you would in the running app. The size is shown in the name box while you drag
   (*Column C  120 px*), and **double-clicking** that border puts the track back on the sheet's own size. Sizes
@@ -2539,8 +2545,8 @@ Every non-empty cell is written into your XAML as a child element of the sheet:
 ```
 
 `Row` and `Column` are **1-based**. A cell may also carry `Italic`, `FontSize`, `FontFamily`, `TextColor`,
-`Fill` and `TextAlign` (`Auto` / `Left` / `Center` / `Right`), and anything you leave out means *the sheet's
-own* setting.
+`Fill`, `TextAlign` (`Auto` / `Left` / `Center` / `Right`) and `BorderEdges`, `BorderThickness`,
+`BorderColor` for its border lines, and anything you leave out means *the sheet's own* setting.
 
 ### 20.4 Formulas
 
@@ -2697,6 +2703,67 @@ still reads the older `..` form.
   preview renders the real control.
 - Numbers are drawn right-aligned while text is left-aligned, unless the cell's own alignment says otherwise;
   a computed number needs no formatting row of its own.
+
+### 20.9 Cell borders, fill colours and text colours (since 0.13.1)
+
+Right-click a cell — or any block of selected cells — and the menu now carries three more entries beside the
+alignment and style ones:
+
+| Entry | What it opens |
+| --- | --- |
+| **Fill colour…** | the swatch panel, for the cell's background |
+| **Text colour…** | the same panel, for the writing |
+| **Borders…** | the border hub, for the lines |
+
+**The swatch panel** is drawn by the control itself, exactly like the print warning and the page question, so
+it looks the same in the design preview and at run time. It shows a **no colour** line first (which is how a
+cell goes back to the sheet's own background), then the **40-colour palette** as five rows of eight, then
+**More colours…**. That last one opens a **picker** — red, green and blue sliders over a preview bar, and the
+bar itself is a target if you would rather point than push. **Nothing reaches the cells until you press *Use
+this colour***, so a colour you were only trying is not written into the form.
+
+**The border hub** is the other half, and it is deliberately phrased in the way you think about a block of
+cells rather than the way a cell stores its lines:
+
+- **All** — every selected cell gets a box of its own.
+- **Outside** — only the rim of the whole selection: the block looks like one bordered table.
+- **Inside** — only the lines *between* the selected cells.
+- **Single edges…** — *Top*, *Right*, *Bottom* or *Left* for the selection (pick **None** to take the lines
+  off again).
+- **Line thickness…**, **Line colour…** and **No border**.
+
+*Outside* and *Inside* are **selection spellings**: a cell stores the four edges and nothing else, so the
+control works out which of them are on the selection's rim and which are shared with another selected cell.
+And just as importantly, **0 means the sheet's own one-pixel line**, not “no line” — the edges decide whether
+there is a border at all, so *All* on its own draws a grid-coloured box that keeps the sheet's own weight.
+
+Two conveniences worth knowing: a thickness and a line colour you choose are **remembered for the next edge
+you set**, but they only ever touch cells that **already have a border** — asking for a thicker line never
+paints a line onto a cell that had none. And borders are **printed**: the page keeps them, unlike the
+selection wash and the fill handles, which are working aids and stay on screen.
+
+**In the designer the same thing lives in the Cells dialog.** The formatting bar's **Edges**, **Weight** and
+**Line** controls do the work from the keyboard side, and the editor's grid draws the borders so you can see
+what the form will look like. The dialog always writes the width **together with** the edges, and it offers an
+*“(as set: …)”* entry when a cell carries a combination no single spelling means, rather than silently
+replacing it. The toolbox snippet ships with `BorderEdges="All"`, and a cell in your XAML carries the three
+settings directly:
+
+```xml
+<spread:SheetCell Row="1" Column="1" Text="Item" BorderEdges="All" BorderThickness="2" BorderColor="#B00020"/>
+```
+
+`BorderEdges` is a flags value — `None`, `Top`, `Right`, `Bottom`, `Left` or `All` — so `Top,Bottom` is a legal
+under-and-over-rule pair. In code the same thing is one call,
+`sheet.SetBorder(row, column, SheetBorderEdges.All, 2, Colors.DarkRed)`, and *Clear formatting* removes the
+border with the rest of the cell's styling.
+
+**The `.xlsx` keeps the borders.** *File ▸ Save…* writes a real border table (one entry per distinct border,
+with the cell format pointing at it) and *File ▸ Load…* reads it back, including the width: `thick` and
+`double` come back as a 3-pixel line, `medium` as 2 and everything else as 1. A **bordered empty cell** — an
+empty box is exactly what someone draws a border *for* — survives both directions, which it did not before
+0.13.1. One thing cannot survive: a workbook has no way to say *“this line is the sheet's grid colour”*, so a
+line whose colour equals the sheet's own comes back as *no colour chosen*.
 
 ---
 

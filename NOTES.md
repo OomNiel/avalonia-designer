@@ -28,16 +28,20 @@ dotnet build host/PreviewerHost.csproj -c Debug   # → host/bin/Debug/net8.0/Pr
 ### Packaging / installing
 ```bash
 npm run package                                              # vsce package (pinned @vscode/vsce@2.15.0)
-code --install-extension avalonia-designer-0.9.4.vsix --force
+code --install-extension avalonia-designer-0.13.1.vsix --force
 npm run publish:stable                                       # Marketplace publish (needs VSCE_PAT)
 ```
-- `activationEvents` is **`[]`** (empty): contributed commands/views/custom editors activate the
-  extension on demand. Listing `onStartupFinished` made it load for every user at every window start.
+- `activationEvents` is **`["workspaceContains:**/*.axaml"]`** — the extension wakes in a window whose
+  workspace already holds a form, because contributing commands/views/custom editors is otherwise the *only*
+  thing that activates it, and the **first-open hook** (create a project → the Form Designer opens on
+  `MainWindow.axaml`) therefore never ran in a fresh window: nothing had been touched yet. Listing
+  `onStartupFinished` stays **forbidden** — it loaded for every user at every window start — and
+  `t2-logic/packaging` asserts the exact list.
 - The `.vsix` does **NOT** bundle the compiled host (only `host/*.cs`, `resources/*.cs` + the
   `.csproj`) — the installed copy auto-builds it.
 - `.vscodeignore` (NOT `.gitignore`) controls packaging; dev docs (`NOTES*.md`/`SESSION.md`),
   `tests/**`, `.poolside/**`, `tsconfig.json`, unused artwork and the source maps are excluded
-  (**89 files / 606 KB**).
+  (**124 files / ~1.5 MB** including the markdown manuals).
 - **vsce is NOT gitignore** (verified in its `collectFiles()`): a negated pattern (`!x`) wins over
   EVERY ignore pattern wherever it sits, and folder patterns are auto-expanded (`foo` → `foo/**`).
   The old `!out/**` therefore re-included all 24 source maps no matter how they were excluded —
@@ -4615,3 +4619,101 @@ deadlocks, because the continuations are posted to the dispatcher thread the dri
 pumps with `Dispatcher.UIThread.RunJobs()` now (an app's message loop is always pumping, so it was never a
 product bug). Suite **9,391 / 0**; `/tmp/sheetprint` 49 checks, `RESULT PASS`; artefact
 `avalonia-designer-0.13.0.vsix` (124 files, 1,484,712 B, sha256 `2c0fd65f…`).
+
+---
+
+### §164 — cell borders, a workbook that keeps them, and the fixes they turned up (2026-09-27, 0.13.1)
+
+The ask, verbatim: *“polish the spreadsheet appearance — the only thing missing now: when right-clicking a
+selected cell (or multiple cells), add the option to set the cell's fill colour and text colour, and the
+option to add border lines to the cells, or group of selected cells, with a choice of which edge, the
+thickness and the colour. Please make sure this also transfers to the CSV file if possible.”* (the workbook,
+not CSV — the sheet has no CSV path). Everything else in this section is either that feature or something its
+testing dug out.
+
+**The border lives on the cell, and `0` means the sheet's own line.** A cell gained `BorderEdges` (flags:
+`None 0`, `Top 1`, `Right 2`, `Bottom 4`, `Left 8`, `All 15`), `BorderThickness` and `BorderColor` (null =
+the sheet's `GridColor`), set in one call — `SetBorder(row, column, edges, thickness, color)` — with
+`ClearFormatting` dropping all three. The trap worth remembering: **`BorderThickness = 0` is not “no
+border”**, it is *the sheet's own one-pixel line*. The **edges** decide whether a line exists at all, so
+`BorderEdges="All"` on its own draws a grid-coloured box of the sheet's weight and `None` is the only “off”.
+Had `0` meant “none”, a form that asked for `All` would have lost the box the moment someone left the width
+at its default.
+
+**Drawing is one pass after the grid lines and before the text** — a border must cover the line it sits on,
+and the writing must stay on top — in both twins (`DrawCellBorder`, called from `DrawCell`). Each end is
+**lengthened by half the thickness** where the edge that meets there is drawn too: at 1 px the chip out of
+every corner is invisible, at 3 px it is the first thing you see. **Borders print**; the selection wash and
+the fill handles deliberately do not (that distinction was already in the print path from 0.13.0, and the
+new pass respects it).
+
+**Three panels, drawn by the control** (`MenuKind.Colour` / `.TextColour` / `.Border`, the same idiom as the
+print warning and the page question, so the design preview and the running app match): the **swatch panel**
+(“no colour”, the 40-colour palette as five rows of eight, **More colours…**), the **picker** (three sliders
+over a preview bar that is itself choosable; **nothing reaches the cells before *Use this colour***), and the
+**Borders hub** (*All* / *Outside* / *Inside*, *Single edges…*, *Line thickness…*, *Line colour…*, *No
+border*). **Outside and Inside are selection spellings**: a cell stores four edges and nothing else, so
+`EdgesFor` expands them per cell — Outside is the block's rim, Inside only the lines shared with another
+selected cell. Thickness and line colour touch **only cells that already have a border** (asking for a
+thicker line must never paint a line where there was none) and are remembered for the next edge set.
+
+**The workbook carries them.** A real `<borders>` table, interned like fonts and fills, `EmptyBorder` at
+index 0, one entry per distinct border, `borderId` + `applyBorder="1"` in the xf. The tables must appear in
+the order Excel wants (fonts → fills → **borders** → cellStyleXfs → cellXfs → cellStyles); the reader
+collects `<border>` elements, maps a side's `style` back to a width (`thick`/`double` → 3, `medium` → 2, else
+1) and turns a `BorderColor` equal to `GridColor` back into *no colour chosen*, because a workbook cannot say
+the difference and a form must not grow an attribute on every reload. **Three separate places had to learn
+that “nothing to carry” excludes a border**: the writer's own skip filter (an empty *box* is exactly what
+someone draws a border for), the reader's filter, and `sheetCellIsStyled` in the designer. Any one of them
+left alone drops the feature. Verified with **openpyxl** as well as our own reader.
+
+**A bug the probe found, not the tests:** the VB twin **could not save a workbook containing a text cell at
+all** — `InvalidCastException: Conversion from string … to type 'Integer'`. VB is case-insensitive, so the
+escaper call `Text(text)` bound to the String *parameter* and indexed it; the twin's escaper is `XmlText`.
+Nothing had caught it because the **VB matrix only ever compiles the twin** — it never runs it with data in
+it. Same family as the older VB traps (`borderKey`/`BorderKey`, lifted comparisons), and the reason the
+probes are run for both languages.
+
+**The bundled marker moved** (`src/bundledComponents.ts`: `DrawCellBorder` → **`EmptyBorder`**), per the rule
+in §147/§148: a *drawing* change in a bundled type must move the staleness marker, or a project holding the
+previous token never gets “Update now” and keeps the old drawing.
+
+**The fixes beside it** (all reported by the user while this was being built):
+
+- **`error CS0103: The name 'Path' does not exist in the current context`** — the generated class emitted
+  `using System.IO;` under the DataGrid-binding branch, but the file-IO helpers are emitted for *any* table
+  that persists. A table whose storage is a **database file**, with nothing bound to it, produced a file that
+  no longer compiled. `needsStorage` now gates the import (both languages).
+- **Un-binding removed less than binding added** — the `ItemsSource` line, the property/field and the
+  `Load`/`Wire` wiring came out, the `using System.Data;` (and `System.Collections.ObjectModel;` for a
+  DataGrid) stayed for ever. `dropImportIfUnused` with a usage guard (the form's own `DataView`, a second
+  bound control). Pinned by a bind → un-bind **byte-identical** round trip; the VB insertion also stopped
+  swallowing the `End Class` indentation.
+- **The design-time preview looked in the wrong places.** *“Why don't I have a live preview of the bound
+  dataset table in the DataGrid at design time, as I did have before? Runtime is working correctly.”* Three
+  copies of the “where is the database” rule had drifted: the canvas, the `.adset` editor and the image
+  preview. **One** rule now (`runtimeDataFolder` in `dataSetGenerator`, exported and imported back): a
+  relative `sqlite.file` is the app's **per-user** folder (`~/.local/share/<App>/`, `%LOCALAPPDATA%\<App>\` —
+  where the generated `RuntimeStorage` puts it and the only copy that exists once the app has run), then a
+  Debug/Release build output, then beside the form; an **absolute** path is used as it stands.
+- **The canvas grid** now shows the app's **captions** as headers (`caption || name`), skips `Byte[]`
+  columns (the app has no column for an image), and with **no database yet** draws the schema's columns with
+  no rows — a bound grid is never an unbound-looking box.
+- **Remove DataSet** deletes the DataSet's own `.db` **wherever it lives**, per-user copy included, and names
+  each path (relative inside the project, absolute outside); the new-DataSet “this name already exists”
+  warning checks that copy too — before, a fresh DataSet could silently inherit a removed one's rows.
+- **A new project opens in the Form Designer.** It never did: `activationEvents` was `[]`, so in a fresh
+  window no command, view or custom editor had been touched and the extension was not running at all when
+  the hook would have fired. Now `["workspaceContains:**/*.axaml"]` (still **no** `onStartupFinished`). The
+  open retries, and the pending marker is only dropped **after** the editor really opened — a failed attempt
+  used to consume it and silently disable the feature for that project for ever.
+
+**Lessons:** (1) a fix that lives only in this repository cannot reach the user — they run the installed
+VSIX, so check `ps` for `extensionDevelopmentPath` and grep the installed `out/*.js` before believing a fix
+did nothing; (2) never repackage a released version (0.13.0's artefact keeps its sha), repackaging an
+*unreleased* one is normal — delete the old `.vsix` first; (3) the `.xlsx` round trip needs the *third* copy
+of the “is this cell empty” rule in the designer kept in step, so probe it rather than reason about it.
+
+Suite **9,660 passed / 0 failed**; host 0 warnings / 0 errors; artefact `avalonia-designer-0.13.1.vsix`
+(**124 files, 1,527,476 B**, sha256 `a82ac92b…` — recorded in PUBLISHING.md, which is *not* packaged, so the
+figure is the shipped file's own).
