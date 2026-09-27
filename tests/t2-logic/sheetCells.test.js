@@ -593,4 +593,450 @@ module.exports = async (t) => {
         'labelled Dock, with the same dock list as every other control');
     t.ok(/DockPanel\.Dock/.test(read('src/designerPanel.ts')), 'panel',
         'and the designer handles DockPanel.Dock generically (wrapping the control in a DockPanel)');
+
+    // ---------------------------------------------------------------------------------------------
+    // 2026-09-27 — the toolbar, the .xlsx round trip and the macro list.
+    //
+    // Three features, and for each of them the failure that would be SILENT rather than loud:
+    //
+    //   * a macro the list offers but the PARSER cannot dispatch — the user picks StdDev from the popup
+    //     and the cell says #NAME?, which reads as "the sheet is broken", not "the list lied";
+    //   * a print path OUTSIDE the PRINT_SUPPORT guard — the file then needs packages and a helper a
+    //     project without print support does not have, so it stops compiling entirely (this one really
+    //     happened: `GrumpyPrint` was referenced unqualified and unguarded, and 12 generated projects
+    //     failed to build);
+    //   * a bundled-file MARKER that does not move — an existing project then keeps its old copy of the
+    //     sheet for ever, so the toolbar never appears no matter how often it opens the form.
+    t.section('T2: the spreadsheet toolbar, .xlsx and macro list');
+
+    const bothTwins = (snippet, group) => {
+        t.ok(cs.includes(snippet), group, `C#: ${snippet}`);
+        t.ok(vb.includes(snippet), group, `VB: ${snippet}`);
+    };
+
+    t.note('the three new property rows exist in both twins, with one default each');
+    t.ok(/Register<GrumpySheet, bool>\(nameof\(ShowToolbar\), true\)/.test(cs), 'toolbar',
+        'C#: ShowToolbar defaults to true — a dropped sheet has File and Print straight away');
+    t.ok(/Register\(Of GrumpySheet, Boolean\)\(NameOf\(ShowToolbar\), True\)/.test(vb), 'toolbar',
+        'VB: the same default');
+    t.ok(/nameof\(EditBackColor\), Color\.Parse\("#FFFFFF"\)/.test(cs) &&
+        /NameOf\(EditBackColor\), Color\.Parse\("#FFFFFF"\)/.test(vb), 'toolbar',
+        'the fx box backcolour defaults to white in both twins');
+    t.ok(/nameof\(EditTextColor\), Color\.Parse\("#1E2228"\)/.test(cs) &&
+        /NameOf\(EditTextColor\), Color\.Parse\("#1E2228"\)/.test(vb), 'toolbar',
+        'and its text colour to the sheet\'s own text colour');
+    t.ok(/AffectsRender<GrumpySheet>\([\s\S]{0,400}?ShowToolbarProperty/.test(cs) &&
+        /AffectsRender\(Of GrumpySheet\)\([\s\S]{0,400}?ShowToolbarProperty/.test(vb), 'toolbar',
+        'all three re-render the sheet when they change (ShowToolbar also re-measures it)');
+    t.ok(/AffectsMeasure<GrumpySheet>\([\s\S]{0,300}?ShowToolbarProperty/.test(cs) &&
+        /AffectsMeasure\(Of GrumpySheet\)\([\s\S]{0,300}?ShowToolbarProperty/.test(vb), 'toolbar',
+        'because the strip takes room from the grid, so the layout has to run again');
+
+    t.note('the toolbar, its menus and the macro list are in both twins');
+    bothTwins('DrawToolbar', 'toolbar');
+    bothTwins('OpenToolbarMenu', 'toolbar');
+    bothTwins('BuildFileItems', 'toolbar');
+    bothTwins('BuildPrintItems', 'toolbar');
+    bothTwins('BuildPageItems', 'toolbar');
+    bothTwins('ToolbarButtonAt', 'toolbar');
+    bothTwins('MenuKind', 'toolbar');
+    bothTwins('FitMacroItems', 'macro');
+    bothTwins('UpdateMacroPopup', 'macro');
+    bothTwins('AcceptMacro', 'macro');
+    bothTwins('SelectedRangeText', 'macro');
+    bothTwins('SheetPickerMemory', 'toolbar');
+    t.ok(/One page is loaded at a time/.test(cs) && /One page is loaded at a time/.test(vb), 'toolbar',
+        'the page list says one page is loaded at a time — the reminder to a user picking a page');
+    t.ok(/_macroStart = -1[\s\S]{0,80}?CloseContextMenu|CloseContextMenu[\s\S]{0,200}?_macroStart = -1/.test(cs),
+        'macro', 'closing a menu also drops the macro list\'s claim on the text');
+
+    t.note('the macro list and the parser agree — the check that stops the list offering what Apply cannot do');
+    const csMacros = [...cs.matchAll(/new SheetMacro \{ Name = "(\w+)"/g)].map((m) => m[1]);
+    const vbMacros = [...vb.matchAll(/New SheetMacro With \{\.Name = "(\w+)"/g)].map((m) => m[1]);
+    t.ok(csMacros.length >= 20, 'macro', `C#: the list offers ${csMacros.length} macros`);
+    t.equal(vbMacros.join(','), csMacros.join(','), 'macro', 'and the VB list is the same list, in order');
+    t.ok(csMacros.includes('Sum') && csMacros.includes('Avg') && csMacros.includes('StdDev') &&
+        csMacros.includes('Max') && csMacros.includes('Min'), 'macro',
+        'including the five the feature was asked for');
+    // Every name is dispatched: by Apply's switch, or — for IF, which is lazy — by CallFunction.
+    const applyCs = cs.slice(cs.indexOf('private FormulaValue Apply('), cs.indexOf('private FormulaValue Apply(') + 2000);
+    const applyVb = vb.slice(vb.indexOf('Private Function Apply('), vb.indexOf('Private Function Apply(') + 2000);
+    const missing = csMacros.filter((name) => {
+        const upper = name.toUpperCase();
+        if (upper === 'IF') return !/name == "IF"/.test(cs) || !/name = "IF"/.test(vb);
+        return !applyCs.includes(`case "${upper}":`) && !applyCs.includes(`"${upper}"`) ||
+            !applyVb.includes(`"${upper}"`);
+    });
+    t.equal(missing.join(','), '', 'macro', 'every macro the list offers is one the parser dispatches');
+
+    t.note('the range spelling the list writes is the one the parser reads');
+    t.ok(/_text\[probe\] == '\.' && _text\[probe \+ 1\] == '\.'/.test(cs), 'formula',
+        'C#: Argument() accepts A1..B3 as well as A1:B3');
+    t.ok(/_text\(probe\) = "\."c AndAlso _text\(probe \+ 1\) = "\."c/.test(vb), 'formula',
+        'VB: the same two-dot separator');
+    t.ok(/CellName\(firstRow, firstColumn\) \+ ":" \+ CellName/.test(cs) &&
+        /CellName\(firstRow, firstColumn\) & ":" & CellName/.test(vb), 'macro',
+        'and the macro pick WRITES it with a colon — the spelling every spreadsheet uses, and what the ' +
+        'tooltip now says; the two-dot form above still reads, so nothing typed before it breaks');
+    t.ok(/_rangeFirstRow/.test(cs) && /_rangeFirstRow/.test(vb), 'macro',
+        'the last BLOCK selected is remembered, so "select the figures, click the total cell, type =sum" works');
+    t.ok(/_rangeFirstRow = SelectionFirstRow\(\)/.test(cs) && /_rangeFirstRow = SelectionFirstRow\(\)/.test(vb),
+        'macro', 'and it is remembered in RaiseSelectionChanged, while the block IS the selection');
+
+    t.note('StdDev arrived with the sample and population split');
+    for (const name of ['STDEV', 'STDDEV', 'STDEVP', 'STDDEVP']) {
+        t.ok(cs.includes(`case "${name}":`), 'formula', `C#: ${name} is dispatched`);
+        t.ok(vb.includes(`"${name}"`), 'formula', `VB: ${name} is dispatched`);
+    }
+    t.ok(/StdDev\(numbers, true\)/.test(cs) && /StdDev\(numbers, false\)/.test(cs), 'formula',
+        'C#: the sample and population forms are the same helper with one flag');
+    t.ok(/StdDevOf\(numbers, True\)/.test(vb) && /StdDevOf\(numbers, False\)/.test(vb), 'formula',
+        'VB: named StdDevOf, because a bare StdDev would read as another property');
+
+    t.note('the workbook round trip is in both twins');
+    bothTwins('SaveWorkbook', 'book');
+    bothTwins('LoadWorkbook', 'book');
+    bothTwins('WorkbookPages', 'book');
+    bothTwins('ExportPng', 'book');
+    bothTwins('StatusText', 'book');
+    bothTwins('"xl/workbook.xml"', 'book');
+    bothTwins('xl/worksheets/sheet1.xml', 'book');
+    bothTwins('inlineStr', 'book');
+    bothTwins('sharedStrings.xml', 'book');
+    bothTwins('xl/styles.xml', 'book');
+    bothTwins('sheetData', 'book');
+    t.ok(/type == "s"/.test(cs), 'book', 'C#: a shared string is resolved through the shared-strings table');
+    t.ok(/type = "s"/.test(vb), 'book', 'VB: the same');
+    t.ok(/sheet\.Rows = Math\.Max\(sheet\.Rows/.test(cs) && /sheet\.Rows = Math\.Max\(sheet\.Rows/.test(vb),
+        'book', 'a loaded page GROWS the sheet and never shrinks it');
+    t.ok(/xmlns:r=/.test(cs) && /xmlns:r=/.test(vb), 'book',
+        'the workbook part declares the r: namespace its r:id lives in');
+    // The two things a hand-written cell part gets wrong: a text cell without the type attribute (every
+    // reader then drops the text) and a formula without its cached value (a reader that does not
+    // calculate shows nothing).
+    t.ok(/t=\\"inlineStr\\"/.test(cs) || cs.includes('t="inlineStr"'), 'book',
+        'C#: a text cell says t="inlineStr"');
+    t.ok(vb.includes('t=""inlineStr""'), 'book', 'VB: the same attribute');
+    t.ok(/<f>[\s\S]{0,60}?<\/f>" \+ cache/.test(cs) && /"<\/f>" & cache/.test(vb), 'book',
+        'and a formula carries the value it worked out, so other programs show the answer');
+
+    t.note('the print and PDF paths stay inside the PRINT_SUPPORT guard');
+    // What matters is that no CODE outside the guard names the helper: a comment may mention it, and one
+    // does (the menu builder says where the helper comes from). So comments come out first, then the
+    // guarded regions.
+    const withoutComments = (text, mark) => text.split('\n')
+        .map((line) => { const at = line.indexOf(mark); return at >= 0 ? line.slice(0, at) : line; })
+        .join('\n');
+    const csUnguarded = withoutComments(cs, '//').replace(/#if PRINT_SUPPORT[\s\S]*?#endif/g, '');
+    const vbUnguarded = withoutComments(vb, "'").replace(/#If PRINT_SUPPORT Then[\s\S]*?#End If/g, '');
+    t.ok(!csUnguarded.includes('GrumpyPrint') && !vbUnguarded.includes('GrumpyPrint'), 'print',
+        'neither twin mentions the print helper outside the guard — a project without the packages must still compile');
+    t.ok(!csUnguarded.includes('Print.ToFileAsync') && !vbUnguarded.includes('Print.ToFileAsync'), 'print',
+        'nor the PDF writer');
+    t.ok(cs.includes('AvaloniaCharts.GrumpyPrint') && vb.includes('Global.AvaloniaCharts.GrumpyPrint'), 'print',
+        'and it is FULLY QUALIFIED inside the guard: the helper lives in the charts\' namespace, which the sheet cannot see unqualified');
+    t.ok(/#if PRINT_SUPPORT[\s\S]{0,4000}?public static bool CanPrint/.test(cs) &&
+        /#If PRINT_SUPPORT Then[\s\S]{0,4000}?Public Shared ReadOnly Property CanPrint/.test(vb), 'print',
+        'CanPrint gates the printer row, the same test the charts make');
+    t.ok(/needs print support/.test(cs) && /needs print support/.test(vb), 'print',
+        'and the row is DISABLED with the reason, not left out');
+
+    t.note('an existing project is offered the refresh');
+    const { bundledComponentSpecs } = require('../../out/bundledComponents.js');
+    const sheetSpec = bundledComponentSpecs(false).find((s) => s.kind === 'GrumpySheet');
+    t.equal(sheetSpec.marker, 'PrintOrientationProperty', 'bundled',
+        'the marker moved to a token only today\'s copy has, or a form that updated once would keep its old sheet for ever');
+    t.ok(/marker/.test(read('src/bundledComponents.ts')) && sheetSpec.bundled.test('// BUNDLED RESOURCE'),
+        'bundled', 'and the file still identifies itself as bundled boilerplate, so a user\'s own copy is left alone');
+    const panel = read('src/designerPanel.ts');
+    const sheetHelper = panel.slice(panel.indexOf('private ensureSheetHelper'), panel.indexOf('private ensureBundledFileIn'));
+    t.ok(sheetHelper.includes("'GrumpyPrint'"), 'bundled',
+        'the designer now copies the print helper in WITH the sheet, as it does with the chart: a project holding one without the other does not compile');
+
+    t.note('the Properties panel offers the three rows');
+    for (const key of ['ShowToolbar', 'EditBackColor', 'EditTextColor']) {
+        t.ok(sheetRows.includes(`key: '${key}'`), 'panel', `the GrumpySheet rows offer ${key}`);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // 2026-09-27 (later) — COPYING A FORMULA MOVES ITS ADDRESSES, and the fill runs all four ways.
+    //
+    // The failures that would be SILENT rather than loud:
+    //
+    //   * a formula copied by a fill that keeps its old addresses — the column of totals then adds the
+    //     same row up over and over, which looks exactly like a spreadsheet and is wrong;
+    //   * a $ that does not anchor (the whole point of one), or a quoted "A1" that moves (it is text);
+    //   * a reference pushed off the sheet that writes an address instead of #REF!;
+    //   * filling UP or LEFT doing nothing at all, because only two of the four directions were written
+    //     — and no handle at the top-left corner, so there is nothing to grab to even try.
+    t.section('T2: copying a formula moves its addresses, and the fill runs all four ways');
+
+    const panelSrc = read('src/controlInfo.ts');
+    const js = read('media/designer.js');
+
+    t.note('the shifter and the anchor reader are in both twins');
+    bothTwins('ShiftFormula', 'fill');
+    bothTwins('TryReadAnchoredAddress', 'fill');
+    bothTwins('WholeToken', 'fill');
+    bothTwins('IsNameChar', 'fill');
+    bothTwins('TopHandleRect', 'fill');
+    bothTwins('OnHandle', 'fill');
+    t.ok(/columnFixed = text\[at\] == '\$';\s*\n\s*rowFixed = dollars > 0;/.test(cs) &&
+        /columnFixed = text\(at\) = "\$"c\s*\n\s*rowFixed = dollars > 0/.test(vb), 'fill',
+        'a $ before the LETTERS anchors the column and one before the digits anchors the row');
+    t.ok(/builder\.Append\(RefError\);/.test(cs) && /builder\.Append\(RefError\)/.test(vb), 'fill',
+        'a reference pushed off the sheet is written as #REF!, never as an address');
+    t.ok(/if \(c == '"'\)\s*\n\s*\{/.test(cs) && /If c = """"c Then/.test(vb), 'fill',
+        'both twins step over a quoted literal, so an "A1" inside one is text and is never moved');
+    t.ok(/return next != '\.' \|\| \(at \+ used \+ 1 < text\.Length && text\[at \+ used \+ 1\] == '\.'\);/.test(cs) &&
+        /Return next1 <> "\."c OrElse \(at \+ used \+ 1 < text\.Length AndAlso text\(at \+ used \+ 1\) = "\."c\)/.test(vb),
+        'fill', 'a dot is a boundary only when it is one of the two that spell a range, so A1..A5 shifts');
+
+    t.note('the fill copies a formula PER CELL and predicts anything else');
+    t.ok(/ShiftFormula\(baseText\.Substring\(1\), row - baseRow, 0\)/.test(cs) &&
+        /ShiftFormula\(baseText\.Substring\(1\), row - baseRow, 0\)/.test(vb), 'fill',
+        'down/up: the copy travels the ROW distance from the cell it came from');
+    t.ok(/ShiftFormula\(baseText\.Substring\(1\), 0, column - baseColumn\)/.test(cs) &&
+        /ShiftFormula\(baseText\.Substring\(1\), 0, column - baseColumn\)/.test(vb), 'fill',
+        'right/left: the same with the COLUMN distance');
+    t.ok(/baseText\[0\] == '='/.test(cs) && /baseText\(0\) = "="c/.test(vb), 'fill',
+        'and the source CELL decides which of the two happens, so one gesture can do both');
+    t.ok(/_fillSourceFirstRow \+ i % height/.test(cs) && /_fillSourceFirstRow \+ i Mod height/.test(vb), 'fill',
+        'the source cell a destination copies is its place in the block, so a 2-row block repeats');
+
+    t.note('the drag runs all four ways');
+    t.ok(/_fillRow > lastRow \|\| _fillRow < firstRow/.test(cs) &&
+        /_fillRow > lastRow OrElse _fillRow < firstRow/.test(vb), 'fill',
+        'ApplyFill has a branch for up as well as down');
+    t.ok(/_fillColumn > lastColumn \|\| _fillColumn < firstColumn/.test(cs) &&
+        /_fillColumn > lastColumn OrElse _fillColumn < firstColumn/.test(vb), 'fill',
+        'and one for left as well as right');
+    t.ok(/_fillRow < SelectionFirstRow\(\) \|\| _fillColumn < SelectionFirstColumn\(\)/.test(cs) &&
+        /_fillRow < SelectionFirstRow\(\) OrElse _fillColumn < SelectionFirstColumn\(\)/.test(vb), 'fill',
+        'so a drag aiming above or to the left counts as a fill at all');
+    t.ok(/var firstRow = Math\.Min\(_fillRow, SelectionFirstRow\(\)\);/.test(cs) &&
+        /Dim firstRow As Integer = Math\.Min\(_fillRow, SelectionFirstRow\(\)\)/.test(vb), 'fill',
+        'and the dashed preview spans whichever way it is dragged');
+    t.ok(/selection\.X - HandleSize \/ 2/.test(cs) && /selection\.X - HandleSize \/ 2/.test(vb), 'fill',
+        'there is a second handle on the selection\'s top-left corner to grab for up/left');
+    t.ok(/_fillSourceLastRow - _fillSourceFirstRow \+ 1/.test(cs) &&
+        /_fillSourceLastRow - _fillSourceFirstRow \+ 1/.test(vb), 'fill',
+        'the block\'s own height is what the copy wraps around, not the fill\'s length');
+
+    t.note('the prediction takes a direction, so up/left continues the same series backwards');
+    t.ok(/private static string\[\] PredictSeries\(IReadOnlyList<string> source, int count, int direction\)/.test(cs) &&
+        /direction As Integer\) As String\(\)/.test(vb), 'fill', 'both twins have the three-argument form');
+    t.ok(/distance\[i\] = direction > 0 \? source\.Count \+ i : i - count;/.test(cs) &&
+        /distance\(i\) = If\(direction > 0, source\.Count \+ i, i - count\)/.test(vb), 'fill',
+        'measured from the block\'s FIRST value, which is what makes the value BEFORE it the first written');
+    t.ok(/PredictSeries\(source, count, down \? 1 : -1\)/.test(cs) &&
+        /PredictSeries\(source, count, If\(down, 1, -1\)\)/.test(vb), 'fill',
+        'the down/up branch passes 1 or -1 to it, so the same series continues either way');
+
+    t.note('the design-time Cells editor fills the same way (media/designer.js)');
+    t.ok(/function sheetShiftFormula\(body, rowDelta, columnDelta\)/.test(js), 'fill',
+        'it has the same address shifter, so the design-time grid fills the way the form will');
+    t.ok(/function sheetReadAddress\(text, at\)/.test(js) && /function sheetWholeToken\(text, at, used\)/.test(js),
+        'fill', 'with the same anchor reader and the same "is this a whole address" rule');
+    t.ok(/sheetPredict\(values, count, down \? 1 : -1\)/.test(js) &&
+        /sheetPredict\(values, count, right \? 1 : -1\)/.test(js), 'fill',
+        'its prediction takes the direction too');
+    t.ok(/fill\.row < source\.r1/.test(js) && /fill\.column < source\.c1/.test(js), 'fill',
+        'and it fills up and left, not only down and right');
+    t.ok(/addHandle\(active\.offsetLeft - 3, active\.offsetTop - 3,/.test(js), 'fill',
+        'the editor draws the same second handle');
+
+    t.note('the designer says so, and the obsolete property is gone');
+    t.ok(/the one at its top-left/.test(panelSrc), 'panel',
+        'the Spreadsheet tooltip describes the second handle');
+    t.ok(/COPIED rather than predicted/.test(panelSrc), 'panel',
+        'and that a copied formula moves its addresses rather than being predicted');
+    t.ok(/the older A1\.\.B3 still reads/.test(panelSrc), 'panel',
+        'and which spelling a range is written in');
+    const sheetCatalog = read('src/propertyCatalog.ts');
+    t.ok(!/key: 'Watermark'/.test(sheetCatalog), 'panel',
+        'no control offers the obsolete Watermark any more (AVLN5001 in a generated project)');
+    t.ok(/MaskedTextBox: \[[\s\S]{0,900}?key: 'PlaceholderText', label: 'Hint Text'/.test(sheetCatalog), 'panel',
+        'PlaceholderText replaces it on the masked box too, as it already does on the TextBox row');
+
+    // ---------------------------------------------------------------------------------------------
+    // 2026-09-27 (later) — THE PRINT AREA. The failures that would be SILENT rather than loud:
+    //
+    //   * a page that pictures the WHOLE sheet because nothing was selected — the accident the warning
+    //     exists to prevent, and on paper it costs ink and time;
+    //   * a warning with no way out, or one that prints while it is still on screen;
+    //   * an area whose headers are WRONG (the block redrawn from A1, so B4:D9 reads A1:C6 on paper);
+    //   * a page that still carries the selection outline, the fill handles or the scroll position.
+    t.section('T2: the print area, and the warning that guards the whole sheet');
+
+    t.note('the print area is in both twins');
+    bothTwins('SheetPrintKind', 'print');
+    bothTwins('PrintArea', 'print');
+    bothTwins('HasPrintArea', 'print');
+    bothTwins('PrintAreaText', 'print');
+    bothTwins('RequestPrint', 'print');
+    bothTwins('RunPrint', 'print');
+    bothTwins('ShowPrintWarning', 'print');
+    bothTwins('AbortPrint', 'print');
+    bothTwins('PageForPrinting', 'print');
+    bothTwins('OnWarningLine', 'print');
+    bothTwins('PrintWarningWidth', 'print');
+    bothTwins('WarningColor', 'print');
+    t.ok(!/ChromeForPrinting/.test(cs) && !/ChromeForPrinting/.test(vb), 'print',
+        'the old chrome-only page scope is gone: the page scope carries the AREA now');
+    t.ok(/if \(HasPrintArea\(\)\)/.test(cs) && /If HasPrintArea\(\) Then/.test(vb), 'print',
+        'a chosen area runs straight away, and only the single-cell case stops to ask');
+    t.ok(/Warning = true,\s*\n?\s*Enabled = false/.test(cs) ||
+        /Warning = true, Enabled = false/.test(cs), 'print',
+        'C#: the warning lines are NOT choosable, so Enter lands on Abort');
+    t.ok(/\.Warning = True, \.Enabled = False/.test(vb), 'print', 'VB: the same, or Enter picks a line with no action');
+    t.ok(/Label = "Abort",\s*\n\s*Hint = "print nothing",\s*\n\s*Ticked = true,/.test(cs) &&
+        /IsSeparator = True/.test(vb), 'print',
+        'Abort is a real line, ticked, and comes before the whole-sheet line');
+    t.ok(/SaveAsPngAsync\(bool wholeSheet = false\)/.test(cs) && /WritePdf\(string path, bool wholeSheet = false\)/.test(cs) &&
+        /PrintAsync\(bool wholeSheet = false\)/.test(cs) && /SaveAsPdfAsync\(bool wholeSheet = false\)/.test(cs) &&
+        /ExportPng\(string path, double scale = 2, bool wholeSheet = false\)/.test(cs), 'print',
+        'C#: every entry can be told to take the whole sheet, and nothing else changes');
+    t.ok(/SaveAsPngAsync\(Optional wholeSheet As Boolean = False\)/.test(vb) &&
+        /ExportPng\(path As String, Optional scale As Double = 2.0,/.test(vb), 'print',
+        'VB: the same, with VB\'s optional parameters');
+    t.ok(/Run = \(\) => RequestPrint\(SheetPrintKind\.Picture\)/.test(cs) &&
+        /png\.Run = Sub\(\) RequestPrint\(SheetPrintKind\.Picture\)/.test(vb), 'print',
+        'the menu goes through RequestPrint rather than calling the export directly');
+    t.ok(/ColumnOffset\(_printLastColumn \+ 1\) - ColumnOffset\(_printFirstColumn\)/.test(cs) &&
+        /ColumnOffset\(_printLastColumn \+ 1\) - ColumnOffset\(_printFirstColumn\)/.test(vb), 'print',
+        'the page is the area\'s own width — a widened column keeps its width on paper');
+    t.ok(/RowOffset\(_printLastRow \+ 1\) - RowOffset\(_printFirstRow\)/.test(cs) &&
+        /RowOffset\(_printLastRow \+ 1\) - RowOffset\(_printFirstRow\)/.test(vb), 'print',
+        'and its own height, which is what stops the rest of the sheet printing underneath');
+    t.ok(/_scrollX = sheet\.ColumnOffset\(firstColumn\)/.test(cs) &&
+        /sheet\._scrollX = sheet\.ColumnOffset\(firstColumn\)/.test(vb), 'print',
+        'the area is reached by SCROLLING to it, so the real headers sit beside it');
+    t.ok(/if \(!_printRange\)/.test(cs) && /If Not _printRange Then/.test(vb), 'print',
+        'a page carries no selection outline');
+    t.ok(/!_selectAll && !_draggingFill && !_printRange/.test(cs) &&
+        /Not _selectAll AndAlso Not _draggingFill AndAlso Not _printRange/.test(vb), 'print',
+        'and no fill handles');
+    t.ok(/SelectionFirstRow\(\) != SelectionLastRow\(\)/.test(cs) &&
+        /SelectionFirstRow\(\) <> SelectionLastRow\(\)/.test(vb), 'print',
+        'a single cell counts as nothing chosen — that is the case that warns');
+
+    // ---------------------------------------------------------------------------------------------
+    // 2026-09-27 (last) — THE PAGE. There is no page setup yet, so every job is composed on A4 and the
+    // one page decision there is — which way round it is — is asked for before the job runs. The failures
+    // that would be SILENT rather than loud:
+    //
+    //   * a job that still hands the SHEET over, so the picture is the area's own size again and the
+    //     orientation does nothing at all;
+    //   * a page that carries the selection WASH (or the header highlights) onto the paper;
+    //   * an orientation that is drawn but not remembered, or remembered but not used;
+    //   * a question asked for a direct API call, which would open a menu inside a form's Button click.
+    t.section('T2: the page — A4, portrait or landscape, and the question asked before every job');
+
+    t.note('the page and its orientation are in both twins');
+    bothTwins('SheetOrientation', 'print');
+    bothTwins('PrintOrientation', 'print');
+    bothTwins('PageSize', 'print');
+    bothTwins('PageText', 'print');
+    bothTwins('PageForOrientation', 'print');
+    bothTwins('SheetPrintPage', 'print');
+    bothTwins('ShowOrientationChooser', 'print');
+    bothTwins('ChooseOrientation', 'print');
+    bothTwins('CancelPrint', 'print');
+    bothTwins('PrintPageWidth', 'print');
+    bothTwins('PrintPageMargin', 'print');
+    t.ok(/595d/.test(cs) && /842d/.test(cs) && /595\.0/.test(vb) && /842\.0/.test(vb), 'print',
+        'A4 in PDF points is the page, in both twins');
+    t.ok(/private const double PrintPageMargin = 18d/.test(cs) &&
+        /Private Const PrintPageMargin As Double = 18\.0/.test(vb), 'print',
+        'with the same 18 pt margin the bundled charts keep — a sheet and a chart look like one printer');
+    t.ok(/PrintOrientationProperty =\s*\n\s*AvaloniaProperty\.Register<GrumpySheet, SheetOrientation>\(nameof\(PrintOrientation\),\s*\n\s*SheetOrientation\.Portrait\)/.test(cs) &&
+        /PrintOrientationProperty As StyledProperty\(Of SheetOrientation\) =\s*\n\s*AvaloniaProperty\.Register\(Of GrumpySheet, SheetOrientation\)\(NameOf\(PrintOrientation\),\s*\n\s*SheetOrientation\.Portrait\)/.test(vb),
+        'print', 'and it is a real property, defaulting to PORTRAIT, so XAML and the panel can set it too');
+    t.ok(/PrintOrientation == SheetOrientation\.Landscape\s*\n\s*\? new Size\(PrintPageHeight, PrintPageWidth\)/.test(cs) &&
+        /If PrintOrientation = SheetOrientation\.Landscape Then\s*\n\s*Return New Size\(PrintPageHeight, PrintPageWidth\)/.test(vb),
+        'print', 'landscape is the same A4 the other way round, in both twins');
+    t.ok(/Stretch\.Uniform/.test(cs) && /Stretch\.Uniform/.test(vb), 'print',
+        'the area is FITTED into the margin, never stretched');
+    t.ok(/FillRectangle\(Brushes\.White/.test(cs) && /FillRectangle\(Brushes\.White/.test(vb), 'print',
+        'and the paper itself is painted white, so a PNG of a page is not transparent');
+
+    t.note('the job is handed the PAGE, not the sheet');
+    t.ok(/PageForOrientation\(\)\s*\}\)/.test(cs) && /\{PageForOrientation\(\)\}/.test(vb), 'print',
+        'the PDF and the printer take the composed page as their only visual');
+    t.ok(/bitmap\.Render\(sheetPage\)/.test(cs) && /bitmap\.Render\(sheetPage\)/.test(vb), 'print',
+        'and so does the PNG export — a page-shaped picture, as the panel row promises');
+    t.ok(!/Math\.Round\(Bounds\.Width \* scale\)/.test(cs) && !/Math\.Round\(Bounds\.Width \* scale\)/.test(vb),
+        'print', 'the PICTURE is no longer measured from the sheet (which is what made orientation a no-op)');
+    t.ok(/Math\.Round\(pageSize\.Width \* scale\)/.test(cs) && /Math\.Round\(paper\.Width \* scale\)/.test(vb),
+        'print', 'its size comes from the page, so 2x is still twice the page');
+    t.ok(/Printable\.Default is not null/.test(cs) && /Printable\.Default IsNot Nothing/.test(vb) &&
+        /Await Printable\.PrintVisualsAsync\(visuals, PageName\(\)\)/.test(vb), 'print',
+        'Print… uses the platform service when there is one, and only falls back to CUPS — which is what ' +
+        'the CanPrint property always promised');
+
+    t.note('a page carries no selection at all');
+    t.ok(/!_printRange && visibleSelection\.Width > 0/.test(cs) &&
+        /Not _printRange AndAlso visibleSelection\.Width > 0/.test(vb), 'print',
+        'not the WASH over the area — a tint would come out of the printer as a pale block');
+    t.ok(/\(!_wholeColumns && !_selectAll\) \|\| _printRange/.test(cs) &&
+        /\(Not _wholeColumns AndAlso Not _selectAll\) OrElse _printRange/.test(vb), 'print',
+        'nor the lit-up column header of a whole-column area');
+
+    t.note('and the page is asked about before the job runs');
+    t.ok(/ShowOrientationChooser\(kind, false\)/.test(cs) && /ShowOrientationChooser\(kind, False\)/.test(vb),
+        'print', 'an area selected goes to the page question instead of straight to the export');
+    t.ok(/ShowOrientationChooser\(pending, true\)/.test(cs) && /ShowOrientationChooser\(pending, True\)/.test(vb),
+        'print', '"print the whole sheet" leads there too, rather than printing behind the warning');
+    t.ok(/PrintOrientation = orientation;/.test(cs) && /\n\s*PrintOrientation = orientation\n/.test(vb), 'print',
+        'the answer is REMEMBERED on the sheet, so the next job starts on it');
+    t.ok(/RunPrint\(_printKind, wholeSheet\)/.test(cs) && /RunPrint\(_printKind, wholeSheet\)/.test(vb), 'print',
+        'and the job runs only after the answer — that is what makes the orientation real');
+    t.ok(/Run = CancelPrint\b/.test(cs) && /Run = AddressOf CancelPrint/.test(vb), 'print',
+        'Cancel is a line of its own, so a job is never produced by accident');
+    t.ok(/the page orientation was not chosen/.test(cs) && /the page orientation was not chosen/.test(vb), 'print',
+        'and it says so in the status line, the way Abort does');
+    t.ok(/_menuHot = current/.test(cs) && /_menuHot = current/.test(vb), 'print',
+        'the highlight STARTS on the current page, so Enter accepts what the sheet already has');
+    t.ok(/enum MenuKind \{ Context, Toolbar, Macro, Warning, Setup \}/.test(cs) && /Setup/.test(vb), 'print',
+        'the question is its own menu kind, which is what keeps Tab (the macro list\'s key) out of it');
+    t.ok(/, " \+ PageText\(\)/.test(cs) && /& ", " & PageText\(\)/.test(vb), 'print',
+        'every status line names the page as well as the area — "Saved a.png — B2:C3, A4 portrait"');
+
+    t.note('the panel offers it, and the section list shows it');
+    t.ok(/key: 'PrintOrientation', label: 'Orientation', kind: 'dropdown', options: \['Portrait', 'Landscape'\], defaultValue: 'Portrait'/.test(sheetCatalog),
+        'panel', 'a PrintOrientation row with both ways round, defaulting to Portrait');
+    t.ok(/'AllowEditing',\s*\n\s*'PrintOrientation'/.test(sheetCatalog), 'panel',
+        'and it is placed in Behavior, beside the sheet\'s other switches');
+
+    t.note('and a page that knows what it is TELLS the printer');
+    const gpCs = read('resources/GrumpyPrint.cs');
+    const gpVb = read('resources/GrumpyPrint.vb');
+    t.ok(/class PrintPageSettings/.test(gpCs) && /Class PrintPageSettings/.test(gpVb), 'print',
+        'both twins of the shared helper carry PrintPageSettings');
+    t.ok(/public bool Landscape/.test(gpCs) && /Public Property Landscape As Boolean/.test(gpVb), 'print',
+        'with Landscape');
+    t.ok(/Landscape \? 4 : 3/.test(gpCs) && /If\(Landscape, 4, 3\)/.test(gpVb), 'print',
+        'and the numbers CUPS wants: 4 landscape, 3 portrait');
+    t.ok(/orientation-requested=/.test(gpCs) && /orientation-requested=/.test(gpVb), 'print',
+        'the JOB is told the orientation — the PDF page box alone is not enough for pdftopdf');
+    t.ok(/PageSize=/.test(gpCs) && /PageSize=/.test(gpVb), 'print',
+        'and the paper, when the page names one');
+    t.ok(/number-up=1/.test(gpCs) && /number-up=1/.test(gpVb), 'print',
+        'and one page per sheet, so a saved lpoptions cannot halve the page layout');
+    t.ok(/if \(settings is not null\)/.test(gpCs) && /If settings IsNot Nothing Then/.test(gpVb), 'print',
+        'a caller that says nothing about its page sends no options at all — the charts are unchanged');
+    t.ok(/CupsArguments/.test(gpCs) && /CupsArguments/.test(gpVb), 'print',
+        'the argument list is a function of its own, which the T4 harness reads back from a stub lp');
+    t.ok(/CupsArguments\(file, title, printer, settings\)/.test(gpCs) &&
+        /CupsArguments\(file, title, printer, settings\)/.test(gpVb), 'print',
+        'and lp is handed exactly that list');
+    t.ok(/new AvaloniaCharts\.PrintPageSettings/.test(cs) &&
+        /New Global\.AvaloniaCharts\.PrintPageSettings/.test(vb), 'print',
+        'the sheet is the caller that DOES describe its page (fully qualified, as a bundled file must be)');
+    t.ok(/Landscape = PrintOrientation == SheetOrientation\.Landscape/.test(cs) &&
+        /\.Landscape = PrintOrientation = SheetOrientation\.Landscape/.test(vb), 'print',
+        'passing the page question\'s own answer');
+    t.ok(/PaperSize = PrintPaperName/.test(cs) && /\.PaperSize = PrintPaperName/.test(vb), 'print',
+        'and the paper the page was composed for — named once, so the page and the job cannot disagree');
 };

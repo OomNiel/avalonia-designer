@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.12.15
+' BUNDLED-COPY: 0.13.0
 ' GrumpySheet.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpySheet.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb / GrumpyCharts.vb.
 '
@@ -33,10 +33,13 @@
 '   * Keyboard: arrows move, Shift+arrows extend the selection, PageUp/PageDown jump ten rows, Home
 '     goes to column A, Ctrl+Home to A1, Enter moves down, Tab moves right, Delete clears the
 '     selected cells.
-'   * AUTOFILL: the small square at the bottom-right of the selection is the fill handle. Drag it down
-'     or right and the pattern is PREDICTED — 1, 2 becomes 3, 4, 5 …; 2, 4 becomes 6, 8 …; a single
-'     number counts up by one; "Item1, Item2" becomes "Item3"; anything else repeats the pattern it
-'     was given, which is how a repeating list is copied.
+'   * AUTOFILL: the small square at the bottom-right of the selection and the one at its top-left are
+'     the fill handles. Drag either one — down, right, up or left — and the pattern is PREDICTED:
+'     1, 2 becomes 3, 4, 5 …; 2, 4 becomes 6, 8 …; a single number counts up by one; "Item1, Item2"
+'     becomes "Item3"; anything else repeats the pattern it was given, which is how a repeating list
+'     is copied. A cell holding a FORMULA is not predicted but COPIED, with every relative address
+'     moved by the distance it travelled (=B2+1 one row down is =B3+1, exactly as a $ anchors a part
+'     of the address in place) and #REF! written where a reference would land off the sheet.
 '   * The formula bar shows the active cell's address (A1) and its contents, and edits them too: press
 '     Ctrl+U or click the address box to move the caret there.
 '   * The wheel scrolls; Shift+wheel scrolls sideways. The headers never leave the top and the left.
@@ -62,18 +65,41 @@
 '     renders identically in a headless preview where nothing can be focused.
 '   * Everything is proportional to ColumnWidth / RowHeight / FontSize, so the sheet survives any
 '     resize, and the grid is clipped to its own rectangle while the headers stay put.
-'   * FORMULAS ARE NOT EVALUATED YET. A cell holding "=SUM(B2:B6)" keeps and shows that text, and the
-'     fx bar is the place to edit it; evaluation is the next phase and does not change this format.
+'   * FORMULAS ARE EVALUATED. A cell holding "=Sum(B2..B6)" keeps and shows that text (the fx box is where
+'     it is read and edited) and the GRID draws what it works out to. Ranges are WRITTEN A1:B3 (Excel's
+'     spelling, and what the macro list writes), the older A1..B3 still reads, and the function list is
+'     offered by a popup the moment "=" is typed.
+'   * PRINTING AND THE PAGE. The toolbar's Print entries produce the PRINT AREA — the selected cells — and
+'     nothing else, and asking for one with a single cell selected warns first, with Abort on Enter. Every
+'     job is composed on an A4 PAGE, portrait or landscape: the page question is asked before each one and
+'     remembered in PrintOrientation, and the area is scaled to fit inside the margin. Load…/Save… read and
+'     write .xlsx, one page at a time.
 Imports System
 Imports System.Collections.Generic
 Imports System.Collections.Specialized
+Imports System.Diagnostics
 Imports System.Globalization
+Imports System.IO
+Imports System.IO.Compression
+Imports System.Threading.Tasks
+Imports System.Xml.Linq
 Imports Avalonia
 Imports Avalonia.Collections
 Imports Avalonia.Controls
 Imports Avalonia.Input
 Imports Avalonia.Media
+Imports Avalonia.Media.Imaging
 Imports Avalonia.Metadata
+Imports Avalonia.Platform.Storage
+
+#If PRINT_SUPPORT Then
+' Printing and the PDF export are provided by two OPTIONAL, third-party libraries a generated project opts
+' into (both packages referenced, the symbol defined — see projectScaffold.ts / printSupport.ts). Undefined,
+' the whole feature is compiled out and costs nothing, which is how the headless PreviewerHost builds this
+' same file with no printer package in reach.
+Imports AvaloniaUI.PrintToPDF
+Imports Avae.Printables
+#End If
 
 ' Global. IS NOT DECORATION. VB prepends the project's RootNamespace to every namespace a
 ' source file declares, so `Namespace AvaloniaSpreadsheet` inside a project whose RootNamespace
@@ -93,6 +119,16 @@ Namespace Global.AvaloniaSpreadsheet
         Left
         Center
         Right
+    End Enum
+
+    ''' <summary>Which way round the PAGE is when the sheet is printed or exported: A4 either way — the page
+    ''' has no other setup yet — with the print area scaled to fit inside the margin. Portrait is the
+    ''' default, and the sheet asks again before every job, because there is no page-setup dialog to set it
+    ''' in. (Not called Orientation: Avalonia.Layout owns that name, and a sheet that shadows it would make
+    ''' `Orientation` ambiguous in a form that uses both.)</summary>
+    Public Enum SheetOrientation
+        Portrait
+        Landscape
     End Enum
 
     ''' <summary>
@@ -284,8 +320,46 @@ Namespace Global.AvaloniaSpreadsheet
         Public Shared ReadOnly SelectionFillColorProperty As StyledProperty(Of Color) =
             AvaloniaProperty.Register(Of GrumpySheet, Color)(NameOf(SelectionFillColor), Color.Parse("#DCE9FA"))
 
+        ''' <summary>Draw the toolbar strip — the File and Print entries — above the formula bar. On by
+        ''' default: dropping a sheet into a form should hand the user Load…, Save… and Print… without a
+        ''' line of code.</summary>
+        Public Shared ReadOnly ShowToolbarProperty As StyledProperty(Of Boolean) =
+            AvaloniaProperty.Register(Of GrumpySheet, Boolean)(NameOf(ShowToolbar), True)
+
+        ''' <summary>The backcolour of the fx box — the cell edit box at the top of the sheet, where a
+        ''' formula is typed and read. White by default, so the box stands apart from the strip it sits
+        ''' in; the whole point of the row is that a form can make it obvious.</summary>
+        Public Shared ReadOnly EditBackColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpySheet, Color)(NameOf(EditBackColor), Color.Parse("#FFFFFF"))
+
+        ''' <summary>The colour of the text in the fx box (and of its caret).</summary>
+        Public Shared ReadOnly EditTextColorProperty As StyledProperty(Of Color) =
+            AvaloniaProperty.Register(Of GrumpySheet, Color)(NameOf(EditTextColor), Color.Parse("#1E2228"))
+
+        ''' <summary>Which way round the page is: portrait (taller than wide, the default) or landscape.
+        ''' Set from XAML, from the designer's properties, or by the page question the Print entries ask —
+        ''' which remembers the answer here, so the next job starts on the choice the user last made.</summary>
+        Public Shared ReadOnly PrintOrientationProperty As StyledProperty(Of SheetOrientation) =
+            AvaloniaProperty.Register(Of GrumpySheet, SheetOrientation)(NameOf(PrintOrientation),
+                SheetOrientation.Portrait)
+
         ''' <summary>The height of the formula bar strip, in pixels (fixed).</summary>
         Private Const BarHeight As Double = 24.0
+
+        ''' <summary>The height of the toolbar strip, in pixels (fixed).</summary>
+        Private Const ToolbarHeight As Double = 26.0
+
+        ''' <summary>The width of one toolbar button's icon, in pixels. The label is drawn after it, so a
+        ''' button is as wide as its own word.</summary>
+        Private Const ToolbarIconWidth As Double = 26.0
+
+        ''' <summary>How many buttons the toolbar has, and which is which.</summary>
+        Private Const ToolbarButtonCount As Integer = 2
+        Private Const ToolbarFile As Integer = 0
+        Private Const ToolbarPrint As Integer = 1
+
+        ''' <summary>The width of one toolbar button, in pixels.</summary>
+        Private Const ToolbarButtonWidth As Double = 28.0
 
         ''' <summary>The size of the autofill square, in pixels.</summary>
         Private Const HandleSize As Double = 7.0
@@ -330,6 +404,15 @@ Namespace Global.AvaloniaSpreadsheet
         Private _fillSourceLastRow As Integer = 1
         Private _fillSourceLastColumn As Integer = 1
 
+        ' The PRINT AREA, while a page is being drawn: the sheet shows only these cells and the real headers
+        ' next to them, which is a different picture from the one on screen. Set and cleared by the page
+        ' scope the three print/export entries use (PageForPrinting), never left set.
+        Private _printRange As Boolean
+        Private _printFirstRow As Integer = 1
+        Private _printFirstColumn As Integer = 1
+        Private _printLastRow As Integer = 1
+        Private _printLastColumn As Integer = 1
+
         ' The editor: no TextBox is involved, so this is the whole of its state.
         Private _editing As Boolean
         Private _barFocused As Boolean
@@ -337,8 +420,1687 @@ Namespace Global.AvaloniaSpreadsheet
         Private _caret As Integer
         Private _editIsNew As Boolean
 
+        ''' <summary>What the last file or print action did, shown at the right of the toolbar. Empty until
+        ''' something happens, so an untouched sheet has a clean strip.</summary>
+        Private _status As String = String.Empty
+
+        ''' <summary>True while a file dialog, a load, a save or a print job is in flight: one at a time, so
+        ''' a double click cannot start two pickers.</summary>
+        Private _fileBusy As Boolean
+
+        ''' <summary>Which toolbar button the pointer is over, or -1. Only the highlight and the label use
+        ''' it.</summary>
+        Private _toolbarHot As Integer = -1
+
+        ''' <summary>Puts a line in the toolbar's status area — how Load…, Save… and Print… report back
+        ''' without a message box, which a control this size has no business opening.</summary>
+        Private Sub SetStatus(text As String)
+            _status = If(text, String.Empty)
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>What the last Load…, Save… or Print… did: the same line the toolbar shows. Empty until
+        ''' one of them has run, and readable from a form that wants to log it.</summary>
+        Public ReadOnly Property StatusText As String
+            Get
+                Return _status
+            End Get
+        End Property
+
         Private _scrollX As Double
         Private _scrollY As Double
+
+        ' ---- .xlsx: the workbook on disk ------------------------------------------------------------
+        '
+        ' Both halves are written against System.IO.Compression and System.Xml, so the sheet keeps its one
+        ' promise — no NuGet package, no assets. A workbook is a zip of small XML parts, and these are the
+        ' smallest parts Excel and LibreOffice BOTH accept:
+        '
+        '   [Content_Types].xml   _rels/.rels   xl/workbook.xml   xl/_rels/workbook.xml.rels
+        '   xl/worksheets/sheet1.xml            xl/styles.xml
+        '
+        ' WHAT TRAVELS: the cells (numbers as numbers, everything else as text), a formula as its own text
+        ' plus the value it worked out — so another program shows the answer without calculating anything —
+        ' each cell's own formatting, and the column widths and row heights a border was dragged on.
+        ' WHAT DOES NOT: merged cells, pictures, comments, multiple pages. A file holding those still LOADS,
+        ' and simply loses them on the way back, which is the honest behaviour for a control this size.
+        ' Loading is ONE PAGE at a time, and Load… asks which when a workbook has several.
+
+        ''' <summary>The worksheet name a saved file carries: the control's Name when a form gave it one, so
+        ''' "Sheet1" in the designer reads "Sheet1" in Excel. Excel's own limits are applied — 31 characters,
+        ''' and none of : \ / ? * [ ] — because a name it refuses is a file it will not open.</summary>
+        Private Function PageName() As String
+            Dim page As String = Name
+            If String.IsNullOrWhiteSpace(page) Then
+                page = "Sheet1"
+            Else
+                page = page.Trim()
+            End If
+
+            Dim builder As New System.Text.StringBuilder(page.Length)
+            For i As Integer = 0 To page.Length - 1
+                If builder.Length >= 31 Then
+                    Exit For
+                End If
+
+                Dim c As Char = page(i)
+                builder.Append(If(c = ":"c OrElse c = "\"c OrElse c = "/"c OrElse c = "?"c OrElse c = "*"c OrElse
+                                  c = "["c OrElse c = "]"c, "_"c, c))
+            Next
+
+            Return If(builder.Length = 0, "Sheet1", builder.ToString())
+        End Function
+
+        ''' <summary>A column's width in Excel's own unit (characters, its default font) as pixels, and back.
+        ''' Excel's rule for 11-point Calibri is pixels = width * 7 + 5, which is what the round trip here
+        ''' uses, so a column that was 120 px wide is 16.4 characters wide and comes back as 120.</summary>
+        Private Shared Function WidthToPixels(width As Double) As Double
+            Return width * 7.0 + 5.0
+        End Function
+
+        Private Shared Function PixelsToWidth(pixels As Double) As Double
+            Return (pixels - 5.0) / 7.0
+        End Function
+
+        ''' <summary>Row heights are points (1/72 inch) in a file and pixels on screen.</summary>
+        Private Shared Function PixelsToPoints(pixels As Double) As Double
+            Return pixels * 72.0 / 96.0
+        End Function
+
+        Private Shared Function PointsToPixels(points As Double) As Double
+            Return points * 96.0 / 72.0
+        End Function
+
+        ''' <summary>
+        ''' Writes the sheet as a one-page workbook. Returns false — with the reason in the toolbar's status
+        ''' line — rather than throwing, so a form can call it from a Save button without a try.
+        ''' </summary>
+        Public Function SaveWorkbook(path As String) As Boolean
+            If String.IsNullOrWhiteSpace(path) Then
+                Return False
+            End If
+
+            Try
+                Xlsx.Write(Me, path)
+                SetStatus("Saved " & System.IO.Path.GetFileName(path))
+                Return True
+            Catch failure As Exception
+                SetStatus("Could not save: " & failure.Message)
+                Return False
+            End Try
+        End Function
+
+        ''' <summary>The page names of a workbook, in the workbook's own order. Empty when the file is not a
+        ''' workbook this control can read — which is also how Load… tells one from something else.</summary>
+        Public Shared Function WorkbookPages(path As String) As List(Of String)
+            Return Xlsx.Pages(path)
+        End Function
+
+        ''' <summary>
+        ''' Reads ONE page of a workbook into the sheet: null (or a name that is not there) takes the first.
+        ''' The sheet is cleared first, so what was on it is gone; Rows/Columns GROW when the page is bigger
+        ''' than the sheet, and are left alone when it is smaller — a form that made a 30 x 12 sheet keeps its
+        ''' shape after loading a 5 x 3 one.
+        ''' </summary>
+        Public Function LoadWorkbook(path As String, Optional page As String = Nothing) As Boolean
+            If String.IsNullOrWhiteSpace(path) Then
+                Return False
+            End If
+
+            Try
+                Dim loaded As Integer = Xlsx.Read(Me, path, page)
+                If loaded < 0 Then
+                    SetStatus("Nothing to load from " & System.IO.Path.GetFileName(path))
+                    Return False
+                End If
+
+                SetStatus("Loaded " & loaded & " cells from " & System.IO.Path.GetFileName(path))
+                Refresh()
+                Return True
+            Catch failure As Exception
+                SetStatus("Could not load: " & failure.Message)
+                Return False
+            End Try
+        End Function
+
+        ' ---- the file dialogs and hardcopy ------------------------------------------------------------
+        '
+        ' Every one of these starts with TopLevel.GetTopLevel(Me): without a window there is no file dialog
+        ' and no printer, so each is a quiet no-op in the designer's headless preview — which is what makes
+        ' the toolbar safe to press anywhere, and why SaveWorkbook/LoadWorkbook (plain paths) exist beside
+        ' them for a form that wants to choose the file itself.
+
+        ''' <summary>
+        ''' Load…: the platform's file dialog, then — when the workbook holds more than one page — the page
+        ''' list, because the sheet holds ONE page at a time.
+        ''' </summary>
+        Public Async Function BrowseForWorkbookAsync() As Task(Of Boolean)
+            Dim top As TopLevel = TopLevel.GetTopLevel(Me)
+            Dim storage As IStorageProvider = If(top Is Nothing, Nothing, top.StorageProvider)
+            If storage Is Nothing OrElse _fileBusy Then
+                Return False
+            End If
+
+            _fileBusy = True
+            Try
+                Dim options As New FilePickerOpenOptions()
+                options.Title = "Load a workbook"
+                options.AllowMultiple = False
+                options.FileTypeFilter = {
+                    New FilePickerFileType("Excel workbook") With {.Patterns = {"*.xlsx", "*.xlsm"}},
+                    New FilePickerFileType("All files") With {.Patterns = {"*"}}}
+                Dim last As String = SheetPickerMemory.LastFolder
+                If last IsNot Nothing Then
+                    Try
+                        options.SuggestedStartLocation = Await storage.TryGetFolderFromPathAsync(New Uri(last))
+                    Catch
+                        ' The remembered folder is gone: let the platform choose.
+                    End Try
+                End If
+
+                Dim files As IReadOnlyList(Of IStorageFile) = Await storage.OpenFilePickerAsync(options)
+                Dim path As String = If(files IsNot Nothing AndAlso files.Count > 0, files(0).TryGetLocalPath(), Nothing)
+                If String.IsNullOrWhiteSpace(path) Then
+                    Return False                   ' cancelled
+                End If
+
+                SheetPickerMemory.LastFolder = FolderOf(path)
+                Dim pages As List(Of String) = WorkbookPages(path)
+                If pages.Count = 0 Then
+                    SetStatus(System.IO.Path.GetFileName(path) & " is not a workbook this sheet can read")
+                    Return False
+                End If
+
+                If pages.Count = 1 Then
+                    Return LoadWorkbook(path, pages(0))
+                End If
+
+                ' More than one page: ask which, and say on the heading that only one comes across.
+                SetStatus(System.IO.Path.GetFileName(path) & " holds " & pages.Count & " pages")
+                OpenMenu(MenuKind.Toolbar, BuildPageItems(path, pages), New Point(0, ToolbarHeight + 1.0), MenuWidth)
+                Return True
+            Catch failure As Exception
+                SetStatus("Could not open the picker: " & failure.Message)
+                Return False
+            Finally
+                _fileBusy = False
+            End Try
+        End Function
+
+        ''' <summary>Save…: the platform's file dialog, then the .xlsx writer.</summary>
+        Public Async Function SaveAsWorkbookAsync() As Task(Of Boolean)
+            Dim top As TopLevel = TopLevel.GetTopLevel(Me)
+            Dim storage As IStorageProvider = If(top Is Nothing, Nothing, top.StorageProvider)
+            If storage Is Nothing OrElse _fileBusy Then
+                Return False
+            End If
+
+            _fileBusy = True
+            Try
+                Dim picker As New FilePickerSaveOptions()
+                picker.Title = "Save the sheet"
+                picker.SuggestedFileName = PageName() & ".xlsx"
+                picker.DefaultExtension = "xlsx"
+                picker.FileTypeChoices = {
+                    New FilePickerFileType("Excel workbook") With {.Patterns = {"*.xlsx"}},
+                    New FilePickerFileType("All files") With {.Patterns = {"*"}}}
+                picker.ShowOverwritePrompt = True
+                Await SuggestFolder(storage, picker)
+                Dim file As IStorageFile = Await storage.SaveFilePickerAsync(picker)
+                Dim path As String = If(file Is Nothing, Nothing, file.TryGetLocalPath())
+                If String.IsNullOrWhiteSpace(path) Then
+                    Return False
+                End If
+
+                Dim saved As Boolean = SaveWorkbook(path)
+                If saved Then
+                    SheetPickerMemory.LastExportFolder = FolderOf(path)
+                End If
+
+                Return saved
+            Catch failure As Exception
+                SetStatus("Could not save: " & failure.Message)
+                Return False
+            Finally
+                _fileBusy = False
+            End Try
+        End Function
+
+        ''' <summary>Save as PNG…: the platform's file dialog, then the render.</summary>
+        Public Async Function SaveAsPngAsync(Optional wholeSheet As Boolean = False) As Task(Of Boolean)
+            Dim top As TopLevel = TopLevel.GetTopLevel(Me)
+            Dim storage As IStorageProvider = If(top Is Nothing, Nothing, top.StorageProvider)
+            If storage Is Nothing OrElse _fileBusy Then
+                Return False
+            End If
+
+            _fileBusy = True
+            Try
+                Dim picker As New FilePickerSaveOptions()
+                picker.Title = "Save the sheet as a picture"
+                picker.SuggestedFileName = PageName() & ".png"
+                picker.DefaultExtension = "png"
+                picker.FileTypeChoices = {
+                    New FilePickerFileType("PNG image") With {.Patterns = {"*.png"}},
+                    New FilePickerFileType("All files") With {.Patterns = {"*"}}}
+                picker.ShowOverwritePrompt = True
+                Await SuggestFolder(storage, picker)
+                Dim file As IStorageFile = Await storage.SaveFilePickerAsync(picker)
+                Dim path As String = If(file Is Nothing, Nothing, file.TryGetLocalPath())
+                If String.IsNullOrWhiteSpace(path) Then
+                    Return False
+                End If
+
+                Dim saved As Boolean = ExportPng(path, 2.0, wholeSheet)
+                If saved Then
+                    SheetPickerMemory.LastExportFolder = FolderOf(path)
+                    SetStatus("Saved " & System.IO.Path.GetFileName(path) & " — " &
+                              PrintAreaText(wholeSheet) & ", " & PageText())
+                End If
+
+                Return saved
+            Catch failure As Exception
+                SetStatus("Could not save the picture: " & failure.Message)
+                Return False
+            Finally
+                _fileBusy = False
+            End Try
+        End Function
+
+        ''' <summary>
+        ''' Renders the PAGE to a PNG file — A4, portrait or landscape, with the print area scaled to fit
+        ''' inside the margin — at scale times its size, so the text is legible once the picture is in a
+        ''' document. No package is involved, so this works on every platform and in the headless previewer:
+        ''' the one export with no prerequisites at all. What it pictures is the PRINT AREA — the selected
+        ''' cells — and the column letters and row numbers beside it are the real ones.
+        ''' </summary>
+        Public Function ExportPng(path As String, Optional scale As Double = 2.0,
+            Optional wholeSheet As Boolean = False) As Boolean
+            If String.IsNullOrWhiteSpace(path) OrElse Bounds.Width <= 0 OrElse Bounds.Height <= 0 Then
+                Return False
+            End If
+
+            Try
+                If scale <= 0 Then
+                    scale = 1.0
+                End If
+
+                Dim firstRow As Integer = 0
+                Dim firstColumn As Integer = 0
+                Dim lastRow As Integer = 0
+                Dim lastColumn As Integer = 0
+                If Not PrintArea(wholeSheet, firstRow, firstColumn, lastRow, lastColumn) Then
+                    Return False
+                End If
+
+                Dim page As PrintPage = PageForPrinting(firstRow, firstColumn, lastRow, lastColumn)
+                Try
+                    Dim paper As Size = PageSize()
+                    Dim sheetPage As SheetPrintPage = PageForOrientation()
+                    Dim pixels As New PixelSize(Math.Max(1, CInt(Math.Round(paper.Width * scale))),
+                                                Math.Max(1, CInt(Math.Round(paper.Height * scale))))
+                    Using bitmap As New RenderTargetBitmap(pixels, New Vector(96 * scale, 96 * scale))
+                        bitmap.Render(sheetPage)
+                        bitmap.Save(path, New PngBitmapEncoderOptions())
+                    End Using
+                Finally
+                    page.Dispose()
+                End Try
+
+                SetStatus("Saved " & System.IO.Path.GetFileName(path) & " — " &
+                          PrintAreaText(wholeSheet) & ", " & PageText())
+                Return True
+            Catch failure As Exception
+                SetStatus("Could not save the picture: " & failure.Message)
+                Return False
+            End Try
+        End Function
+
+        ''' <summary>Opens a save dialog where the last one left off, when that folder is still there.</summary>
+        Private Shared Async Function SuggestFolder(storage As IStorageProvider, picker As FilePickerSaveOptions) As Task
+            Dim last As String = SheetPickerMemory.LastExportFolder
+            If last Is Nothing Then
+                Return
+            End If
+
+            Try
+                picker.SuggestedStartLocation = Await storage.TryGetFolderFromPathAsync(New Uri(last))
+            Catch
+                ' The remembered folder has gone: let the platform choose.
+            End Try
+        End Function
+
+        ''' <summary>The folder a path is in, for the picker's memory. Never throws.</summary>
+        Private Shared Function FolderOf(path As String) As String
+            Try
+                Return If(String.IsNullOrWhiteSpace(path), Nothing, System.IO.Path.GetDirectoryName(path))
+            Catch
+                Return Nothing
+            End Try
+        End Function
+
+        ' ---- the print area ---------------------------------------------------------------------
+        ' PRINTING is the one action here that costs paper, ink and time, and the sheet's resting state is a
+        ' SINGLE cell selected — which used to mean that choosing Print… quietly printed all 26 columns and
+        ' 50 rows. So the three entries under Print work on the SELECTION, and when nothing but a single cell
+        ' is selected the sheet asks first, with an Abort line the keyboard reaches by default.
+
+        ''' <summary>The width the warning is drawn at — wide enough for its longest line.</summary>
+        Private Const PrintWarningWidth As Double = 300.0
+
+        ''' <summary>A4 in PDF points (1/72 inch) — the page every job and export is composed on. Landscape
+        ''' swaps the two, which is the whole of the page setup there is: paper size and margin are the next
+        ''' step, and belong to a printer setup of their own.</summary>
+        Private Const PrintPageWidth As Double = 595.0
+        Private Const PrintPageHeight As Double = 842.0
+
+        ''' <summary>The white space kept inside the page, in points — the same 18 the bundled charts use,
+        ''' so a sheet and a chart printed from the same form look like they came from the same printer.</summary>
+        Private Const PrintPageMargin As Double = 18.0
+
+        ''' <summary>The paper the page is composed for. It is what the sheet SAYS in its status line and what
+        ''' the printer is asked for, so the page and the job cannot disagree about it.</summary>
+        Private Const PrintPaperName As String = "A4"
+
+        ''' <summary>The page, the way round the sheet asks for: portrait is taller than wide.</summary>
+        Private Function PageSize() As Size
+            If PrintOrientation = SheetOrientation.Landscape Then
+                Return New Size(PrintPageHeight, PrintPageWidth)
+            End If
+
+            Return New Size(PrintPageWidth, PrintPageHeight)
+        End Function
+
+        ''' <summary>The page as "A4 portrait", for the status line and the page question's heading.</summary>
+        Private Function PageText() As String
+            Return PrintPaperName & If(PrintOrientation = SheetOrientation.Landscape, " landscape", " portrait")
+        End Function
+
+        ''' <summary>Which of the three entries the warning is about.</summary>
+        Private Enum SheetPrintKind
+            None
+            Picture
+            Pdf
+            Printer
+        End Enum
+
+        Private _printKind As SheetPrintKind
+
+        ''' <summary>
+        ''' The cells a page will hold: the SELECTION — the print area the user chose — or, when the warning
+        ''' was answered with "print the whole sheet", every row and column. False only when there is nothing
+        ''' to print at all.
+        ''' </summary>
+        Private Function PrintArea(wholeSheet As Boolean, ByRef firstRow As Integer, ByRef firstColumn As Integer,
+            ByRef lastRow As Integer, ByRef lastColumn As Integer) As Boolean
+            If wholeSheet Then
+                firstRow = 1
+                firstColumn = 1
+                lastRow = RowCount
+                lastColumn = ColumnCount
+                Return True
+            End If
+
+            firstRow = SelectionFirstRow()
+            firstColumn = SelectionFirstColumn()
+            lastRow = SelectionLastRow()
+            lastColumn = SelectionLastColumn()
+            Return lastRow >= firstRow AndAlso lastColumn >= firstColumn
+        End Function
+
+        ''' <summary>True when the user has actually CHOSEN something to print: a block, a whole column or a
+        ''' whole row — anything but the single cell that is selected by default. Clicking the corner above the
+        ''' row numbers (or Ctrl+A) counts as chosen: that is a deliberate "all of it".</summary>
+        Private Function HasPrintArea() As Boolean
+            Return SelectionFirstRow() <> SelectionLastRow() OrElse
+                SelectionFirstColumn() <> SelectionLastColumn()
+        End Function
+
+        ''' <summary>The area as "B4:D9", for the status line and the warning.</summary>
+        Private Function PrintAreaText(wholeSheet As Boolean) As String
+            Dim firstRow As Integer = 0
+            Dim firstColumn As Integer = 0
+            Dim lastRow As Integer = 0
+            Dim lastColumn As Integer = 0
+            If Not PrintArea(wholeSheet, firstRow, firstColumn, lastRow, lastColumn) Then
+                Return "nothing"
+            End If
+
+            Return CellName(firstRow, firstColumn) & ":" & CellName(lastRow, lastColumn)
+        End Function
+
+        ''' <summary>A print or export entry was chosen: with an area selected it goes straight to the page
+        ''' question, and with a bare single cell it warns first.</summary>
+        Private Sub RequestPrint(kind As SheetPrintKind)
+            If HasPrintArea() Then
+                ShowOrientationChooser(kind, False)
+                Return
+            End If
+
+            _printKind = kind
+            ShowPrintWarning()
+        End Sub
+
+        ''' <summary>
+        ''' The page question, asked before every job — there is no page-setup dialog yet, so this is where
+        ''' the sheet learns which way round the paper is. The current choice is ticked and the highlight
+        ''' STARTS on it, so Enter accepts the page as it already is; choosing one REMEMBERS it on the sheet
+        ''' (PrintOrientation, which the designer's properties and a form's own XAML can set too) and then
+        ''' runs the job; Cancel is a line of its own, so a job is never produced by accident.
+        ''' </summary>
+        Private Sub ShowOrientationChooser(kind As SheetPrintKind, wholeSheet As Boolean)
+            _printKind = kind
+            Dim items As New List(Of SheetMenuItem)()
+            items.Add(New SheetMenuItem With {
+                .Label = "Page orientation (A4)", .Hint = "the area is fitted to it", .Enabled = False})
+            Dim current As Integer = -1
+            items.Add(New SheetMenuItem With {
+                .Label = "Portrait", .Hint = "taller than wide",
+                .Ticked = PrintOrientation = SheetOrientation.Portrait,
+                .Run = Sub() ChooseOrientation(SheetOrientation.Portrait, wholeSheet)})
+            If PrintOrientation = SheetOrientation.Portrait Then
+                current = items.Count - 1
+            End If
+
+            items.Add(New SheetMenuItem With {
+                .Label = "Landscape", .Hint = "wider than tall",
+                .Ticked = PrintOrientation = SheetOrientation.Landscape,
+                .Run = Sub() ChooseOrientation(SheetOrientation.Landscape, wholeSheet)})
+            If PrintOrientation = SheetOrientation.Landscape Then
+                current = items.Count - 1
+            End If
+
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            items.Add(New SheetMenuItem With {
+                .Label = "Cancel", .Hint = "print nothing", .Run = AddressOf CancelPrint})
+
+            ' Just under the toolbar, where the eye already is. ToolbarStrip is where the strip ENDS (it is
+            ' the formula bar's top edge, and 0 when the strip is switched off).
+            Dim button As Rect = ToolbarButtonRect(ToolbarPrint)
+            OpenMenu(MenuKind.Setup, items, New Point(button.X, ToolbarStrip), PrintWarningWidth)
+            If current >= 0 Then
+                _menuHot = current
+            End If
+        End Sub
+
+        ''' <summary>The orientation the user picked: remembered on the sheet, and then the job runs.</summary>
+        Private Sub ChooseOrientation(orientation As SheetOrientation, wholeSheet As Boolean)
+            PrintOrientation = orientation
+            RunPrint(_printKind, wholeSheet)
+        End Sub
+
+        ''' <summary>The answer that produces nothing, from the page question: the sheet is left exactly as
+        ''' it was, and the status line says why nothing happened.</summary>
+        Private Sub CancelPrint()
+            _printKind = SheetPrintKind.None
+            SetStatus("Nothing was printed — the page orientation was not chosen")
+        End Sub
+
+        ''' <summary>Runs the entry the warning was about — with the whole sheet, now that the user said so.</summary>
+        Private Sub RunPrint(kind As SheetPrintKind, wholeSheet As Boolean)
+            If kind = SheetPrintKind.Picture Then
+                RunPicture(wholeSheet)
+                Return
+            End If
+
+#If PRINT_SUPPORT Then
+            If kind = SheetPrintKind.Pdf Then
+                RunPdf(wholeSheet)
+                Return
+            End If
+
+            If kind = SheetPrintKind.Printer Then
+                RunPrinter(wholeSheet)
+            End If
+#End If
+        End Sub
+
+        ' Fire and forget, the file's own idiom: an Async Sub that awaits the entry. A bare Sub() calling one
+        ' is BC42358 — a warning, and this project keeps a 0-warning bar.
+        Private Async Sub RunPicture(wholeSheet As Boolean)
+            Await SaveAsPngAsync(wholeSheet)
+        End Sub
+
+#If PRINT_SUPPORT Then
+        Private Async Sub RunPdf(wholeSheet As Boolean)
+            Await SaveAsPdfAsync(wholeSheet)
+        End Sub
+
+        Private Async Sub RunPrinter(wholeSheet As Boolean)
+            Await PrintAsync(wholeSheet)
+        End Sub
+#End If
+
+        ''' <summary>
+        ''' The warning, drawn with the same machinery as the right-click menu — a Control has no dialog of its
+        ''' own, and the one time this file reached for platform popup plumbing (an Avalonia ContextMenu for the
+        ''' right-click menu) it never appeared at all. Abort is the FIRST line, so Enter and Escape both mean
+        ''' "no": printing the whole sheet has to be asked for twice.
+        ''' </summary>
+        Private Sub ShowPrintWarning()
+            Dim items As New List(Of SheetMenuItem)()
+            ' Enabled = false, so the warning lines are not choosable — Enter and Escape then both land on
+            ' Abort, which is the first ENABLED line.
+            items.Add(New SheetMenuItem With {
+                .Label = "Nothing is selected to print.", .Warning = True, .Enabled = False})
+            items.Add(New SheetMenuItem With {
+                .Label = "Select the cells that make the page,", .Warning = True, .Enabled = False})
+            items.Add(New SheetMenuItem With {
+                .Label = "or print the whole sheet.", .Warning = True, .Enabled = False})
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            Dim pending As SheetPrintKind = _printKind
+            items.Add(New SheetMenuItem With {
+                .Label = "Abort", .Hint = "print nothing", .Ticked = True,
+                .Run = Sub() AbortPrint()})
+            items.Add(New SheetMenuItem With {
+                .Label = "Print the whole sheet", .Hint = "every row and column",
+                .Run = Sub() ShowOrientationChooser(pending, True)})
+
+            ' Just under the toolbar, so the warning is where the eye already is. ToolbarStrip is where the
+            ' strip ENDS (it is the formula bar's top edge, and 0 when the strip is switched off).
+            Dim button As Rect = ToolbarButtonRect(ToolbarPrint)
+            OpenMenu(MenuKind.Warning, items, New Point(button.X, ToolbarStrip), PrintWarningWidth)
+        End Sub
+
+        ''' <summary>The answer that prints nothing: the sheet is left exactly as it was.</summary>
+        Private Sub AbortPrint()
+            _printKind = SheetPrintKind.None
+            SetStatus("Nothing was printed — select the cells for the page, then try again")
+        End Sub
+
+        ''' <summary>
+        ''' The page the three entries work on: the print area, with the driving chrome off, at the area's own
+        ''' size — and put back exactly as it was when the using block ends.
+        '''
+        ''' The AREA is the selection (the cells the user chose), unless the warning was answered with "print
+        ''' the whole sheet". Either way the page carries the REAL column letters and row numbers, because the
+        ''' sheet is SCROLLED to the area's first cell rather than redrawn somewhere else — which is also why a
+        ''' scrolled sheet no longer prints its scrollbar position, and why "the whole sheet" finally means the
+        ''' whole sheet on paper rather than the window that happened to be on screen.
+        ''' </summary>
+        Private Function PageForPrinting(firstRow As Integer, firstColumn As Integer, lastRow As Integer,
+            lastColumn As Integer) As PrintPage
+            Return New PrintPage(Me, firstRow, firstColumn, lastRow, lastColumn)
+        End Function
+
+        ''' <summary>Off for the page, back on for the screen: chrome, scroll, size and the area itself.</summary>
+        Private Structure PrintPage
+            Implements IDisposable
+
+            Private _sheet As GrumpySheet
+            Private _toolbar As Boolean
+            Private _bar As Boolean
+            Private _scrollBars As Boolean
+            Private _range As Boolean
+            Private _scrollX As Double
+            Private _scrollY As Double
+            Private _width As Double
+            Private _height As Double
+            Private _firstRow As Integer
+            Private _firstColumn As Integer
+            Private _lastRow As Integer
+            Private _lastColumn As Integer
+
+            Friend Sub New(sheet As GrumpySheet, firstRow As Integer, firstColumn As Integer, lastRow As Integer,
+                lastColumn As Integer)
+                _sheet = sheet
+                _toolbar = sheet.ShowToolbar
+                _bar = sheet.ShowFormulaBar
+                _scrollBars = sheet.ShowScrollBars
+                _range = sheet._printRange
+                _scrollX = sheet._scrollX
+                _scrollY = sheet._scrollY
+                _width = sheet.Width
+                _height = sheet.Height
+                _firstRow = sheet._printFirstRow
+                _firstColumn = sheet._printFirstColumn
+                _lastRow = sheet._printLastRow
+                _lastColumn = sheet._printLastColumn
+
+                sheet.ShowToolbar = False
+                sheet.ShowFormulaBar = False
+                sheet.ShowScrollBars = False
+                sheet._printRange = True
+                sheet._printFirstRow = firstRow
+                sheet._printFirstColumn = firstColumn
+                sheet._printLastRow = lastRow
+                sheet._printLastColumn = lastColumn
+                sheet._scrollX = sheet.ColumnOffset(firstColumn)
+                sheet._scrollY = sheet.RowOffset(firstRow)
+                Dim origin As Point = sheet.GridOrigin
+                sheet.Width = origin.X + sheet.ColumnOffset(lastColumn + 1) - sheet.ColumnOffset(firstColumn)
+                sheet.Height = origin.Y + sheet.RowOffset(lastRow + 1) - sheet.RowOffset(firstRow)
+                sheet.Measure(New Size(sheet.Width, sheet.Height))
+                sheet.Arrange(New Rect(0, 0, sheet.Width, sheet.Height))
+            End Sub
+
+            ''' <summary>Puts the sheet back exactly as it was, and lets the layout run again so the screen gets
+            ''' its own size back.</summary>
+            Public Sub Dispose() Implements IDisposable.Dispose
+                If _sheet Is Nothing Then
+                    Return
+                End If
+
+                _sheet._printRange = _range
+                _sheet._printFirstRow = _firstRow
+                _sheet._printFirstColumn = _firstColumn
+                _sheet._printLastRow = _lastRow
+                _sheet._printLastColumn = _lastColumn
+                _sheet._scrollX = _scrollX
+                _sheet._scrollY = _scrollY
+                _sheet._printKind = SheetPrintKind.None
+                _sheet.ShowToolbar = _toolbar
+                _sheet.ShowFormulaBar = _bar
+                _sheet.ShowScrollBars = _scrollBars
+                _sheet.Width = _width
+                _sheet.Height = _height
+                _sheet.InvalidateMeasure()
+                _sheet.InvalidateVisual()
+            End Sub
+        End Structure
+
+        ''' <summary>
+        ''' The page the job is drawn on: A4, white, with the sheet — arranged at the print area's own size
+        ''' by PageForPrinting — scaled to FIT inside the margin. Never stretched, so a wide area and a tall
+        ''' one keep their proportions.
+        '''
+        ''' A separate visual is needed because a page has a size of its own, and the whole point of the page
+        ''' question is that this size CHANGES with the answer. The sheet is painted through a VisualBrush,
+        ''' which keeps it VECTOR in the PDF, and the page is measured and arranged before it is handed over:
+        ''' a backend draws what it is given and runs no layout pass for us, so an un-laid-out page renders
+        ''' empty — a PDF whose size is right and whose paint is nothing. (The bundled charts compose their
+        ''' page exactly this way.)
+        ''' </summary>
+        Private Function PageForOrientation() As SheetPrintPage
+            Dim paper As Size = PageSize()
+            Dim sheetPage As New SheetPrintPage(Me, paper, PrintPageMargin)
+            sheetPage.Measure(paper)
+            sheetPage.Arrange(New Rect(0, 0, paper.Width, paper.Height))
+            Return sheetPage
+        End Function
+
+        ''' <summary>
+        ''' The sheet AS A PAGE: white paper with the print area fitted inside the margin. Drawn by this one
+        ''' small control rather than assembled out of panels and transforms, so the file keeps its promise
+        ''' — no assets, no dependencies — and the same visual can be handed to a PDF, to the printer, or to
+        ''' the PNG export without any of the three knowing about the others.
+        ''' </summary>
+        Private NotInheritable Class SheetPrintPage
+            Inherits Control
+
+            Private ReadOnly _sheet As Control
+            Private ReadOnly _page As Size
+            Private ReadOnly _margin As Double
+
+            Friend Sub New(sheet As Control, page As Size, margin As Double)
+                _sheet = sheet
+                _page = page
+                _margin = margin
+                Width = page.Width
+                Height = page.Height
+            End Sub
+
+            Public Overrides Sub Render(context As DrawingContext)
+                ' paperWidth, not width: VB is case-INSENSITIVE, so a local named `width` would hide the
+                ' control's own Width property for the whole method — including inside this initialiser.
+                Dim paperWidth As Double = If(Double.IsNaN(Width) OrElse Width <= 0, _page.Width, Width)
+                Dim paperHeight As Double = If(Double.IsNaN(Height) OrElse Height <= 0, _page.Height, Height)
+                context.FillRectangle(Brushes.White, New Rect(0, 0, paperWidth, paperHeight))
+                Dim gap As Double = Math.Max(0, _margin)
+                Dim inner As New Rect(gap, gap, Math.Max(1, paperWidth - 2 * gap),
+                    Math.Max(1, paperHeight - 2 * gap))
+                context.DrawRectangle(New VisualBrush With {.Visual = _sheet, .Stretch = Stretch.Uniform},
+                    Nothing, inner)
+            End Sub
+        End Class
+
+#If PRINT_SUPPORT Then
+        ''' <summary>
+        ''' True when this machine can really put a page on paper: the platform's own printing service, or on
+        ''' a Linux desktop the CUPS client the bundled GrumpyPrint drives. The same test the charts make, and
+        ''' the reason the Print… row is greyed out rather than offering a click that does nothing.
+        ''' </summary>
+        Public Shared ReadOnly Property CanPrint As Boolean
+            Get
+                Try
+                    If Printable.Default IsNot Nothing Then
+                        Return True
+                    End If
+                Catch
+                    ' No service registered: try CUPS below.
+                End Try
+
+                ' Fully qualified: GrumpyPrint is the SHARED bundled helper and lives in the charts' own
+                ' namespace, which a sheet in AvaloniaSpreadsheet cannot see unqualified.
+                Return Global.AvaloniaCharts.GrumpyPrint.Available
+            End Get
+        End Property
+
+        ''' <summary>Save as PDF…: the platform's file dialog, then the PDF itself.</summary>
+        Public Async Function SaveAsPdfAsync(Optional wholeSheet As Boolean = False) As Task(Of Boolean)
+            Dim top As TopLevel = TopLevel.GetTopLevel(Me)
+            Dim storage As IStorageProvider = If(top Is Nothing, Nothing, top.StorageProvider)
+            If storage Is Nothing OrElse _fileBusy Then
+                Return False
+            End If
+
+            _fileBusy = True
+            Try
+                Dim picker As New FilePickerSaveOptions()
+                picker.Title = "Save the sheet as a PDF"
+                picker.SuggestedFileName = PageName() & ".pdf"
+                picker.DefaultExtension = "pdf"
+                picker.FileTypeChoices = {
+                    New FilePickerFileType("PDF document") With {.Patterns = {"*.pdf"}},
+                    New FilePickerFileType("All files") With {.Patterns = {"*"}}}
+                picker.ShowOverwritePrompt = True
+                Await SuggestFolder(storage, picker)
+                Dim file As IStorageFile = Await storage.SaveFilePickerAsync(picker)
+                Dim path As String = If(file Is Nothing, Nothing, file.TryGetLocalPath())
+                If String.IsNullOrWhiteSpace(path) Then
+                    Return False
+                End If
+
+                Dim written As Boolean = Await WritePdf(path, wholeSheet)
+                If written Then
+                    SheetPickerMemory.LastExportFolder = FolderOf(path)
+                End If
+
+                Return written
+            Catch failure As Exception
+                SetStatus("Could not write the PDF: " & failure.Message)
+                Return False
+            Finally
+                _fileBusy = False
+            End Try
+        End Function
+
+        ''' <summary>Writes the sheet to a PDF file (Skia vector output — no printer is involved).</summary>
+        Public Async Function WritePdf(path As String, Optional wholeSheet As Boolean = False) As Task(Of Boolean)
+            If String.IsNullOrWhiteSpace(path) Then
+                Return False
+            End If
+
+            Try
+                Dim firstRow As Integer = 0
+                Dim firstColumn As Integer = 0
+                Dim lastRow As Integer = 0
+                Dim lastColumn As Integer = 0
+                If Not PrintArea(wholeSheet, firstRow, firstColumn, lastRow, lastColumn) Then
+                    Return False
+                End If
+
+                Dim page As PrintPage = PageForPrinting(firstRow, firstColumn, lastRow, lastColumn)
+                Try
+                    Dim visuals As Visual() = {PageForOrientation()}
+                    Await Print.ToFileAsync(path, visuals)
+                Finally
+                    page.Dispose()
+                End Try
+
+                SetStatus("Saved " & System.IO.Path.GetFileName(path) & " — " &
+                          PrintAreaText(wholeSheet) & ", " & PageText())
+                Return True
+            Catch failure As Exception
+                SetStatus("Could not write the PDF: " & failure.Message)
+                Return False
+            End Try
+        End Function
+
+        ''' <summary>Print…: hands the page to the printer, through the platform's service or CUPS.</summary>
+        Public Async Function PrintAsync(Optional wholeSheet As Boolean = False) As Task(Of Boolean)
+            If Not CanPrint Then
+                SetStatus("Nothing here can print — Save as PDF… needs no printer")
+                Return False
+            End If
+
+            Try
+                Dim firstRow As Integer = 0
+                Dim firstColumn As Integer = 0
+                Dim lastRow As Integer = 0
+                Dim lastColumn As Integer = 0
+                If Not PrintArea(wholeSheet, firstRow, firstColumn, lastRow, lastColumn) Then
+                    Return False
+                End If
+
+                Dim page As PrintPage = PageForPrinting(firstRow, firstColumn, lastRow, lastColumn)
+                Try
+                    ' Two ways onto paper, and only one of them is present on any one machine: the
+                    ' platform's own printing service (Windows, macOS, GTK), or — on a plain Linux desktop,
+                    ' where that library registers no service at all — the CUPS client the bundled helper
+                    ' drives. CUPS is TOLD what the page is: the PDF's own page box is not enough, because
+                    ' pdftopdf transforms the page according to the JOB's options, so a queue whose saved
+                    ' defaults say portrait (a user's ~/.cups/lpoptions can pin it) prints a landscape page
+                    ' the wrong way round. Measured 2026-09-27: one and the same PDF came out wrong with no
+                    ' options and right with orientation-requested=4.
+                    Dim visuals As Visual() = {PageForOrientation()}
+                    If Printable.Default IsNot Nothing Then
+                        Await Printable.PrintVisualsAsync(visuals, PageName())
+                    Else
+                        Await Global.AvaloniaCharts.GrumpyPrint.PrintAsync(visuals(0), PageName(), Nothing,
+                            New Global.AvaloniaCharts.PrintPageSettings With {
+                                .Landscape = PrintOrientation = SheetOrientation.Landscape,
+                                .PaperSize = PrintPaperName})
+                    End If
+                Finally
+                    page.Dispose()
+                End Try
+
+                SetStatus("Sent " & PageName() & " (" & PrintAreaText(wholeSheet) & ", " & PageText() &
+                          ") to the printer")
+                Return True
+            Catch failure As Exception
+                SetStatus("Could not print: " & failure.Message)
+                Return False
+            End Try
+        End Function
+
+        ''' <summary>
+        ''' The driving chrome off for a page, and back on when the using block ends — the whole page scope,
+        ''' including the print area, lives in PageForPrinting now, outside this guard, because the PNG export
+        ''' needs it too.
+        ''' </summary>
+#End If
+
+        ''' <summary>
+        ''' The workbook half of Load…/Save…: the zip, the parts, and the two directions of translation.
+        ''' Nested rather than spread through the control because none of it needs the sheet's state — the
+        ''' control's own Save/Load methods above are the door into it.
+        ''' </summary>
+        Private NotInheritable Class Xlsx
+            Private Const Main As String = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+            ' ---- writing --------------------------------------------------------------------------
+
+            ''' <summary>Writes one page: the cells, the formats they use, and the part that names them.</summary>
+            Friend Shared Sub Write(sheet As GrumpySheet, path As String)
+                Dim styles As New StyleTable(sheet)
+                Dim rows As New System.Text.StringBuilder()
+                Dim count As Integer = Body(sheet, styles, rows)
+
+                Using stream As New FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None)
+                    Using zip As New ZipArchive(stream, ZipArchiveMode.Create)
+                        WritePart(zip, "[Content_Types].xml",
+                            "<?xml version=""1.0"" encoding=""UTF-8"" standalone=""yes""?>" &
+                            "<Types xmlns=""http://schemas.openxmlformats.org/package/2006/content-types"">" &
+                            "<Default Extension=""rels"" ContentType=""application/vnd.openxmlformats-package.relationships+xml"" />" &
+                            "<Default Extension=""xml"" ContentType=""application/xml"" />" &
+                            "<Override PartName=""/xl/workbook.xml"" ContentType=""application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"" />" &
+                            "<Override PartName=""/xl/worksheets/sheet1.xml"" ContentType=""application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"" />" &
+                            "<Override PartName=""/xl/styles.xml"" ContentType=""application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"" />" &
+                            "</Types>")
+                        WritePart(zip, "_rels/.rels",
+                            "<?xml version=""1.0"" encoding=""UTF-8"" standalone=""yes""?>" &
+                            "<Relationships xmlns=""http://schemas.openxmlformats.org/package/2006/relationships"">" &
+                            "<Relationship Id=""rId1"" Type=""http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"" Target=""xl/workbook.xml"" />" &
+                            "</Relationships>")
+                        WritePart(zip, "xl/workbook.xml",
+                            "<?xml version=""1.0"" encoding=""UTF-8"" standalone=""yes""?>" &
+                            "<workbook xmlns=""" & Main & """ " &
+                            "xmlns:r=""http://schemas.openxmlformats.org/officeDocument/2006/relationships"">" &
+                            "<sheets><sheet name=""" & XmlText(sheet.PageName()) & """ sheetId=""1"" r:id=""rId1"" /></sheets>" &
+                            "</workbook>")
+                        WritePart(zip, "xl/_rels/workbook.xml.rels",
+                            "<?xml version=""1.0"" encoding=""UTF-8"" standalone=""yes""?>" &
+                            "<Relationships xmlns=""http://schemas.openxmlformats.org/package/2006/relationships"">" &
+                            "<Relationship Id=""rId1"" Type=""http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"" Target=""worksheets/sheet1.xml"" />" &
+                            "<Relationship Id=""rId2"" Type=""http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"" Target=""styles.xml"" />" &
+                            "</Relationships>")
+                        WritePart(zip, "xl/styles.xml", styles.Document())
+                        WritePart(zip, "xl/worksheets/sheet1.xml",
+                            "<?xml version=""1.0"" encoding=""UTF-8"" standalone=""yes""?>" &
+                            "<worksheet xmlns=""" & Main & """>" &
+                            "<sheetViews><sheetView workbookViewId=""0"" /></sheetViews>" &
+                            "<sheetFormatPr defaultRowHeight=""" & Number(PixelsToPoints(sheet.RowHeight)) & """ />" &
+                            sheet.ColumnsElement() &
+                            "<sheetData>" & rows.ToString() & "</sheetData></worksheet>")
+                    End Using
+                End Using
+
+                Trace.WriteLine("GrumpySheet: saved " & count & " cells to " & path)
+            End Sub
+
+            ''' <summary>The rows of the sheet, as XML: only the cells that exist, so an empty sheet writes an
+            ''' empty sheetData. A formula goes in twice — its text, and what it worked out to.</summary>
+            Private Shared Function Body(sheet As GrumpySheet, styles As StyleTable,
+                rows As System.Text.StringBuilder) As Integer
+                Dim written As Integer = 0
+                For row As Integer = 1 To sheet.RowCount
+                    Dim rowXml As New System.Text.StringBuilder()
+                    For column As Integer = 1 To sheet.ColumnCount
+                        Dim cell As SheetCell = sheet.FindCell(row, column)
+                        If cell Is Nothing Then
+                            Continue For
+                        End If
+
+                        Dim text As String = If(cell.Text, String.Empty)
+                        If text.Length = 0 AndAlso Not cell.Fill.HasValue Then
+                            Continue For            ' nothing to say and nothing to show
+                        End If
+
+                        written += 1
+                        rowXml.Append(OneCell(sheet, styles, cell, row, column, text))
+                    Next
+
+                    If rowXml.Length = 0 Then
+                        Continue For
+                    End If
+
+                    Dim height As Double = sheet.RowHeightOf(row)
+                    Dim own As Boolean = Math.Abs(height - sheet.RowHeight) > 0.01
+                    rows.Append("<row r=""").Append(row).Append(""""c)
+                    If own Then
+                        rows.Append(" ht=""").Append(Number(PixelsToPoints(height))).Append(""" customHeight=""1""")
+                    End If
+
+                    rows.Append(">"c).Append(rowXml).Append("</row>")
+                Next
+
+                Return written
+            End Function
+
+            ''' <summary>One cell: a number, a formula with its result, or text — plus its own format when it has
+            ''' one (no `s` at all means "the plain format", which is index 0).</summary>
+            Private Shared Function OneCell(sheet As GrumpySheet, styles As StyleTable, cell As SheetCell,
+                row As Integer, column As Integer, text As String) As String
+                Dim address As String = GrumpySheet.CellName(row, column)
+                Dim style As Integer = styles.Format(cell)
+                Dim s As String = If(style > 0, " s=""" & style & """", String.Empty)
+                If text.Length > 0 AndAlso text(0) = "="c Then
+                    ' A formula keeps its text AND the value it worked out, so a reader that does not
+                    ' calculate (or a print preview) still shows the answer.
+                    Dim value As String = sheet.ValueOf(row, column)
+                    Dim cache As String = If(LooksNumeric(value), "<v>" & Number(ValueNumber(value)) & "</v>", String.Empty)
+                    Return "<c r=""" & address & """" & s & "><f>" & XmlText(text.Substring(1)) & "</f>" & cache & "</c>"
+                End If
+
+                If text.Length > 0 AndAlso LooksNumeric(text) Then
+                    Return "<c r=""" & address & """" & s & "><v>" & Number(ValueNumber(text)) & "</v></c>"
+                End If
+
+                If text.Length = 0 Then
+                    Return "<c r=""" & address & """" & s & " />"     ' a highlight with nothing in it
+                End If
+
+                ' Inline strings, not a shared table: the type attribute is what tells every reader these
+                ' characters are a STRING, and it is the one thing a hand-written cell part gets wrong.
+                Return "<c r=""" & address & """" & s & " t=""inlineStr""><is><t>" & Text(text) & "</t></is></c>"
+            End Function
+
+            ''' <summary>The value text a cell draws as a number, as a double. Only ever called for text that
+            ''' already looks numeric.</summary>
+            Private Shared Function ValueNumber(text As String) As Double
+                Dim value As Double = 0.0
+                Return If(Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, value), value, 0.0)
+            End Function
+
+            ''' <summary>A number as XML: invariant, and never in exponent form for ordinary sizes — "1E-05" is
+            ''' legal but unreadable in a cell someone opens in Excel.</summary>
+            Private Shared Function Number(value As Double) As String
+                Dim text As String = value.ToString("0.######", CultureInfo.InvariantCulture)
+                Return If(text.Length = 0, "0", text)
+            End Function
+
+            ''' <summary>Text as XML: the five characters that would break the part are escaped, and the
+            ''' control characters XML cannot carry at all are dropped.</summary>
+            Friend Shared Function XmlText(value As String) As String
+                Dim builder As New System.Text.StringBuilder(value.Length + 8)
+                For i As Integer = 0 To value.Length - 1
+                    Dim c As Char = value(i)
+                    If c = "&"c Then
+                        builder.Append("&amp;")
+                    ElseIf c = "<"c Then
+                        builder.Append("&lt;")
+                    ElseIf c = ">"c Then
+                        builder.Append("&gt;")
+                    ElseIf c = """"c Then
+                        builder.Append("&quot;")
+                    ElseIf c < " "c AndAlso c <> ChrW(9) AndAlso c <> ChrW(10) AndAlso c <> ChrW(13) Then
+                        Continue For
+                    Else
+                        builder.Append(c)
+                    End If
+                Next
+
+                Return builder.ToString()
+            End Function
+
+            Private Shared Sub WritePart(zip As ZipArchive, name As String, xml As String)
+                Dim entry As ZipArchiveEntry = zip.CreateEntry(name, CompressionLevel.Optimal)
+                Using stream As Stream = entry.Open()
+                    Dim bytes As Byte() = New System.Text.UTF8Encoding(False).GetBytes(xml)
+                    stream.Write(bytes, 0, bytes.Length)
+                End Using
+            End Sub
+
+            ' ---- the format tables ------------------------------------------------------------------
+
+            ''' <summary>
+            ''' Excel names every look twice over: a font table, a fill table, and a table of CELL FORMATS
+            ''' that points into both, which is what a cell's `s` index selects. Two cells that look the same
+            ''' share one entry — a 10 000-cell sheet of plain numbers still writes three entries.
+            ''' </summary>
+            Private NotInheritable Class StyleTable
+                Private ReadOnly _sheet As GrumpySheet
+                Private ReadOnly _fonts As New List(Of String)()
+                Private ReadOnly _fills As New List(Of String)()
+                Private ReadOnly _formats As New List(Of String)()
+                Private ReadOnly _fontAt As New Dictionary(Of String, Integer)(StringComparer.Ordinal)
+                Private ReadOnly _fillAt As New Dictionary(Of String, Integer)(StringComparer.Ordinal)
+                Private ReadOnly _formatAt As New Dictionary(Of String, Integer)(StringComparer.Ordinal)
+
+                Friend Sub New(sheet As GrumpySheet)
+                    _sheet = sheet
+                    _fills.Add("<fill><patternFill /></fill>")                          ' 0: no fill
+                    _fills.Add("<fill><patternFill patternType=""gray125"" /></fill>")  ' 1: Excel's own
+                    _fonts.Add(FontXml(False, False, sheet.FontSize, If(sheet.FontFamilyName, String.Empty), Nothing))
+                    _formats.Add("<xf numFmtId=""0"" fontId=""0"" fillId=""0"" borderId=""0"" xfId=""0"" />")
+                End Sub
+
+                ''' <summary>This cell's format index, or 0 for "nothing of its own" — which is what makes a
+                ''' plain cell a short element with no `s` at all.</summary>
+                Friend Function Format(cell As SheetCell) As Integer
+                    Dim bold As Boolean = cell.Bold
+                    Dim italic As Boolean = cell.Italic
+                    Dim size As Double = If(cell.FontSize > 0, cell.FontSize, _sheet.FontSize)
+                    Dim family As String = If(String.IsNullOrWhiteSpace(cell.FontFamily),
+                        If(_sheet.FontFamilyName, String.Empty), cell.FontFamily)
+                    Dim text As Nullable(Of Color) = cell.TextColor
+                    Dim fill As Nullable(Of Color) = cell.Fill
+
+                    Dim fontKey As String = Flag(bold) & Flag(italic) & Number(size) & "|" & family & "|" &
+                                            If(text.HasValue, Rgb(text.Value), "-")
+                    Dim font As Integer = Intern(_fonts, _fontAt, fontKey, FontXml(bold, italic, size, family, text))
+                    Dim fillId As Integer = 0
+                    If fill.HasValue Then
+                        fillId = Intern(_fills, _fillAt, Rgb(fill.Value),
+                            "<fill><patternFill patternType=""solid""><fgColor rgb=""" & Rgb(fill.Value) &
+                            """ /><bgColor indexed=""64"" /></patternFill></fill>")
+                    End If
+
+                    Dim align As String = If(cell.TextAlign = SheetAlign.Left, "left",
+                        If(cell.TextAlign = SheetAlign.Center, "center",
+                        If(cell.TextAlign = SheetAlign.Right, "right", String.Empty)))
+                    If font = 0 AndAlso fillId = 0 AndAlso align.Length = 0 Then
+                        Return 0
+                    End If
+
+                    Return Intern(_formats, _formatAt, font & "|" & fillId & "|" & align,
+                        "<xf numFmtId=""0"" fontId=""" & font & """ fillId=""" & fillId &
+                        """ borderId=""0"" xfId=""0"" applyFont=""1"" applyFill=""1""" &
+                        If(align.Length = 0, " />",
+                            " applyAlignment=""1""><alignment horizontal=""" & align & """ /></xf>"))
+                End Function
+
+                ''' <summary>The whole styles part, with each table's count beside it (Excel ignores the counts
+                ''' and reads the tables, but LibreOffice is happier when they agree).</summary>
+                Friend Function Document() As String
+                    Return "<?xml version=""1.0"" encoding=""UTF-8"" standalone=""yes""?>" &
+                           "<styleSheet xmlns=""" & Main & """>" &
+                           "<fonts count=""" & _fonts.Count & """>" & String.Concat(_fonts) & "</fonts>" &
+                           "<fills count=""" & _fills.Count & """>" & String.Concat(_fills) & "</fills>" &
+                           "<borders count=""1""><border><left /><right /><top /><bottom /><diagonal /></border></borders>" &
+                           "<cellStyleXfs count=""1""><xf numFmtId=""0"" fontId=""0"" fillId=""0"" borderId=""0"" /></cellStyleXfs>" &
+                           "<cellXfs count=""" & _formats.Count & """>" & String.Concat(_formats) & "</cellXfs>" &
+                           "<cellStyles count=""1""><cellStyle name=""Normal"" xfId=""0"" builtinId=""0"" /></cellStyles>" &
+                           "</styleSheet>"
+                End Function
+
+                Private Shared Function FontXml(bold As Boolean, italic As Boolean, size As Double, family As String,
+                    text As Nullable(Of Color)) As String
+                    Return "<font><name val=""" & XmlText(If(family.Length = 0, "Calibri", family)) & """ />" &
+                           If(bold, "<b />", String.Empty) & If(italic, "<i />", String.Empty) &
+                           If(text.HasValue, "<color rgb=""" & Rgb(text.Value) & """ />", String.Empty) &
+                           "<sz val=""" & Number(size) & """ /></font>"
+                End Function
+
+                Private Shared Function Intern(table As List(Of String), at As Dictionary(Of String, Integer),
+                    key As String, xml As String) As Integer
+                    Dim found As Integer
+                    If at.TryGetValue(key, found) Then
+                        Return found
+                    End If
+
+                    table.Add(xml)
+                    at(key) = table.Count - 1
+                    Return table.Count - 1
+                End Function
+
+                Private Shared Function Flag(isOn As Boolean) As String
+                    Return If(isOn, "1", "0")
+                End Function
+            End Class
+
+            ''' <summary>A colour as the eight hexadecimal digits a workbook uses — ARGB, opaque.</summary>
+            Friend Shared Function Rgb(color As Color) As String
+                Return "FF" & color.R.ToString("X2", CultureInfo.InvariantCulture) &
+                       color.G.ToString("X2", CultureInfo.InvariantCulture) &
+                       color.B.ToString("X2", CultureInfo.InvariantCulture)
+            End Function
+
+            ' ---- reading --------------------------------------------------------------------------
+
+            ''' <summary>The workbook's page names in order. An unreadable file simply has none.</summary>
+            Friend Shared Function Pages(path As String) As List(Of String)
+                Dim names As New List(Of String)()
+                Try
+                    Using zip As ZipArchive = OpenBook(path)
+                        Dim book As XDocument = XlsxPart(zip, "xl/workbook.xml")
+                        If book Is Nothing Then
+                            Return names
+                        End If
+
+                        For Each element As XElement In book.Descendants()
+                            If element.Name.LocalName = "sheet" Then
+                                Dim name As XAttribute = element.Attribute("name")
+                                names.Add(If(name Is Nothing, String.Empty, name.Value))
+                            End If
+                        Next
+                    End Using
+                Catch
+                    ' Not a workbook, or not readable: the caller treats "no pages" as "no file to load".
+                End Try
+
+                Return names
+            End Function
+
+            ''' <summary>
+            ''' Reads one page into the sheet and answers how many cells it put there. Everything the sheet
+            ''' already held is cleared first; the sheet grows to fit the page, never shrinks to it. Answers -1
+            ''' when there is no such page, so the caller can say so rather than report an empty load as a
+            ''' success.
+            ''' </summary>
+            Friend Shared Function Read(sheet As GrumpySheet, path As String, page As String) As Integer
+                Using zip As ZipArchive = OpenBook(path)
+                    Dim book As XDocument = XlsxPart(zip, "xl/workbook.xml")
+                    Dim part As String = SheetPart(zip, book, page)
+                    If part Is Nothing Then
+                        Return -1
+                    End If
+
+                    Dim pool As List(Of String) = SharedStrings(zip)
+                    Dim formatTable As List(Of CellFormat) = Formats(zip)
+                    Dim cells As XDocument = XlsxPart(zip, part)
+                    If cells Is Nothing Then
+                        Return -1
+                    End If
+
+                    Dim built As New List(Of SheetCell)()
+                    Dim widths As New Dictionary(Of Integer, Double)()
+                    Dim heights As New Dictionary(Of Integer, Double)()
+                    Dim lastRow As Integer = 0
+                    Dim lastColumn As Integer = 0
+                    Dim kept As Integer = 0
+                    For Each row As XElement In cells.Descendants()
+                        If row.Name.LocalName = "col" Then
+                            ReadColumn(row, widths)     ' <cols> sits beside the rows, not inside them
+                            Continue For
+                        End If
+
+                        If row.Name.LocalName <> "row" Then
+                            Continue For
+                        End If
+
+                        Dim number As String = Attr(row, "r")
+                        Dim at As Integer = 0
+                        If number IsNot Nothing Then
+                            Integer.TryParse(number, NumberStyles.Integer, CultureInfo.InvariantCulture, at)
+                        End If
+
+                        If at <= 0 Then
+                            Continue For                  ' a row with no number cannot be placed
+                        End If
+
+                        Dim height As String = Attr(row, "ht")
+                        Dim points As Double = 0.0
+                        If height IsNot Nothing AndAlso Double.TryParse(height, NumberStyles.Float,
+                                CultureInfo.InvariantCulture, points) AndAlso points > 0 Then
+                            heights(at) = PointsToPixels(points)
+                        End If
+
+                        For Each cell As XElement In row.Elements()
+                            If cell.Name.LocalName <> "c" Then
+                                Continue For
+                            End If
+
+                            Dim built2 As SheetCell = CellFrom(cell, pool, formatTable)
+                            If built2 Is Nothing Then
+                                Continue For
+                            End If
+
+                            lastRow = Math.Max(lastRow, built2.Row)
+                            lastColumn = Math.Max(lastColumn, built2.Column)
+                            kept += 1
+                            built.Add(built2)
+                        Next
+                    Next
+
+                    ' Grow — never shrink — and only then fill: a page smaller than the sheet leaves the
+                    ' sheet's own shape alone, which is what a form that sized its grid wants.
+                    sheet.Cells.Clear()
+                    sheet.ClearSizes()
+                    sheet.Rows = Math.Max(sheet.Rows, Math.Max(1, lastRow))
+                    sheet.Columns = Math.Max(sheet.Columns, Math.Max(1, lastColumn))
+                    sheet.Cells.AddRange(built)
+                    For Each pair As KeyValuePair(Of Integer, Double) In widths
+                        sheet.SetColumnWidth(pair.Key, pair.Value)
+                    Next
+
+                    For Each pair As KeyValuePair(Of Integer, Double) In heights
+                        sheet.SetRowHeight(pair.Key, pair.Value)
+                    Next
+
+                    sheet.InvalidateValues()
+                    Return kept
+                End Using
+            End Function
+
+            ''' <summary>A workbook part by name, or Nothing. The lookup is case-insensitive because a file
+            ''' written on Windows may spell its own parts either way.</summary>
+            Private Shared Function XlsxPart(zip As ZipArchive, name As String) As XDocument
+                For Each entry As ZipArchiveEntry In zip.Entries
+                    If String.Equals(entry.FullName, name, StringComparison.OrdinalIgnoreCase) Then
+                        Using stream As Stream = entry.Open()
+                            Return XDocument.Load(stream)
+                        End Using
+                    End If
+                Next
+
+                Return Nothing
+            End Function
+
+            ''' <summary>A pixel width as the character width a workbook stores, as text.</summary>
+            Friend Shared Function WidthNumber(pixels As Double) As String
+                Return Number(PixelsToWidth(pixels))
+            End Function
+
+            Private Shared Function OpenBook(path As String) As ZipArchive
+                ' ReadWrite sharing: a workbook the user still has open in Excel is exactly the one they are
+                ' most likely to load from.
+                Return New ZipArchive(New FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite),
+                    ZipArchiveMode.Read)
+            End Function
+
+            ''' <summary>An attribute's value, or Nothing. (Named "Attr": "Attribute" would read as VB's own
+            ''' attribute syntax at every call site.)</summary>
+            Private Shared Function Attr(element As XElement, name As String) As String
+                Dim found As XAttribute = element.Attribute(name)
+                Return If(found Is Nothing, Nothing, found.Value)
+            End Function
+
+            ''' <summary>The sheet part to read: the page asked for by name, else the first one. The r:id on
+            ''' each sheet is resolved through the workbook's relationships, so the order of the PARTS in the
+            ''' zip does not matter — only the order of the pages in the workbook does.</summary>
+            Private Shared Function SheetPart(zip As ZipArchive, book As XDocument, page As String) As String
+                If book Is Nothing Then
+                    Return Nothing
+                End If
+
+                Dim wanted As String = Nothing
+                Dim first As String = Nothing
+                For Each element As XElement In book.Descendants()
+                    If element.Name.LocalName <> "sheet" Then
+                        Continue For
+                    End If
+
+                    Dim id As String = RelationshipOf(element)
+                    If first Is Nothing Then
+                        first = id
+                    End If
+
+                    Dim name As String = If(Attr(element, "name"), String.Empty)
+                    If page IsNot Nothing AndAlso String.Equals(name, page, StringComparison.OrdinalIgnoreCase) Then
+                        wanted = id
+                        Exit For
+                    End If
+                Next
+
+                Dim wantedId As String = If(wanted, first)   ' a page that is not there falls back to the first
+                If wantedId Is Nothing Then
+                    Return Nothing
+                End If
+
+                Dim rels As XDocument = XlsxPart(zip, "xl/_rels/workbook.xml.rels")
+                If rels Is Nothing Then
+                    Return Nothing
+                End If
+
+                For Each element As XElement In rels.Descendants()
+                    ' "Relationship", capitalised — the one name in these parts that is, so it is compared
+                    ' without regard to case rather than trusting to a spelling nobody can remember.
+                    If Not String.Equals(element.Name.LocalName, "relationship", StringComparison.OrdinalIgnoreCase) Then
+                        Continue For
+                    End If
+
+                    If Not String.Equals(Attr(element, "Id"), wantedId, StringComparison.OrdinalIgnoreCase) Then
+                        Continue For
+                    End If
+
+                    Dim target As String = If(Attr(element, "Target"), String.Empty)
+                    Dim trimmed As String = target.Replace("\"c, "/"c).Trim()
+                    If trimmed.StartsWith("/", StringComparison.Ordinal) Then
+                        trimmed = trimmed.TrimStart("/"c)
+                    Else
+                        trimmed = "xl/" & trimmed
+                    End If
+
+                    While trimmed.Contains("../", StringComparison.Ordinal)
+                        Dim at As Integer = trimmed.IndexOf("../", StringComparison.Ordinal)
+                        Dim cut As Integer = trimmed.LastIndexOf("/"c, Math.Max(0, at - 1))
+                        trimmed = If(cut <= 0, trimmed.Substring(at + 3),
+                            trimmed.Substring(0, cut + 1) & trimmed.Substring(at + 3))
+                    End While
+
+                    Return trimmed
+                Next
+
+                Return Nothing
+            End Function
+
+            ''' <summary>A sheet element's relationship id. It is written namespaced — r:id — so it is found by
+            ''' its LOCAL name, the way every other part of this reader is read.</summary>
+            Private Shared Function RelationshipOf(sheetElement As XElement) As String
+                For Each attribute As XAttribute In sheetElement.Attributes()
+                    If attribute.Name.LocalName = "id" Then
+                        Return attribute.Value
+                    End If
+                Next
+
+                Return Nothing
+            End Function
+
+            ''' <summary>The workbook's shared strings, in order. A file with none (this control writes inline
+            ''' strings) simply gets an empty table.</summary>
+            Private Shared Function SharedStrings(zip As ZipArchive) As List(Of String)
+                Dim strings As New List(Of String)()
+                Dim part As XDocument = XlsxPart(zip, "xl/sharedStrings.xml")
+                If part Is Nothing Then
+                    Return strings
+                End If
+
+                For Each element As XElement In part.Descendants()
+                    If element.Name.LocalName = "si" Then
+                        Dim builder As New System.Text.StringBuilder()
+                        For Each text As XElement In element.Descendants()
+                            If text.Name.LocalName = "t" Then
+                                builder.Append(text.Value)
+                            End If
+                        Next
+
+                        strings.Add(builder.ToString())
+                    End If
+                Next
+
+                Return strings
+            End Function
+
+            ''' <summary>One cell, translated: its text (a formula keeps its '='), and whatever formatting the
+            ''' file gives it. Nothing for a cell with nothing to say and nothing to show.</summary>
+            Private Shared Function CellFrom(cell As XElement, pool As List(Of String),
+                formatTable As List(Of CellFormat)) As SheetCell
+                Dim reference As String = Attr(cell, "r")
+                Dim row As Integer = 0
+                Dim column As Integer = 0
+                If reference Is Nothing OrElse Not GrumpySheet.ParseCellName(reference, row, column) Then
+                    Return Nothing
+                End If
+
+                Dim text As String = String.Empty
+                Dim formula As String = String.Empty
+                For Each child As XElement In cell.Elements()
+                    If child.Name.LocalName = "f" Then
+                        formula = "=" & child.Value
+                        Continue For
+                    End If
+
+                    If child.Name.LocalName <> "v" Then
+                        Continue For
+                    End If
+
+                    Dim type As String = Attr(cell, "t")
+                    If type = "s" Then
+                        Dim at As Integer = 0
+                        If Integer.TryParse(child.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, at) AndAlso
+                           at >= 0 AndAlso at < pool.Count Then
+                            text = pool(at)
+                        End If
+                    ElseIf type = "b" Then
+                        text = If(child.Value = "1", "TRUE", "FALSE")
+                    Else
+                        text = child.Value
+                    End If
+                Next
+
+                If formula.Length > 0 Then
+                    text = formula                       ' the sheet works its own answers out again
+                ElseIf text.Length = 0 Then
+                    Dim inline As String = InlineText(cell)
+                    If inline IsNot Nothing Then
+                        text = inline
+                    End If
+                End If
+
+                Dim style As String = Attr(cell, "s")
+                Dim styleAt As Integer = 0
+                If style IsNot Nothing Then
+                    Integer.TryParse(style, NumberStyles.Integer, CultureInfo.InvariantCulture, styleAt)
+                End If
+
+                Dim format As CellFormat = If(styleAt >= 0 AndAlso styleAt < formatTable.Count, formatTable(styleAt), Nothing)
+                If text.Length = 0 AndAlso (format Is Nothing OrElse Not format.Fill.HasValue) Then
+                    Return Nothing                       ' neither a value nor a highlight: nothing to carry
+                End If
+
+                Dim built As New SheetCell()
+                built.Row = row
+                built.Column = column
+                built.Text = text
+                If format IsNot Nothing Then
+                    built.Bold = format.Bold
+                    built.Italic = format.Italic
+                    built.FontSize = format.Size
+                    built.FontFamily = format.Family
+                    built.TextColor = format.Text
+                    built.Fill = format.Fill
+                    built.TextAlign = format.Align
+                End If
+
+                Return built
+            End Function
+
+            ''' <summary>An inline string's text (this control's own spelling), or Nothing when the cell has no
+            ''' inline string at all.</summary>
+            Private Shared Function InlineText(cell As XElement) As String
+                If Attr(cell, "t") <> "inlineStr" Then
+                    Return Nothing
+                End If
+
+                Dim builder As New System.Text.StringBuilder()
+                For Each text As XElement In cell.Descendants()
+                    If text.Name.LocalName = "t" Then
+                        builder.Append(text.Value)
+                    End If
+                Next
+
+                Return builder.ToString()
+            End Function
+
+            ''' <summary>One col element: its width and the columns it covers. Excel stores a width in
+            ''' characters, and only the columns that differ from the sheet's default carry one.</summary>
+            Private Shared Sub ReadColumn(col As XElement, widths As Dictionary(Of Integer, Double))
+                Dim width As String = Attr(col, "width")
+                Dim characters As Double = 0.0
+                If width Is Nothing OrElse
+                   Not Double.TryParse(width, NumberStyles.Float, CultureInfo.InvariantCulture, characters) Then
+                    Return
+                End If
+
+                Dim first As Integer = 0
+                Dim last As Integer = 0
+                Integer.TryParse(If(Attr(col, "min"), String.Empty), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, first)
+                Integer.TryParse(If(Attr(col, "max"), String.Empty), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, last)
+                If first <= 0 Then
+                    Return
+                End If
+
+                If last < first Then
+                    last = first
+                End If
+
+                For column As Integer = first To last
+                    widths(column) = WidthToPixels(characters)
+                Next
+            End Sub
+
+            ''' <summary>One look, read out of the styles part: everything a cell of that format carries.</summary>
+            Private NotInheritable Class CellFormat
+                Friend Bold As Boolean
+                Friend Italic As Boolean
+                Friend Size As Double
+                Friend Family As String
+                Friend Text As Nullable(Of Color)
+                Friend Fill As Nullable(Of Color)
+                Friend Align As SheetAlign = SheetAlign.Auto
+            End Class
+
+            ''' <summary>The styles part, as a lookup from a cell's `s` index to what it means.</summary>
+            Private Shared Function Formats(zip As ZipArchive) As List(Of CellFormat)
+                Dim list As New List(Of CellFormat)()
+                Dim styles As XDocument = XlsxPart(zip, "xl/styles.xml")
+                If styles Is Nothing Then
+                    Return list
+                End If
+
+                Dim fonts As New List(Of XElement)()
+                Dim fills As New List(Of XElement)()
+                Dim xfs As New List(Of XElement)()
+                For Each element As XElement In styles.Descendants()
+                    If element.Name.LocalName = "font" AndAlso element.Parent IsNot Nothing AndAlso
+                       element.Parent.Name.LocalName = "fonts" Then
+                        fonts.Add(element)
+                    ElseIf element.Name.LocalName = "fill" AndAlso element.Parent IsNot Nothing AndAlso
+                           element.Parent.Name.LocalName = "fills" Then
+                        fills.Add(element)
+                    ElseIf element.Name.LocalName = "xf" AndAlso element.Parent IsNot Nothing AndAlso
+                           element.Parent.Name.LocalName = "cellXfs" Then
+                        xfs.Add(element)
+                    End If
+                Next
+
+                For Each xf As XElement In xfs
+                    Dim format As New CellFormat()
+                    Dim font As XElement = Nth(fonts, Attr(xf, "fontId"))
+                    If font IsNot Nothing Then
+                        format.Bold = Has(font, "b")
+                        format.Italic = Has(font, "i")
+                        For Each child As XElement In font.Elements()
+                            If child.Name.LocalName = "sz" Then
+                                Dim size As Double = 0.0
+                                If Double.TryParse(If(Attr(child, "val"), String.Empty), NumberStyles.Float,
+                                        CultureInfo.InvariantCulture, size) AndAlso size > 0 Then
+                                    format.Size = size
+                                End If
+                            ElseIf child.Name.LocalName = "name" Then
+                                format.Family = Attr(child, "val")
+                            ElseIf child.Name.LocalName = "color" Then
+                                format.Text = Colour(child)
+                            End If
+                        Next
+                    End If
+
+                    Dim fill As XElement = Nth(fills, Attr(xf, "fillId"))
+                    If fill IsNot Nothing Then
+                        For Each child As XElement In fill.Descendants()
+                            If child.Name.LocalName = "fgColor" Then
+                                format.Fill = Colour(child)      ' a solid pattern's colour is here
+                            End If
+                        Next
+                    End If
+
+                    For Each child As XElement In xf.Descendants()
+                        If child.Name.LocalName <> "alignment" Then
+                            Continue For
+                        End If
+
+                        Dim horizontal As String = Attr(child, "horizontal")
+                        format.Align = If(horizontal = "center", SheetAlign.Center,
+                            If(horizontal = "right", SheetAlign.Right,
+                            If(horizontal = "left", SheetAlign.Left, SheetAlign.Auto)))
+                    Next
+
+                    list.Add(format)
+                Next
+
+                Return list
+            End Function
+
+            Private Shared Function Nth(list As List(Of XElement), index As String) As XElement
+                Dim slot As Integer = 0
+                If index IsNot Nothing Then
+                    Integer.TryParse(index, NumberStyles.Integer, CultureInfo.InvariantCulture, slot)
+                End If
+
+                Return If(slot >= 0 AndAlso slot < list.Count, list(slot), Nothing)
+            End Function
+
+            ''' <summary>Does this element have a child of that name? (A loop, not LINQ: a bundled file must
+            ''' compile in a host project that imports nothing it does not import itself.)</summary>
+            Private Shared Function Has(element As XElement, name As String) As Boolean
+                For Each child As XElement In element.Elements()
+                    If child.Name.LocalName = name Then
+                        Return True
+                    End If
+                Next
+
+                Return False
+            End Function
+
+            ''' <summary>A colour element as a colour: the six RGB digits of an eight-digit value. A THEME
+            ''' colour (what Excel writes for the default text) answers Nothing, so the cell keeps the sheet's
+            ''' own colour instead of guessing at a theme it cannot see.</summary>
+            Private Shared Function Colour(element As XElement) As Nullable(Of Color)
+                Dim rgb As String = Attr(element, "rgb")
+                If String.IsNullOrWhiteSpace(rgb) Then
+                    Return Nothing
+                End If
+
+                Dim digits As String = rgb.Trim()
+                If digits.Length = 8 Then
+                    digits = digits.Substring(2)             ' drop the alpha: the sheet's colours are opaque
+                End If
+
+                Dim r As Byte = 0
+                Dim g As Byte = 0
+                Dim b As Byte = 0
+                If digits.Length <> 6 OrElse
+                   Not Byte.TryParse(digits.Substring(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, r) OrElse
+                   Not Byte.TryParse(digits.Substring(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, g) OrElse
+                   Not Byte.TryParse(digits.Substring(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, b) Then
+                    Return Nothing
+                End If
+
+                Return Color.FromArgb(255, r, g, b)
+            End Function
+        End Class
+
+        ''' <summary>The cols element for the columns a border was dragged on, or nothing when they are all
+        ''' the sheet's own width.</summary>
+        Private Function ColumnsElement() As String
+            Dim element As String = String.Empty
+            For column As Integer = 1 To ColumnCount
+                Dim width As Double = ColumnWidthOf(column)
+                If Math.Abs(width - ColumnWidth) <= 0.01 Then
+                    Continue For
+                End If
+
+                element &= "<col min=""" & column & """ max=""" & column & """ width=""" &
+                           Xlsx.WidthNumber(width) & """ customWidth=""1"" />"
+            Next
+
+            Return If(element.Length = 0, String.Empty, "<cols>" & element & "</cols>")
+        End Function
 
         ' ---- formulas ---------------------------------------------------------------------------
         ' What each formula cell works out to, kept until any cell's text changes (see InvalidateValues).
@@ -380,20 +2142,35 @@ Namespace Global.AvaloniaSpreadsheet
         ' The right-click menu. It is DRAWN by the control itself — see the menu section far below for why it
         ' is not an Avalonia ContextMenu.
         Private _menuItems As New List(Of SheetMenuItem)()
+        Private _menuKind As MenuKind = MenuKind.Context
+        Private _menuWidth As Double = MenuWidth
         Private _menuOpen As Boolean
         Private _menuX As Double
         Private _menuY As Double
         Private _menuHot As Integer = -1
 
+        ''' <summary>Where in the editor text the '=' that opened the macro list sits, or -1.</summary>
+        Private _macroStart As Integer = -1
+
+        ' The last BLOCK that was selected, kept because of the order a total is usually written in: pick
+        ' the column of figures, then click the cell the total goes in, then type "=sum". By then the block is
+        ' no longer selected, so without this the formula would arrive empty — and a formula committed INTO
+        ' the block it reads can only ever be #CYCLE!.
+        Private _rangeFirstRow As Integer
+        Private _rangeFirstColumn As Integer
+        Private _rangeLastRow As Integer
+        Private _rangeLastColumn As Integer
+
         Shared Sub New()
             AffectsRender(Of GrumpySheet)(RowsProperty, ColumnsProperty, ColumnWidthProperty, RowHeightProperty,
                 HeaderWidthProperty, HeaderHeightProperty, ShowHeadersProperty, ShowFormulaBarProperty,
-                ShowScrollBarsProperty,
+                ShowScrollBarsProperty, ShowToolbarProperty, EditBackColorProperty, EditTextColorProperty,
                 FontFamilyNameProperty, FontSizeProperty, GridColorProperty, HeaderBackColorProperty,
                 HeaderTextColorProperty, CellBackColorProperty, TextColorProperty, SelectionColorProperty,
                 SelectionFillColorProperty)
             AffectsMeasure(Of GrumpySheet)(RowsProperty, ColumnsProperty, ColumnWidthProperty, RowHeightProperty,
-                HeaderWidthProperty, HeaderHeightProperty, ShowHeadersProperty, ShowFormulaBarProperty)
+                HeaderWidthProperty, HeaderHeightProperty, ShowHeadersProperty, ShowFormulaBarProperty,
+                ShowToolbarProperty)
         End Sub
 
         ''' <summary>Creates an empty sheet. Fill <see cref="Cells"/> in XAML, or call SetCell.</summary>
@@ -555,6 +2332,16 @@ Namespace Global.AvaloniaSpreadsheet
             End Set
         End Property
 
+        ''' <summary>Draw the toolbar (File and Print) at all.</summary>
+        Public Property ShowToolbar As Boolean
+            Get
+                Return GetValue(ShowToolbarProperty)
+            End Get
+            Set(value As Boolean)
+                SetValue(ShowToolbarProperty, value)
+            End Set
+        End Property
+
         ''' <summary>False makes the sheet read-only.</summary>
         Public Property AllowEditing As Boolean
             Get
@@ -632,6 +2419,36 @@ Namespace Global.AvaloniaSpreadsheet
             End Get
             Set(value As Color)
                 SetValue(TextColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The backcolour of the fx box — the cell edit box at the top of the sheet.</summary>
+        Public Property EditBackColor As Color
+            Get
+                Return GetValue(EditBackColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(EditBackColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>The colour of the text in the fx box.</summary>
+        Public Property EditTextColor As Color
+            Get
+                Return GetValue(EditTextColorProperty)
+            End Get
+            Set(value As Color)
+                SetValue(EditTextColorProperty, value)
+            End Set
+        End Property
+
+        ''' <summary>Which way round the page is when the sheet is printed or exported.</summary>
+        Public Property PrintOrientation As SheetOrientation
+            Get
+                Return GetValue(PrintOrientationProperty)
+            End Get
+            Set(value As SheetOrientation)
+                SetValue(PrintOrientationProperty, value)
             End Set
         End Property
 
@@ -1321,6 +3138,15 @@ Namespace Global.AvaloniaSpreadsheet
         End Sub
 
         Private Sub RaiseSelectionChanged()
+            ' Remember a block while it IS the selection: it is what the macro list offers as a range after
+            ' the pointer has moved on to the cell the formula is going into (see SelectedRangeText).
+            If SelectionFirstRow() <> SelectionLastRow() OrElse SelectionFirstColumn() <> SelectionLastColumn() Then
+                _rangeFirstRow = SelectionFirstRow()
+                _rangeFirstColumn = SelectionFirstColumn()
+                _rangeLastRow = SelectionLastRow()
+                _rangeLastColumn = SelectionLastColumn()
+            End If
+
             RaiseEvent SelectionChanged(Me, EventArgs.Empty)
         End Sub
 
@@ -1384,11 +3210,11 @@ Namespace Global.AvaloniaSpreadsheet
 
         ' ---- geometry ---------------------------------------------------------------------------
 
-        ''' <summary>Where the grid's cells start, allowing for the bar and the headers.</summary>
+        ''' <summary>Where the grid's cells start, allowing for the toolbar, the bar and the headers.</summary>
         Private ReadOnly Property GridOrigin As Point
             Get
                 Dim x As Double = If(ShowHeaders, HeaderWidth, 0.0)
-                Dim y As Double = If(ShowFormulaBar, BarHeight, 0.0) + If(ShowHeaders, HeaderHeight, 0.0)
+                Dim y As Double = ToolbarStrip + If(ShowFormulaBar, BarHeight, 0.0) + If(ShowHeaders, HeaderHeight, 0.0)
                 Return New Point(x, y)
             End Get
         End Property
@@ -1671,6 +3497,254 @@ Namespace Global.AvaloniaSpreadsheet
             End Using
         End Sub
 
+        ' ---- the toolbar ----------------------------------------------------------------------------
+        ' Drawn by the control itself, like the grid, the bar, the menu and the scrollbars: two icon
+        ' buttons and a line of status text. It is the reason a dropped sheet is USABLE with no code at
+        ' all — Load…, Save… and Print… are already there — and ShowToolbar = False puts the sheet back
+        ' exactly as it was before the strip existed.
+        '
+        ' File > Load… / Save… are the .xlsx reader and writer below. Print > Save as PNG… / Save as PDF… /
+        ' Print…. The dialogs come from the platform, so they need a real window: in the designer's
+        ' headless preview the buttons are drawn and the strip says why a menu leads nowhere.
+
+        ''' <summary>Paints the strip: its two buttons, the hovering one's word, and the status line.</summary>
+        Private Sub DrawToolbar(context As DrawingContext, size As Size, back As IBrush, text As IBrush,
+            accent As IBrush)
+            If Not ShowToolbar OrElse size.Width <= 0 Then
+                Return
+            End If
+
+            context.FillRectangle(back, New Rect(0, 0, size.Width, ToolbarHeight))
+            For i As Integer = 0 To ToolbarButtonCount - 1
+                Dim button As Rect = ToolbarButtonRect(i)
+                If i = _toolbarHot Then
+                    context.FillRectangle(accent, button)
+                End If
+
+                If i = ToolbarFile Then
+                    DrawFileIcon(context, button, text)
+                Else
+                    DrawPrintIcon(context, button, text)
+                End If
+            Next
+
+            ' The word of the button under the pointer, beside the pair: the strip's own tooltip, drawn
+            ' rather than asked of the framework, like everything else here.
+            Dim afterButtons As Double = ToolbarButtonRect(ToolbarButtonCount - 1).Right + 4
+            If _toolbarHot >= 0 Then
+                DrawCellText(context, ToolbarLabel(_toolbarHot), New Rect(afterButtons, 0, 60, ToolbarHeight),
+                    text, False, TextAlignment.Left)
+            End If
+
+            If _status.Length > 0 Then
+                Dim statusLeft As Double = afterButtons + 66
+                DrawCellText(context, _status,
+                    New Rect(statusLeft, 0, Math.Max(0, size.Width - statusLeft - 6), ToolbarHeight),
+                    text, False, TextAlignment.Right, -1, Nothing, Math.Max(9.0, FontSize - 1.0))
+            End If
+
+            context.DrawLine(New Pen(New SolidColorBrush(GridColor), 1.0), New Point(0, ToolbarHeight - 0.5),
+                New Point(size.Width, ToolbarHeight - 0.5))
+        End Sub
+
+        ''' <summary>The File button's icon: a page with a folded corner and a few lines on it. Drawn from
+        ''' rectangles and lines — the control ships no image files at all.</summary>
+        Private Shared Sub DrawFileIcon(context As DrawingContext, button As Rect, ink As IBrush)
+            Dim pen As New Pen(ink, 1.2)
+            Dim x As Double = button.Center.X - 5.5
+            Dim y As Double = button.Center.Y - 7.5
+            context.DrawRectangle(Nothing, pen, New Rect(x, y, 11.0, 15.0))
+            context.DrawLine(pen, New Point(x + 7.0, y), New Point(x + 7.0, y + 4.0))
+            context.DrawLine(pen, New Point(x + 7.0, y + 4.0), New Point(x + 11.0, y + 4.0))
+            For i As Integer = 0 To 2
+                Dim line As Double = y + 8.0 + i * 3.0
+                context.DrawLine(pen, New Point(x + 2.5, line),
+                    New Point(x + If(i = 2, 6.0, 8.5), line))
+            Next
+        End Sub
+
+        ''' <summary>The Print button's icon: the sheet going in at the top, the body of the printer, and the
+        ''' page coming out below — plus its little lamp.</summary>
+        Private Shared Sub DrawPrintIcon(context As DrawingContext, button As Rect, ink As IBrush)
+            Dim pen As New Pen(ink, 1.2)
+            Dim x As Double = button.Center.X - 7.0
+            Dim y As Double = button.Center.Y - 7.0
+            context.DrawRectangle(Nothing, pen, New Rect(x + 2.5, y, 9.0, 5.0))
+            context.DrawRectangle(Nothing, pen, New Rect(x, y + 4.5, 14.0, 6.0))
+            context.DrawRectangle(Nothing, pen, New Rect(x + 3.0, y + 10.0, 8.0, 4.5))
+            context.FillRectangle(ink, New Rect(x + 10.5, y + 6.0, 2.0, 2.0))
+        End Sub
+
+        ' ---- the macro list a '=' opens ---------------------------------------------------------------
+        '
+        ' "=" is the one moment the sheet knows a FORMULA is wanted rather than a value, which makes it the
+        ' right moment to offer the names. The list filters as more letters arrive; the pick lands in the fx
+        ' box, with the cells that were selected already written in as the range. So the common case —
+        ' select B2:B9, type "=su", press Enter — arrives complete, and the caret waits between the brackets
+        ' when there was nothing to fill in.
+
+        ''' <summary>One macro the list offers.</summary>
+        Private NotInheritable Class SheetMacro
+            ''' <summary>The name typed after '=', exactly as the parser dispatches it.</summary>
+            Public Name As String = String.Empty
+
+            ''' <summary>What it does, in a few words — drawn beside the name.</summary>
+            Public Hint As String = String.Empty
+
+            ''' <summary>Whether the selected cells are offered to it as a range: true for the readings
+            ''' (Sum, Avg, StdDev …), false for the ones that take a plain value or a text.</summary>
+            Public TakesRange As Boolean
+        End Class
+
+        ''' <summary>
+        ''' Every macro the parser knows, in the order the list shows them: the readings a sheet is usually
+        ''' asked for first, then the rest. EVERY name here is one Apply dispatches, which a test compares —
+        ''' so the list can never offer something the engine cannot do.
+        ''' </summary>
+        Private Shared ReadOnly Macros As SheetMacro() = {
+            New SheetMacro With {.Name = "Sum", .Hint = "the total of a range", .TakesRange = True},
+            New SheetMacro With {.Name = "Avg", .Hint = "the average (Average works too)", .TakesRange = True},
+            New SheetMacro With {.Name = "StdDev", .Hint = "sample standard deviation (n-1)", .TakesRange = True},
+            New SheetMacro With {.Name = "StdDevP", .Hint = "population standard deviation (n)", .TakesRange = True},
+            New SheetMacro With {.Name = "Max", .Hint = "the largest number", .TakesRange = True},
+            New SheetMacro With {.Name = "Min", .Hint = "the smallest number", .TakesRange = True},
+            New SheetMacro With {.Name = "Count", .Hint = "how many cells hold a number", .TakesRange = True},
+            New SheetMacro With {.Name = "CountA", .Hint = "how many cells are not empty", .TakesRange = True},
+            New SheetMacro With {.Name = "Abs", .Hint = "a number without its sign"},
+            New SheetMacro With {.Name = "Round", .Hint = "Round(number, places)"},
+            New SheetMacro With {.Name = "Int", .Hint = "rounds down to a whole number"},
+            New SheetMacro With {.Name = "Sqrt", .Hint = "the square root"},
+            New SheetMacro With {.Name = "Mod", .Hint = "the remainder: Mod(number, divisor)"},
+            New SheetMacro With {.Name = "If", .Hint = "If(condition, then, else)"},
+            New SheetMacro With {.Name = "And", .Hint = "true when every condition is"},
+            New SheetMacro With {.Name = "Or", .Hint = "true when any condition is"},
+            New SheetMacro With {.Name = "Not", .Hint = "the opposite of a condition"},
+            New SheetMacro With {.Name = "Len", .Hint = "how many characters"},
+            New SheetMacro With {.Name = "Upper", .Hint = "the text in capitals"},
+            New SheetMacro With {.Name = "Lower", .Hint = "the text in small letters"},
+            New SheetMacro With {.Name = "Trim", .Hint = "the text without spaces at the ends"}}
+
+        ''' <summary>
+        ''' Shows, hides or refilters the macro list for what is being typed. Called after EVERY change to
+        ''' the editor's text — and after a caret move, because where the '=' is depends on where the caret
+        ''' is.
+        ''' </summary>
+        Private Sub UpdateMacroPopup()
+            If Not _editing OrElse Not AllowEditing Then
+                CloseMacroPopup()
+                Return
+            End If
+
+            ' The '=' nearest the caret, at or before it: everything after it is the macro being typed.
+            Dim caret As Integer = Math.Min(_caret, _editText.Length)
+            Dim start As Integer = -1
+            For i As Integer = caret - 1 To 0 Step -1
+                If _editText(i) = "="c Then
+                    start = i
+                    Exit For
+                End If
+            Next
+
+            If start < 0 Then
+                CloseMacroPopup()
+                Return
+            End If
+
+            Dim typed As String = _editText.Substring(start + 1, caret - start - 1).Trim()
+            If typed.IndexOf("("c) >= 0 OrElse typed.IndexOf(")"c) >= 0 Then
+                CloseMacroPopup()              ' a finished call: there is nothing left to offer
+                Return
+            End If
+
+            Dim items As List(Of SheetMenuItem) = BuildMacroItems(typed)
+            If items.Count = 0 Then
+                CloseMacroPopup()
+                Return
+            End If
+
+            _macroStart = start
+            Dim anchor As Point = MacroAnchor()
+            OpenMenu(MenuKind.Macro, FitMacroItems(items, anchor), anchor, MacroMenuWidth)
+        End Sub
+
+        ''' <summary>Where the list hangs: under the fx box when the edit is up there, else under the cell
+        ''' being edited — the two places a formula can be typed.</summary>
+        Private Function MacroAnchor() As Point
+            Dim size As Size = Bounds.Size
+            If _barFocused Then
+                Dim input As Rect = BarInputRect(size)
+                Return New Point(input.X + 22, input.Bottom + 2)
+            End If
+
+            Dim cell As Rect = CellRect(_activeRow, _activeColumn)
+            Return New Point(cell.X, cell.Bottom + 2)
+        End Function
+
+        ''' <summary>Hides the macro list without touching the edit — and only a list that is actually
+        ''' showing is closed, so this is safe to call from anywhere.</summary>
+        Private Sub CloseMacroPopup()
+            If _menuOpen AndAlso _menuKind = MenuKind.Macro Then
+                CloseContextMenu()             ' which clears _macroStart with it
+                Return
+            End If
+
+            _macroStart = -1
+        End Sub
+
+        ''' <summary>
+        ''' Puts the chosen macro into the fx box, ready to edit — a formula of any length belongs up there,
+        ''' where it can be read and corrected. The cells selected when it was chosen become the range, so the
+        ''' caret waits after the closing bracket; with a single cell selected it waits BETWEEN the brackets,
+        ''' which is the case the list exists for.
+        ''' </summary>
+        Private Sub AcceptMacro(macro As SheetMacro)
+            Dim start As Integer = If(_macroStart >= 0 AndAlso _macroStart <= _editText.Length, _macroStart, 0)
+            Dim caret As Integer = Math.Min(_caret, _editText.Length)
+            Dim head As String = _editText.Substring(0, start)
+            Dim tail As String = _editText.Substring(caret)
+            Dim rangeText As String = If(macro.TakesRange, SelectedRangeText(), String.Empty)
+            Dim invocation As String = "=" & macro.Name & "(" & rangeText & ")"
+            _editText = head & invocation & tail
+            _caret = head.Length + invocation.Length - If(rangeText.Length > 0, 1, 0)
+            _macroStart = -1
+            _menuOpen = False                  ' the list closes; the EDIT carries on
+            _menuHot = -1
+            _editing = True
+            _barFocused = True                 ' and the formula is edited in the box from here on
+            _editIsNew = False
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>The selection as a range ("B2:B9"), or empty when there is nothing to offer. A whole
+        ''' column or row becomes the range it covers, so clicking a column and typing "=sum" fills the whole
+        ''' column in. When the selection is a single cell the LAST BLOCK that was selected is used instead,
+        ''' because that is the order a total is written in — select the figures, click where the total goes,
+        ''' type the formula — and a formula committed into the block it reads could only be #CYCLE!. The
+        ''' colon is what a range is WRITTEN with (Excel's spelling, and what this list writes); the older
+        ''' two-dot form still READS, so a formula typed before this stays exactly as it was.</summary>
+        Private Function SelectedRangeText() As String
+            Dim firstRow As Integer = SelectionFirstRow()
+            Dim lastRow As Integer = SelectionLastRow()
+            Dim firstColumn As Integer = SelectionFirstColumn()
+            Dim lastColumn As Integer = SelectionLastColumn()
+            If firstRow = lastRow AndAlso firstColumn = lastColumn Then
+                firstRow = _rangeFirstRow
+                firstColumn = _rangeFirstColumn
+                lastRow = _rangeLastRow
+                lastColumn = _rangeLastColumn
+            End If
+
+            If lastRow < firstRow OrElse lastColumn < firstColumn Then
+                Return String.Empty
+            End If
+
+            If firstRow = lastRow AndAlso firstColumn = lastColumn Then
+                Return String.Empty              ' one cell: leave the brackets for the user
+            End If
+
+            Return CellName(firstRow, firstColumn) & ":" & CellName(lastRow, lastColumn)
+        End Function
+
         ' ---- the right-click menu ------------------------------------------------------------------
         '
         ' An Avalonia ContextMenu was tried first and it never opened for a real right-click (reported
@@ -1691,15 +3765,46 @@ Namespace Global.AvaloniaSpreadsheet
             ''' <summary>Show a tick beside it (what the selection already is).</summary>
             Public Ticked As Boolean
 
+            ''' <summary>A few words about it, drawn dimmed at the right of the line — what the macro list
+            ''' uses to say what each function is for.</summary>
+            Public Hint As String = String.Empty
+
+            ''' <summary>False greys the line out and makes it unchoosable: a heading, or a command this
+            ''' machine cannot do (Print… with nothing to print through).</summary>
+            Public Enabled As Boolean = True
+
+            ''' <summary>A WARNING rather than a command — the lines the print-area warning is made of. Drawn in
+            ''' the warning colour and never choosable, whatever Enabled happens to be.</summary>
+            Public Warning As Boolean
+
             ''' <summary>What choosing it does.</summary>
             Public Run As Action
         End Class
+
+        ''' <summary>The ink a warning line is drawn in — the one colour in this file that is deliberately NOT
+        ''' part of the sheet's palette, because a warning has to read as one whatever theme the form uses.</summary>
+        Private Shared ReadOnly WarningColor As Color = Color.Parse("#B3261E")
+
+        ''' <summary>Which of the things a menu can be: the right-click menu, a toolbar button's menu, the
+        ''' macro list a '=' opens, the print-area warning, or the page question. They share the drawing, the
+        ''' hover and the keys; the kind is what tells Tab (and the painters) which one is showing.</summary>
+        Private Enum MenuKind
+            Context
+            Toolbar
+            Macro
+            Warning
+            Setup
+        End Enum
 
         ''' <summary>How wide the menu is, and how tall one of its lines is.</summary>
         Private Const MenuWidth As Double = 200.0
         Private Const MenuItemHeight As Double = 24.0
         Private Const MenuSeparatorHeight As Double = 9.0
         Private Const MenuPad As Double = 5.0
+
+        ''' <summary>The macro list is wider than a command menu: it draws each function's syntax as well as
+        ''' its name, and a name with no room for its hint is just a name.</summary>
+        Private Const MacroMenuWidth As Double = 300.0
 
         ''' <summary>What the menu offers, built on each open so the ticks are current. The commands act on
         ''' the SELECTION — a whole column lines up in one gesture, which is the point of having it.</summary>
@@ -1733,6 +3838,208 @@ Namespace Global.AvaloniaSpreadsheet
             Return item
         End Function
 
+        ''' <summary>The File menu: Load… and Save…, both .xlsx — the format the charts read and every
+        ''' spreadsheet writes. Both are disabled while a dialog is already open.</summary>
+        Private Function BuildFileItems() As List(Of SheetMenuItem)
+            Dim busy As Boolean = _fileBusy
+            Dim items As New List(Of SheetMenuItem)()
+            Dim load As New SheetMenuItem()
+            load.Label = "Load…"
+            load.Hint = "a workbook, one page at a time"
+            load.Enabled = Not busy
+            load.Run = Async Sub()
+                Await BrowseForWorkbookAsync()
+            End Sub
+            items.Add(load)
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            Dim save As New SheetMenuItem()
+            save.Label = "Save…"
+            save.Hint = "this sheet as .xlsx"
+            save.Enabled = Not busy
+            save.Run = Async Sub()
+                Await SaveAsWorkbookAsync()
+            End Sub
+            items.Add(save)
+            Return items
+        End Function
+
+        ''' <summary>
+        ''' The Print menu: what can be produced from here. Saving the sheet as a PICTURE needs nothing but
+        ''' Avalonia, so that entry is always there; the PDF and the printer live behind PRINT_SUPPORT, the
+        ''' symbol a project gets when the print packages are wired into it (see GrumpyPrint).
+        '''
+        ''' All three produce a PAGE, and a page is the PRINT AREA — the selected cells — so none of them goes
+        ''' through the methods directly: they ask RequestPrint, which is what warns when nothing but a single
+        ''' cell is selected.
+        ''' </summary>
+        Private Function BuildPrintItems() As List(Of SheetMenuItem)
+            Dim items As New List(Of SheetMenuItem)()
+            Dim png As New SheetMenuItem()
+            png.Label = "Save as PNG…"
+            png.Hint = "the print area as a picture"
+            png.Enabled = Not _fileBusy
+            png.Run = Sub() RequestPrint(SheetPrintKind.Picture)
+            items.Add(png)
+#If PRINT_SUPPORT Then
+            Dim pdf As New SheetMenuItem()
+            pdf.Label = "Save as PDF…"
+            pdf.Hint = "the print area as a page"
+            pdf.Enabled = Not _fileBusy
+            pdf.Run = Sub() RequestPrint(SheetPrintKind.Pdf)
+            items.Add(pdf)
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            Dim print As New SheetMenuItem()
+            print.Label = "Print…"
+            print.Hint = If(CanPrint, "the print area, on paper", "nothing here can print")
+            print.Enabled = CanPrint AndAlso Not _fileBusy
+            print.Run = Sub() RequestPrint(SheetPrintKind.Printer)
+            items.Add(print)
+#Else
+            items.Add(New SheetMenuItem With {.IsSeparator = True})
+            ' Disabled rather than LEFT OUT, with the reason on the row: a missing entry reads as a broken
+            ' menu — the complaint the charts' Print… row answered when they grew one.
+            Dim missing As New SheetMenuItem()
+            missing.Label = "Print… (needs print support)"
+            missing.Enabled = False
+            items.Add(missing)
+#End If
+            Return items
+        End Function
+
+        ''' <summary>The page list Load… shows when a workbook holds more than one page: a heading that says
+        ''' only one page at a time is loaded, then every page by name.</summary>
+        Private Function BuildPageItems(path As String, pages As List(Of String)) As List(Of SheetMenuItem)
+            Dim items As New List(Of SheetMenuItem)()
+            Dim heading As New SheetMenuItem()
+            heading.Label = "One page is loaded at a time:"
+            heading.Enabled = False
+            items.Add(heading)
+            For i As Integer = 0 To pages.Count - 1
+                Dim chosen As String = pages(i)
+                Dim page As New SheetMenuItem()
+                page.Label = If(chosen.Length = 0, "(unnamed page)", chosen)
+                page.Hint = If(i = 0, "the first page", String.Empty)
+                page.Run = Sub() LoadPage(path, chosen)
+                items.Add(page)
+            Next
+
+            Return items
+        End Function
+
+        ''' <summary>The macro list: every function the parser knows whose name starts with what has been
+        ''' typed — or, when none does, the ones that merely contain it, so "dev" still finds StdDev.</summary>
+        Private Function BuildMacroItems(typed As String) As List(Of SheetMenuItem)
+            Dim wanted As New List(Of SheetMacro)()
+            For i As Integer = 0 To Macros.Length - 1
+                If typed.Length = 0 OrElse Macros(i).Name.StartsWith(typed, StringComparison.OrdinalIgnoreCase) Then
+                    wanted.Add(Macros(i))
+                End If
+            Next
+
+            If wanted.Count = 0 AndAlso typed.Length > 0 Then
+                For i As Integer = 0 To Macros.Length - 1
+                    If Macros(i).Name.IndexOf(typed, StringComparison.OrdinalIgnoreCase) >= 0 Then
+                        wanted.Add(Macros(i))
+                    End If
+                Next
+            End If
+
+            Dim items As New List(Of SheetMenuItem)()
+            For i As Integer = 0 To wanted.Count - 1
+                Dim macro As SheetMacro = wanted(i)
+                Dim item As New SheetMenuItem()
+                item.Label = macro.Name
+                item.Hint = macro.Hint
+                item.Run = Sub() AcceptMacro(macro)
+                items.Add(item)
+            Next
+
+            Return items
+        End Function
+
+        ''' <summary>Opens a menu of items at a point, kept inside the control. The context menu has its own
+        ''' opener — it moves the selection onto what was right-clicked first — and everything else comes
+        ''' through here.</summary>
+        Private Sub OpenMenu(kind As MenuKind, items As List(Of SheetMenuItem), point As Point, width As Double)
+            _menuItems = items
+            _menuKind = kind
+            _menuWidth = width
+            _menuOpen = True
+            _menuHot = FirstEnabled(items)
+            Dim size As Size = Bounds.Size
+            Dim height As Double = MenuRect().Height
+            _menuX = Math.Max(0, Math.Min(point.X, size.Width - width))
+            _menuY = Math.Max(0, point.Y)
+            If _menuY + height > size.Height AndAlso height <= size.Height Then
+                ' Flip up rather than run off the bottom — but only when it FITS somewhere. A list taller
+                ' than the whole control stays where it is and is clipped instead: jumping to the top would
+                ' take it away from the cell being typed in, which is where the eye is.
+                _menuY = Math.Max(0, size.Height - height)
+            End If
+
+            InvalidateVisual()
+        End Sub
+
+        ''' <summary>
+        ''' The macro list trimmed to the rows that actually fit under the anchor, so it hangs where the user
+        ''' is typing. When something was left out the last line says so — a list that silently ends before
+        ''' Sqrt reads as a list without a Sqrt in it.
+        ''' </summary>
+        Private Function FitMacroItems(items As List(Of SheetMenuItem), anchor As Point) As List(Of SheetMenuItem)
+            Dim room As Double = Bounds.Height - anchor.Y - 6.0
+            Dim rows As Integer = CInt(Math.Floor(room / MenuItemHeight))
+            If rows < 5 Then
+                rows = 5
+            End If
+
+            If items.Count <= rows Then
+                Return items
+            End If
+
+            Dim fitted As New List(Of SheetMenuItem)()
+            For i As Integer = 0 To rows - 2
+                If i >= items.Count Then
+                    Exit For
+                End If
+
+                fitted.Add(items(i))
+            Next
+
+            Dim more As New SheetMenuItem()
+            more.Label = "… type more letters to narrow the list"
+            more.Enabled = False
+            fitted.Add(more)
+            Return fitted
+        End Function
+
+        ''' <summary>The first line that can actually be chosen, or -1 — the page list opens with a heading
+        ''' that cannot be, so the highlight starts on the page below it.</summary>
+        Private Shared Function FirstEnabled(items As List(Of SheetMenuItem)) As Integer
+            For i As Integer = 0 To items.Count - 1
+                If Not items(i).IsSeparator AndAlso items(i).Enabled Then
+                    Return i
+                End If
+            Next
+
+            Return -1
+        End Function
+
+        ''' <summary>Opens a toolbar button's menu just under it.</summary>
+        Private Sub OpenToolbarMenu(button As Integer)
+            If button < 0 OrElse button >= ToolbarButtonCount Then
+                Return
+            End If
+
+            Dim items As List(Of SheetMenuItem) = If(button = ToolbarFile, BuildFileItems(), BuildPrintItems())
+            OpenMenu(MenuKind.Toolbar, items, New Point(ToolbarButtonRect(button).X, ToolbarHeight + 1.0), MenuWidth)
+        End Sub
+
+        ''' <summary>Loads one page of a workbook that has already been picked.</summary>
+        Private Sub LoadPage(path As String, page As String)
+            LoadWorkbook(path, page)
+            Refresh()
+        End Sub
+
         ''' <summary>The menu's rectangle on the canvas, which is only meaningful while it is open.</summary>
         Private Function MenuRect() As Rect
             Dim height As Double = 2 * MenuPad
@@ -1740,10 +4047,11 @@ Namespace Global.AvaloniaSpreadsheet
                 height += If(_menuItems(i).IsSeparator, MenuSeparatorHeight, MenuItemHeight)
             Next
 
-            Return New Rect(_menuX, _menuY, MenuWidth, height)
+            Return New Rect(_menuX, _menuY, _menuWidth, height)
         End Function
 
-        ''' <summary>Which line of the menu a point is on, or -1. Separators are not selectable.</summary>
+        ''' <summary>Which line of the menu a point is on, or -1. Separators and greyed-out lines are not
+        ''' selectable, so they answer -1 and a click on one does nothing.</summary>
         Private Function MenuItemAt(point As Point) As Integer
             If Not _menuOpen OrElse Not MenuRect().Contains(point) Then
                 Return -1
@@ -1753,7 +4061,7 @@ Namespace Global.AvaloniaSpreadsheet
             For i As Integer = 0 To _menuItems.Count - 1
                 Dim item As SheetMenuItem = _menuItems(i)
                 Dim height As Double = If(item.IsSeparator, MenuSeparatorHeight, MenuItemHeight)
-                If Not item.IsSeparator AndAlso point.Y >= y AndAlso point.Y < y + height Then
+                If Not item.IsSeparator AndAlso Not item.Warning AndAlso item.Enabled AndAlso point.Y >= y AndAlso point.Y < y + height Then
                     Return i
                 End If
 
@@ -1778,6 +4086,8 @@ Namespace Global.AvaloniaSpreadsheet
 
             SetContextSelection(point)
             _menuItems = BuildMenuItems()
+            _menuKind = MenuKind.Context
+            _menuWidth = MenuWidth
             _menuOpen = True
             _menuHot = -1
             Dim size As Size = Bounds.Size
@@ -1794,12 +4104,19 @@ Namespace Global.AvaloniaSpreadsheet
 
             _menuOpen = False
             _menuHot = -1
+            _macroStart = -1               ' any menu closing ends the macro list's claim on the text
             InvalidateVisual()
         End Sub
 
         ''' <summary>Runs the line a point is on, if any, and closes. Always True: the press was the menu's.</summary>
         Private Function ChooseMenuItem(point As Point) As Boolean
             Dim index As Integer = MenuItemAt(point)
+            If index < 0 AndAlso OnWarningLine(point) Then
+                ' A click on the WARNING text itself. It is not a command, and closing on it would read as a
+                ' silent abort for a click that never meant one.
+                Return True
+            End If
+
             Dim run As Action = If(index >= 0, _menuItems(index).Run, Nothing)
             CloseContextMenu()
             If run IsNot Nothing Then
@@ -1809,7 +4126,30 @@ Namespace Global.AvaloniaSpreadsheet
             Return True
         End Function
 
-        ''' <summary>Paints the menu over everything else.</summary>
+        ''' <summary>True when a point is on one of the menu's WARNING lines — the text above the choices, which
+        ''' says what is about to happen and is not itself clickable.</summary>
+        Private Function OnWarningLine(point As Point) As Boolean
+            If Not _menuOpen OrElse point.X < _menuX OrElse point.X > _menuX + _menuWidth Then
+                Return False
+            End If
+
+            Dim y As Double = _menuY + MenuPad
+            For i As Integer = 0 To _menuItems.Count - 1
+                Dim item As SheetMenuItem = _menuItems(i)
+                Dim height As Double = If(item.IsSeparator, MenuSeparatorHeight, MenuItemHeight)
+                If item.Warning AndAlso point.Y >= y AndAlso point.Y < y + height Then
+                    Return True
+                End If
+
+                y += height
+            Next
+
+            Return False
+        End Function
+
+        ''' <summary>Paints the menu over everything else — whichever kind it is: the right-click menu, a
+        ''' toolbar button's menu, or the macro list. A greyed-out line is drawn dimmed and cannot be chosen;
+        ''' a line with a hint draws it at the right.</summary>
         Private Sub DrawContextMenu(context As DrawingContext)
             If Not _menuOpen Then
                 Return
@@ -1820,7 +4160,9 @@ Namespace Global.AvaloniaSpreadsheet
             context.FillRectangle(New SolidColorBrush(CellBackColor), rect)
             context.DrawRectangle(Nothing, New Pen(edge, 1.0), rect)
             Dim text As New SolidColorBrush(TextColor)
+            Dim faded As New SolidColorBrush(Color.FromArgb(140, TextColor.R, TextColor.G, TextColor.B))
             Dim hot As New SolidColorBrush(SelectionFillColor)
+            Dim warn As New SolidColorBrush(WarningColor)
             Dim y As Double = _menuY + MenuPad
             For i As Integer = 0 To _menuItems.Count - 1
                 Dim item As SheetMenuItem = _menuItems(i)
@@ -1831,17 +4173,27 @@ Namespace Global.AvaloniaSpreadsheet
                     Continue For
                 End If
 
-                If i = _menuHot Then
-                    context.FillRectangle(hot, New Rect(_menuX + 1, y, MenuWidth - 2, MenuItemHeight))
+                Dim ink As IBrush = If(item.Warning, warn, If(item.Enabled, text, faded))
+                If i = _menuHot AndAlso item.Enabled Then
+                    context.FillRectangle(hot, New Rect(_menuX + 1, y, _menuWidth - 2, MenuItemHeight))
                 End If
 
                 If item.Ticked Then
-                    DrawCellText(context, ChrW(&H2713), New Rect(_menuX + 1, y, 15, MenuItemHeight), text, False,
+                    DrawCellText(context, ChrW(&H2713), New Rect(_menuX + 1, y, 15, MenuItemHeight), ink, False,
                         TextAlignment.Center)
                 End If
 
-                DrawCellText(context, item.Label, New Rect(_menuX + 17, y, MenuWidth - 22, MenuItemHeight),
-                    text, False, TextAlignment.Left)
+                Dim labelWidth As Double = _menuWidth - 22
+                If item.Hint.Length > 0 Then
+                    Dim hintWidth As Double = _menuWidth * 0.5
+                    DrawCellText(context, item.Hint,
+                        New Rect(_menuX + _menuWidth - hintWidth - 8, y, hintWidth, MenuItemHeight), faded,
+                        False, TextAlignment.Right, -1, Nothing, Math.Max(9.0, FontSize - 1.0))
+                    labelWidth = _menuWidth - hintWidth - 26
+                End If
+
+                DrawCellText(context, item.Label, New Rect(_menuX + 17, y, labelWidth, MenuItemHeight),
+                    ink, False, TextAlignment.Left)
                 y += MenuItemHeight
             Next
         End Sub
@@ -1877,6 +4229,8 @@ Namespace Global.AvaloniaSpreadsheet
         End Sub
 
         ''' <summary>The menu's own keys: Escape closes, Up/Down move the highlight, Enter chooses.</summary>
+        ''' <summary>The menu's own keys: Escape closes, Up/Down move the highlight, Enter chooses, and Tab
+        ''' chooses too in the macro list (where Tab would otherwise commit the cell and lose the list).</summary>
         Private Function HandleMenuKey(e As KeyEventArgs) As Boolean
             If Not _menuOpen Then
                 Return False
@@ -1899,7 +4253,7 @@ Namespace Global.AvaloniaSpreadsheet
                         at = 0
                     End If
 
-                    If Not _menuItems(at).IsSeparator Then
+                    If Not _menuItems(at).IsSeparator AndAlso _menuItems(at).Enabled Then
                         Exit For
                     End If
                 Next
@@ -1909,7 +4263,8 @@ Namespace Global.AvaloniaSpreadsheet
                 Return True
             End If
 
-            If e.Key = Key.Enter AndAlso _menuHot >= 0 AndAlso _menuHot < _menuItems.Count Then
+            Dim choose As Boolean = e.Key = Key.Enter OrElse (e.Key = Key.Tab AndAlso _menuKind = MenuKind.Macro)
+            If choose AndAlso _menuHot >= 0 AndAlso _menuHot < _menuItems.Count AndAlso _menuItems(_menuHot).Enabled Then
                 Dim run As Action = _menuItems(_menuHot).Run
                 CloseContextMenu()
                 If run IsNot Nothing Then
@@ -2102,22 +4457,66 @@ Namespace Global.AvaloniaSpreadsheet
             Dim origin As Point = GridOrigin
             Dim width As Double = size.Width - origin.X
             Dim height As Double = size.Height - origin.Y
+            If _printRange Then
+                ' A page holds the print area and NOTHING else, whatever size the layout hands the control:
+                ' the visible-range walks below all read this rectangle, so this is the one place that has to
+                ' know. Without it a page would grow to whatever the parent measured and print the rest of
+                ' the sheet under the area.
+                width = ColumnOffset(_printLastColumn + 1) - ColumnOffset(_printFirstColumn)
+                height = RowOffset(_printLastRow + 1) - RowOffset(_printFirstRow)
+            End If
+
             Return New Rect(origin.X, origin.Y, If(width < 0, 0.0, width), If(height < 0, 0.0, height))
         End Function
 
         Private Function BarRect(size As Size) As Rect
-            Return New Rect(0, 0, size.Width, BarHeight)
+            Return New Rect(0, ToolbarStrip, size.Width, BarHeight)
         End Function
 
         Private Function BarNameRect(size As Size) As Rect
             Dim width As Double = If(ShowHeaders, HeaderWidth, 0.0)
-            Return New Rect(0, 0, width, BarHeight)
+            Return New Rect(0, ToolbarStrip, width, BarHeight)
         End Function
 
         Private Function BarInputRect(size As Size) As Rect
             Dim name As Rect = BarNameRect(size)
             Dim x As Double = name.Right
-            Return New Rect(x, 0, size.Width - x, BarHeight)
+            Return New Rect(x, ToolbarStrip, size.Width - x, BarHeight)
+        End Function
+
+        ''' <summary>How tall the toolbar strip is: zero when it is switched off, so every rectangle below
+        ''' it can be worked out without asking whether there is one.</summary>
+        Private ReadOnly Property ToolbarStrip As Double
+            Get
+                Return If(ShowToolbar, ToolbarHeight, 0.0)
+            End Get
+        End Property
+
+        ''' <summary>One toolbar button's rectangle, at the left of the strip: File is 0, Print is 1.</summary>
+        Private Function ToolbarButtonRect(index As Integer) As Rect
+            Return New Rect(index * ToolbarButtonWidth, 0, ToolbarButtonWidth, ToolbarHeight)
+        End Function
+
+        ''' <summary>Which toolbar button a point is on, or -1 — the point has to be inside the strip as well
+        ''' as inside the button, so a sheet with the toolbar off answers -1 everywhere.</summary>
+        Private Function ToolbarButtonAt(point As Point) As Integer
+            If Not ShowToolbar OrElse point.Y < 0 OrElse point.Y >= ToolbarHeight Then
+                Return -1
+            End If
+
+            For i As Integer = 0 To ToolbarButtonCount - 1
+                If ToolbarButtonRect(i).Contains(point) Then
+                    Return i
+                End If
+            Next
+
+            Return -1
+        End Function
+
+        ''' <summary>A button's word, shown beside it while the pointer is over it — the strip draws its own
+        ''' tooltip rather than asking the framework for one, like everything else here.</summary>
+        Private Shared Function ToolbarLabel(button As Integer) As String
+            Return If(button = ToolbarFile, "File", "Print")
         End Function
 
         ''' <summary>The autofill square, at the bottom-right of the selection.</summary>
@@ -2125,6 +4524,31 @@ Namespace Global.AvaloniaSpreadsheet
             Dim selection As Rect = SelectionRect()
             Return New Rect(selection.Right - HandleSize / 2, selection.Bottom - HandleSize / 2,
                 HandleSize, HandleSize)
+        End Function
+
+        ''' <summary>The second autofill square, at the top-left — the one that makes filling UP or LEFT
+        ''' something you can see rather than something you have to know.</summary>
+        Private Function TopHandleRect() As Rect
+            Dim selection As Rect = SelectionRect()
+            Return New Rect(selection.X - HandleSize / 2, selection.Y - HandleSize / 2,
+                HandleSize, HandleSize)
+        End Function
+
+        ''' <summary>True when the pointer is on either autofill square.</summary>
+        Private Function OnHandle(point As Point) As Boolean
+            If _selectAll Then
+                Return False
+            End If
+
+            Dim bottom As Rect = HandleRect()
+            If Math.Abs(point.X - bottom.Center.X) <= HandleSize AndAlso
+                Math.Abs(point.Y - bottom.Center.Y) <= HandleSize Then
+                Return True
+            End If
+
+            Dim top As Rect = TopHandleRect()
+            Return Math.Abs(point.X - top.Center.X) <= HandleSize AndAlso
+                Math.Abs(point.Y - top.Center.Y) <= HandleSize
         End Function
 
         Private Sub ClampScroll(size As Size)
@@ -2246,10 +4670,12 @@ Namespace Global.AvaloniaSpreadsheet
                 Next
             End Using
 
-            ' The wash goes down before the grid lines, so the lines still read through a selection.
+            ' The wash goes down before the grid lines, so the lines still read through a selection — but
+            ' NOT on a page: a page carries no selection at all, and a tint over the print area would come
+            ' out of the printer as a pale block, in a colour the sheet itself never uses.
             Dim selection As Rect = SelectionRect()
             Dim visibleSelection As Rect = selection.Intersect(grid)
-            If visibleSelection.Width > 0 AndAlso visibleSelection.Height > 0 Then
+            If Not _printRange AndAlso visibleSelection.Width > 0 AndAlso visibleSelection.Height > 0 Then
                 context.FillRectangle(selectionFill, visibleSelection)
             End If
 
@@ -2307,19 +4733,28 @@ Namespace Global.AvaloniaSpreadsheet
             End Using
 
             DrawHeaders(context, size, headerBrush, headerTextBrush, grid, selection)
-            DrawSelectionOutline(context, selectionBrush, grid)
+            If Not _printRange Then
+                ' A PAGE carries no selection: the outline, the active-cell box and the fill handles are how
+                ' the sheet is used, not what is in it.
+                DrawSelectionOutline(context, selectionBrush, grid)
+            End If
+
+            DrawToolbar(context, size, headerBrush, headerTextBrush, selectionFill)
             DrawFormulaBar(context, size, headerBrush, headerTextBrush, textBrush, selectionBrush)
             If Not AllowEditing Then
                 DrawScrollBars(context, size)
                 Return
             End If
 
-            ' The fill handle, unless the selection is the whole sheet (nothing to fill into).
-            If Not _selectAll AndAlso Not _draggingFill Then
-                Dim handle As Rect = HandleRect()
-                If grid.Contains(handle.Center) Then
-                    context.FillRectangle(selectionBrush, handle)
-                End If
+            ' The fill handles, unless the selection is the whole sheet (nothing to fill into) or the picture
+            ' is a page on its way to paper.
+            If Not _selectAll AndAlso Not _draggingFill AndAlso Not _printRange Then
+                Dim squares As Rect() = {TopHandleRect(), HandleRect()}
+                For i As Integer = 0 To squares.Length - 1
+                    If grid.Contains(squares(i).Center) Then
+                        context.FillRectangle(selectionBrush, squares(i))
+                    End If
+                Next
             End If
 
             ' Last of all, over everything including the scrollbars: the right-click menu, if it is open.
@@ -2373,7 +4808,8 @@ Namespace Global.AvaloniaSpreadsheet
 
         ''' <summary>The bit of the column header that belongs to the selected columns.</summary>
         Private Function ColumnHighlight(selection As Rect) As Rect
-            If Not _wholeColumns AndAlso Not _selectAll Then
+            If (Not _wholeColumns AndAlso Not _selectAll) OrElse _printRange Then
+                ' Nothing to light up — and on a page there is no selection anywhere: only the cells.
                 Return New Rect(0, 0, 0, 0)
             End If
 
@@ -2384,7 +4820,8 @@ Namespace Global.AvaloniaSpreadsheet
 
         ''' <summary>The bit of the row header that belongs to the selected rows.</summary>
         Private Function RowHighlight(selection As Rect) As Rect
-            If Not _wholeRows AndAlso Not _selectAll Then
+            If (Not _wholeRows AndAlso Not _selectAll) OrElse _printRange Then
+                ' Nothing to light up — and on a page there is no selection anywhere: only the cells.
                 Return New Rect(0, 0, 0, 0)
             End If
 
@@ -2439,16 +4876,21 @@ Namespace Global.AvaloniaSpreadsheet
             DrawCellText(context, "fx", New Rect(input.X, bar.Y, 22, bar.Height), headerText, False,
                 TextAlignment.Center)
 
-            Dim box As New Rect(input.X + 22, bar.Y, Math.Max(0, input.Width - 22), bar.Height)
+            Dim box As New Rect(input.X + 22, bar.Y + 1, Math.Max(0, input.Width - 23), bar.Height - 2)
+            ' The fx box has a backcolour of its OWN (EditBackColor) and its own text colour: it is the one
+            ' part of the strip a form most often wants to make obvious, which is why those rows exist.
+            context.FillRectangle(New SolidColorBrush(EditBackColor), box)
+            context.DrawRectangle(Nothing, New Pen(New SolidColorBrush(GridColor), 1.0), box)
+            Dim editText As New SolidColorBrush(EditTextColor)
             Dim shown As String = If(_editing AndAlso _barFocused, _editText, SelectedText())
             If _editing AndAlso _barFocused Then
-                DrawCellText(context, shown, box, text, False, TextAlignment.Left, _caret)
+                DrawCellText(context, shown, box, editText, False, TextAlignment.Left, _caret)
             Else
-                DrawCellText(context, shown, box, text, False, TextAlignment.Left)
-
-                ' A light border on the address box is the cue that it can be clicked to type there.
-                context.DrawRectangle(Nothing, New Pen(accent, 1.0), New Rect(0.5, 0.5, name.Width, name.Height - 1))
+                DrawCellText(context, shown, box, editText, False, TextAlignment.Left)
             End If
+
+            ' A light border on the address box is the cue that it can be clicked to type there.
+            context.DrawRectangle(Nothing, New Pen(accent, 1.0), New Rect(0.5, bar.Y + 0.5, name.Width, name.Height - 1))
         End Sub
 
         ''' <summary>
@@ -2607,6 +5049,7 @@ Namespace Global.AvaloniaSpreadsheet
         Private Const HitVScrollTrack As Integer = 10
         Private Const HitHScrollThumb As Integer = 11
         Private Const HitHScrollTrack As Integer = 12
+        Private Const HitToolbar As Integer = 13
 
         ''' <summary>What is under a point, and which cell it belongs to.</summary>
         Private Function HitTest(point As Point, ByRef row As Integer, ByRef column As Integer) As Integer
@@ -2614,8 +5057,15 @@ Namespace Global.AvaloniaSpreadsheet
             column = 1
             Dim size As Size = Bounds.Size
             Dim grid As Rect = GridRect(size)
-            Dim bar As Double = If(ShowFormulaBar, BarHeight, 0.0)
-            If ShowFormulaBar AndAlso point.Y < bar Then
+
+            ' The toolbar is ABOVE the formula bar, so it is hit FIRST: a press up there must not fall
+            ' through to the bar or to the header underneath it.
+            If ShowToolbar AndAlso point.Y < ToolbarHeight Then
+                Return If(ToolbarButtonAt(point) >= 0, HitToolbar, HitNothing)
+            End If
+
+            Dim bar As Double = ToolbarStrip + If(ShowFormulaBar, BarHeight, 0.0)
+            If ShowFormulaBar AndAlso point.Y >= ToolbarStrip AndAlso point.Y < bar Then
                 ' The fx box is a real input — clicking it edits the active cell up there. The address
                 ' box is not (it only shows where you are), so a click on it does nothing.
                 Return If(point.X >= BarNameRect(size).Right, HitBar, HitNothing)
@@ -2671,8 +5121,7 @@ Namespace Global.AvaloniaSpreadsheet
 
             row = RowAt(point.Y)
             column = ColumnAt(point.X)
-            If Not _selectAll AndAlso Math.Abs(point.X - HandleRect().Center.X) <= HandleSize AndAlso
-                Math.Abs(point.Y - HandleRect().Center.Y) <= HandleSize Then
+            If OnHandle(point) Then
                 Return HitHandle
             End If
 
@@ -2736,6 +5185,11 @@ Namespace Global.AvaloniaSpreadsheet
         ''' <summary>Back to the arrow when the pointer leaves, whatever it was showing.</summary>
         Protected Overrides Sub OnPointerExited(e As PointerEventArgs)
             SetCursor(StandardCursorType.Arrow)
+            If _toolbarHot <> -1 Then
+                _toolbarHot = -1
+                InvalidateVisual()
+            End If
+
             MyBase.OnPointerExited(e)
         End Sub
 
@@ -2763,6 +5217,16 @@ Namespace Global.AvaloniaSpreadsheet
             End If
 
             If Not point.Properties.IsLeftButtonPressed Then
+                Return
+            End If
+
+            ' A toolbar button first: it sits above everything else, and a press on one opens its menu rather
+            ' than starting a selection in the cell that happens to be underneath.
+            Dim button As Integer = ToolbarButtonAt(point.Position)
+            If button >= 0 Then
+                Focus()
+                OpenToolbarMenu(button)
+                e.Handled = True
                 Return
             End If
 
@@ -2901,6 +5365,20 @@ Namespace Global.AvaloniaSpreadsheet
                 End If
 
                 Return
+            End If
+
+            ' The toolbar's own hover: which button is lit, and its word beside it. When the pointer is up in
+            ' the strip the rest of this method has nothing to say, so it stops here.
+            If ShowToolbar Then
+                Dim over As Integer = ToolbarButtonAt(point)
+                If over <> _toolbarHot Then
+                    _toolbarHot = over
+                    InvalidateVisual()
+                End If
+
+                If over >= 0 Then
+                    Return
+                End If
             End If
 
             ' Dragging a scrollbar: the pointer's travel along the track, scaled to the scroll range.
@@ -3340,19 +5818,28 @@ Namespace Global.AvaloniaSpreadsheet
             _editIsNew = replace
             _editText = If(text, String.Empty)
             _caret = _editText.Length
+            ' Editing a cell that already holds a formula shows the list for what is there, so "=Su" can be
+            ' finished from the keyboard without remembering the rest of the name.
+            UpdateMacroPopup()
             InvalidateVisual()
         End Sub
 
-        ''' <summary>True when the fill drag is aiming somewhere it could actually fill.</summary>
+        ''' <summary>True when the fill drag is aiming somewhere it could actually fill — down, right, up or
+        ''' left, since the same maths runs either way.</summary>
         Private Function HasFillTarget() As Boolean
-            Return _draggingFill AndAlso (_fillRow > SelectionLastRow() OrElse _fillColumn > SelectionLastColumn())
+            Return _draggingFill AndAlso
+                (_fillRow > SelectionLastRow() OrElse _fillColumn > SelectionLastColumn() OrElse
+                 _fillRow < SelectionFirstRow() OrElse _fillColumn < SelectionFirstColumn())
         End Function
 
-        ''' <summary>The block the fill would write, for the dashed preview.</summary>
+        ''' <summary>The block the fill would write, for the dashed preview — in whichever direction it is
+        ''' being dragged, so the box drawn is the box filled.</summary>
         Private Function PreviewRect() As Rect
-            Dim first As Rect = CellRect(SelectionFirstRow(), SelectionFirstColumn())
+            Dim firstRow As Integer = Math.Min(_fillRow, SelectionFirstRow())
+            Dim firstColumn As Integer = Math.Min(_fillColumn, SelectionFirstColumn())
             Dim lastRow As Integer = Math.Max(_fillRow, SelectionLastRow())
             Dim lastColumn As Integer = Math.Max(_fillColumn, SelectionLastColumn())
+            Dim first As Rect = CellRect(firstRow, firstColumn)
             Dim last As Rect = CellRect(lastRow, lastColumn)
             Return New Rect(first.X, first.Y, last.Right - first.X, last.Bottom - first.Y)
         End Function
@@ -3382,6 +5869,7 @@ Namespace Global.AvaloniaSpreadsheet
                     _caret -= 1
                 End If
 
+                UpdateMacroPopup()             ' where the caret is decides which '=' is being typed after
                 InvalidateVisual()
                 Return True
             End If
@@ -3391,18 +5879,21 @@ Namespace Global.AvaloniaSpreadsheet
                     _caret += 1
                 End If
 
+                UpdateMacroPopup()
                 InvalidateVisual()
                 Return True
             End If
 
             If e.Key = Key.Home Then
                 _caret = 0
+                UpdateMacroPopup()
                 InvalidateVisual()
                 Return True
             End If
 
             If e.Key = Key.End Then
                 _caret = _editText.Length
+                UpdateMacroPopup()
                 InvalidateVisual()
                 Return True
             End If
@@ -3413,6 +5904,7 @@ Namespace Global.AvaloniaSpreadsheet
                     _caret -= 1
                 End If
 
+                UpdateMacroPopup()
                 InvalidateVisual()
                 Return True
             End If
@@ -3422,6 +5914,7 @@ Namespace Global.AvaloniaSpreadsheet
                     _editText = _editText.Substring(0, _caret) & _editText.Substring(_caret + 1)
                 End If
 
+                UpdateMacroPopup()
                 InvalidateVisual()
                 Return True
             End If
@@ -3429,6 +5922,7 @@ Namespace Global.AvaloniaSpreadsheet
             If control AndAlso e.Key = Key.A Then
                 _editText = String.Empty
                 _caret = 0
+                UpdateMacroPopup()
                 InvalidateVisual()
                 Return True
             End If
@@ -3440,6 +5934,8 @@ Namespace Global.AvaloniaSpreadsheet
         Private Sub InsertIntoEdit(text As String)
             _editText = _editText.Substring(0, _caret) & text & _editText.Substring(_caret)
             _caret += text.Length
+            ' A '=' typed anywhere opens the macro list; any other letter refilters it.
+            UpdateMacroPopup()
             InvalidateVisual()
         End Sub
 
@@ -3460,6 +5956,7 @@ Namespace Global.AvaloniaSpreadsheet
             _editText = String.Empty
             _caret = 0
             _editIsNew = False
+            CloseMacroPopup()
 
             If keep Then
                 If replace AndAlso (SelectionFirstRow() <> SelectionLastRow() OrElse
@@ -3487,33 +5984,65 @@ Namespace Global.AvaloniaSpreadsheet
             InvalidateVisual()
         End Sub
 
-        ''' <summary>Writes the predicted series into the area the handle was dragged over.</summary>
+        ''' <summary>
+        ''' Writes the fill into the area the handle was dragged over — in any of the four directions.
+        '''
+        ''' PER CELL, from the cell that destination copies: a FORMULA is the source's formula with every
+        ''' relative address moved by the distance between the two cells (so =Sum(B2:B9) dragged one row
+        ''' down reads =Sum(B3:B10), and a $ holds a part still), while anything else keeps the series
+        ''' prediction it has always had — 1, 2 becomes 3, 4 …, Item1, Item2 becomes Item3, and a pattern
+        ''' repeats. That split is what makes a column of totals beside a column of figures fill sensibly in
+        ''' one gesture.
+        ''' </summary>
         Private Sub ApplyFill()
+            Dim firstRow As Integer = SelectionFirstRow()
+            Dim firstColumn As Integer = SelectionFirstColumn()
             Dim lastRow As Integer = SelectionLastRow()
             Dim lastColumn As Integer = SelectionLastColumn()
-            If _fillRow > lastRow Then
+
+            ' DOWN or UP: one pass per column of the source block.
+            If _fillRow > lastRow OrElse _fillRow < firstRow Then
+                Dim down As Boolean = _fillRow > lastRow
+                Dim count As Integer = If(down, _fillRow - lastRow, firstRow - _fillRow)
+                Dim firstTarget As Integer = If(down, lastRow + 1, _fillRow)
+                Dim height As Integer = _fillSourceLastRow - _fillSourceFirstRow + 1
                 For column As Integer = _fillSourceFirstColumn To _fillSourceLastColumn
                     Dim source As String() = ReadColumn(column, _fillSourceFirstRow, _fillSourceLastRow)
-                    Dim written As String() = PredictSeries(source, _fillRow - lastRow)
+                    Dim written As String() = PredictSeries(source, count, If(down, 1, -1))
                     For i As Integer = 0 To written.Length - 1
-                        SetCell(lastRow + 1 + i, column, written(i))
+                        Dim row As Integer = firstTarget + i
+                        Dim baseRow As Integer = _fillSourceFirstRow + i Mod height
+                        Dim baseText As String = GetCell(baseRow, column)
+                        Dim filled As String = If(baseText.Length > 0 AndAlso baseText(0) = "="c,
+                            "=" & ShiftFormula(baseText.Substring(1), row - baseRow, 0), written(i))
+                        SetCell(row, column, filled)
                     Next
                 Next
 
-                SelectRange(_fillSourceFirstRow, _fillSourceFirstColumn, _fillRow, lastColumn)
+                SelectRange(Math.Min(firstRow, _fillRow), firstColumn, Math.Max(lastRow, _fillRow), lastColumn)
                 Return
             End If
 
-            If _fillColumn > lastColumn Then
+            ' RIGHT or LEFT: the same, one pass per row.
+            If _fillColumn > lastColumn OrElse _fillColumn < firstColumn Then
+                Dim right As Boolean = _fillColumn > lastColumn
+                Dim count As Integer = If(right, _fillColumn - lastColumn, firstColumn - _fillColumn)
+                Dim firstTarget As Integer = If(right, lastColumn + 1, _fillColumn)
+                Dim width As Integer = _fillSourceLastColumn - _fillSourceFirstColumn + 1
                 For row As Integer = _fillSourceFirstRow To _fillSourceLastRow
                     Dim source As String() = ReadRow(row, _fillSourceFirstColumn, _fillSourceLastColumn)
-                    Dim written As String() = PredictSeries(source, _fillColumn - lastColumn)
+                    Dim written As String() = PredictSeries(source, count, If(right, 1, -1))
                     For i As Integer = 0 To written.Length - 1
-                        SetCell(row, lastColumn + 1 + i, written(i))
+                        Dim column As Integer = firstTarget + i
+                        Dim baseColumn As Integer = _fillSourceFirstColumn + i Mod width
+                        Dim baseText As String = GetCell(row, baseColumn)
+                        Dim filled As String = If(baseText.Length > 0 AndAlso baseText(0) = "="c,
+                            "=" & ShiftFormula(baseText.Substring(1), 0, column - baseColumn), written(i))
+                        SetCell(row, column, filled)
                     Next
                 Next
 
-                SelectRange(_fillSourceFirstRow, _fillSourceFirstColumn, lastRow, _fillColumn)
+                SelectRange(firstRow, Math.Min(firstColumn, _fillColumn), lastRow, Math.Max(lastColumn, _fillColumn))
             End If
         End Sub
 
@@ -3539,8 +6068,17 @@ Namespace Global.AvaloniaSpreadsheet
         ''' Works out what the next values should be, from the ones it was given: a run of numbers
         ''' continues by its step (1, 2 becomes 3, 4 …; 2, 4 becomes 6, 8 …), a single number counts
         ''' up by one, "Item1, Item2" becomes "Item3", and anything else repeats the pattern cyclically.
+        '''
+        ''' direction is 1 when the fill was dragged forwards (down or right) and -1 when it was dragged
+        ''' backwards (up or left): the same step, extended the other way — 3, 4 filled upwards becomes
+        ''' 1, 2 — which is what "continue this series" means in both directions.
         ''' </summary>
         Private Shared Function PredictSeries(source As IReadOnlyList(Of String), count As Integer) As String()
+            Return PredictSeries(source, count, 1)
+        End Function
+
+        Private Shared Function PredictSeries(source As IReadOnlyList(Of String), count As Integer,
+            direction As Integer) As String()
             If count < 0 Then
                 count = 0
             End If
@@ -3559,6 +6097,13 @@ Namespace Global.AvaloniaSpreadsheet
                 Return written
             End If
 
+            ' How far the destination sits from the block's FIRST value: +1 is the value after a one-cell
+            ' block, -1 the value before it, and so on for the whole run.
+            Dim distance As Integer() = New Integer(written.Length - 1) {}
+            For i As Integer = 0 To written.Length - 1
+                distance(i) = If(direction > 0, source.Count + i, i - count)
+            Next
+
             Dim decimals As Integer = DecimalsOf(source)
             Dim numbers As List(Of Double) = NumbersOf(source)
             If numbers IsNot Nothing AndAlso numbers.Count >= 2 Then
@@ -3572,9 +6117,9 @@ Namespace Global.AvaloniaSpreadsheet
                 Next
 
                 If steady Then
-                    Dim last As Double = numbers(numbers.Count - 1)
+                    Dim firstValue As Double = numbers(0)
                     For i As Integer = 0 To written.Length - 1
-                        written(i) = FormatNumber(last + stepValue * (i + 1), decimals)
+                        written(i) = FormatNumber(firstValue + stepValue * distance(i), decimals)
                     Next
 
                     Return written
@@ -3583,7 +6128,7 @@ Namespace Global.AvaloniaSpreadsheet
 
             If numbers IsNot Nothing AndAlso numbers.Count = 1 Then
                 For i As Integer = 0 To written.Length - 1
-                    written(i) = FormatNumber(numbers(0) + i + 1, decimals)
+                    written(i) = FormatNumber(numbers(0) + distance(i), decimals)
                 Next
 
                 Return written
@@ -3595,14 +6140,19 @@ Namespace Global.AvaloniaSpreadsheet
             Dim numberStep As Integer = 0
             If SplitTrailingNumber(source, prefix, suffix, first, numberStep) Then
                 For i As Integer = 0 To written.Length - 1
-                    written(i) = prefix & (first + numberStep * (i + 1)).ToString(CultureInfo.InvariantCulture) & suffix
+                    written(i) = prefix & (first + numberStep * distance(i)).ToString(CultureInfo.InvariantCulture) & suffix
                 Next
 
                 Return written
             End If
 
             For i As Integer = 0 To written.Length - 1
-                written(i) = source(i Mod source.Count)
+                Dim at As Integer = distance(i) Mod source.Count
+                If at < 0 Then
+                    at += source.Count
+                End If
+
+                written(i) = source(at)
             Next
 
             Return written
@@ -3924,6 +6474,19 @@ Namespace Global.AvaloniaSpreadsheet
         ''' </summary>
         Private Shared Function TryReadAddress(text As String, at As Integer, ByRef row As Integer,
             ByRef column As Integer, ByRef used As Integer) As Boolean
+            Dim ignored1 As Boolean = False
+            Dim ignored2 As Boolean = False
+            Return TryReadAnchoredAddress(text, at, row, column, used, ignored1, ignored2)
+        End Function
+
+        ''' <summary>
+        ''' An address, with which parts of it were ANCHORED with a $ — what a copied formula has to know and
+        ''' what the evaluator can ignore. $B$2 is fixed in both directions, B$2 keeps its row and $B2 its
+        ''' column; a bare B2 moves with the copy, which is the whole point of a dollar sign.
+        ''' </summary>
+        Private Shared Function TryReadAnchoredAddress(text As String, at As Integer, ByRef row As Integer,
+            ByRef column As Integer, ByRef used As Integer, ByRef rowFixed As Boolean,
+            ByRef columnFixed As Boolean) As Boolean
             row = 0
             column = 0
             used = 0
@@ -3946,7 +6509,9 @@ Namespace Global.AvaloniaSpreadsheet
                 index += 1
             End While
 
+            Dim dollars As Integer = 0
             While index < text.Length AndAlso text(index) = "$"c
+                dollars += 1
                 index += 1
             End While
 
@@ -3970,7 +6535,112 @@ Namespace Global.AvaloniaSpreadsheet
             row = row1
             column = column1
             used = index - at
-            Return True
+            ' A $ before the letters anchors the COLUMN, one before the digits anchors the ROW.
+            columnFixed = text(at) = "$"c
+            rowFixed = dollars > 0
+            Return row > 0 AndAlso column > 0
+        End Function
+
+        ''' <summary>
+        ''' A formula body with every RELATIVE reference moved by a fill's offset — what a formula MEANS in
+        ''' its new home. Anchors do not move ($B$2 never does, B$2 keeps its row, $B2 its column), and a
+        ''' reference that would land off the sheet becomes #REF! in the text: the one answer that tells the
+        ''' truth about a cell that now points at nothing (what every other spreadsheet writes).
+        '''
+        ''' Only whole addresses move. Text is never touched — a formula holding "A1" is QUOTING it — and
+        ''' neither is a function name, because TryReadAnchoredAddress needs a letter run AND a digit run, and
+        ''' a name that is followed by an opening bracket is not an address either.
+        ''' </summary>
+        Private Shared Function ShiftFormula(body As String, rowDelta As Integer, columnDelta As Integer) As String
+            If rowDelta = 0 AndAlso columnDelta = 0 Then
+                Return body
+            End If
+
+            Dim builder As New System.Text.StringBuilder(body.Length + 8)
+            Dim i As Integer = 0
+            While i < body.Length
+                Dim c As Char = body(i)
+                If c = """"c Then
+                    ' A string literal, copied exactly — doubled quotes and all, the way the parser reads it.
+                    Dim start As Integer = i
+                    i += 1
+                    While i < body.Length
+                        If body(i) = """"c Then
+                            If i + 1 < body.Length AndAlso body(i + 1) = """"c Then
+                                i += 2
+                                Continue While
+                            End If
+
+                            i += 1
+                            Exit While
+                        End If
+
+                        i += 1
+                    End While
+
+                    builder.Append(body.Substring(start, i - start))
+                    Continue While
+                End If
+
+                Dim row1 As Integer = 0
+                Dim column1 As Integer = 0
+                Dim used As Integer = 0
+                Dim rowFixed As Boolean = False
+                Dim columnFixed As Boolean = False
+                If TryReadAnchoredAddress(body, i, row1, column1, used, rowFixed, columnFixed) AndAlso
+                    WholeToken(body, i, used) Then
+                    Dim movedRow As Integer = If(rowFixed, row1, row1 + rowDelta)
+                    Dim movedColumn As Integer = If(columnFixed, column1, column1 + columnDelta)
+                    If movedRow < 1 OrElse movedColumn < 1 Then
+                        builder.Append(RefError)
+                    Else
+                        Dim address As New System.Text.StringBuilder()
+                        If columnFixed Then
+                            address.Append("$")
+                        End If
+
+                        address.Append(ColumnName(movedColumn))
+                        If rowFixed Then
+                            address.Append("$")
+                        End If
+
+                        address.Append(movedRow.ToString(CultureInfo.InvariantCulture))
+                        builder.Append(address.ToString())
+                    End If
+
+                    i += used
+                    Continue While
+                End If
+
+                builder.Append(c)
+                i += 1
+            End While
+
+            Return builder.ToString()
+        End Function
+
+        ''' <summary>True when the address at "at" stands alone: nothing that could make it part of a longer
+        ''' name touches it, so a name like A1B is left as the name it is. A DOT is a boundary when it is one
+        ''' of the two that spell a range (A1..B2) and not when it continues a name.</summary>
+        Private Shared Function WholeToken(text As String, at As Integer, used As Integer) As Boolean
+            If at > 0 AndAlso IsNameChar(text(at - 1)) Then
+                Return False
+            End If
+
+            If at + used >= text.Length Then
+                Return True
+            End If
+
+            Dim next1 As Char = text(at + used)
+            If IsNameChar(next1) Then
+                Return False
+            End If
+
+            Return next1 <> "."c OrElse (at + used + 1 < text.Length AndAlso text(at + used + 1) = "."c)
+        End Function
+
+        Private Shared Function IsNameChar(c As Char) As Boolean
+            Return Char.IsLetterOrDigit(c) OrElse c = "_"c
         End Function
 
         ''' <summary>
@@ -4398,7 +7068,8 @@ Namespace Global.AvaloniaSpreadsheet
                 Return New FormulaParser(_sheet, _row, _column, _text.Substring(start, [end] - start)).Work()
             End Function
 
-            ''' <summary>One argument: a range (A1:B3 — only meaningful as an argument) or an expression.</summary>
+            ''' <summary>One argument: a range (A1:B3 or A1..B3 — only meaningful as an argument) or an
+            ''' expression.</summary>
             Private Function Argument() As FormulaArg
                 SkipSpaces()
                 Dim save As Integer = _at
@@ -4411,8 +7082,18 @@ Namespace Global.AvaloniaSpreadsheet
                         probe += 1
                     End While
 
+                    ' A range reads A1:B3 or A1..B3. The COLON is what this sheet writes (the macro list
+                    ' and the shift-on-fill both keep to it) and what every spreadsheet taught; the older
+                    ' two-dot form is still read, so a formula typed before this change is left alone.
+                    Dim separator As Integer = 0
                     If probe < _text.Length AndAlso _text(probe) = ":"c Then
-                        probe += 1
+                        separator = 1
+                    ElseIf probe + 1 < _text.Length AndAlso _text(probe) = "."c AndAlso _text(probe + 1) = "."c Then
+                        separator = 2
+                    End If
+
+                    If separator > 0 Then
+                        probe += separator
                         Dim row2 As Integer = 0
                         Dim column2 As Integer = 0
                         Dim used2 As Integer = 0
@@ -4438,7 +7119,7 @@ Namespace Global.AvaloniaSpreadsheet
 
             Private Function Apply(name As String, args As List(Of FormulaArg)) As FormulaValue
                 Select Case name
-                    Case "SUM", "AVERAGE", "AVG", "MIN", "MAX", "COUNT", "COUNTA"
+                    Case "SUM", "AVERAGE", "AVG", "MIN", "MAX", "COUNT", "COUNTA", "STDEV", "STDDEV", "STDEVP", "STDDEVP"
                         Return Aggregate(name, args)
                     Case "ABS"
                         Return One(args, AddressOf Math.Abs)
@@ -4517,6 +7198,10 @@ Namespace Global.AvaloniaSpreadsheet
                         Return FormulaValue.OfNumber(If(numbers.Count = 0, 0.0, MinOf(numbers)))
                     Case "MAX"
                         Return FormulaValue.OfNumber(If(numbers.Count = 0, 0.0, MaxOf(numbers)))
+                    Case "STDEV", "STDDEV"
+                        Return FormulaValue.OfNumber(StdDevOf(numbers, True))
+                    Case "STDEVP", "STDDEVP"
+                        Return FormulaValue.OfNumber(StdDevOf(numbers, False))
                     Case Else
                         If numbers.Count = 0 Then
                             Throw New FormulaError(DivisionByZero)     ' an average of nothing
@@ -4555,6 +7240,28 @@ Namespace Global.AvaloniaSpreadsheet
                 Next
 
                 Return value
+            End Function
+
+            ''' <summary>
+            ''' STDEV / STDDEV is the SAMPLE standard deviation (divide by n−1) and STDEVP / STDDEVP the
+            ''' population one (divide by n) — the difference matters for the handful of readings a sheet
+            ''' this size usually holds. One number has no sample spread at all, which is named rather
+            ''' than answered as a confident zero.
+            ''' (Named "StdDevOf": a bare StdDev would read as a property beside the sheet's own rows.)
+            ''' </summary>
+            Private Shared Function StdDevOf(numbers As List(Of Double), sample As Boolean) As Double
+                If numbers.Count = 0 OrElse (sample AndAlso numbers.Count < 2) Then
+                    Throw New FormulaError(DivisionByZero)
+                End If
+
+                Dim mean As Double = SumOf(numbers) / numbers.Count
+                Dim total As Double = 0.0
+                For i As Integer = 0 To numbers.Count - 1
+                    Dim delta As Double = numbers(i) - mean
+                    total += delta * delta
+                Next
+
+                Return Math.Sqrt(total / If(sample, numbers.Count - 1, numbers.Count))
             End Function
 
             Private Shared Function One(args As List(Of FormulaArg), work As Func(Of Double, Double)) As FormulaValue
@@ -4729,6 +7436,23 @@ Namespace Global.AvaloniaSpreadsheet
             Return True
         End Function
 
+    End Class
+
+    ''' <summary>
+    ''' Where the sheet's file dialogs left off, for this session. Static, so the NEXT dialog opens where the
+    ''' last one was — which is what every desktop app does — and scoped to the process, which is the right
+    ''' lifetime for a hint nobody asked to keep. (The charts' own ChartPickerMemory writes a file so that it
+    ''' survives a restart; a sheet that has only just grown a File menu does not need that yet.)
+    ''' </summary>
+    Friend NotInheritable Class SheetPickerMemory
+        Private Sub New()
+        End Sub
+
+        ''' <summary>The folder Load… last read a workbook from.</summary>
+        Friend Shared LastFolder As String
+
+        ''' <summary>The folder Save…, the PNG or the PDF last wrote to.</summary>
+        Friend Shared LastExportFolder As String
     End Class
 
 End Namespace

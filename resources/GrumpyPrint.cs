@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.15
+// BUNDLED-COPY: 0.13.0
 // GrumpyPrint.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyPrint.vb). Copied into a project
 // next to GrumpyCharts.cs / ChromeWindow.cs / PathPicker.cs / … and linked into the PreviewerHost.
 //
@@ -16,9 +16,12 @@
 //   • on Linux with a CUPS client (`lp`) on the PATH it renders the page to a temporary PDF — the
 //     vector export the chart already needs — and hands that file to CUPS.
 //
-// The page size, margin and white background come from the CHART (its Print Paper / Print Margin /
-// Print on White rows), which hands us the visual it composed — so nothing here knows about pages,
-// and the same options steer the printer and the PDF export alike.
+// The page GUTTER — its size, margin and white background — still comes from whoever composed the page
+// (a chart's Print Paper / Print Margin / Print on White rows, or the sheet's own A4) and is handed over as
+// a visual. What this file does know about pages, since 2026-09-27, is the ONE thing a PDF cannot carry on
+// every queue: which way round it is. A caller that composed a landscape page passes PrintPageSettings and
+// the CUPS job says so — see that type for the measurement that made it necessary. A caller that passes
+// nothing gets exactly the argument list this file has always sent.
 //
 // The chart asks GrumpyPrint.Available before it offers its Print… entry, so that property is the
 // whole integration surface: no service to register, no interface to implement, nothing to add to
@@ -32,6 +35,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
 using Avalonia;
@@ -39,6 +43,36 @@ using AvaloniaUI.PrintToPDF;
 
 namespace AvaloniaCharts
 {
+    /// <summary>
+    /// What the PAGE is, for the printer's own options — the part of a print job a PDF cannot carry on
+    /// every queue.
+    /// <para>
+    /// A Linux desktop prints through CUPS, and CUPS's PDF filter (<c>pdftopdf</c>) transforms the page
+    /// according to the JOB'S options rather than the file's page box. A queue whose saved defaults say
+    /// portrait — which <c>~/.cups/lpoptions</c> can pin for a user — therefore rotates or re-scales a
+    /// landscape page. Measured here on 2026-09-27 (Canon MF230 + CUPS, one and the same PDF): no options
+    /// came out wrong, and <c>-o orientation-requested=4</c> came out right.
+    /// </para>
+    /// <para>
+    /// <b>Null means "no options at all"</b>: the argument list this helper has always sent, just the title
+    /// and the file. A chart whose page is its own size must not claim to be A4 — only a caller that really
+    /// composed paper of its own says so here.
+    /// </para>
+    /// </summary>
+    public sealed class PrintPageSettings
+    {
+        /// <summary>True for a page wider than tall: CUPS is asked for orientation-requested=4 (landscape)
+        /// instead of 3 (portrait).</summary>
+        public bool Landscape { get; set; }
+
+        /// <summary>The paper the page was composed for, e.g. "A4". Empty sends no paper option at all,
+        /// which leaves the queue's own default alone.</summary>
+        public string PaperSize { get; set; } = string.Empty;
+
+        /// <summary>The orientation said the way the printer understands it: 4 is landscape, 3 portrait.</summary>
+        public int OrientationRequested => Landscape ? 4 : 3;
+    }
+
     /// <summary>
     /// Printing for the platforms Avae.Printables does not cover: the page is rendered to a temporary
     /// PDF and handed to CUPS. The chart asks <see cref="Available"/> first, so on Windows and macOS —
@@ -80,11 +114,16 @@ namespace AvaloniaCharts
         }
 
         /// <summary>
-        /// Print one visual — the page the chart composed — on real paper: render it to a temporary
-        /// PDF, then `lp [-d printer] -t title file`. Throws when CUPS refuses, which the chart reports
-        /// through its PrintFailed event (it never throws into the caller).
+        /// Print one visual — the page the caller composed — on real paper: render it to a temporary PDF,
+        /// then <c>lp [-d printer] [-o …] -t title file</c>. Throws when CUPS refuses, which the caller
+        /// reports through its PrintFailed event (it never throws into the caller).
+        /// <para>
+        /// <paramref name="settings"/> says which way round the page is, when the caller knows; leaving it
+        /// null sends no options at all, exactly as this overload always did.
+        /// </para>
         /// </summary>
-        public static async Task PrintAsync(Visual visual, string title, string? printer = null)
+        public static async Task PrintAsync(Visual visual, string title, string? printer = null,
+            PrintPageSettings? settings = null)
         {
             if (visual is null) throw new ArgumentNullException(nameof(visual));
             var file = Path.Combine(Path.GetTempPath(),
@@ -92,7 +131,7 @@ namespace AvaloniaCharts
             try
             {
                 await Print.ToFileAsync(file, new[] { visual });
-                if (!await SendFileAsync(file, title, printer))
+                if (!await SendFileAsync(file, title, printer, settings))
                     throw new InvalidOperationException(
                         "CUPS refused the print job (see the trace for the job's output).");
             }
@@ -107,11 +146,12 @@ namespace AvaloniaCharts
         /// <summary>
         /// Print a file that is already on disk. The chart's legend-override path needs this: the page it
         /// wants the printer to have cannot be the LIVE chart the other overload takes, so the chart renders
-        /// the PDF itself and hands the file over.
+        /// the PDF itself and hands the file over. Same <paramref name="settings"/> rule.
         /// </summary>
-        public static async Task PrintFileAsync(string file, string title, string? printer = null)
+        public static async Task PrintFileAsync(string file, string title, string? printer = null,
+            PrintPageSettings? settings = null)
         {
-            if (!await SendFileAsync(file, title, printer))
+            if (!await SendFileAsync(file, title, printer, settings))
                 throw new InvalidOperationException("CUPS refused the print job (see the trace for the job's output).");
         }
 
@@ -168,16 +208,48 @@ namespace AvaloniaCharts
             }
         }
 
-        /// <summary>`lp [-d printer] -t title file` — the whole CUPS interaction.</summary>
-        private static async Task<bool> SendFileAsync(string file, string title, string? printer)
+        /// <summary>
+        /// The whole CUPS interaction as an argument list: <c>lp [-d printer] [-o …] -t title file</c>. Built
+        /// as a LIST for <see cref="ProcessStartInfo.ArgumentList"/> — no shell, no quoting — and so that a
+        /// test can assert the command line one argument at a time.
+        /// <para>
+        /// The <c>-o</c> rows appear only when <paramref name="settings"/> asks for them: the orientation
+        /// (because <c>pdftopdf</c> follows the JOB, not the PDF's page box) and the paper, plus
+        /// <c>number-up=1</c> so a queue left on "2-up" cannot quietly halve the app's own page layout.
+        /// </para>
+        /// </summary>
+        internal static List<string> CupsArguments(string file, string title, string? printer,
+            PrintPageSettings? settings)
         {
-            if (string.IsNullOrWhiteSpace(file)) return false;
             var arguments = new List<string>();
             if (!string.IsNullOrWhiteSpace(printer)) { arguments.Add("-d"); arguments.Add(printer!); }
+            if (settings is not null)
+            {
+                arguments.Add("-o");
+                arguments.Add("orientation-requested=" +
+                              settings.OrientationRequested.ToString(CultureInfo.InvariantCulture));
+                if (!string.IsNullOrWhiteSpace(settings.PaperSize))
+                {
+                    arguments.Add("-o");
+                    arguments.Add("PageSize=" + settings.PaperSize);
+                }
+
+                arguments.Add("-o");
+                arguments.Add("number-up=1");
+            }
+
             // -t is the job title: what the user sees in the print queue while the page comes out.
             if (!string.IsNullOrWhiteSpace(title)) { arguments.Add("-t"); arguments.Add(title); }
             arguments.Add(file);
-            return await RunAsync("lp", arguments);
+            return arguments;
+        }
+
+        /// <summary><c>lp</c> with the arguments above — the whole CUPS interaction.</summary>
+        private static async Task<bool> SendFileAsync(string file, string title, string? printer,
+            PrintPageSettings? settings)
+        {
+            if (string.IsNullOrWhiteSpace(file)) return false;
+            return await RunAsync("lp", CupsArguments(file, title, printer, settings));
         }
     }
 }

@@ -673,7 +673,10 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
     MaskedTextBox: [
         { key: 'Text', label: 'Text', kind: 'text' },
         { key: 'Mask', label: 'Mask', kind: 'text' },
-        { key: 'Watermark', label: 'Hint Text', kind: 'text' },
+        // PlaceholderText, NOT Watermark: Avalonia 12 removed Watermark (AVLN5001 in a generated
+        // project — the TextBox row was fixed on 2026-08-31, this one was missed because the property
+        // audit only checks that a row ROUND-TRIPS into XAML, which an obsolete one still does).
+        { key: 'PlaceholderText', label: 'Hint Text', kind: 'text' },
         { key: 'PasswordChar', label: 'Password Char', kind: 'text' }
     ],
     NumericUpDown: [
@@ -722,7 +725,7 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
             key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS,
             desc: 'Pin the sheet to an edge of a DockPanel: Left/Right give it a column of its own (the Width is its thickness), Top/Bottom a band (the Height is), and Fill takes what is left. The designer wraps the sheet in a DockPanel for you if it is not already in one.'
         },
-        { key: 'Cells', label: 'Edit cells…', kind: 'button', desc: 'Open the spreadsheet grid: type in the cells, select a range and drag its fill handle to continue a series. What you leave is written into the form as <spread:SheetCell> elements, and the Rows/Columns boxes at the top of the same dialog set how big the sheet is. The formatting bar in that dialog — bold, italics, size, font, text colour, highlight, alignment — applies to everything selected and shows the active cell’s own settings; a setting left on the sheet’s own is not written to the form at all, and Clear formatting drops the lot.' },
+        { key: 'Cells', label: 'Edit cells…', kind: 'button', desc: 'Open the spreadsheet grid: type in the cells, select a range and drag its fill handle to continue a series (a formula is copied with its relative addresses moved, a $ holds the part it anchors, and the other corner\'s handle fills up or left). What you leave is written into the form as <spread:SheetCell> elements, and the Rows/Columns boxes at the top of the same dialog set how big the sheet is. The formatting bar in that dialog — bold, italics, size, font, text colour, highlight, alignment — applies to everything selected and shows the active cell’s own settings; a setting left on the sheet’s own is not written to the form at all, and Clear formatting drops the lot.' },
         { key: 'ColumnWidth', label: 'Column Width', kind: 'number', unit: 'px', defaultValue: '72' },
         { key: 'RowHeight', label: 'Row Height', kind: 'number', unit: 'px', defaultValue: '22' },
         // Widths and heights for the tracks that are NOT the sheet's own, as "3:120,7:60" — the same
@@ -736,12 +739,24 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'GridColor', label: 'Grid Colour', kind: 'color', options: COLORS, defaultValue: '#C9CED6' },
         { key: 'CellBackColor', label: 'Cell Back', kind: 'color', options: COLORS, defaultValue: '#FFFFFF' },
         { key: 'TextColor', label: 'Text Colour', kind: 'color', options: COLORS, defaultValue: '#1E2228' },
+        // The fx box — the cell edit box at the top of the sheet — has a backcolour and a text colour of
+        // its own (2026-09-27): white by default, so the box a formula is typed into stands apart.
+        { key: 'EditBackColor', label: 'Edit Box Back', kind: 'color', options: COLORS, defaultValue: '#FFFFFF', desc: 'The backcolour of the fx box: the cell edit box at the top of the sheet, where a formula is typed and read. Its default is white, so it stands apart from the strip it sits in.' },
+        { key: 'EditTextColor', label: 'Edit Box Text', kind: 'color', options: COLORS, defaultValue: '#1E2228' },
         { key: 'HeaderBackColor', label: 'Header Back', kind: 'color', options: COLORS, defaultValue: '#EFF1F4' },
         { key: 'HeaderTextColor', label: 'Header Text', kind: 'color', options: COLORS, defaultValue: '#39404A' },
         { key: 'SelectionColor', label: 'Selection', kind: 'color', options: COLORS, defaultValue: '#2D7DD2' },
         { key: 'SelectionFillColor', label: 'Selection Fill', kind: 'color', options: COLORS, defaultValue: '#DCE9FA' },
         { key: 'ShowHeaders', label: 'Show Headers', kind: 'dropdown', options: BOOL, defaultValue: 'True' },
         { key: 'ShowFormulaBar', label: 'Formula Bar', kind: 'dropdown', options: BOOL, defaultValue: 'True' },
+        // The toolbar (2026-09-27): File (Load… / Save… a .xlsx) and Print (a PNG, a PDF or the printer),
+        // drawn by the control above the formula bar. On by default, so a dropped sheet is usable with no
+        // code at all; off leaves the sheet exactly as it was before the strip existed.
+        { key: 'ShowToolbar', label: 'Toolbar', kind: 'dropdown', options: BOOL, defaultValue: 'True', desc: 'Draw the toolbar above the formula bar: File, which loads and saves a sheet as .xlsx (one page at a time), and Print, which writes the sheet as a PNG or — with the print packages wired into the project — a PDF or a real print job. Its status line reports what the last one did.' },
+        // The page question (2026-09-27): which way round the paper is. There is no page setup yet, so a job
+        // is composed on an A4 page and this row — plus the question every Print entry asks — is what decides
+        // portrait or landscape (the print area itself is always fitted inside the margin).
+        { key: 'PrintOrientation', label: 'Orientation', kind: 'dropdown', options: ['Portrait', 'Landscape'], defaultValue: 'Portrait', desc: 'Which way round the page is when the sheet is printed or exported: A4 either way, with the print area scaled to fit inside the margin. Every Print entry asks for it as well — the page has no other setup yet — and starts on whatever this row says, so a landscape sheet prints landscape without a click.' },
         { key: 'ShowScrollBars', label: 'Scrollbars', kind: 'dropdown', options: BOOL, defaultValue: 'True', desc: 'Draw slim scrollbars when the sheet is bigger than its space. They appear by themselves when there is something to scroll to, and they are the only sign that columns off to the right are reachable.' },
         { key: 'AllowEditing', label: 'Allow Editing', kind: 'dropdown', options: BOOL, defaultValue: 'True' }
     ],
@@ -1369,7 +1384,6 @@ const KEY_DEFAULTS: Record<string, Partial<PropTemplate>> = {
     ShowButtonSpinner: { desc: 'Show the up/down arrows on the number box.' },
     FormatString: { desc: 'A format for the number, e.g. "F2" for two decimals or "{0:C}" for currency.' },
     Mask: { desc: 'Which characters are allowed: 0 = digit, L = letter, 9 = digit or space (e.g. "0000-0000").' },
-    Watermark: { desc: 'Hint text shown while the box is empty.' },
     OnContent: { desc: 'What the switch shows when it is ON.' },
     OffContent: { desc: 'What the switch shows when it is OFF.' },
 
@@ -1728,7 +1742,6 @@ export const DEFAULTS: Record<string, string> = {
     ShowButtonSpinner: 'True',
     FormatString: '',
     Mask: '0000-0000',
-    Watermark: '',
     // --- GrumpyCharts: the control's own defaults, so the panel shows a real value and setting one
     // back to its default strips the attribute again. 'Values'/'Points' start empty on purpose: the
     // toolbox snippet fills them, so a dropped chart draws immediately. ---
@@ -2036,10 +2049,12 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'MarkerStyle', 'MarkerSize',
             'ShowGrid', 'GridColor', 'GridThickness', 'GridStyle',
             // GrumpySheet (2026-09-26): the sheet's own colours — the grid lines it shares the
-            // GridColor key with, the paper the cells are drawn on, the text, the headers, and the
-            // selection's outline and wash. Every one of them has the sheet's default on the row, so
-            // the panel shows what the control draws rather than a blank.
-            'CellBackColor', 'TextColor', 'HeaderBackColor', 'HeaderTextColor',
+            // GridColor key with, the paper the cells are drawn on, the text, the headers, the
+            // selection's outline and wash, and (2026-09-27) the fx box's own back and text colours.
+            // Every one of them has the sheet's default on the row, so the panel shows what the control
+            // draws rather than a blank.
+            'CellBackColor', 'TextColor', 'EditBackColor', 'EditTextColor',
+            'HeaderBackColor', 'HeaderTextColor',
             'SelectionColor', 'SelectionFillColor',
             'ShowAxes', 'AxisColor',
             'ShowMajorTicks', 'MajorTickLength', 'ShowMinorTicks', 'MinorTickLength',
@@ -2088,7 +2103,7 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             'WrapSelection', 'SelectionStart', 'SelectionEnd',
             'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview',
             // The 2026-09-19 controls: switch state text, the masked box's mask and hint, number format
-            'OnContent', 'OffContent', 'Mask', 'Watermark', 'FormatString',
+            'OnContent', 'OffContent', 'Mask', 'FormatString',
             // GrumpyCharts: the axis names (the spreadsheet's row-1 column headers by default), and the
             // waterfall's depth-axis name.
             'XAxisTitle', 'YAxisTitle', 'ZAxisTitle',
@@ -2149,9 +2164,12 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // AsDrawn (the default) keeps the chart's own size and prints the legend as drawn, which is
             // what the rows did nothing about before.
             'PrintPaper', 'PrintMargin', 'PrintLightBackground', 'PrintLegend', 'PrintInk',
-            // GrumpySheet's four switches: whether the headers are drawn, whether the formula bar is,
-            // whether the scrollbars are, and whether the user of the form can type in it at all.
-            'ShowHeaders', 'ShowFormulaBar', 'ShowScrollBars', 'AllowEditing'
+            // GrumpySheet's switches (2026-09-27): whether the headers are drawn, whether the formula bar
+            // is, whether the TOOLBAR is (File and Print, on by default), whether the scrollbars are, and
+            // whether the user of the form can type in it at all. 'PrintOrientation' joins them: which way
+            // round the PAGE is, the one page setup row there is so far.
+            'ShowHeaders', 'ShowFormulaBar', 'ShowToolbar', 'ShowScrollBars', 'AllowEditing',
+            'PrintOrientation'
         ]
     }
 ];

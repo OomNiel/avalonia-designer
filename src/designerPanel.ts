@@ -4886,8 +4886,20 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private ensureSheetHelper(doc: DesignerDocument): boolean {
         const proj = findProject(doc.uri);
         if (!proj) return false;
-        return this.ensureBundledFileIn(path.dirname(proj.projectUri.fsPath), proj.language === 'vb',
-            'GrumpySheet', 'this form holds a spreadsheet, which the project did not have yet');
+        const folder = path.dirname(proj.projectUri.fsPath);
+        const vb = proj.language === 'vb';
+        // The sheet first, then the print helper its Print… menu calls when the project has PRINT_SUPPORT
+        // — the same pairing the charts use, for the same reason: a project holding one without the other
+        // does not compile. (Without the symbol the helper compiles to nothing, so copying it in is
+        // always safe.)
+        let touched = this.ensureBundledFileIn(folder, vb, 'GrumpySheet',
+            'this form holds a spreadsheet, which the project did not have yet');
+        if (this.ensureBundledFileIn(folder, vb, 'GrumpyPrint',
+            'the sheet prints through CUPS on Linux, where Avae.Printables has no service of its own'
+        )) {
+            touched = true;
+        }
+        return touched;
     }
 
     /**

@@ -64,7 +64,8 @@ const CHECKS_CUPS = [
     'properties-roundtrip-paper', 'properties-roundtrip-margin', 'properties-roundtrip-light',
     'exportpng-a4-true',
     'failed-export-returns-false', 'printfailed-raised-once',
-    'print-with-cups-true', 'cups-print-is-not-a-failure', 'not-printing-after-the-run'
+    'print-with-cups-true', 'cups-print-is-not-a-failure', 'not-printing-after-the-run',
+    'print-with-page-settings-true'
 ];
 
 /** …and in mode `nocups`, where nothing on the PATH can print: the entry has to refuse and say so. */
@@ -131,6 +132,8 @@ module.exports = async (t) => {
         '#!/bin/sh',
         '# The CUPS client, stubbed by tests/t4-runtime/printExport.test.js: record the argv, keep the file.',
         'printf "%s\\n" "$@" > "$GRUMPY_STUB_DIR/argv.txt"',
+        'printf -- "---\\n" >> "$GRUMPY_STUB_DIR/argv-log.txt"',
+        'printf "%s\\n" "$@" >> "$GRUMPY_STUB_DIR/argv-log.txt"',
         'last=""',
         'for a in "$@"; do last="$a"; done',
         'cp "$last" "$GRUMPY_STUB_DIR/received.pdf"',
@@ -157,16 +160,45 @@ module.exports = async (t) => {
 
     // ---------- what the printer was actually asked to do ----------
     const argvFile = path.join(STUB_DIR, 'argv.txt');
+    const argvLog = path.join(STUB_DIR, 'argv-log.txt');
     const received = path.join(STUB_DIR, 'received.pdf');
     t.ok(fs.existsSync(argvFile), 'cups', 'the stub `lp` was called at all');
     if (fs.existsSync(argvFile)) {
-        const argv = fs.readFileSync(argvFile, 'utf8').split('\n').filter((l) => l.length > 0);
-        t.equal(argv.length, 3, 'cups', 'three arguments: -t, the job title, the file — no printer named');
-        t.equal(argv[0], '-t', 'cups', 'the job TITLE goes with -t (it is what the print queue shows)');
-        t.equal(argv[1], 'Harness chart', 'cups', 'and it is the chart\'s own Name');
-        t.ok(/\.pdf$/.test(argv[2] || ''), 'cups', 'the last argument is the rendered page', argv[2] || '');
-        t.ok(argv[2] && !fs.existsSync(argv[2]), 'cups',
+        // Every call is recorded as a block, so BOTH jobs read back: the chart's own (no options at all —
+        // what this helper has always sent) and the one that described its page.
+        const blocks = [];
+        let current = null;
+        for (const line of fs.readFileSync(argvLog, 'utf8').split('\n')) {
+            if (line === '---') { current = []; blocks.push(current); continue; }
+            if (current && line.length > 0) current.push(line);
+        }
+        t.equal(blocks.length, 2, 'cups', 'two jobs reached the printer: the chart\'s own, and one with page options');
+        const plain = blocks[0] || [];
+        t.equal(plain.length, 3, 'cups', 'three arguments: -t, the job title, the file — no printer named');
+        t.equal(plain[0], '-t', 'cups', 'the job TITLE goes with -t (it is what the print queue shows)');
+        t.equal(plain[1], 'Harness chart', 'cups', 'and it is the chart\'s own Name');
+        t.ok(/\.pdf$/.test(plain[2] || ''), 'cups', 'the last argument is the rendered page', plain[2] || '');
+        t.ok(plain[2] && !fs.existsSync(plain[2]), 'cups',
             'the temporary PDF is deleted again once lp returns (the spooler has it by then)');
+
+        // ---------- and what a caller that KNOWS its page asks the queue for ----------
+        // The row that fixed hardcopy landscape: the PDF's page box alone is not enough, because
+        // pdftopdf transforms the page according to the JOB's options.
+        const page = blocks[1] || [];
+        t.equal(page.length, 9, 'cups',
+            'nine arguments for a described page: three -o pairs, -t + title, file', page.join(' '));
+        t.equal(page[0], '-o', 'cups', 'the page is described to CUPS with -o …');
+        t.equal(page[1], 'orientation-requested=4', 'cups',
+            'and a LANDSCAPE page asks for landscape — the row that fixed the hardcopy');
+        t.equal(page[2], '-o', 'cups', 'then');
+        t.equal(page[3], 'PageSize=A4', 'cups', 'the paper the page was composed for');
+        t.equal(page[4], '-o', 'cups', 'and');
+        t.equal(page[5], 'number-up=1', 'cups', 'one page per sheet, whatever a saved lpoptions says');
+        t.equal(page[6], '-t', 'cups', 'then the job title exactly as before');
+        t.equal(page[7], 'Harness chart', 'cups', 'the chart\'s own Name');
+        t.ok(/\.pdf$/.test(page[8] || ''), 'cups', 'and the file last — a real PDF', page[8] || '');
+        t.ok(/orientation-requested=4/.test(fs.readFileSync(argvFile, 'utf8')), 'cups',
+            'which is also the LAST thing lp was told (the raw argv)');
     }
     t.ok(fs.existsSync(received), 'cups', 'the stub kept the file it was handed');
     if (fs.existsSync(received)) {

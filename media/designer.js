@@ -6457,10 +6457,22 @@
         renderSheet();
     }
 
-    /** What the next values should be, from the ones the selection gave (the control's own rules). */
-    function sheetPredict(values, count) {
+    /** What the next values should be, from the ones the selection gave (the control's own rules).
+     *  `direction` is 1 when the fill was dragged down/right and -1 for up/left, so a series continues
+     *  the same way whichever way it is dragged. */
+    function sheetPredict(values, count, direction) {
+        const dir = direction === -1 ? -1 : 1;
         const out = [];
         const texts = values.map((v) => String(v == null ? '' : v));
+        if (count <= 0) return out;
+        if (texts.length === 0) {
+            for (let i = 0; i < count; i++) out.push('');
+            return out;
+        }
+        // How far the destination sits from the block's FIRST value: +1 is the value after a one-cell
+        // block, -1 the value before it, and so on for the whole run.
+        const distance = [];
+        for (let i = 0; i < count; i++) distance.push(dir > 0 ? texts.length + i : i - count);
         const numbers = texts.map((t) => (t.trim().length > 0 && !isNaN(Number(t)) ? Number(t) : null));
         const allNumbers = numbers.length > 0 && numbers.every((n) => n !== null);
         const decimals = texts.reduce((most, t) => {
@@ -6475,58 +6487,172 @@
                 if (Math.abs(numbers[i] - numbers[i - 1] - step) > 1e-9) { steady = false; break; }
             }
             if (steady) {
-                const last = numbers[numbers.length - 1];
-                for (let i = 0; i < count; i++) out.push(format(last + step * (i + 1)));
+                const first = numbers[0];
+                for (let i = 0; i < count; i++) out.push(format(first + step * distance[i]));
                 return out;
             }
         }
         if (allNumbers && numbers.length === 1) {
-            for (let i = 0; i < count; i++) out.push(format(numbers[0] + i + 1));
+            for (let i = 0; i < count; i++) out.push(format(numbers[0] + distance[i]));
             return out;
         }
         const parts = texts.map((t) => /^(.*?)(\d+)$/.exec(t));
         if (parts.length > 0 && parts.every((p) => p && p[1] === parts[0][1])) {
-            const last = parseInt(parts[parts.length - 1][2], 10);
+            const first = parseInt(parts[0][2], 10);
             let step = 1;
             if (parts.length >= 2) {
                 const previous = parseInt(parts[parts.length - 2][2], 10);
+                const last = parseInt(parts[parts.length - 1][2], 10);
                 step = (last - previous) || 1;
             }
-            for (let i = 0; i < count; i++) out.push(parts[0][1] + String(last + step * (i + 1)));
+            for (let i = 0; i < count; i++) out.push(parts[0][1] + String(first + step * distance[i]));
             return out;
         }
-        for (let i = 0; i < count; i++) out.push(texts[i % texts.length]);
+        for (let i = 0; i < count; i++) {
+            out.push(texts[((distance[i] % texts.length) + texts.length) % texts.length]);
+        }
         return out;
     }
 
-    /** Writes the predicted series into the area the fill handle was dragged over. */
+    /**
+     * A formula body with every RELATIVE reference moved by a fill's offset — what a formula MEANS in its
+     * new home. A $ anchors the part it is in front of ($B$2 fixed, B$2 keeps its row, $B2 its column), a
+     * reference that would leave the sheet becomes #REF!, and text in quotes is never touched. The same
+     * rules the control applies at run time, so the design-time grid fills the way the form will.
+     */
+    function sheetShiftFormula(body, rowDelta, columnDelta) {
+        if (rowDelta === 0 && columnDelta === 0) return body;
+        let out = '';
+        let i = 0;
+        while (i < body.length) {
+            const c = body[i];
+            if (c === '"') {
+                // A string literal, copied exactly — doubled quotes and all.
+                const start = i;
+                i++;
+                while (i < body.length) {
+                    if (body[i] === '"') {
+                        if (i + 1 < body.length && body[i + 1] === '"') { i += 2; continue; }
+                        i++;
+                        break;
+                    }
+                    i++;
+                }
+                out += body.slice(start, i);
+                continue;
+            }
+            const address = sheetReadAddress(body, i);
+            if (address && sheetWholeToken(body, i, address.used)) {
+                const row = address.rowFixed ? address.row : address.row + rowDelta;
+                const column = address.columnFixed ? address.column : address.column + columnDelta;
+                out += (row < 1 || column < 1)
+                    ? '#REF!'
+                    : (address.columnFixed ? '$' : '') + sheetColumnName(column) +
+                    (address.rowFixed ? '$' : '') + row;
+                i += address.used;
+                continue;
+            }
+            out += c;
+            i++;
+        }
+        return out;
+    }
+
+    /** "A1" / "$B$2" AT AN OFFSET, saying which parts a $ anchored and how many characters it used. */
+    function sheetReadAddress(text, at) {
+        let i = at;
+        while (i < text.length && text[i] === '$') i++;
+        let letters = 0;
+        let column1 = 0;
+        while (i < text.length) {
+            const c = text[i].toUpperCase();
+            if (c < 'A' || c > 'Z') break;
+            column1 = column1 * 26 + (c.charCodeAt(0) - 64);
+            letters++;
+            i++;
+        }
+        let dollars = 0;
+        while (i < text.length && text[i] === '$') { dollars++; i++; }
+        let digits = 0;
+        let row1 = 0;
+        while (i < text.length && text[i] >= '0' && text[i] <= '9') {
+            row1 = row1 * 10 + (text.charCodeAt(i) - 48);
+            digits++;
+            i++;
+        }
+        if (letters < 1 || letters > 3 || digits < 1 || digits > 7) return null;
+        if (row1 < 1 || column1 < 1) return null;
+        return {
+            row: row1,
+            column: column1,
+            used: i - at,
+            columnFixed: text[at] === '$',
+            rowFixed: dollars > 0
+        };
+    }
+
+    /** An address stands alone: nothing that could make it part of a longer name touches it — except the
+     *  first of the two dots that spell a range (A1..B2), which is a boundary. */
+    function sheetWholeToken(text, at, used) {
+        const nameChar = (ch) => /[A-Za-z0-9_]/.test(ch);
+        if (at > 0 && nameChar(text[at - 1])) return false;
+        if (at + used >= text.length) return true;
+        const next = text[at + used];
+        if (nameChar(next)) return false;
+        return next !== '.' || text[at + used + 1] === '.';
+    }
+
+    /** Writes the fill into the area the fill handle was dragged over — in any of the four directions.
+     *  PER CELL: a FORMULA is copied with its relative addresses moved, anything else keeps the series
+     *  prediction, exactly as the control does at run time. */
     function sheetApplyFill() {
         const fill = sheetEdit.fill;
         sheetEdit.fill = null;
         if (!fill || fill.row == null || fill.column == null) { renderSheet(); return; }
         const source = sheetBounds();
-        if (fill.row > source.r2) {
+        const height = source.r2 - source.r1 + 1;
+        const width = source.c2 - source.c1 + 1;
+        const write = (row, column, baseRow, baseColumn, predicted) => {
+            const base = sheetText(baseRow, baseColumn);
+            sheetSet(row, column, base.startsWith('=')
+                ? '=' + sheetShiftFormula(base.slice(1), row - baseRow, column - baseColumn)
+                : predicted);
+        };
+        if (fill.row > source.r2 || fill.row < source.r1) {
+            const down = fill.row > source.r2;
+            const count = down ? fill.row - source.r2 : source.r1 - fill.row;
+            const firstTarget = down ? source.r2 + 1 : fill.row;
             for (let column = source.c1; column <= source.c2; column++) {
                 const values = [];
                 for (let row = source.r1; row <= source.r2; row++) values.push(sheetText(row, column));
-                const written = sheetPredict(values, fill.row - source.r2);
-                for (let i = 0; i < written.length; i++) sheetSet(source.r2 + 1 + i, column, written[i]);
+                const written = sheetPredict(values, count, down ? 1 : -1);
+                for (let i = 0; i < written.length; i++) {
+                    write(firstTarget + i, column, source.r1 + (i % height), column, written[i]);
+                }
             }
-            sheetEdit.sel.r1 = source.r1;
+            sheetEdit.sel.r1 = Math.min(fill.row, source.r1);
             sheetEdit.sel.c1 = source.c1;
-            sheetEdit.sel.r2 = fill.row;
+            sheetEdit.sel.r2 = Math.max(fill.row, source.r2);
             sheetEdit.sel.c2 = source.c2;
-        } else if (fill.column > source.c2) {
+            renderSheet();
+            return;
+        }
+        if (fill.column > source.c2 || fill.column < source.c1) {
+            const right = fill.column > source.c2;
+            const count = right ? fill.column - source.c2 : source.c1 - fill.column;
+            const firstTarget = right ? source.c2 + 1 : fill.column;
             for (let row = source.r1; row <= source.r2; row++) {
                 const values = [];
                 for (let column = source.c1; column <= source.c2; column++) values.push(sheetText(row, column));
-                const written = sheetPredict(values, fill.column - source.c2);
-                for (let i = 0; i < written.length; i++) sheetSet(row, source.c2 + 1 + i, written[i]);
+                const written = sheetPredict(values, count, right ? 1 : -1);
+                for (let i = 0; i < written.length; i++) {
+                    write(row, firstTarget + i, row, source.c1 + (i % width), written[i]);
+                }
             }
             sheetEdit.sel.r1 = source.r1;
-            sheetEdit.sel.c1 = source.c1;
+            sheetEdit.sel.c1 = Math.min(fill.column, source.c1);
             sheetEdit.sel.r2 = source.r2;
-            sheetEdit.sel.c2 = fill.column;
+            sheetEdit.sel.c2 = Math.max(fill.column, source.c2);
         }
         renderSheet();
     }
@@ -6736,12 +6862,15 @@
                     td.classList.add('sheet-sel');
                 }
                 if (fillRow != null) {
+                    const firstRow = Math.min(fillRow, bounds.r1);
                     const lastRow = Math.max(fillRow, bounds.r2);
+                    const firstColumn = Math.min(fillColumn != null ? fillColumn : bounds.c1, bounds.c1);
                     const lastColumn = Math.max(fillColumn != null ? fillColumn : bounds.c2, bounds.c2);
-                    if (r > bounds.r2 && r <= lastRow && c >= bounds.c1 && c <= bounds.c2) {
+                    const inside = r >= bounds.r1 && r <= bounds.r2 && c >= bounds.c1 && c <= bounds.c2;
+                    if (!inside && r >= firstRow && r <= lastRow && c >= bounds.c1 && c <= bounds.c2) {
                         td.classList.add('sheet-fill');
                     }
-                    if (c > bounds.c2 && c <= lastColumn && r >= bounds.r1 && r <= bounds.r2) {
+                    if (!inside && c >= firstColumn && c <= lastColumn && r >= bounds.r1 && r <= bounds.r2) {
                         td.classList.add('sheet-fill');
                     }
                 }
@@ -6758,22 +6887,32 @@
             table.appendChild(tr);
         }
 
-        const existing = els.sheetGridWrap.querySelector('.sheet-handle');
-        if (existing) existing.remove();
+        const existing = els.sheetGridWrap.querySelectorAll('.sheet-handle');
+        for (const element of Array.from(existing)) element.remove();
         const active = table.querySelector(`td[data-row="${sheetEdit.sel.r1}"][data-col="${sheetEdit.sel.c1}"]`);
         if (active) {
-            const handle = document.createElement('div');
-            handle.className = 'sheet-handle';
-            handle.style.left = (active.offsetLeft + active.offsetWidth - 4) + 'px';
-            handle.style.top = (active.offsetTop + active.offsetHeight - 4) + 'px';
-            handle.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                sheetEdit.fill = { r1: sheetEdit.sel.r1, c1: sheetEdit.sel.c1 };
-                sheetEdit.fill.row = null;
-                sheetEdit.fill.column = null;
-            });
-            els.sheetGridWrap.appendChild(handle);
+            // Two handles, like the control: the bottom-right one continues the series down/right, the
+            // top-left one up/left. The direction is decided by where the drag ends, not by which square
+            // it started on.
+            const addHandle = (left, top, hint) => {
+                const handle = document.createElement('div');
+                handle.className = 'sheet-handle';
+                handle.title = hint;
+                handle.style.left = left + 'px';
+                handle.style.top = top + 'px';
+                handle.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    sheetEdit.fill = { r1: sheetEdit.sel.r1, c1: sheetEdit.sel.c1 };
+                    sheetEdit.fill.row = null;
+                    sheetEdit.fill.column = null;
+                });
+                els.sheetGridWrap.appendChild(handle);
+            };
+            addHandle(active.offsetLeft + active.offsetWidth - 4, active.offsetTop + active.offsetHeight - 4,
+                'Drag to continue the series down or right');
+            addHandle(active.offsetLeft - 3, active.offsetTop - 3,
+                'Drag to continue the series up or left');
         }
 
         els.sheetAddress.textContent = sheetColumnName(sheetEdit.sel.c1) + String(sheetEdit.sel.r1);

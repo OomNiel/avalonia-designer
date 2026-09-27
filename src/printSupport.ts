@@ -8,6 +8,11 @@
  * entries — an invisible kind of missing (nothing fails, nothing warns), which is exactly why the
  * designer says so when a chart is placed.
  *
+ * The bundled **spreadsheet** rides the same symbol (2026-09-27): its toolbar's *Save as PDF…* and
+ * *Print…* are compiled in behind `PRINT_SUPPORT` too, and *Save as PNG…* — like a chart's *Save as
+ * picture…* — needs nothing at all. So one project-level answer covers both controls, which is why
+ * there is one module rather than two.
+ *
  * This module holds the two mechanical halves of that conversation, apart from the panel so they can be
  * tested on their own:
  *   - `printSupportState` — what is present and what is not;

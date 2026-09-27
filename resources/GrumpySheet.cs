@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.12.15
+// BUNDLED-COPY: 0.13.0
 // GrumpySheet.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpySheet.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs / GrumpyCharts.cs.
 //
@@ -33,10 +33,13 @@
 //   * Keyboard: arrows move, Shift+arrows extend the selection, PageUp/PageDown jump ten rows, Home
 //     goes to column A, Ctrl+Home to A1, Enter moves down, Tab moves right, Delete clears the
 //     selected cells.
-//   * AUTOFILL: the small square at the bottom-right of the selection is the fill handle. Drag it down
-//     or right and the pattern is PREDICTED — 1, 2 becomes 3, 4, 5 …; 2, 4 becomes 6, 8 …; a single
-//     number counts up by one; "Item1, Item2" becomes "Item3"; anything else repeats the pattern it
-//     was given, which is how a repeating list is copied.
+//   * AUTOFILL: the small square at the bottom-right of the selection and the one at its top-left are
+//     the fill handles. Drag either one — down, right, up or left — and the pattern is PREDICTED:
+//     1, 2 becomes 3, 4, 5 …; 2, 4 becomes 6, 8 …; a single number counts up by one; "Item1, Item2"
+//     becomes "Item3"; anything else repeats the pattern it was given, which is how a repeating list
+//     is copied. A cell holding a FORMULA is not predicted but COPIED, with every relative address
+//     moved by the distance it travelled (=B2+1 one row down is =B3+1, exactly as a $ anchors a part
+//     of the address in place) and #REF! written where a reference would land off the sheet.
 //   * The formula bar shows the active cell's address (A1) and its contents, and edits them too: press
 //     Ctrl+U or click the address box to move the caret there.
 //   * The wheel scrolls; Shift+wheel scrolls sideways. The headers never leave the top and the left.
@@ -63,17 +66,40 @@
 //     renders identically in a headless preview where nothing can be focused.
 //   * Everything is proportional to ColumnWidth / RowHeight / FontSize, so the sheet survives any
 //     resize, and the grid is clipped to its own rectangle while the headers stay put.
-//   * FORMULAS ARE NOT EVALUATED YET. A cell holding "=SUM(B2:B6)" keeps and shows that text, and the
-//     fx bar is the place to edit it; evaluation is the next phase and does not change this format.
+//   * FORMULAS ARE EVALUATED. A cell holding "=Sum(B2..B6)" keeps and shows that text (the fx box is where
+//     it is read and edited) and the GRID draws what it works out to. Ranges are WRITTEN A1:B3 (Excel's
+//     spelling, and what the macro list writes), the older A1..B3 still reads, and the function list is
+//     offered by a popup the moment "=" is typed.
+//   * PRINTING AND THE PAGE. The toolbar's Print entries produce the PRINT AREA — the selected cells — and
+//     nothing else, and asking for one with a single cell selected warns first, with Abort on Enter. Every
+//     job is composed on an A4 PAGE, portrait or landscape: the page question is asked before each one and
+//     remembered in PrintOrientation, and the area is scaled to fit inside the margin. Load…/Save… read and
+//     write .xlsx, one page at a time.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
+using System.IO;
+using System.IO.Compression;
+using System.Threading.Tasks;
+using System.Xml.Linq;
 using Avalonia;
 using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Metadata;
+using Avalonia.Platform.Storage;
+
+#if PRINT_SUPPORT
+// Printing and the PDF export are provided by two OPTIONAL, third-party libraries a generated project opts
+// into (both packages referenced, the symbol defined — see projectScaffold.ts / printSupport.ts). Undefined,
+// the whole feature is compiled out and costs nothing, which is how the headless PreviewerHost builds this
+// same file with no printer package in reach.
+using AvaloniaUI.PrintToPDF;
+using Avae.Printables;
+#endif
 
 namespace AvaloniaSpreadsheet
 {
@@ -86,6 +112,17 @@ namespace AvaloniaSpreadsheet
         Left,
         Center,
         Right
+    }
+
+    /// <summary>Which way round the PAGE is when the sheet is printed or exported: A4 either way — the page
+    /// has no other setup yet — with the print area scaled to fit inside the margin. Portrait is the
+    /// default, and the sheet asks again before every job, because there is no page-setup dialog to set it
+    /// in. (Not called Orientation: Avalonia.Layout owns that name, and a sheet that shadows it would make
+    /// `Orientation` ambiguous in a form that uses both.)</summary>
+    public enum SheetOrientation
+    {
+        Portrait,
+        Landscape
     }
 
     /// <summary>
@@ -265,8 +302,38 @@ namespace AvaloniaSpreadsheet
         public static readonly StyledProperty<Color> SelectionFillColorProperty =
             AvaloniaProperty.Register<GrumpySheet, Color>(nameof(SelectionFillColor), Color.Parse("#DCE9FA"));
 
+        /// <summary>Draw the toolbar strip — the File and Print entries — above the formula bar. On by
+        /// default: dropping a sheet into a form should hand the user Load…, Save… and Print… without a
+        /// line of code.</summary>
+        public static readonly StyledProperty<bool> ShowToolbarProperty =
+            AvaloniaProperty.Register<GrumpySheet, bool>(nameof(ShowToolbar), true);
+
+        /// <summary>The backcolour of the fx box — the cell edit box at the top of the sheet, where a
+        /// formula is typed and read. White by default, so the box stands apart from the strip it sits
+        /// in; the whole point of the row is that a form can make it obvious.</summary>
+        public static readonly StyledProperty<Color> EditBackColorProperty =
+            AvaloniaProperty.Register<GrumpySheet, Color>(nameof(EditBackColor), Color.Parse("#FFFFFF"));
+
+        /// <summary>The colour of the text in the fx box (and of its caret).</summary>
+        public static readonly StyledProperty<Color> EditTextColorProperty =
+            AvaloniaProperty.Register<GrumpySheet, Color>(nameof(EditTextColor), Color.Parse("#1E2228"));
+
+        /// <summary>Which way round the page is: portrait (taller than wide, the default) or landscape.
+        /// Set from XAML, from the designer's properties, or by the page question the Print entries ask —
+        /// which remembers the answer here, so the next job starts on the choice the user last made.</summary>
+        public static readonly StyledProperty<SheetOrientation> PrintOrientationProperty =
+            AvaloniaProperty.Register<GrumpySheet, SheetOrientation>(nameof(PrintOrientation),
+                SheetOrientation.Portrait);
+
         /// <summary>The height of the formula bar strip, in pixels (fixed).</summary>
         private const double BarHeight = 24d;
+
+        /// <summary>The height of the toolbar strip, in pixels (fixed).</summary>
+        private const double ToolbarHeight = 26d;
+
+        /// <summary>The width of one toolbar button's icon, in pixels. The label is drawn after it, so a
+        /// button is as wide as its own word.</summary>
+        private const double ToolbarIconWidth = 26d;
 
         /// <summary>The size of the autofill square, in pixels.</summary>
         private const double HandleSize = 7d;
@@ -311,6 +378,15 @@ namespace AvaloniaSpreadsheet
         private int _fillSourceLastRow = 1;
         private int _fillSourceLastColumn = 1;
 
+        // The PRINT AREA, while a page is being drawn: the sheet shows only these cells and the real
+        // headers next to them, which is a different picture from the one on screen. Set and cleared by
+        // the page scope the three print/export entries use (PageForPrinting), never left set.
+        private bool _printRange;
+        private int _printFirstRow = 1;
+        private int _printFirstColumn = 1;
+        private int _printLastRow = 1;
+        private int _printLastColumn = 1;
+
         // The editor: no TextBox is involved, so this is the whole of its state.
         private bool _editing;
         private bool _barFocused;
@@ -320,6 +396,1902 @@ namespace AvaloniaSpreadsheet
 
         private double _scrollX;
         private double _scrollY;
+
+        // ---- .xlsx: the workbook on disk ------------------------------------------------------------
+        //
+        // Both halves are written against System.IO.Compression and System.Xml, so the sheet keeps its one
+        // promise — no NuGet package, no assets. A workbook is a zip of small XML parts, and these are the
+        // smallest parts Excel and LibreOffice BOTH accept:
+        //
+        //   [Content_Types].xml   _rels/.rels   xl/workbook.xml   xl/_rels/workbook.xml.rels
+        //   xl/worksheets/sheet1.xml            xl/styles.xml
+        //
+        // WHAT TRAVELS: the cells (numbers as numbers, everything else as text), a formula as its own text
+        // plus the value it worked out — so another program shows the answer without calculating anything —
+        // each cell's own formatting, and the column widths and row heights a border was dragged on.
+        // WHAT DOES NOT: merged cells, pictures, comments, multiple pages. A file holding those still
+        // LOADS, and simply loses them on the way back, which is the honest behaviour for a control this
+        // size. Loading is ONE PAGE at a time, and Load… asks which when a workbook has several.
+
+        /// <summary>The worksheet name a saved file carries: the control's Name when a form gave it one,
+        /// so "Sheet1" in the designer reads "Sheet1" in Excel. Excel's own limits are applied — 31
+        /// characters, and none of : \ / ? * [ ] — because a name it refuses is a file it will not open.</summary>
+        private string PageName()
+        {
+            var name = string.IsNullOrWhiteSpace(Name) ? "Sheet1" : Name!.Trim();
+            var builder = new System.Text.StringBuilder(name.Length);
+            for (var i = 0; i < name.Length && builder.Length < 31; i++)
+            {
+                var c = name[i];
+                builder.Append(c == ':' || c == '\\' || c == '/' || c == '?' || c == '*' || c == '[' || c == ']'
+                    ? '_' : c);
+            }
+
+            return builder.Length == 0 ? "Sheet1" : builder.ToString();
+        }
+
+        /// <summary>A column's width in Excel's own unit (characters, its default font) as pixels, and
+        /// back. Excel's rule for 11-point Calibri is pixels = width * 7 + 5, which is what the round trip
+        /// here uses, so a column that was 120 px wide is 16.4 characters wide and comes back as 120.</summary>
+        private static double WidthToPixels(double width)
+        {
+            return width * 7d + 5d;
+        }
+
+        private static double PixelsToWidth(double pixels)
+        {
+            return (pixels - 5d) / 7d;
+        }
+
+        /// <summary>Row heights are points (1/72 inch) in a file and pixels on screen.</summary>
+        private static double PixelsToPoints(double pixels)
+        {
+            return pixels * 72d / 96d;
+        }
+
+        private static double PointsToPixels(double points)
+        {
+            return points * 96d / 72d;
+        }
+
+        /// <summary>
+        /// Writes the sheet as a one-page workbook. Returns false — with the reason in the toolbar's
+        /// status line — rather than throwing, so a form can call it from a Save button without a try.
+        /// </summary>
+        public bool SaveWorkbook(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            try
+            {
+                Xlsx.Write(this, path);
+                SetStatus("Saved " + System.IO.Path.GetFileName(path));
+                return true;
+            }
+            catch (Exception error)
+            {
+                SetStatus("Could not save: " + error.Message);
+                return false;
+            }
+        }
+
+        /// <summary>The page names of a workbook, in the workbook's own order. Empty when the file is not a
+        /// workbook this control can read — which is also how Load… tells one from something else.</summary>
+        public static List<string> WorkbookPages(string path)
+        {
+            return Xlsx.Pages(path);
+        }
+
+        /// <summary>
+        /// Reads ONE page of a workbook into the sheet: null (or a name that is not there) takes the first.
+        /// The sheet is cleared first, so what was on it is gone; <see cref="Rows"/>/<see cref="Columns"/>
+        /// GROW when the page is bigger than the sheet, and are left alone when it is smaller — a form that
+        /// made a 30 x 12 sheet keeps its shape after loading a 5 x 3 one.
+        /// </summary>
+        public bool LoadWorkbook(string path, string? page = null)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            try
+            {
+                var loaded = Xlsx.Read(this, path, page);
+                if (loaded < 0)
+                {
+                    SetStatus("Nothing to load from " + System.IO.Path.GetFileName(path));
+                    return false;
+                }
+
+                SetStatus("Loaded " + loaded + " cells from " + System.IO.Path.GetFileName(path));
+                Refresh();
+                return true;
+            }
+            catch (Exception error)
+            {
+                SetStatus("Could not load: " + error.Message);
+                return false;
+            }
+        }
+
+        // ---- the file dialogs and hardcopy ------------------------------------------------------------
+        //
+        // Every one of these starts with TopLevel.GetTopLevel(this): without a window there is no file
+        // dialog and no printer, so each is a quiet no-op in the designer's headless preview — which is
+        // what makes the toolbar safe to press anywhere, and why SaveWorkbook/LoadWorkbook (plain paths)
+        // exist beside them for a form that wants to choose the file itself.
+
+        /// <summary>
+        /// Load…: the platform's file dialog, then — when the workbook holds more than one page — the page
+        /// list, because the sheet holds ONE page at a time.
+        /// </summary>
+        public async Task<bool> BrowseForWorkbookAsync()
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.StorageProvider is not { } storage || _fileBusy)
+            {
+                return false;
+            }
+
+            _fileBusy = true;
+            try
+            {
+                var options = new FilePickerOpenOptions
+                {
+                    Title = "Load a workbook",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("Excel workbook") { Patterns = new[] { "*.xlsx", "*.xlsm" } },
+                        new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                    }
+                };
+                var last = SheetPickerMemory.LastFolder;
+                if (last != null)
+                {
+                    try { options.SuggestedStartLocation = await storage.TryGetFolderFromPathAsync(new Uri(last)); }
+                    catch { }                       // the remembered folder is gone: let the platform choose
+                }
+
+                var files = await storage.OpenFilePickerAsync(options);
+                var path = files != null && files.Count > 0 ? files[0].TryGetLocalPath() : null;
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return false;                   // cancelled
+                }
+
+                SheetPickerMemory.LastFolder = FolderOf(path);
+                var pages = WorkbookPages(path!);
+                if (pages.Count == 0)
+                {
+                    SetStatus(System.IO.Path.GetFileName(path!) +
+                              " is not a workbook this sheet can read");
+                    return false;
+                }
+
+                if (pages.Count == 1)
+                {
+                    return LoadWorkbook(path!, pages[0]);
+                }
+
+                // More than one page: ask which, and say on the heading that only one comes across.
+                SetStatus(System.IO.Path.GetFileName(path!) + " holds " + pages.Count + " pages");
+                OpenMenu(MenuKind.Toolbar, BuildPageItems(path!, pages), new Point(0, ToolbarHeight + 1d),
+                    MenuWidth);
+                return true;
+            }
+            catch (Exception error)
+            {
+                SetStatus("Could not open the picker: " + error.Message);
+                return false;
+            }
+            finally
+            {
+                _fileBusy = false;
+            }
+        }
+
+        /// <summary>Save…: the platform's file dialog, then the .xlsx writer.</summary>
+        public async Task<bool> SaveAsWorkbookAsync()
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.StorageProvider is not { } storage || _fileBusy)
+            {
+                return false;
+            }
+
+            _fileBusy = true;
+            try
+            {
+                var picker = new FilePickerSaveOptions
+                {
+                    Title = "Save the sheet",
+                    SuggestedFileName = PageName() + ".xlsx",
+                    DefaultExtension = "xlsx",
+                    FileTypeChoices = new[]
+                    {
+                        new FilePickerFileType("Excel workbook") { Patterns = new[] { "*.xlsx" } },
+                        new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                    },
+                    ShowOverwritePrompt = true
+                };
+                await SuggestFolder(storage, picker);
+                var file = await storage.SaveFilePickerAsync(picker);
+                var path = file?.TryGetLocalPath();
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return false;
+                }
+
+                var ok = SaveWorkbook(path!);
+                if (ok)
+                {
+                    SheetPickerMemory.LastExportFolder = FolderOf(path);
+                }
+
+                return ok;
+            }
+            catch (Exception error)
+            {
+                SetStatus("Could not save: " + error.Message);
+                return false;
+            }
+            finally
+            {
+                _fileBusy = false;
+            }
+        }
+
+        /// <summary>Save as PNG…: the platform's file dialog, then the render.</summary>
+        public async Task<bool> SaveAsPngAsync(bool wholeSheet = false)
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.StorageProvider is not { } storage || _fileBusy)
+            {
+                return false;
+            }
+
+            _fileBusy = true;
+            try
+            {
+                var picker = new FilePickerSaveOptions
+                {
+                    Title = "Save the sheet as a picture",
+                    SuggestedFileName = PageName() + ".png",
+                    DefaultExtension = "png",
+                    FileTypeChoices = new[]
+                    {
+                        new FilePickerFileType("PNG image") { Patterns = new[] { "*.png" } },
+                        new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                    },
+                    ShowOverwritePrompt = true
+                };
+                await SuggestFolder(storage, picker);
+                var file = await storage.SaveFilePickerAsync(picker);
+                var path = file?.TryGetLocalPath();
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return false;
+                }
+
+                var ok = ExportPng(path!, 2, wholeSheet);
+                if (ok)
+                {
+                    SheetPickerMemory.LastExportFolder = FolderOf(path);
+                    SetStatus("Saved " + System.IO.Path.GetFileName(path!) + " \u2014 " +
+                              PrintAreaText(wholeSheet) + ", " + PageText());
+                }
+
+                return ok;
+            }
+            catch (Exception error)
+            {
+                SetStatus("Could not save the picture: " + error.Message);
+                return false;
+            }
+            finally
+            {
+                _fileBusy = false;
+            }
+        }
+
+        /// <summary>
+        /// Renders the PAGE to a PNG file — A4, portrait or landscape, with the print area scaled to fit
+        /// inside the margin — at <paramref name="scale"/> times its size, so the text is legible once the
+        /// picture is in a document. No package is involved, so this works on every platform and in the
+        /// headless previewer: the one export with no prerequisites at all. What it pictures is the PRINT
+        /// AREA — the selected cells — and the column letters and row numbers beside it are the real ones.
+        /// </summary>
+        public bool ExportPng(string path, double scale = 2, bool wholeSheet = false)
+        {
+            if (string.IsNullOrWhiteSpace(path) || Bounds.Width <= 0 || Bounds.Height <= 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                if (scale <= 0)
+                {
+                    scale = 1;
+                }
+
+                int firstRow;
+                int firstColumn;
+                int lastRow;
+                int lastColumn;
+                if (!PrintArea(wholeSheet, out firstRow, out firstColumn, out lastRow, out lastColumn))
+                {
+                    return false;
+                }
+
+                using (var page = PageForPrinting(firstRow, firstColumn, lastRow, lastColumn))
+                {
+                    var pageSize = PageSize();
+                    var sheetPage = PageForOrientation();
+                    var pixels = new PixelSize(
+                        Math.Max(1, (int)Math.Round(pageSize.Width * scale)),
+                        Math.Max(1, (int)Math.Round(pageSize.Height * scale)));
+                    using (var bitmap = new RenderTargetBitmap(pixels, new Vector(96 * scale, 96 * scale)))
+                    {
+                        bitmap.Render(sheetPage);
+                        bitmap.Save(path, new PngBitmapEncoderOptions());
+                    }
+                }
+
+                SetStatus("Saved " + System.IO.Path.GetFileName(path) + " \u2014 " +
+                          PrintAreaText(wholeSheet) + ", " + PageText());
+                return true;
+            }
+            catch (Exception error)
+            {
+                SetStatus("Could not save the picture: " + error.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Opens a save dialog where the last one left off, when that folder is still there.</summary>
+        private static async Task SuggestFolder(IStorageProvider storage, FilePickerSaveOptions picker)
+        {
+            var last = SheetPickerMemory.LastExportFolder;
+            if (last == null)
+            {
+                return;
+            }
+
+            try
+            {
+                picker.SuggestedStartLocation = await storage.TryGetFolderFromPathAsync(new Uri(last));
+            }
+            catch
+            {
+                // The remembered folder has gone: let the platform choose.
+            }
+        }
+
+        /// <summary>The folder a path is in, for the picker's memory. Never throws.</summary>
+        private static string? FolderOf(string? path)
+        {
+            try
+            {
+                return string.IsNullOrWhiteSpace(path) ? null : System.IO.Path.GetDirectoryName(path);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // ---- the print area ---------------------------------------------------------------------
+        // PRINTING is the one action here that costs paper, ink and time, and the sheet's resting state is a
+        // SINGLE cell selected — which used to mean that choosing Print… quietly printed all 26 columns and
+        // 50 rows. So the three entries under Print work on the SELECTION, and when nothing but a single
+        // cell is selected the sheet asks first, with an Abort line the keyboard reaches by default.
+
+        /// <summary>The width the warning is drawn at — wide enough for its longest line.</summary>
+        private const double PrintWarningWidth = 300d;
+
+        /// <summary>A4 in PDF points (1/72 inch) — the page every job and export is composed on. Landscape
+        /// swaps the two, which is the whole of the page setup there is: paper size and margin are the next
+        /// step, and belong to a printer setup of their own.</summary>
+        private const double PrintPageWidth = 595d;
+        private const double PrintPageHeight = 842d;
+
+        /// <summary>The white space kept inside the page, in points — the same 18 the bundled charts use,
+        /// so a sheet and a chart printed from the same form look like they came from the same printer.</summary>
+        private const double PrintPageMargin = 18d;
+
+        /// <summary>The paper the page is composed for. It is what the sheet SAYS in its status line and what
+        /// the printer is asked for, so the page and the job cannot disagree about it.</summary>
+        private const string PrintPaperName = "A4";
+
+        /// <summary>The page, the way round the sheet asks for: portrait is taller than wide.</summary>
+        private Size PageSize()
+        {
+            return PrintOrientation == SheetOrientation.Landscape
+                ? new Size(PrintPageHeight, PrintPageWidth)
+                : new Size(PrintPageWidth, PrintPageHeight);
+        }
+
+        /// <summary>The page as "A4 portrait", for the status line and the page question's heading.</summary>
+        private string PageText()
+        {
+            return PrintPaperName + (PrintOrientation == SheetOrientation.Landscape ? " landscape" : " portrait");
+        }
+
+        /// <summary>Which of the three entries the warning is about.</summary>
+        private enum SheetPrintKind
+        {
+            None,
+            Picture,
+            Pdf,
+            Printer
+        }
+
+        private SheetPrintKind _printKind;
+
+        /// <summary>
+        /// The cells a page will hold: the SELECTION — the print area the user chose — or, when the warning
+        /// was answered with "print the whole sheet", every row and column. False only when there is nothing
+        /// to print at all.
+        /// </summary>
+        private bool PrintArea(bool wholeSheet, out int firstRow, out int firstColumn, out int lastRow,
+            out int lastColumn)
+        {
+            if (wholeSheet)
+            {
+                firstRow = 1;
+                firstColumn = 1;
+                lastRow = RowCount;
+                lastColumn = ColumnCount;
+                return true;
+            }
+
+            firstRow = SelectionFirstRow();
+            firstColumn = SelectionFirstColumn();
+            lastRow = SelectionLastRow();
+            lastColumn = SelectionLastColumn();
+            return lastRow >= firstRow && lastColumn >= firstColumn;
+        }
+
+        /// <summary>True when the user has actually CHOSEN something to print: a block, a whole column or a
+        /// whole row — anything but the single cell that is selected by default. Clicking the corner above
+        /// the row numbers (or Ctrl+A) counts as chosen: that is a deliberate "all of it".</summary>
+        private bool HasPrintArea()
+        {
+            return SelectionFirstRow() != SelectionLastRow() ||
+                   SelectionFirstColumn() != SelectionLastColumn();
+        }
+
+        /// <summary>The area as "B4:D9", for the status line and the warning.</summary>
+        private string PrintAreaText(bool wholeSheet)
+        {
+            int firstRow;
+            int firstColumn;
+            int lastRow;
+            int lastColumn;
+            if (!PrintArea(wholeSheet, out firstRow, out firstColumn, out lastRow, out lastColumn))
+            {
+                return "nothing";
+            }
+
+            return CellName(firstRow, firstColumn) + ":" + CellName(lastRow, lastColumn);
+        }
+
+        /// <summary>A print or export entry was chosen: with an area selected it goes straight to the page
+        /// question, and with a bare single cell it warns first.</summary>
+        private void RequestPrint(SheetPrintKind kind)
+        {
+            if (HasPrintArea())
+            {
+                ShowOrientationChooser(kind, false);
+                return;
+            }
+
+            _printKind = kind;
+            ShowPrintWarning();
+        }
+
+        /// <summary>
+        /// The page question, asked before every job — there is no page-setup dialog yet, so this is where
+        /// the sheet learns which way round the paper is. The current choice is ticked and the highlight
+        /// STARTS on it, so Enter accepts the page as it already is; choosing one REMEMBERS it on the sheet
+        /// (<see cref="PrintOrientation"/>, which the designer's properties and a form's own XAML can set
+        /// too) and then runs the job; Cancel is a line of its own, so a job is never produced by accident.
+        /// </summary>
+        private void ShowOrientationChooser(SheetPrintKind kind, bool wholeSheet)
+        {
+            _printKind = kind;
+            var items = new List<SheetMenuItem>();
+            items.Add(new SheetMenuItem
+            {
+                Label = "Page orientation (A4)",
+                Hint = "the area is fitted to it",
+                Enabled = false
+            });
+            var current = -1;
+            items.Add(new SheetMenuItem
+            {
+                Label = "Portrait",
+                Hint = "taller than wide",
+                Ticked = PrintOrientation == SheetOrientation.Portrait,
+                Run = () => ChooseOrientation(SheetOrientation.Portrait, wholeSheet)
+            });
+            if (PrintOrientation == SheetOrientation.Portrait)
+            {
+                current = items.Count - 1;
+            }
+
+            items.Add(new SheetMenuItem
+            {
+                Label = "Landscape",
+                Hint = "wider than tall",
+                Ticked = PrintOrientation == SheetOrientation.Landscape,
+                Run = () => ChooseOrientation(SheetOrientation.Landscape, wholeSheet)
+            });
+            if (PrintOrientation == SheetOrientation.Landscape)
+            {
+                current = items.Count - 1;
+            }
+
+            items.Add(new SheetMenuItem { IsSeparator = true });
+            items.Add(new SheetMenuItem
+            {
+                Label = "Cancel",
+                Hint = "print nothing",
+                Run = CancelPrint
+            });
+
+            // Just under the toolbar, where the eye already is. ToolbarStrip is where the strip ENDS (it is
+            // the formula bar's top edge, and 0 when the strip is switched off).
+            var button = ToolbarButtonRect(ToolbarPrint);
+            OpenMenu(MenuKind.Setup, items, new Point(button.X, ToolbarStrip), PrintWarningWidth);
+            if (current >= 0)
+            {
+                _menuHot = current;
+            }
+        }
+
+        /// <summary>The orientation the user picked: remembered on the sheet, and then the job runs.</summary>
+        private void ChooseOrientation(SheetOrientation orientation, bool wholeSheet)
+        {
+            PrintOrientation = orientation;
+            RunPrint(_printKind, wholeSheet);
+        }
+
+        /// <summary>The answer that produces nothing, from the page question: the sheet is left exactly as
+        /// it was, and the status line says why nothing happened.</summary>
+        private void CancelPrint()
+        {
+            _printKind = SheetPrintKind.None;
+            SetStatus("Nothing was printed \u2014 the page orientation was not chosen");
+        }
+
+        /// <summary>Runs the entry the warning was about — with the whole sheet, now that the user said so.</summary>
+        private void RunPrint(SheetPrintKind kind, bool wholeSheet)
+        {
+            if (kind == SheetPrintKind.Picture)
+            {
+                _ = SaveAsPngAsync(wholeSheet);
+                return;
+            }
+
+#if PRINT_SUPPORT
+            if (kind == SheetPrintKind.Pdf)
+            {
+                _ = SaveAsPdfAsync(wholeSheet);
+                return;
+            }
+
+            if (kind == SheetPrintKind.Printer)
+            {
+                _ = PrintAsync(wholeSheet);
+            }
+#endif
+        }
+
+        /// <summary>
+        /// The warning, drawn with the same machinery as the right-click menu — a Control has no dialog of
+        /// its own, and the one time this file reached for platform popup plumbing (an Avalonia
+        /// `ContextMenu` for the right-click menu) it never appeared at all. <b>Abort</b> is the FIRST line,
+        /// so Enter and Escape both mean "no": printing the whole sheet has to be asked for twice.
+        /// </summary>
+        private void ShowPrintWarning()
+        {
+            var items = new List<SheetMenuItem>();
+            // Enabled = false, so the warning lines are not choosable — Enter and Escape then both land on
+            // Abort, which is the first ENABLED line.
+            items.Add(new SheetMenuItem { Label = "Nothing is selected to print.", Warning = true, Enabled = false });
+            items.Add(new SheetMenuItem
+            {
+                Label = "Select the cells that make the page,",
+                Warning = true,
+                Enabled = false
+            });
+            items.Add(new SheetMenuItem { Label = "or print the whole sheet.", Warning = true, Enabled = false });
+            items.Add(new SheetMenuItem { IsSeparator = true });
+            var pending = _printKind;
+            items.Add(new SheetMenuItem
+            {
+                Label = "Abort",
+                Hint = "print nothing",
+                Ticked = true,
+                Run = () => AbortPrint()
+            });
+            items.Add(new SheetMenuItem
+            {
+                Label = "Print the whole sheet",
+                Hint = "every row and column",
+                Run = () => ShowOrientationChooser(pending, true)
+            });
+
+            // Just under the toolbar, so the warning is where the eye already is. ToolbarStrip is where the
+            // strip ENDS (it is the formula bar's top edge, and 0 when the strip is switched off).
+            var button = ToolbarButtonRect(ToolbarPrint);
+            var at = new Point(button.X, ToolbarStrip);
+            OpenMenu(MenuKind.Warning, items, at, PrintWarningWidth);
+        }
+
+        /// <summary>The answer that prints nothing: the sheet is left exactly as it was.</summary>
+        private void AbortPrint()
+        {
+            _printKind = SheetPrintKind.None;
+            SetStatus("Nothing was printed \u2014 select the cells for the page, then try again");
+        }
+
+        /// <summary>
+        /// The page the three entries work on: the print area, with the driving chrome off, at the area's own
+        /// size — and put back exactly as it was when the using block ends.
+        ///
+        /// The AREA is the selection (the cells the user chose), unless the warning was answered with "print
+        /// the whole sheet". Either way the page carries the REAL column letters and row numbers, because the
+        /// sheet is SCROLLED to the area's first cell rather than redrawn somewhere else — which is also why
+        /// a scrolled sheet no longer prints its scrollbar position, and why "the whole sheet" finally means
+        /// the whole sheet on paper rather than the window that happened to be on screen.
+        /// </summary>
+        private PrintPage PageForPrinting(int firstRow, int firstColumn, int lastRow, int lastColumn)
+        {
+            return new PrintPage(this, firstRow, firstColumn, lastRow, lastColumn);
+        }
+
+        /// <summary>Off for the page, back on for the screen: chrome, scroll, size and the area itself.</summary>
+        private struct PrintPage : IDisposable
+        {
+            private GrumpySheet _sheet;
+            private bool _toolbar;
+            private bool _bar;
+            private bool _scrollBars;
+            private bool _range;
+            private double _scrollX;
+            private double _scrollY;
+            private double _width;
+            private double _height;
+            private int _firstRow;
+            private int _firstColumn;
+            private int _lastRow;
+            private int _lastColumn;
+
+            internal PrintPage(GrumpySheet sheet, int firstRow, int firstColumn, int lastRow, int lastColumn)
+            {
+                _sheet = sheet;
+                _toolbar = sheet.ShowToolbar;
+                _bar = sheet.ShowFormulaBar;
+                _scrollBars = sheet.ShowScrollBars;
+                _range = sheet._printRange;
+                _scrollX = sheet._scrollX;
+                _scrollY = sheet._scrollY;
+                _width = sheet.Width;
+                _height = sheet.Height;
+                _firstRow = sheet._printFirstRow;
+                _firstColumn = sheet._printFirstColumn;
+                _lastRow = sheet._printLastRow;
+                _lastColumn = sheet._printLastColumn;
+
+                sheet.ShowToolbar = false;
+                sheet.ShowFormulaBar = false;
+                sheet.ShowScrollBars = false;
+                sheet._printRange = true;
+                sheet._printFirstRow = firstRow;
+                sheet._printFirstColumn = firstColumn;
+                sheet._printLastRow = lastRow;
+                sheet._printLastColumn = lastColumn;
+                sheet._scrollX = sheet.ColumnOffset(firstColumn);
+                sheet._scrollY = sheet.RowOffset(firstRow);
+                var origin = sheet.GridOrigin;
+                sheet.Width = origin.X + sheet.ColumnOffset(lastColumn + 1) - sheet.ColumnOffset(firstColumn);
+                sheet.Height = origin.Y + sheet.RowOffset(lastRow + 1) - sheet.RowOffset(firstRow);
+                sheet.Measure(new Size(sheet.Width, sheet.Height));
+                sheet.Arrange(new Rect(0, 0, sheet.Width, sheet.Height));
+            }
+
+            /// <summary>Puts the sheet back exactly as it was, and lets the layout run again so the screen
+            /// gets its own size back.</summary>
+            public void Dispose()
+            {
+                if (_sheet == null)
+                {
+                    return;
+                }
+
+                _sheet._printRange = _range;
+                _sheet._printFirstRow = _firstRow;
+                _sheet._printFirstColumn = _firstColumn;
+                _sheet._printLastRow = _lastRow;
+                _sheet._printLastColumn = _lastColumn;
+                _sheet._scrollX = _scrollX;
+                _sheet._scrollY = _scrollY;
+                _sheet._printKind = SheetPrintKind.None;
+                _sheet.ShowToolbar = _toolbar;
+                _sheet.ShowFormulaBar = _bar;
+                _sheet.ShowScrollBars = _scrollBars;
+                _sheet.Width = _width;
+                _sheet.Height = _height;
+                _sheet.InvalidateMeasure();
+                _sheet.InvalidateVisual();
+            }
+        }
+
+        /// <summary>
+        /// The page the job is drawn on: A4, white, with the sheet — arranged at the print area's own size
+        /// by <see cref="PageForPrinting"/> — scaled to FIT inside the margin. Never stretched, so a wide
+        /// area and a tall one keep their proportions.
+        ///
+        /// A separate visual is needed because a page has a size of its own, and the whole point of the page
+        /// question is that this size CHANGES with the answer. The sheet is painted through a
+        /// <see cref="VisualBrush"/>, which keeps it VECTOR in the PDF, and the page is measured and arranged
+        /// before it is handed over: a backend draws what it is given and runs no layout pass for us, so an
+        /// un-laid-out page renders empty — a PDF whose size is right and whose paint is nothing. (The
+        /// bundled charts compose their page exactly this way.)
+        /// </summary>
+        private SheetPrintPage PageForOrientation()
+        {
+            var size = PageSize();
+            var page = new SheetPrintPage(this, size, PrintPageMargin);
+            page.Measure(size);
+            page.Arrange(new Rect(0, 0, size.Width, size.Height));
+            return page;
+        }
+
+        /// <summary>
+        /// The sheet AS A PAGE: white paper with the print area fitted inside the margin. Drawn by this one
+        /// small control rather than assembled out of panels and transforms, so the file keeps its promise
+        /// — no assets, no dependencies — and the same visual can be handed to a PDF, to the printer, or to
+        /// the PNG export without any of the three knowing about the others.
+        /// </summary>
+        private sealed class SheetPrintPage : Control
+        {
+            private readonly Control _sheet;
+            private readonly Size _page;
+            private readonly double _margin;
+
+            internal SheetPrintPage(Control sheet, Size page, double margin)
+            {
+                _sheet = sheet;
+                _page = page;
+                _margin = margin;
+                Width = page.Width;
+                Height = page.Height;
+            }
+
+            public override void Render(DrawingContext context)
+            {
+                var width = double.IsNaN(Width) || Width <= 0 ? _page.Width : Width;
+                var height = double.IsNaN(Height) || Height <= 0 ? _page.Height : Height;
+                context.FillRectangle(Brushes.White, new Rect(0, 0, width, height));
+                var margin = Math.Max(0, _margin);
+                var inner = new Rect(margin, margin, Math.Max(1, width - 2 * margin),
+                    Math.Max(1, height - 2 * margin));
+                context.DrawRectangle(new VisualBrush { Visual = _sheet, Stretch = Stretch.Uniform }, null,
+                    inner);
+            }
+        }
+
+#if PRINT_SUPPORT
+        /// <summary>
+        /// True when this machine can really put a page on paper: the platform's own printing service, or on
+        /// a Linux desktop the CUPS client the bundled GrumpyPrint drives. The same test the charts make,
+        /// and the reason the Print… row is greyed out rather than offering a click that does nothing.
+        /// </summary>
+        public static bool CanPrint
+        {
+            get
+            {
+                try { if (Printable.Default is not null) return true; } catch { }
+                // Fully qualified: GrumpyPrint is the SHARED bundled helper and lives in the charts' own
+                // namespace, which a sheet in AvaloniaSpreadsheet cannot see unqualified.
+                return AvaloniaCharts.GrumpyPrint.Available;
+            }
+        }
+
+        /// <summary>Save as PDF…: the platform's file dialog, then the PDF itself.</summary>
+        public async Task<bool> SaveAsPdfAsync(bool wholeSheet = false)
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.StorageProvider is not { } storage || _fileBusy)
+            {
+                return false;
+            }
+
+            _fileBusy = true;
+            try
+            {
+                var picker = new FilePickerSaveOptions
+                {
+                    Title = "Save the sheet as a PDF",
+                    SuggestedFileName = PageName() + ".pdf",
+                    DefaultExtension = "pdf",
+                    FileTypeChoices = new[]
+                    {
+                        new FilePickerFileType("PDF document") { Patterns = new[] { "*.pdf" } },
+                        new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                    },
+                    ShowOverwritePrompt = true
+                };
+                await SuggestFolder(storage, picker);
+                var file = await storage.SaveFilePickerAsync(picker);
+                var path = file?.TryGetLocalPath();
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return false;
+                }
+
+                var ok = await WritePdf(path!, wholeSheet);
+                if (ok)
+                {
+                    SheetPickerMemory.LastExportFolder = FolderOf(path);
+                }
+
+                return ok;
+            }
+            catch (Exception error)
+            {
+                SetStatus("Could not write the PDF: " + error.Message);
+                return false;
+            }
+            finally
+            {
+                _fileBusy = false;
+            }
+        }
+
+        /// <summary>Writes the sheet to a PDF file (Skia vector output — no printer is involved).</summary>
+        public async Task<bool> WritePdf(string path, bool wholeSheet = false)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            try
+            {
+                int firstRow;
+                int firstColumn;
+                int lastRow;
+                int lastColumn;
+                if (!PrintArea(wholeSheet, out firstRow, out firstColumn, out lastRow, out lastColumn))
+                {
+                    return false;
+                }
+
+                using (var page = PageForPrinting(firstRow, firstColumn, lastRow, lastColumn))
+                {
+                    await Print.ToFileAsync(path, new Visual[] { PageForOrientation() });
+                }
+
+                SetStatus("Saved " + System.IO.Path.GetFileName(path) + " \u2014 " +
+                          PrintAreaText(wholeSheet) + ", " + PageText());
+                return true;
+            }
+            catch (Exception error)
+            {
+                SetStatus("Could not write the PDF: " + error.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Print…: hands the page to the printer, through the platform's service or CUPS.</summary>
+        public async Task<bool> PrintAsync(bool wholeSheet = false)
+        {
+            if (!CanPrint)
+            {
+                SetStatus("Nothing here can print \u2014 Save as PDF\u2026 needs no printer");
+                return false;
+            }
+
+            try
+            {
+                int firstRow;
+                int firstColumn;
+                int lastRow;
+                int lastColumn;
+                if (!PrintArea(wholeSheet, out firstRow, out firstColumn, out lastRow, out lastColumn))
+                {
+                    return false;
+                }
+
+                using (var page = PageForPrinting(firstRow, firstColumn, lastRow, lastColumn))
+                {
+                    var visuals = new Visual[] { PageForOrientation() };
+                    if (Printable.Default is not null)
+                    {
+                        await Printable.PrintVisualsAsync(visuals, PageName());
+                    }
+                    else
+                    {
+                        // CUPS again, and this time it is TOLD what the page is. The PDF's own page box is
+                        // not enough: pdftopdf transforms the page according to the JOB's options, so a
+                        // queue whose saved defaults say portrait (a user's ~/.cups/lpoptions can pin it)
+                        // prints a landscape page the wrong way round. Measured 2026-09-27: one and the same
+                        // PDF came out wrong with no options and right with orientation-requested=4.
+                        await AvaloniaCharts.GrumpyPrint.PrintAsync(visuals[0], PageName(), null,
+                            new AvaloniaCharts.PrintPageSettings
+                            {
+                                Landscape = PrintOrientation == SheetOrientation.Landscape,
+                                PaperSize = PrintPaperName
+                            });
+                    }
+                }
+
+                SetStatus("Sent " + PageName() + " (" + PrintAreaText(wholeSheet) + ", " + PageText() +
+                          ") to the printer");
+                return true;
+            }
+            catch (Exception error)
+            {
+                SetStatus("Could not print: " + error.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The driving chrome off for a page, and back on when the using block ends — the whole page scope,
+        /// including the print area, lives in <see cref="PageForPrinting"/> now, outside this guard, because
+        /// the PNG export needs it too.
+        /// </summary>
+#endif
+
+        /// <summary>
+        /// The workbook half of Load…/Save…: the zip, the parts, and the two directions of translation.
+        /// Nested rather than spread through the control because none of it needs the sheet's state — the
+        /// control's own Save/Load methods above are the door into it.
+        /// </summary>
+        private static class Xlsx
+        {
+            private const string Main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+            // ---- writing --------------------------------------------------------------------------
+
+            /// <summary>Writes one page: the cells, the formats they use, and the part that names them.</summary>
+            internal static void Write(GrumpySheet sheet, string path)
+            {
+                var styles = new StyleTable(sheet);
+                var body = new System.Text.StringBuilder();
+                var cells = Body(sheet, styles, body);
+
+                using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
+                    {
+                        Entry(zip, "[Content_Types].xml",
+                            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
+                            "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\" />" +
+                            "<Default Extension=\"xml\" ContentType=\"application/xml\" />" +
+                            "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\" />" +
+                            "<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\" />" +
+                            "<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\" />" +
+                            "</Types>");
+                        Entry(zip, "_rels/.rels",
+                            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\" />" +
+                            "</Relationships>");
+                        Entry(zip, "xl/workbook.xml",
+                            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                            "<workbook xmlns=\"" + Main + "\" " +
+                            "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">" +
+                            "<sheets><sheet name=\"" + Text(sheet.PageName()) + "\" sheetId=\"1\" r:id=\"rId1\" /></sheets>" +
+                            "</workbook>");
+                        Entry(zip, "xl/_rels/workbook.xml.rels",
+                            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\" />" +
+                            "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\" />" +
+                            "</Relationships>");
+                        Entry(zip, "xl/styles.xml", styles.Document());
+                        Entry(zip, "xl/worksheets/sheet1.xml",
+                            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                            "<worksheet xmlns=\"" + Main + "\">" +
+                            "<sheetViews><sheetView workbookViewId=\"0\" /></sheetViews>" +
+                            "<sheetFormatPr defaultRowHeight=\"" + Number(PixelsToPoints(sheet.RowHeight)) + "\" />" +
+                            sheet.ColumnsElement() +
+                            "<sheetData>" + body + "</sheetData></worksheet>");
+                    }
+                }
+
+                Trace.WriteLine("GrumpySheet: saved " + cells + " cells to " + path);
+            }
+
+            /// <summary>The rows of the sheet, as XML: only the cells that exist, so an empty sheet writes
+            /// an empty sheetData. A formula goes in twice — its text, and what it worked out to.</summary>
+            private static int Body(GrumpySheet sheet, StyleTable styles, System.Text.StringBuilder body)
+            {
+                var written = 0;
+                for (var row = 1; row <= sheet.RowCount; row++)
+                {
+                    var rowXml = new System.Text.StringBuilder();
+                    for (var column = 1; column <= sheet.ColumnCount; column++)
+                    {
+                        var cell = sheet.FindCell(row, column);
+                        if (cell == null)
+                        {
+                            continue;
+                        }
+
+                        var text = cell.Text ?? string.Empty;
+                        if (text.Length == 0 && !cell.Fill.HasValue)
+                        {
+                            continue;               // nothing to say and nothing to show
+                        }
+
+                        written++;
+                        rowXml.Append(OneCell(sheet, styles, cell, row, column, text));
+                    }
+
+                    if (rowXml.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var height = sheet.RowHeightOf(row);
+                    var own = Math.Abs(height - sheet.RowHeight) > 0.01;
+                    body.Append("<row r=\"").Append(row).Append('"');
+                    if (own)
+                    {
+                        body.Append(" ht=\"").Append(Number(PixelsToPoints(height)))
+                            .Append("\" customHeight=\"1\"");
+                    }
+
+                    body.Append('>').Append(rowXml).Append("</row>");
+                }
+
+                return written;
+            }
+
+            /// <summary>One cell: a number, a formula with its result, or text — plus its own format when it
+            /// has one (no `s` at all means "the plain format", which is index 0).</summary>
+            private static string OneCell(GrumpySheet sheet, StyleTable styles, SheetCell cell, int row,
+                int column, string text)
+            {
+                var address = GrumpySheet.CellName(row, column);
+                var style = styles.Format(cell);
+                var s = style > 0 ? " s=\"" + style + "\"" : string.Empty;
+                if (text.Length > 0 && text[0] == '=')
+                {
+                    // A formula keeps its text AND the value it worked out, so a reader that does not
+                    // calculate (or a print preview) still shows the answer.
+                    var value = sheet.ValueOf(row, column);
+                    var cache = LooksNumeric(value) ? "<v>" + Number(ValueNumber(value)) + "</v>" : string.Empty;
+                    return "<c r=\"" + address + "\"" + s + "><f>" + Text(text.Substring(1)) + "</f>" + cache + "</c>";
+                }
+
+                if (text.Length > 0 && LooksNumeric(text))
+                {
+                    return "<c r=\"" + address + "\"" + s + "><v>" + Number(ValueNumber(text)) + "</v></c>";
+                }
+
+                if (text.Length == 0)
+                {
+                    return "<c r=\"" + address + "\"" + s + " />";      // a highlight with nothing in it
+                }
+
+                // Inline strings, not a shared table: the type attribute is what tells every reader these
+                // characters are a STRING, and it is the one thing a hand-written cell part gets wrong.
+                return "<c r=\"" + address + "\"" + s + " t=\"inlineStr\"><is><t>" + Text(text) +
+                       "</t></is></c>";
+            }
+
+            /// <summary>The value text a cell draws as a number, as a double. Only ever called for text
+            /// that already looks numeric.</summary>
+            private static double ValueNumber(string text)
+            {
+                double value;
+                return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                    ? value : 0d;
+            }
+
+            /// <summary>A number as XML: invariant, and never in exponent form for ordinary sizes —
+            /// "1E-05" is legal but unreadable in a cell someone opens in Excel.</summary>
+            private static string Number(double value)
+            {
+                var text = value.ToString("0.######", CultureInfo.InvariantCulture);
+                return text.Length == 0 ? "0" : text;
+            }
+
+            /// <summary>Text as XML: the five characters that would break the part are escaped, and the
+            /// control characters XML cannot carry at all are dropped.</summary>
+            internal static string Text(string text)
+            {
+                var builder = new System.Text.StringBuilder(text.Length + 8);
+                for (var i = 0; i < text.Length; i++)
+                {
+                    var c = text[i];
+                    if (c == '&') builder.Append("&amp;");
+                    else if (c == '<') builder.Append("&lt;");
+                    else if (c == '>') builder.Append("&gt;");
+                    else if (c == '"') builder.Append("&quot;");
+                    else if (c < ' ' && c != '\t' && c != '\n' && c != '\r') continue;
+                    else builder.Append(c);
+                }
+
+                return builder.ToString();
+            }
+
+            private static void Entry(ZipArchive zip, string name, string xml)
+            {
+                var entry = zip.CreateEntry(name, CompressionLevel.Optimal);
+                using (var stream = entry.Open())
+                {
+                    var bytes = new System.Text.UTF8Encoding(false).GetBytes(xml);
+                    stream.Write(bytes, 0, bytes.Length);
+                }
+            }
+
+            // ---- the format tables ------------------------------------------------------------------
+
+            /// <summary>
+            /// Excel names every look twice over: a font table, a fill table, and a table of CELL FORMATS
+            /// that points into both, which is what a cell's `s` index selects. Two cells that look the same
+            /// share one entry — a 10 000-cell sheet of plain numbers still writes three entries.
+            /// </summary>
+            private sealed class StyleTable
+            {
+                private readonly GrumpySheet _sheet;
+                private readonly List<string> _fonts = new List<string>();
+                private readonly List<string> _fills = new List<string>();
+                private readonly List<string> _formats = new List<string>();
+                private readonly Dictionary<string, int> _fontAt = new Dictionary<string, int>(StringComparer.Ordinal);
+                private readonly Dictionary<string, int> _fillAt = new Dictionary<string, int>(StringComparer.Ordinal);
+                private readonly Dictionary<string, int> _formatAt = new Dictionary<string, int>(StringComparer.Ordinal);
+
+                internal StyleTable(GrumpySheet sheet)
+                {
+                    _sheet = sheet;
+                    _fills.Add("<fill><patternFill /></fill>");                          // 0: no fill
+                    _fills.Add("<fill><patternFill patternType=\"gray125\" /></fill>");  // 1: Excel's own
+                    _fonts.Add(FontXml(false, false, sheet.FontSize, sheet.FontFamilyName ?? string.Empty, null));
+                    _formats.Add("<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" />");
+                }
+
+                /// <summary>This cell's format index, or 0 for "nothing of its own" — which is what makes a
+                /// plain cell a short element with no `s` at all.</summary>
+                internal int Format(SheetCell cell)
+                {
+                    var bold = cell.Bold;
+                    var italic = cell.Italic;
+                    var size = cell.FontSize > 0 ? cell.FontSize : _sheet.FontSize;
+                    var family = string.IsNullOrWhiteSpace(cell.FontFamily)
+                        ? _sheet.FontFamilyName ?? string.Empty : cell.FontFamily!;
+                    var text = cell.TextColor;
+                    var fill = cell.Fill;
+
+                    var fontKey = Flag(bold) + Flag(italic) + Number(size) + "|" + family + "|" +
+                                  (text.HasValue ? Rgb(text.Value) : "-");
+                    var font = Intern(_fonts, _fontAt, fontKey,
+                        FontXml(bold, italic, size, family, text));
+                    var fillId = fill.HasValue
+                        ? Intern(_fills, _fillAt, Rgb(fill.Value),
+                            "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"" + Rgb(fill.Value) +
+                            "\" /><bgColor indexed=\"64\" /></patternFill></fill>")
+                        : 0;
+                    var align = cell.TextAlign == SheetAlign.Left ? "left"
+                        : cell.TextAlign == SheetAlign.Center ? "center"
+                        : cell.TextAlign == SheetAlign.Right ? "right" : string.Empty;
+                    if (font == 0 && fillId == 0 && align.Length == 0)
+                    {
+                        return 0;
+                    }
+
+                    var format = Intern(_formats, _formatAt, font + "|" + fillId + "|" + align,
+                        "<xf numFmtId=\"0\" fontId=\"" + font + "\" fillId=\"" + fillId +
+                        "\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"" +
+                        (align.Length == 0 ? " />"
+                            : " applyAlignment=\"1\"><alignment horizontal=\"" + align + "\" /></xf>"));
+                    return format;
+                }
+
+                /// <summary>The whole styles part, with each table's count beside it (Excel ignores the
+                /// counts and reads the tables, but LibreOffice is happier when they agree).</summary>
+                internal string Document()
+                {
+                    return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                           "<styleSheet xmlns=\"" + Main + "\">" +
+                           "<fonts count=\"" + _fonts.Count + "\">" + string.Concat(_fonts) + "</fonts>" +
+                           "<fills count=\"" + _fills.Count + "\">" + string.Concat(_fills) + "</fills>" +
+                           "<borders count=\"1\"><border><left /><right /><top /><bottom /><diagonal /></border></borders>" +
+                           "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" /></cellStyleXfs>" +
+                           "<cellXfs count=\"" + _formats.Count + "\">" + string.Concat(_formats) + "</cellXfs>" +
+                           "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\" /></cellStyles>" +
+                           "</styleSheet>";
+                }
+
+                private static string FontXml(bool bold, bool italic, double size, string family,
+                    Color? text)
+                {
+                    return "<font><name val=\"" + Text(family.Length == 0 ? "Calibri" : family) + "\" />" +
+                           (bold ? "<b />" : string.Empty) + (italic ? "<i />" : string.Empty) +
+                           (text.HasValue ? "<color rgb=\"" + Rgb(text.Value) + "\" />" : string.Empty) +
+                           "<sz val=\"" + Number(size) + "\" /></font>";
+                }
+
+                private static int Intern(List<string> table, Dictionary<string, int> at, string key,
+                    string xml)
+                {
+                    int found;
+                    if (at.TryGetValue(key, out found))
+                    {
+                        return found;
+                    }
+
+                    table.Add(xml);
+                    at[key] = table.Count - 1;
+                    return table.Count - 1;
+                }
+
+                private static string Flag(bool on)
+                {
+                    return on ? "1" : "0";
+                }
+            }
+
+            /// <summary>A colour as the eight hexadecimal digits a workbook uses — ARGB, opaque.</summary>
+            internal static string Rgb(Color color)
+            {
+                return "FF" + color.R.ToString("X2", CultureInfo.InvariantCulture)
+                    + color.G.ToString("X2", CultureInfo.InvariantCulture)
+                    + color.B.ToString("X2", CultureInfo.InvariantCulture);
+            }
+
+            // ---- reading --------------------------------------------------------------------------
+
+            /// <summary>The workbook's page names in order. An unreadable file simply has none.</summary>
+            internal static List<string> Pages(string path)
+            {
+                var pages = new List<string>();
+                try
+                {
+                    using (var zip = Open(path))
+                    {
+                        var book = Part(zip, "xl/workbook.xml");
+                        if (book == null)
+                        {
+                            return pages;
+                        }
+
+                        foreach (var element in book.Descendants())
+                        {
+                            if (element.Name.LocalName == "sheet")
+                            {
+                                var name = element.Attribute("name");
+                                pages.Add(name == null ? string.Empty : name.Value);
+                            }
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    // Not a workbook, or not readable: the caller treats "no pages" as "no file to load".
+                }
+
+                return pages;
+            }
+
+            /// <summary>
+            /// Reads one page into the sheet and answers how many cells it put there. Everything the sheet
+            /// already held is cleared first; the sheet grows to fit the page, never shrinks to it.
+            /// </summary>
+            internal static int Read(GrumpySheet sheet, string path, string? page)
+            {
+                using (var zip = Open(path))
+                {
+                    var book = Part(zip, "xl/workbook.xml");
+                    var part = SheetPart(zip, book, page);
+                    if (part == null)
+                    {
+                        return -1;                      // no such page: the caller says so rather than
+                    }                                   // reporting an empty load as a success
+
+                    var shared = Shared(zip);
+                    var formats = Formats(zip);
+                    var cells = Part(zip, part);
+                    if (cells == null)
+                    {
+                        return -1;
+                    }
+                    var built = new List<SheetCell>();
+                    var widths = new Dictionary<int, double>();
+                    var heights = new Dictionary<int, double>();
+                    var lastRow = 0;
+                    var lastColumn = 0;
+                    var kept = 0;
+                    foreach (var row in cells.Descendants())
+                    {
+                        if (row.Name.LocalName == "col")
+                        {
+                            ReadColumn(row, widths);        // <cols> sits beside the rows, not inside them
+                            continue;
+                        }
+
+                        if (row.Name.LocalName != "row")
+                        {
+                            continue;
+                        }
+
+                        var number = Attribute(row, "r");
+                        var at = 0;
+                        if (number != null)
+                        {
+                            int.TryParse(number, NumberStyles.Integer, CultureInfo.InvariantCulture, out at);
+                        }
+
+                        if (at <= 0)
+                        {
+                            continue;                       // a row with no number cannot be placed
+                        }
+
+                        var height = Attribute(row, "ht");
+                        double points;
+                        if (height != null && double.TryParse(height, NumberStyles.Float,
+                                CultureInfo.InvariantCulture, out points) && points > 0)
+                        {
+                            heights[at] = PointsToPixels(points);
+                        }
+
+                        foreach (var cell in row.Elements())
+                        {
+                            if (cell.Name.LocalName != "c")
+                            {
+                                continue;
+                            }
+
+                            var built2 = Cell(cell, shared, formats);
+                            if (built2 == null)
+                            {
+                                continue;
+                            }
+
+                            lastRow = Math.Max(lastRow, built2.Row);
+                            lastColumn = Math.Max(lastColumn, built2.Column);
+                            kept++;
+                            built.Add(built2);
+                        }
+                    }
+
+                    // Grow — never shrink — and only then fill: a page smaller than the sheet leaves the
+                    // sheet's own shape alone, which is what a form that sized its grid wants.
+                    sheet.Cells.Clear();
+                    sheet.ClearSizes();
+                    sheet.Rows = Math.Max(sheet.Rows, Math.Max(1, lastRow));
+                    sheet.Columns = Math.Max(sheet.Columns, Math.Max(1, lastColumn));
+                    sheet.Cells.AddRange(built);
+                    foreach (var pair in widths)
+                    {
+                        sheet.SetColumnWidth(pair.Key, pair.Value);
+                    }
+
+                    foreach (var pair in heights)
+                    {
+                        sheet.SetRowHeight(pair.Key, pair.Value);
+                    }
+
+                    sheet.InvalidateValues();
+                    return kept;
+                }
+            }
+
+            /// <summary>A workbook part by name, or null. The lookup is case-insensitive because a file
+            /// written on Windows may spell its own parts either way.</summary>
+            private static XDocument? Part(ZipArchive zip, string name)
+            {
+                foreach (var entry in zip.Entries)
+                {
+                    if (string.Equals(entry.FullName, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        using (var stream = entry.Open())
+                        {
+                            return XDocument.Load(stream);
+                        }
+                    }
+                }
+
+                return null;
+            }
+
+            private static XDocument? Element(ZipArchive zip, string name)
+            {
+                return Part(zip, name);
+            }
+
+            /// <summary>A pixel width as the character width a workbook stores, as text.</summary>
+            internal static string WidthNumber(double pixels)
+            {
+                return Number(PixelsToWidth(pixels));
+            }
+
+            private static ZipArchive Open(string path)
+            {
+                // ReadWrite sharing: a workbook the user still has open in Excel is exactly the one they
+                // are most likely to load from.
+                return new ZipArchive(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite),
+                    ZipArchiveMode.Read);
+            }
+
+            private static string? Attribute(XElement element, string name)
+            {
+                var attribute = element.Attribute(name);
+                return attribute == null ? null : attribute.Value;
+            }
+
+            /// <summary>The sheet part to read: the page asked for by name, else the first one. The r:id on
+            /// each sheet is resolved through the workbook's relationships, so the order of the PARTS in the
+            /// zip does not matter — only the order of the pages in the workbook does.</summary>
+            private static string? SheetPart(ZipArchive zip, XDocument? book, string? page)
+            {
+                if (book == null)
+                {
+                    return null;
+                }
+
+                string? wanted = null;
+                string? first = null;
+                foreach (var element in book.Descendants())
+                {
+                    if (element.Name.LocalName != "sheet")
+                    {
+                        continue;
+                    }
+
+                    var id = RelationshipOf(element);
+                    if (first == null)
+                    {
+                        first = id;
+                    }
+
+                    var name = Attribute(element, "name") ?? string.Empty;
+                    if (page != null && string.Equals(name, page, StringComparison.OrdinalIgnoreCase))
+                    {
+                        wanted = id;
+                        break;
+                    }
+                }
+
+                var wantedId = wanted ?? first;         // a page that is not there falls back to the first
+                if (wantedId == null)
+                {
+                    return null;
+                }
+
+                var rels = Part(zip, "xl/_rels/workbook.xml.rels");
+                if (rels == null)
+                {
+                    return null;
+                }
+
+                foreach (var element in rels.Descendants())
+                {
+                    // "Relationship", capitalised — the one name in these parts that is, so it is compared
+                    // without regard to case rather than trusting to a spelling nobody can remember.
+                    if (!string.Equals(element.Name.LocalName, "relationship", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(Attribute(element, "Id"), wantedId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var target = Attribute(element, "Target") ?? string.Empty;
+                    var trimmed = target.Replace('\\', '/').Trim();
+                    if (trimmed.StartsWith("/", StringComparison.Ordinal))
+                    {
+                        trimmed = trimmed.TrimStart('/');
+                    }
+                    else
+                    {
+                        trimmed = "xl/" + trimmed;
+                    }
+
+                    while (trimmed.Contains("../", StringComparison.Ordinal))
+                    {
+                        var at = trimmed.IndexOf("../", StringComparison.Ordinal);
+                        var cut = trimmed.LastIndexOf('/', Math.Max(0, at - 1));
+                        trimmed = cut <= 0 ? trimmed.Substring(at + 3)
+                            : trimmed.Substring(0, cut + 1) + trimmed.Substring(at + 3);
+                    }
+
+                    return trimmed;
+                }
+
+                return null;
+            }
+
+            /// <summary>A sheet element's relationship id. It is written namespaced — <c>r:id</c> — so it
+            /// is found by its LOCAL name, the way every other part of this reader is read.</summary>
+            private static string? RelationshipOf(XElement sheet)
+            {
+                foreach (var attribute in sheet.Attributes())
+                {
+                    if (attribute.Name.LocalName == "id")
+                    {
+                        return attribute.Value;
+                    }
+                }
+
+                return null;
+            }
+
+            /// <summary>The workbook's shared strings, in order. A file with none (this control writes
+            /// inline strings) simply gets an empty table.</summary>
+            private static List<string> Shared(ZipArchive zip)
+            {
+                var strings = new List<string>();
+                var part = Part(zip, "xl/sharedStrings.xml");
+                if (part == null)
+                {
+                    return strings;
+                }
+
+                foreach (var element in part.Descendants())
+                {
+                    if (element.Name.LocalName == "si")
+                    {
+                        var builder = new System.Text.StringBuilder();
+                        foreach (var text in element.Descendants())
+                        {
+                            if (text.Name.LocalName == "t")
+                            {
+                                builder.Append(text.Value);
+                            }
+                        }
+
+                        strings.Add(builder.ToString());
+                    }
+                }
+
+                return strings;
+            }
+
+            /// <summary>One cell, translated: its text (a formula keeps its '='), and whatever formatting
+            /// the file gives it. Null for a cell with nothing to say and nothing to show.</summary>
+            private static SheetCell? Cell(XElement cell, List<string> shared, List<CellFormat> formats)
+            {
+                var reference = Attribute(cell, "r");
+                var row = 0;
+                var column = 0;
+                if (reference == null || !GrumpySheet.ParseCellName(reference, out row, out column))
+                {
+                    return null;
+                }
+
+                var text = string.Empty;
+                var formula = string.Empty;
+                foreach (var child in cell.Elements())
+                {
+                    if (child.Name.LocalName == "f")
+                    {
+                        formula = "=" + child.Value;
+                        continue;
+                    }
+
+                    if (child.Name.LocalName != "v")
+                    {
+                        continue;
+                    }
+
+                    var type = Attribute(cell, "t");
+                    if (type == "s")
+                    {
+                        var at = 0;
+                        if (int.TryParse(child.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out at) &&
+                            at >= 0 && at < shared.Count)
+                        {
+                            text = shared[at];
+                        }
+                    }
+                    else if (type == "b")
+                    {
+                        text = child.Value == "1" ? "TRUE" : "FALSE";
+                    }
+                    else
+                    {
+                        text = child.Value;
+                    }
+                }
+
+                if (formula.Length > 0)
+                {
+                    text = formula;                     // the sheet works its own answers out again
+                }
+                else if (text.Length == 0)
+                {
+                    var inline = InlineText(cell);
+                    if (inline != null)
+                    {
+                        text = inline;
+                    }
+                }
+
+                var style = Attribute(cell, "s");
+                var styleAt = 0;
+                if (style != null)
+                {
+                    int.TryParse(style, NumberStyles.Integer, CultureInfo.InvariantCulture, out styleAt);
+                }
+
+                var format = styleAt >= 0 && styleAt < formats.Count ? formats[styleAt] : null;
+                if (text.Length == 0 && (format == null || !format.Fill.HasValue))
+                {
+                    return null;                        // neither a value nor a highlight: nothing to carry
+                }
+
+                var built = new SheetCell { Row = row, Column = column, Text = text };
+                if (format != null)
+                {
+                    built.Bold = format.Bold;
+                    built.Italic = format.Italic;
+                    built.FontSize = format.Size;
+                    built.FontFamily = format.Family;
+                    built.TextColor = format.Text;
+                    built.Fill = format.Fill;
+                    built.TextAlign = format.Align;
+                }
+
+                return built;
+            }
+
+            /// <summary>An inline string's text (this control's own spelling), or null when the cell has
+            /// no inline string at all.</summary>
+            private static string? InlineText(XElement cell)
+            {
+                if (Attribute(cell, "t") != "inlineStr")
+                {
+                    return null;
+                }
+
+                var builder = new System.Text.StringBuilder();
+                foreach (var text in cell.Descendants())
+                {
+                    if (text.Name.LocalName == "t")
+                    {
+                        builder.Append(text.Value);
+                    }
+                }
+
+                return builder.ToString();
+            }
+
+            /// <summary>One `<col>`: its width and the columns it covers. Excel stores a width in
+            /// characters, and only the columns that differ from the sheet's default carry one.</summary>
+            private static void ReadColumn(XElement col, Dictionary<int, double> widths)
+            {
+                var width = Attribute(col, "width");
+                double characters;
+                if (width == null ||
+                    !double.TryParse(width, NumberStyles.Float, CultureInfo.InvariantCulture, out characters))
+                {
+                    return;
+                }
+
+                var first = 0;
+                var last = 0;
+                int.TryParse(Attribute(col, "min") ?? string.Empty, NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out first);
+                int.TryParse(Attribute(col, "max") ?? string.Empty, NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out last);
+                if (first <= 0)
+                {
+                    return;
+                }
+
+                if (last < first)
+                {
+                    last = first;
+                }
+
+                for (var column = first; column <= last; column++)
+                {
+                    widths[column] = WidthToPixels(characters);
+                }
+            }
+
+            /// <summary>One look, read out of the styles part: everything a cell of that format carries.</summary>
+            private sealed class CellFormat
+            {
+                internal bool Bold;
+                internal bool Italic;
+                internal double Size;
+                internal string? Family;
+                internal Color? Text;
+                internal Color? Fill;
+                internal SheetAlign Align = SheetAlign.Auto;
+            }
+
+            /// <summary>The styles part, as a lookup from a cell's `s` index to what it means.</summary>
+            private static List<CellFormat> Formats(ZipArchive zip)
+            {
+                var list = new List<CellFormat>();
+                var styles = Part(zip, "xl/styles.xml");
+                if (styles == null)
+                {
+                    return list;
+                }
+
+                var fonts = new List<XElement>();
+                var fills = new List<XElement>();
+                var xfs = new List<XElement>();
+                foreach (var element in styles.Descendants())
+                {
+                    if (element.Name.LocalName == "font" && element.Parent != null &&
+                        element.Parent.Name.LocalName == "fonts")
+                    {
+                        fonts.Add(element);
+                    }
+                    else if (element.Name.LocalName == "fill" && element.Parent != null &&
+                             element.Parent.Name.LocalName == "fills")
+                    {
+                        fills.Add(element);
+                    }
+                    else if (element.Name.LocalName == "xf" && element.Parent != null &&
+                             element.Parent.Name.LocalName == "cellXfs")
+                    {
+                        xfs.Add(element);
+                    }
+                }
+
+                foreach (var xf in xfs)
+                {
+                    var format = new CellFormat();
+                    var font = At(fonts, Attribute(xf, "fontId"));
+                    if (font != null)
+                    {
+                        format.Bold = Has(font, "b");
+                        format.Italic = Has(font, "i");
+                        foreach (var child in font.Elements())
+                        {
+                            if (child.Name.LocalName == "sz")
+                            {
+                                double size;
+                                if (double.TryParse(Attribute(child, "val") ?? string.Empty, NumberStyles.Float,
+                                        CultureInfo.InvariantCulture, out size) && size > 0)
+                                {
+                                    format.Size = size;
+                                }
+                            }
+                            else if (child.Name.LocalName == "name")
+                            {
+                                format.Family = Attribute(child, "val");
+                            }
+                            else if (child.Name.LocalName == "color")
+                            {
+                                format.Text = Colour(child);
+                            }
+                        }
+                    }
+
+                    var fill = At(fills, Attribute(xf, "fillId"));
+                    if (fill != null)
+                    {
+                        foreach (var child in fill.Descendants())
+                        {
+                            if (child.Name.LocalName == "fgColor")
+                            {
+                                format.Fill = Colour(child);        // a solid pattern's colour is here
+                            }
+                        }
+                    }
+
+                    foreach (var child in xf.Descendants())
+                    {
+                        if (child.Name.LocalName != "alignment")
+                        {
+                            continue;
+                        }
+
+                        var horizontal = Attribute(child, "horizontal");
+                        format.Align = horizontal == "center" ? SheetAlign.Center
+                            : horizontal == "right" ? SheetAlign.Right
+                            : horizontal == "left" ? SheetAlign.Left
+                            : SheetAlign.Auto;
+                    }
+
+                    list.Add(format);
+                }
+
+                return list;
+            }
+
+            private static XElement? At(List<XElement> list, string? index)
+            {
+                var at = 0;
+                if (index != null)
+                {
+                    int.TryParse(index, NumberStyles.Integer, CultureInfo.InvariantCulture, out at);
+                }
+
+                return at >= 0 && at < list.Count ? list[at] : null;
+            }
+
+            /// <summary>Does this element have a child of that name? (A loop, not LINQ: a bundled file
+            /// must compile in a host project that imports nothing it does not import itself.)</summary>
+            private static bool Has(XElement element, string name)
+            {
+                foreach (var child in element.Elements())
+                {
+                    if (child.Name.LocalName == name)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            /// <summary>A colour element as a colour: the six RGB digits of an eight-digit value. A
+            /// THEME colour (what Excel writes for the default text) answers null, so the cell keeps the
+            /// sheet's own colour instead of guessing at a theme it cannot see.</summary>
+            private static Color? Colour(XElement element)
+            {
+                var rgb = Attribute(element, "rgb");
+                if (string.IsNullOrWhiteSpace(rgb))
+                {
+                    return null;
+                }
+
+                var digits = rgb!.Trim();
+                if (digits.Length == 8)
+                {
+                    digits = digits.Substring(2);           // drop the alpha: the sheet's colours are opaque
+                }
+
+                byte r = 0;
+                byte g = 0;
+                byte b = 0;
+                if (digits.Length != 6 ||
+                    !byte.TryParse(digits.Substring(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out r) ||
+                    !byte.TryParse(digits.Substring(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out g) ||
+                    !byte.TryParse(digits.Substring(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out b))
+                {
+                    return null;
+                }
+
+                return Color.FromArgb(255, r, g, b);
+            }
+        }
+
+        /// <summary>The `<cols>` element for the columns a border was dragged on, or nothing when they are
+        /// all the sheet's own width.</summary>
+        private string ColumnsElement()
+        {
+            var element = string.Empty;
+            for (var column = 1; column <= ColumnCount; column++)
+            {
+                var width = ColumnWidthOf(column);
+                if (Math.Abs(width - ColumnWidth) <= 0.01)
+                {
+                    continue;
+                }
+
+                element += "<col min=\"" + column + "\" max=\"" + column + "\" width=\"" +
+                           Xlsx.WidthNumber(width) + "\" customWidth=\"1\" />";
+            }
+
+            return element.Length == 0 ? string.Empty : "<cols>" + element + "</cols>";
+        }
 
         // ---- formulas ---------------------------------------------------------------------------
         // What each formula cell works out to, kept until any cell's text changes (see InvalidateValues).
@@ -338,6 +2310,29 @@ namespace AvaloniaSpreadsheet
         private readonly Dictionary<int, double> _columnWidths = new Dictionary<int, double>();
         private readonly Dictionary<int, double> _rowHeights = new Dictionary<int, double>();
         private double[]? _columnOffsets;
+
+        /// <summary>What the last file or print action did, shown at the right of the toolbar. Empty until
+        /// something happens, so an untouched sheet has a clean strip.</summary>
+        private string _status = string.Empty;
+
+        /// <summary>True while a file dialog, a load, a save or a print job is in flight: one at a time, so
+        /// a double click cannot start two pickers.</summary>
+        private bool _fileBusy;
+
+        /// <summary>Puts a line in the toolbar's status area — how Load…, Save… and Print… report back
+        /// without a message box, which a control this size has no business opening.</summary>
+        private void SetStatus(string text)
+        {
+            _status = text ?? string.Empty;
+            InvalidateVisual();
+        }
+
+        /// <summary>What the last Load…, Save… or Print… did: the same line the toolbar shows. Empty until
+        /// one of them has run, and readable from a form that wants to log it.</summary>
+        public string StatusText
+        {
+            get { return _status; }
+        }
         private double[]? _rowOffsets;
 
         // Dragging a border. Only one track is ever being resized, so a pair of fields per axis is enough
@@ -362,12 +2357,13 @@ namespace AvaloniaSpreadsheet
         {
             AffectsRender<GrumpySheet>(RowsProperty, ColumnsProperty, ColumnWidthProperty, RowHeightProperty,
                 HeaderWidthProperty, HeaderHeightProperty, ShowHeadersProperty, ShowFormulaBarProperty,
-                ShowScrollBarsProperty,
+                ShowScrollBarsProperty, ShowToolbarProperty, EditBackColorProperty, EditTextColorProperty,
                 FontFamilyNameProperty, FontSizeProperty, GridColorProperty, HeaderBackColorProperty,
                 HeaderTextColorProperty, CellBackColorProperty, TextColorProperty, SelectionColorProperty,
                 SelectionFillColorProperty);
             AffectsMeasure<GrumpySheet>(RowsProperty, ColumnsProperty, ColumnWidthProperty, RowHeightProperty,
-                HeaderWidthProperty, HeaderHeightProperty, ShowHeadersProperty, ShowFormulaBarProperty);
+                HeaderWidthProperty, HeaderHeightProperty, ShowHeadersProperty, ShowFormulaBarProperty,
+                ShowToolbarProperty);
         }
 
         /// <summary>Creates an empty sheet. Fill <see cref="Cells"/> in XAML, or call SetCell.</summary>
@@ -499,6 +2495,13 @@ namespace AvaloniaSpreadsheet
             set { SetValue(ShowScrollBarsProperty, value); }
         }
 
+        /// <summary>Draw the toolbar (File and Print) at all.</summary>
+        public bool ShowToolbar
+        {
+            get { return GetValue(ShowToolbarProperty); }
+            set { SetValue(ShowToolbarProperty, value); }
+        }
+
         /// <summary>False makes the sheet read-only.</summary>
         public bool AllowEditing
         {
@@ -553,6 +2556,27 @@ namespace AvaloniaSpreadsheet
         {
             get { return GetValue(TextColorProperty); }
             set { SetValue(TextColorProperty, value); }
+        }
+
+        /// <summary>The backcolour of the fx box — the cell edit box at the top of the sheet.</summary>
+        public Color EditBackColor
+        {
+            get { return GetValue(EditBackColorProperty); }
+            set { SetValue(EditBackColorProperty, value); }
+        }
+
+        /// <summary>The colour of the text in the fx box.</summary>
+        public Color EditTextColor
+        {
+            get { return GetValue(EditTextColorProperty); }
+            set { SetValue(EditTextColorProperty, value); }
+        }
+
+        /// <summary>Which way round the page is when the sheet is printed or exported.</summary>
+        public SheetOrientation PrintOrientation
+        {
+            get { return GetValue(PrintOrientationProperty); }
+            set { SetValue(PrintOrientationProperty, value); }
         }
 
         /// <summary>The selection colour: the outline, the active cell and the fill handle.</summary>
@@ -1293,6 +3317,16 @@ namespace AvaloniaSpreadsheet
 
         private void RaiseSelectionChanged()
         {
+            // Remember a block while it IS the selection: it is what the macro list offers as a range after
+            // the pointer has moved on to the cell the formula is going into (see SelectedRangeText).
+            if (SelectionFirstRow() != SelectionLastRow() || SelectionFirstColumn() != SelectionLastColumn())
+            {
+                _rangeFirstRow = SelectionFirstRow();
+                _rangeFirstColumn = SelectionFirstColumn();
+                _rangeLastRow = SelectionLastRow();
+                _rangeLastColumn = SelectionLastColumn();
+            }
+
             var handler = SelectionChanged;
             if (handler != null)
             {
@@ -1372,13 +3406,13 @@ namespace AvaloniaSpreadsheet
 
         // ---- geometry ---------------------------------------------------------------------------
 
-        /// <summary>Where the grid's cells start, allowing for the bar and the headers.</summary>
+        /// <summary>Where the grid's cells start, allowing for the toolbar, the bar and the headers.</summary>
         private Point GridOrigin
         {
             get
             {
                 var x = ShowHeaders ? HeaderWidth : 0d;
-                var y = (ShowFormulaBar ? BarHeight : 0d) + (ShowHeaders ? HeaderHeight : 0d);
+                var y = ToolbarStrip + (ShowFormulaBar ? BarHeight : 0d) + (ShowHeaders ? HeaderHeight : 0d);
                 return new Point(x, y);
             }
         }
@@ -1756,25 +3790,75 @@ namespace AvaloniaSpreadsheet
             var origin = GridOrigin;
             var width = size.Width - origin.X;
             var height = size.Height - origin.Y;
+            if (_printRange)
+            {
+                // A page holds the print area and NOTHING else, whatever size the layout hands the control:
+                // the visible-range walks below all read this rectangle, so this is the one place that has
+                // to know. Without it a page would grow to whatever the parent measured and print the rest
+                // of the sheet under the area.
+                width = ColumnOffset(_printLastColumn + 1) - ColumnOffset(_printFirstColumn);
+                height = RowOffset(_printLastRow + 1) - RowOffset(_printFirstRow);
+            }
+
             return new Rect(origin.X, origin.Y, width < 0 ? 0 : width, height < 0 ? 0 : height);
         }
 
         private Rect BarRect(Size size)
         {
-            return new Rect(0, 0, size.Width, BarHeight);
+            return new Rect(0, ToolbarStrip, size.Width, BarHeight);
         }
 
         private Rect BarNameRect(Size size)
         {
             var width = ShowHeaders ? HeaderWidth : 0d;
-            return new Rect(0, 0, width, BarHeight);
+            return new Rect(0, ToolbarStrip, width, BarHeight);
         }
 
         private Rect BarInputRect(Size size)
         {
             var name = BarNameRect(size);
             var x = name.Right;
-            return new Rect(x, 0, size.Width - x, BarHeight);
+            return new Rect(x, ToolbarStrip, size.Width - x, BarHeight);
+        }
+
+        /// <summary>How tall the toolbar strip is: zero when it is switched off, so every rectangle below
+        /// it can be worked out without asking whether there is one.</summary>
+        private double ToolbarStrip
+        {
+            get { return ShowToolbar ? ToolbarHeight : 0d; }
+        }
+
+        /// <summary>One toolbar button's rectangle, at the left of the strip: File is 0, Print is 1.</summary>
+        private Rect ToolbarButtonRect(int index)
+        {
+            return new Rect(index * ToolbarButtonWidth, 0, ToolbarButtonWidth, ToolbarHeight);
+        }
+
+        /// <summary>Which toolbar button a point is on, or -1 — the point has to be inside the strip as
+        /// well as inside the button, so a sheet with the toolbar off answers -1 everywhere.</summary>
+        private int ToolbarButtonAt(Point point)
+        {
+            if (!ShowToolbar || point.Y < 0 || point.Y >= ToolbarHeight)
+            {
+                return -1;
+            }
+
+            for (var i = 0; i < ToolbarButtonCount; i++)
+            {
+                if (ToolbarButtonRect(i).Contains(point))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>A button's word, shown beside it while the pointer is over it — the strip draws its own
+        /// tooltip rather than asking the framework for one, like everything else here.</summary>
+        private static string ToolbarLabel(int button)
+        {
+            return button == ToolbarFile ? "File" : "Print";
         }
 
         /// <summary>The autofill square, at the bottom-right of the selection.</summary>
@@ -1783,6 +3867,33 @@ namespace AvaloniaSpreadsheet
             var selection = SelectionRect();
             return new Rect(selection.Right - HandleSize / 2, selection.Bottom - HandleSize / 2,
                 HandleSize, HandleSize);
+        }
+
+        /// <summary>The second autofill square, at the top-left — the one that makes filling UP or LEFT
+        /// something you can see rather than something you have to know.</summary>
+        private Rect TopHandleRect()
+        {
+            var selection = SelectionRect();
+            return new Rect(selection.X - HandleSize / 2, selection.Y - HandleSize / 2,
+                HandleSize, HandleSize);
+        }
+
+        /// <summary>True when the pointer is on either autofill square.</summary>
+        private bool OnHandle(Point point)
+        {
+            if (_selectAll)
+            {
+                return false;
+            }
+
+            var bottom = HandleRect();
+            if (Math.Abs(point.X - bottom.Center.X) <= HandleSize && Math.Abs(point.Y - bottom.Center.Y) <= HandleSize)
+            {
+                return true;
+            }
+
+            var top = TopHandleRect();
+            return Math.Abs(point.X - top.Center.X) <= HandleSize && Math.Abs(point.Y - top.Center.Y) <= HandleSize;
         }
 
         // ---- the scrollbars -----------------------------------------------------------------------
@@ -2069,10 +4180,12 @@ namespace AvaloniaSpreadsheet
                 }
             }
 
-            // The wash goes down before the grid lines, so the lines still read through a selection.
+            // The wash goes down before the grid lines, so the lines still read through a selection — but
+            // NOT on a page: a page carries no selection at all, and a tint over the print area would come
+            // out of the printer as a pale block, in a colour the sheet itself never uses.
             var selection = SelectionRect();
             var visibleSelection = selection.Intersect(grid);
-            if (visibleSelection.Width > 0 && visibleSelection.Height > 0)
+            if (!_printRange && visibleSelection.Width > 0 && visibleSelection.Height > 0)
             {
                 context.FillRectangle(selectionFill, visibleSelection);
             }
@@ -2141,7 +4254,14 @@ namespace AvaloniaSpreadsheet
             }
 
             DrawHeaders(context, size, headerBrush, headerTextBrush, grid, selection);
-            DrawSelectionOutline(context, selectionBrush, grid);
+            if (!_printRange)
+            {
+                // A PAGE carries no selection: the outline, the active-cell box and the fill handles are
+                // how the sheet is used, not what is in it.
+                DrawSelectionOutline(context, selectionBrush, grid);
+            }
+
+            DrawToolbar(context, size, headerBrush, headerTextBrush, selectionFill);
             DrawFormulaBar(context, size, headerBrush, headerTextBrush, textBrush, selectionBrush);
             if (!AllowEditing)
             {
@@ -2149,13 +4269,17 @@ namespace AvaloniaSpreadsheet
                 return;
             }
 
-            // The fill handle, unless the selection is the whole sheet (nothing to fill into).
-            if (!_selectAll && !_draggingFill)
+            // The fill handles, unless the selection is the whole sheet (nothing to fill into) or the
+            // picture is a page on its way to paper.
+            if (!_selectAll && !_draggingFill && !_printRange)
             {
-                var handle = HandleRect();
-                if (grid.Contains(handle.Center))
+                var handles = new[] { TopHandleRect(), HandleRect() };
+                for (var i = 0; i < handles.Length; i++)
                 {
-                    context.FillRectangle(selectionBrush, handle);
+                    if (grid.Contains(handles[i].Center))
+                    {
+                        context.FillRectangle(selectionBrush, handles[i]);
+                    }
                 }
             }
 
@@ -2217,8 +4341,9 @@ namespace AvaloniaSpreadsheet
         /// <summary>The bit of the column header that belongs to the selected columns.</summary>
         private Rect ColumnHighlight(Rect selection)
         {
-            if (!_wholeColumns && !_selectAll)
+            if ((!_wholeColumns && !_selectAll) || _printRange)
             {
+                // Nothing to light up — and on a page there is no selection anywhere: only the cells.
                 return new Rect(0, 0, 0, 0);
             }
 
@@ -2230,8 +4355,9 @@ namespace AvaloniaSpreadsheet
         /// <summary>The bit of the row header that belongs to the selected rows.</summary>
         private Rect RowHighlight(Rect selection)
         {
-            if (!_wholeRows && !_selectAll)
+            if ((!_wholeRows && !_selectAll) || _printRange)
             {
+                // Nothing to light up — and on a page there is no selection anywhere: only the cells.
                 return new Rect(0, 0, 0, 0);
             }
 
@@ -2293,19 +4419,24 @@ namespace AvaloniaSpreadsheet
             DrawCellText(context, "fx", new Rect(input.X, bar.Y, 22, bar.Height), headerText, false,
                 TextAlignment.Center);
 
-            var box = new Rect(input.X + 22, bar.Y, Math.Max(0, input.Width - 22), bar.Height);
+            var box = new Rect(input.X + 22, bar.Y + 1, Math.Max(0, input.Width - 23), bar.Height - 2);
+            // The fx box has a backcolour of its OWN (EditBackColor) and its own text colour: it is the one
+            // part of the strip a form most often wants to make obvious, which is why those rows exist.
+            context.FillRectangle(new SolidColorBrush(EditBackColor), box);
+            context.DrawRectangle(null, new Pen(new SolidColorBrush(GridColor), 1d), box);
+            var editText = new SolidColorBrush(EditTextColor);
             var shown = _editing && _barFocused ? _editText : SelectedText();
             if (_editing && _barFocused)
             {
-                DrawCellText(context, shown, box, text, false, TextAlignment.Left, _caret);
+                DrawCellText(context, shown, box, editText, false, TextAlignment.Left, _caret);
             }
             else
             {
-                DrawCellText(context, shown, box, text, false, TextAlignment.Left);
-
-                // A light border on the address box is the cue that it can be clicked to type there.
-                context.DrawRectangle(null, new Pen(accent, 1d), new Rect(0.5, 0.5, name.Width, name.Height - 1));
+                DrawCellText(context, shown, box, editText, false, TextAlignment.Left);
             }
+
+            // A light border on the address box is the cue that it can be clicked to type there.
+            context.DrawRectangle(null, new Pen(accent, 1d), new Rect(0.5, bar.Y + 0.5, name.Width, name.Height - 1));
         }
 
         /// <summary>
@@ -2481,6 +4612,7 @@ namespace AvaloniaSpreadsheet
         private const int HitVScrollTrack = 10;
         private const int HitHScrollThumb = 11;
         private const int HitHScrollTrack = 12;
+        private const int HitToolbar = 13;
 
         /// <summary>What is under a point, and which cell it belongs to.</summary>
         private int HitTest(Point point, out int row, out int column)
@@ -2489,8 +4621,16 @@ namespace AvaloniaSpreadsheet
             column = 1;
             var size = Bounds.Size;
             var grid = GridRect(size);
-            var bar = ShowFormulaBar ? BarHeight : 0d;
-            if (ShowFormulaBar && point.Y < bar)
+
+            // The toolbar is ABOVE the formula bar, so it is hit FIRST: a press up there must not fall
+            // through to the bar or to the header underneath it.
+            if (ShowToolbar && point.Y < ToolbarHeight)
+            {
+                return ToolbarButtonAt(point) >= 0 ? HitToolbar : HitNothing;
+            }
+
+            var bar = ToolbarStrip + (ShowFormulaBar ? BarHeight : 0d);
+            if (ShowFormulaBar && point.Y >= ToolbarStrip && point.Y < bar)
             {
                 // The fx box is a real input — clicking it edits the active cell up there. The address
                 // box is not (it only shows where you are), so a click on it does nothing.
@@ -2556,8 +4696,7 @@ namespace AvaloniaSpreadsheet
 
             row = RowAt(point.Y);
             column = ColumnAt(point.X);
-            if (!_selectAll && Math.Abs(point.X - HandleRect().Center.X) <= HandleSize &&
-                Math.Abs(point.Y - HandleRect().Center.Y) <= HandleSize)
+            if (OnHandle(point))
             {
                 return HitHandle;
             }
@@ -2635,7 +4774,302 @@ namespace AvaloniaSpreadsheet
         protected override void OnPointerExited(PointerEventArgs e)
         {
             SetCursor(StandardCursorType.Arrow);
+            if (_toolbarHot != -1)
+            {
+                _toolbarHot = -1;
+                InvalidateVisual();
+            }
+
             base.OnPointerExited(e);
+        }
+
+        // ---- the toolbar ----------------------------------------------------------------------------
+        // Drawn by the control itself, like the grid, the bar, the menu and the scrollbars: two icon
+        // buttons and a line of status text. It is the reason a dropped sheet is USABLE with no code at
+        // all — Load…, Save… and Print… are already there — and ShowToolbar = False puts the sheet back
+        // exactly as it was before the strip existed.
+        //
+        // File ▸ Load… / Save… are the .xlsx reader and writer below. Print ▸ Save as PNG… / Save as PDF… /
+        // Print…. The dialogs come from the platform, so they need a real window: in the designer's
+        // headless preview the buttons are drawn and the strip says why a menu leads nowhere.
+
+        /// <summary>How many buttons the toolbar has, and which is which.</summary>
+        private const int ToolbarButtonCount = 2;
+        private const int ToolbarFile = 0;
+        private const int ToolbarPrint = 1;
+
+        /// <summary>The width of one toolbar button, in pixels.</summary>
+        private const double ToolbarButtonWidth = 28d;
+
+        /// <summary>Which button the pointer is over, or -1. Only the highlight and the label use it.</summary>
+        private int _toolbarHot = -1;
+
+        /// <summary>Paints the strip: its two buttons, the hovering one's word, and the status line.</summary>
+        private void DrawToolbar(DrawingContext context, Size size, IBrush back, IBrush text, IBrush accent)
+        {
+            if (!ShowToolbar || size.Width <= 0)
+            {
+                return;
+            }
+
+            context.FillRectangle(back, new Rect(0, 0, size.Width, ToolbarHeight));
+            for (var i = 0; i < ToolbarButtonCount; i++)
+            {
+                var button = ToolbarButtonRect(i);
+                if (i == _toolbarHot)
+                {
+                    context.FillRectangle(accent, button);
+                }
+
+                if (i == ToolbarFile)
+                {
+                    DrawFileIcon(context, button, text);
+                }
+                else
+                {
+                    DrawPrintIcon(context, button, text);
+                }
+            }
+
+            // The word of the button under the pointer, beside the pair: the strip's own tooltip, drawn
+            // rather than asked of the framework, like everything else here.
+            var afterButtons = ToolbarButtonRect(ToolbarButtonCount - 1).Right + 4;
+            if (_toolbarHot >= 0)
+            {
+                DrawCellText(context, ToolbarLabel(_toolbarHot), new Rect(afterButtons, 0, 60, ToolbarHeight),
+                    text, false, TextAlignment.Left);
+            }
+
+            if (_status.Length > 0)
+            {
+                var statusLeft = afterButtons + 66;
+                DrawCellText(context, _status,
+                    new Rect(statusLeft, 0, Math.Max(0, size.Width - statusLeft - 6), ToolbarHeight),
+                    text, false, TextAlignment.Right, -1, null, Math.Max(9d, FontSize - 1d));
+            }
+
+            context.DrawLine(new Pen(new SolidColorBrush(GridColor), 1d), new Point(0, ToolbarHeight - 0.5),
+                new Point(size.Width, ToolbarHeight - 0.5));
+        }
+
+        /// <summary>The File button's icon: a page with a folded corner and a few lines on it. Drawn from
+        /// rectangles and lines — the control ships no image files at all.</summary>
+        private static void DrawFileIcon(DrawingContext context, Rect button, IBrush ink)
+        {
+            var pen = new Pen(ink, 1.2d);
+            var x = button.Center.X - 5.5d;
+            var y = button.Center.Y - 7.5d;
+            context.DrawRectangle(null, pen, new Rect(x, y, 11d, 15d));
+            context.DrawLine(pen, new Point(x + 7d, y), new Point(x + 7d, y + 4d));
+            context.DrawLine(pen, new Point(x + 7d, y + 4d), new Point(x + 11d, y + 4d));
+            for (var i = 0; i < 3; i++)
+            {
+                var line = y + 8d + i * 3d;
+                context.DrawLine(pen, new Point(x + 2.5d, line),
+                    new Point(x + (i == 2 ? 6d : 8.5d), line));
+            }
+        }
+
+        /// <summary>The Print button's icon: the sheet going in at the top, the body of the printer, and the
+        /// page coming out below — plus its little lamp.</summary>
+        private static void DrawPrintIcon(DrawingContext context, Rect button, IBrush ink)
+        {
+            var pen = new Pen(ink, 1.2d);
+            var x = button.Center.X - 7d;
+            var y = button.Center.Y - 7d;
+            context.DrawRectangle(null, pen, new Rect(x + 2.5d, y, 9d, 5d));
+            context.DrawRectangle(null, pen, new Rect(x, y + 4.5d, 14d, 6d));
+            context.DrawRectangle(null, pen, new Rect(x + 3d, y + 10d, 8d, 4.5d));
+            context.FillRectangle(ink, new Rect(x + 10.5d, y + 6d, 2d, 2d));
+        }
+
+        // ---- the macro list a '=' opens ---------------------------------------------------------------
+        //
+        // "=" is the one moment the sheet knows a FORMULA is wanted rather than a value, which makes it the
+        // right moment to offer the names. The list filters as more letters arrive; the pick lands in the fx
+        // box, with the cells that were selected already written in as the range. So the common case —
+        // select B2:B9, type "=su", press Enter — arrives complete, and the caret waits between the brackets
+        // when there was nothing to fill in.
+
+        /// <summary>One macro the list offers.</summary>
+        private sealed class SheetMacro
+        {
+            /// <summary>The name typed after '=', exactly as the parser dispatches it.</summary>
+            public string Name = string.Empty;
+
+            /// <summary>What it does, in a few words — drawn beside the name.</summary>
+            public string Hint = string.Empty;
+
+            /// <summary>Whether the selected cells are offered to it as a range: true for the readings
+            /// (Sum, Avg, StdDev …), false for the ones that take a plain value or a text.</summary>
+            public bool TakesRange;
+        }
+
+        /// <summary>
+        /// Every macro the parser knows, in the order the list shows them: the readings a sheet is usually
+        /// asked for first, then the rest. EVERY name here is one <c>Apply</c> dispatches, which a test
+        /// compares — so the list can never offer something the engine cannot do.
+        /// </summary>
+        private static readonly SheetMacro[] Macros = new[]
+        {
+            new SheetMacro { Name = "Sum", Hint = "the total of a range", TakesRange = true },
+            new SheetMacro { Name = "Avg", Hint = "the average (Average works too)", TakesRange = true },
+            new SheetMacro { Name = "StdDev", Hint = "sample standard deviation (n-1)", TakesRange = true },
+            new SheetMacro { Name = "StdDevP", Hint = "population standard deviation (n)", TakesRange = true },
+            new SheetMacro { Name = "Max", Hint = "the largest number", TakesRange = true },
+            new SheetMacro { Name = "Min", Hint = "the smallest number", TakesRange = true },
+            new SheetMacro { Name = "Count", Hint = "how many cells hold a number", TakesRange = true },
+            new SheetMacro { Name = "CountA", Hint = "how many cells are not empty", TakesRange = true },
+            new SheetMacro { Name = "Abs", Hint = "a number without its sign" },
+            new SheetMacro { Name = "Round", Hint = "Round(number, places)" },
+            new SheetMacro { Name = "Int", Hint = "rounds down to a whole number" },
+            new SheetMacro { Name = "Sqrt", Hint = "the square root" },
+            new SheetMacro { Name = "Mod", Hint = "the remainder: Mod(number, divisor)" },
+            new SheetMacro { Name = "If", Hint = "If(condition, then, else)" },
+            new SheetMacro { Name = "And", Hint = "true when every condition is" },
+            new SheetMacro { Name = "Or", Hint = "true when any condition is" },
+            new SheetMacro { Name = "Not", Hint = "the opposite of a condition" },
+            new SheetMacro { Name = "Len", Hint = "how many characters" },
+            new SheetMacro { Name = "Upper", Hint = "the text in capitals" },
+            new SheetMacro { Name = "Lower", Hint = "the text in small letters" },
+            new SheetMacro { Name = "Trim", Hint = "the text without spaces at the ends" }
+        };
+
+        /// <summary>
+        /// Shows, hides or refilters the macro list for what is being typed. Called after EVERY change to
+        /// the editor's text — and after a caret move, because where the '=' is depends on where the caret
+        /// is.
+        /// </summary>
+        private void UpdateMacroPopup()
+        {
+            if (!_editing || !AllowEditing)
+            {
+                CloseMacroPopup();
+                return;
+            }
+
+            // The '=' nearest the caret, at or before it: everything after it is the macro being typed.
+            var caret = Math.Min(_caret, _editText.Length);
+            var start = -1;
+            for (var i = caret - 1; i >= 0; i--)
+            {
+                if (_editText[i] == '=')
+                {
+                    start = i;
+                    break;
+                }
+            }
+
+            if (start < 0)
+            {
+                CloseMacroPopup();
+                return;
+            }
+
+            var typed = _editText.Substring(start + 1, caret - start - 1).Trim();
+            if (typed.IndexOf('(') >= 0 || typed.IndexOf(')') >= 0)
+            {
+                CloseMacroPopup();              // a finished call: there is nothing left to offer
+                return;
+            }
+
+            var items = BuildMacroItems(typed);
+            if (items.Count == 0)
+            {
+                CloseMacroPopup();
+                return;
+            }
+
+            _macroStart = start;
+            var anchor = MacroAnchor();
+            OpenMenu(MenuKind.Macro, FitMacroItems(items, anchor), anchor, MacroMenuWidth);
+        }
+
+        /// <summary>Where the list hangs: under the fx box when the edit is up there, else under the cell
+        /// being edited — the two places a formula can be typed.</summary>
+        private Point MacroAnchor()
+        {
+            var size = Bounds.Size;
+            if (_barFocused)
+            {
+                var input = BarInputRect(size);
+                return new Point(input.X + 22, input.Bottom + 2);
+            }
+
+            var cell = CellRect(_activeRow, _activeColumn);
+            return new Point(cell.X, cell.Bottom + 2);
+        }
+
+        /// <summary>Hides the macro list without touching the edit — and only a list that is actually
+        /// showing is closed, so this is safe to call from anywhere.</summary>
+        private void CloseMacroPopup()
+        {
+            if (_menuOpen && _menuKind == MenuKind.Macro)
+            {
+                CloseContextMenu();             // which clears _macroStart with it
+                return;
+            }
+
+            _macroStart = -1;
+        }
+
+        /// <summary>
+        /// Puts the chosen macro into the fx box, ready to edit — a formula of any length belongs up there,
+        /// where it can be read and corrected. The cells selected when it was chosen become the range, so
+        /// the caret waits after the closing bracket; with a single cell selected it waits BETWEEN the
+        /// brackets, which is the case the list exists for.
+        /// </summary>
+        private void AcceptMacro(SheetMacro macro)
+        {
+            var start = _macroStart >= 0 && _macroStart <= _editText.Length ? _macroStart : 0;
+            var caret = Math.Min(_caret, _editText.Length);
+            var head = _editText.Substring(0, start);
+            var tail = _editText.Substring(caret);
+            var range = macro.TakesRange ? SelectedRangeText() : string.Empty;
+            var call = "=" + macro.Name + "(" + range + ")";
+            _editText = head + call + tail;
+            _caret = head.Length + call.Length - (range.Length > 0 ? 1 : 0);
+            _macroStart = -1;
+            _menuOpen = false;                  // the list closes; the EDIT carries on
+            _menuHot = -1;
+            _editing = true;
+            _barFocused = true;                 // and the formula is edited in the box from here on
+            _editIsNew = false;
+            InvalidateVisual();
+        }
+
+        /// <summary>The selection as a range ("B2:B9"), or empty when there is nothing to offer. A whole
+        /// column or row becomes the range it covers, so clicking a column and typing "=sum" fills the whole
+        /// column in. When the selection is a single cell the LAST BLOCK that was selected is used instead,
+        /// because that is the order a total is written in — select the figures, click where the total goes,
+        /// type the formula — and a formula committed into the block it reads could only be #CYCLE!. The
+        /// colon is what a range is WRITTEN with (Excel's spelling, and what this list writes); the older
+        /// two-dot form still READS, so a formula typed before this stays exactly as it was.</summary>
+        private string SelectedRangeText()
+        {
+            var firstRow = SelectionFirstRow();
+            var lastRow = SelectionLastRow();
+            var firstColumn = SelectionFirstColumn();
+            var lastColumn = SelectionLastColumn();
+            if (firstRow == lastRow && firstColumn == lastColumn)
+            {
+                firstRow = _rangeFirstRow;
+                firstColumn = _rangeFirstColumn;
+                lastRow = _rangeLastRow;
+                lastColumn = _rangeLastColumn;
+            }
+
+            if (lastRow < firstRow || lastColumn < firstColumn)
+            {
+                return string.Empty;
+            }
+
+            if (firstRow == lastRow && firstColumn == lastColumn)
+            {
+                return string.Empty;                    // one cell: leave the brackets for the user
+            }
+
+            return CellName(firstRow, firstColumn) + ":" + CellName(lastRow, lastColumn);
         }
 
         // ---- the right-click menu ------------------------------------------------------------------
@@ -2660,9 +5094,30 @@ namespace AvaloniaSpreadsheet
             /// <summary>Show a tick beside it (what the selection already is).</summary>
             public bool Ticked;
 
+            /// <summary>A few words about it, drawn dimmed at the right of the line — what the macro list
+            /// uses to say what each function is for.</summary>
+            public string Hint = string.Empty;
+
+            /// <summary>False greys the line out and makes it unchoosable: a heading, or a command this
+            /// machine cannot do (Print… with nothing to print through).</summary>
+            public bool Enabled = true;
+
+            /// <summary>A WARNING rather than a command — the lines the print-area warning is made of. Drawn
+            /// in the warning colour and never choosable, whatever <see cref="Enabled"/> happens to be.</summary>
+            public bool Warning;
+
             /// <summary>What choosing it does.</summary>
             public Action? Run;
         }
+
+        /// <summary>The ink a warning line is drawn in — the one colour in this file that is deliberately NOT
+        /// part of the sheet's palette, because a warning has to read as one whatever theme the form uses.</summary>
+        private static readonly Color WarningColor = Color.Parse("#B3261E");
+
+        /// <summary>Which of the things a menu can be: the right-click menu, a toolbar button's menu, the
+        /// macro list a '=' opens, the print-area warning, or the page question. They share the drawing, the
+        /// hover and the keys; the kind is what tells Tab (and the painters) which one is showing.</summary>
+        private enum MenuKind { Context, Toolbar, Macro, Warning, Setup }
 
         /// <summary>How wide the menu is, and how tall one of its lines is.</summary>
         private const double MenuWidth = 200d;
@@ -2670,11 +5125,29 @@ namespace AvaloniaSpreadsheet
         private const double MenuSeparatorHeight = 9d;
         private const double MenuPad = 5d;
 
+        /// <summary>The macro list is wider than a command menu: it draws each function's syntax as well
+        /// as its name, and a name with no room for its hint is just a name.</summary>
+        private const double MacroMenuWidth = 300d;
+
         private List<SheetMenuItem> _menuItems = new List<SheetMenuItem>();
+        private MenuKind _menuKind = MenuKind.Context;
+        private double _menuWidth = MenuWidth;
         private bool _menuOpen;
         private double _menuX;
         private double _menuY;
         private int _menuHot = -1;
+
+        /// <summary>Where in the editor text the '=' that opened the macro list sits, or -1.</summary>
+        private int _macroStart = -1;
+
+        // The last BLOCK that was selected, kept because of the order a total is usually written in: pick
+        // the column of figures, then click the cell the total goes in, then type "=sum". By then the block
+        // is no longer selected, so without this the formula would arrive empty — and a formula committed
+        // INTO the block it reads can only ever be #CYCLE!.
+        private int _rangeFirstRow;
+        private int _rangeFirstColumn;
+        private int _rangeLastRow;
+        private int _rangeLastColumn;
 
         /// <summary>What the menu offers, built on each open so the ticks are current. The commands act on
         /// the SELECTION — a whole column lines up in one gesture, which is the point of having it.</summary>
@@ -2715,6 +5188,225 @@ namespace AvaloniaSpreadsheet
             };
         }
 
+        /// <summary>The File menu: Load… and Save…, both .xlsx — the format the charts read and every
+        /// spreadsheet writes. Both are disabled while a dialog is already open.</summary>
+        private List<SheetMenuItem> BuildFileItems()
+        {
+            var busy = _fileBusy;
+            var items = new List<SheetMenuItem>();
+            items.Add(new SheetMenuItem
+            {
+                Label = "Load…",
+                Hint = "a workbook, one page at a time",
+                Enabled = !busy,
+                Run = () => _ = BrowseForWorkbookAsync()
+            });
+            items.Add(new SheetMenuItem { IsSeparator = true });
+            items.Add(new SheetMenuItem
+            {
+                Label = "Save…",
+                Hint = "this sheet as .xlsx",
+                Enabled = !busy,
+                Run = () => _ = SaveAsWorkbookAsync()
+            });
+            return items;
+        }
+
+        /// <summary>
+        /// The Print menu: what can be produced from here. Saving the sheet as a PICTURE needs nothing but
+        /// Avalonia, so that entry is always there; the PDF and the printer live behind PRINT_SUPPORT, the
+        /// symbol a project gets when the print packages are wired into it (see GrumpyPrint).
+        ///
+        /// All three produce a PAGE, and a page is the PRINT AREA — the selected cells — so none of them
+        /// goes through the methods directly: they ask <see cref="RequestPrint"/>, which is what warns when
+        /// nothing but a single cell is selected.
+        /// </summary>
+        private List<SheetMenuItem> BuildPrintItems()
+        {
+            var items = new List<SheetMenuItem>();
+            items.Add(new SheetMenuItem
+            {
+                Label = "Save as PNG…",
+                Hint = "the print area as a picture",
+                Enabled = !_fileBusy,
+                Run = () => RequestPrint(SheetPrintKind.Picture)
+            });
+#if PRINT_SUPPORT
+            items.Add(new SheetMenuItem
+            {
+                Label = "Save as PDF…",
+                Hint = "the print area as a page",
+                Enabled = !_fileBusy,
+                Run = () => RequestPrint(SheetPrintKind.Pdf)
+            });
+            items.Add(new SheetMenuItem { IsSeparator = true });
+            items.Add(new SheetMenuItem
+            {
+                Label = "Print…",
+                Hint = CanPrint ? "the print area, on paper" : "nothing here can print",
+                Enabled = CanPrint && !_fileBusy,
+                Run = () => RequestPrint(SheetPrintKind.Printer)
+            });
+#else
+            items.Add(new SheetMenuItem { IsSeparator = true });
+            // Disabled rather than LEFT OUT, with the reason on the row: a missing entry reads as a broken
+            // menu — the complaint the charts' Print… row answered when they grew one.
+            items.Add(new SheetMenuItem { Label = "Print… (needs print support)", Enabled = false });
+#endif
+            return items;
+        }
+
+        /// <summary>The page list Load… shows when a workbook holds more than one page: a heading that says
+        /// only one page at a time is loaded, then every page by name.</summary>
+        private List<SheetMenuItem> BuildPageItems(string path, List<string> pages)
+        {
+            var items = new List<SheetMenuItem>();
+            items.Add(new SheetMenuItem { Label = "One page is loaded at a time:", Enabled = false });
+            for (var i = 0; i < pages.Count; i++)
+            {
+                var chosen = pages[i];
+                items.Add(new SheetMenuItem
+                {
+                    Label = chosen.Length == 0 ? "(unnamed page)" : chosen,
+                    Hint = i == 0 ? "the first page" : string.Empty,
+                    Run = () => LoadPage(path, chosen)
+                });
+            }
+
+            return items;
+        }
+
+        /// <summary>The macro list: every function the parser knows whose name starts with what has been
+        /// typed — or, when none does, the ones that merely contain it, so "dev" still finds StdDev.</summary>
+        private List<SheetMenuItem> BuildMacroItems(string typed)
+        {
+            var wanted = new List<SheetMacro>();
+            for (var i = 0; i < Macros.Length; i++)
+            {
+                if (typed.Length == 0 || Macros[i].Name.StartsWith(typed, StringComparison.OrdinalIgnoreCase))
+                {
+                    wanted.Add(Macros[i]);
+                }
+            }
+
+            if (wanted.Count == 0 && typed.Length > 0)
+            {
+                for (var i = 0; i < Macros.Length; i++)
+                {
+                    if (Macros[i].Name.IndexOf(typed, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        wanted.Add(Macros[i]);
+                    }
+                }
+            }
+
+            var items = new List<SheetMenuItem>();
+            for (var i = 0; i < wanted.Count; i++)
+            {
+                var macro = wanted[i];
+                items.Add(new SheetMenuItem
+                {
+                    Label = macro.Name,
+                    Hint = macro.Hint,
+                    Run = () => AcceptMacro(macro)
+                });
+            }
+
+            return items;
+        }
+
+        /// <summary>Opens a menu of items at a point, kept inside the control. The context menu has its own
+        /// opener — it moves the selection onto what was right-clicked first — and everything else comes
+        /// through here.</summary>
+        private void OpenMenu(MenuKind kind, List<SheetMenuItem> items, Point point, double width)
+        {
+            _menuItems = items;
+            _menuKind = kind;
+            _menuWidth = width;
+            _menuOpen = true;
+            _menuHot = FirstEnabled(items);
+            var size = Bounds.Size;
+            var height = MenuRect().Height;
+            _menuX = Math.Max(0, Math.Min(point.X, size.Width - width));
+            _menuY = Math.Max(0, point.Y);
+            if (_menuY + height > size.Height && height <= size.Height)
+            {
+                // Flip up rather than run off the bottom — but only when it FITS somewhere. A list taller
+                // than the whole control stays where it is and is clipped instead: jumping to the top would
+                // take it away from the cell being typed in, which is where the eye is.
+                _menuY = Math.Max(0, size.Height - height);
+            }
+
+            InvalidateVisual();
+        }
+
+        /// <summary>
+        /// The macro list trimmed to the rows that actually fit under the anchor, so it hangs where the user
+        /// is typing. When something was left out the last line says so — a list that silently ends before
+        /// Sqrt reads as a list without a Sqrt in it.
+        /// </summary>
+        private List<SheetMenuItem> FitMacroItems(List<SheetMenuItem> items, Point anchor)
+        {
+            var room = Bounds.Height - anchor.Y - 6d;
+            var rows = (int)Math.Floor(room / MenuItemHeight);
+            if (rows < 5)
+            {
+                rows = 5;
+            }
+
+            if (items.Count <= rows)
+            {
+                return items;
+            }
+
+            var fitted = new List<SheetMenuItem>();
+            for (var i = 0; i < rows - 1 && i < items.Count; i++)
+            {
+                fitted.Add(items[i]);
+            }
+
+            fitted.Add(new SheetMenuItem
+            {
+                Label = "\u2026 type more letters to narrow the list",
+                Enabled = false
+            });
+            return fitted;
+        }
+
+        /// <summary>The first line that can actually be chosen, or -1 — the page list opens with a heading
+        /// that cannot be, so the highlight starts on the page below it.</summary>
+        private static int FirstEnabled(List<SheetMenuItem> items)
+        {
+            for (var i = 0; i < items.Count; i++)
+            {
+                if (!items[i].IsSeparator && items[i].Enabled)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>Opens a toolbar button's menu just under it.</summary>
+        private void OpenToolbarMenu(int button)
+        {
+            if (button < 0 || button >= ToolbarButtonCount)
+            {
+                return;
+            }
+
+            var items = button == ToolbarFile ? BuildFileItems() : BuildPrintItems();
+            OpenMenu(MenuKind.Toolbar, items, new Point(ToolbarButtonRect(button).X, ToolbarHeight + 1d), MenuWidth);
+        }
+
+        /// <summary>Loads one page of a workbook that has already been picked.</summary>
+        private void LoadPage(string path, string page)
+        {
+            LoadWorkbook(path, page);
+            Refresh();
+        }
+
         /// <summary>The menu's rectangle on the canvas, which is only meaningful while it is open.</summary>
         private Rect MenuRect()
         {
@@ -2724,10 +5416,11 @@ namespace AvaloniaSpreadsheet
                 height += _menuItems[i].IsSeparator ? MenuSeparatorHeight : MenuItemHeight;
             }
 
-            return new Rect(_menuX, _menuY, MenuWidth, height);
+            return new Rect(_menuX, _menuY, _menuWidth, height);
         }
 
-        /// <summary>Which line of the menu a point is on, or -1. Separators are not selectable.</summary>
+        /// <summary>Which line of the menu a point is on, or -1. Separators and greyed-out lines are not
+        /// selectable, so they answer -1 and a click on one does nothing.</summary>
         private int MenuItemAt(Point point)
         {
             if (!_menuOpen || !MenuRect().Contains(point))
@@ -2740,7 +5433,7 @@ namespace AvaloniaSpreadsheet
             {
                 var item = _menuItems[i];
                 var height = item.IsSeparator ? MenuSeparatorHeight : MenuItemHeight;
-                if (!item.IsSeparator && point.Y >= y && point.Y < y + height)
+                if (!item.IsSeparator && !item.Warning && item.Enabled && point.Y >= y && point.Y < y + height)
                 {
                     return i;
                 }
@@ -2768,6 +5461,8 @@ namespace AvaloniaSpreadsheet
 
             SetContextSelection(point);
             _menuItems = BuildMenuItems();
+            _menuKind = MenuKind.Context;
+            _menuWidth = MenuWidth;
             _menuOpen = true;
             _menuHot = -1;
             var size = Bounds.Size;
@@ -2786,6 +5481,7 @@ namespace AvaloniaSpreadsheet
 
             _menuOpen = false;
             _menuHot = -1;
+            _macroStart = -1;               // any menu closing ends the macro list's claim on the text
             InvalidateVisual();
         }
 
@@ -2793,6 +5489,13 @@ namespace AvaloniaSpreadsheet
         private bool ChooseMenuItem(Point point)
         {
             var index = MenuItemAt(point);
+            if (index < 0 && OnWarningLine(point))
+            {
+                // A click on the WARNING text itself. It is not a command, and closing on it would read as a
+                // silent abort for a click that never meant one.
+                return true;
+            }
+
             var run = index >= 0 ? _menuItems[index].Run : null;
             CloseContextMenu();
             if (run != null)
@@ -2803,7 +5506,34 @@ namespace AvaloniaSpreadsheet
             return true;
         }
 
-        /// <summary>Paints the menu over everything else.</summary>
+        /// <summary>True when a point is on one of the menu's WARNING lines — the text above the choices, which
+        /// says what is about to happen and is not itself clickable.</summary>
+        private bool OnWarningLine(Point point)
+        {
+            if (!_menuOpen || point.X < _menuX || point.X > _menuX + _menuWidth)
+            {
+                return false;
+            }
+
+            var y = _menuY + MenuPad;
+            for (var i = 0; i < _menuItems.Count; i++)
+            {
+                var item = _menuItems[i];
+                var height = item.IsSeparator ? MenuSeparatorHeight : MenuItemHeight;
+                if (item.Warning && point.Y >= y && point.Y < y + height)
+                {
+                    return true;
+                }
+
+                y += height;
+            }
+
+            return false;
+        }
+
+        /// <summary>Paints the menu over everything else — whichever kind it is: the right-click menu, a
+        /// toolbar button's menu, or the macro list. A greyed-out line is drawn dimmed and cannot be
+        /// chosen; a line with a hint draws it at the right.</summary>
         private void DrawContextMenu(DrawingContext context)
         {
             if (!_menuOpen)
@@ -2816,6 +5546,7 @@ namespace AvaloniaSpreadsheet
             context.FillRectangle(new SolidColorBrush(CellBackColor), rect);
             context.DrawRectangle(null, new Pen(edge, 1d), rect);
             var text = new SolidColorBrush(TextColor);
+            var dim = new SolidColorBrush(Color.FromArgb(140, TextColor.R, TextColor.G, TextColor.B));
             var hot = new SolidColorBrush(SelectionFillColor);
             var y = _menuY + MenuPad;
             for (var i = 0; i < _menuItems.Count; i++)
@@ -2829,19 +5560,30 @@ namespace AvaloniaSpreadsheet
                     continue;
                 }
 
-                if (i == _menuHot)
+                var ink = item.Warning ? new SolidColorBrush(WarningColor) : (item.Enabled ? text : dim);
+                if (i == _menuHot && item.Enabled)
                 {
-                    context.FillRectangle(hot, new Rect(_menuX + 1, y, MenuWidth - 2, MenuItemHeight));
+                    context.FillRectangle(hot, new Rect(_menuX + 1, y, _menuWidth - 2, MenuItemHeight));
                 }
 
                 if (item.Ticked)
                 {
-                    DrawCellText(context, "\u2713", new Rect(_menuX + 1, y, 15, MenuItemHeight), text, false,
+                    DrawCellText(context, "\u2713", new Rect(_menuX + 1, y, 15, MenuItemHeight), ink, false,
                         TextAlignment.Center);
                 }
 
-                DrawCellText(context, item.Label, new Rect(_menuX + 17, y, MenuWidth - 22, MenuItemHeight),
-                    text, false, TextAlignment.Left);
+                var labelWidth = _menuWidth - 22;
+                if (item.Hint.Length > 0)
+                {
+                    var hintWidth = _menuWidth * 0.5;
+                    DrawCellText(context, item.Hint,
+                        new Rect(_menuX + _menuWidth - hintWidth - 8, y, hintWidth, MenuItemHeight), dim,
+                        false, TextAlignment.Right, -1, null, Math.Max(9d, FontSize - 1d));
+                    labelWidth = _menuWidth - hintWidth - 26;
+                }
+
+                DrawCellText(context, item.Label, new Rect(_menuX + 17, y, labelWidth, MenuItemHeight),
+                    ink, false, TextAlignment.Left);
                 y += MenuItemHeight;
             }
         }
@@ -2879,7 +5621,8 @@ namespace AvaloniaSpreadsheet
             SelectCell(row, column);
         }
 
-        /// <summary>The menu's own keys: Escape closes, Up/Down move the highlight, Enter chooses.</summary>
+        /// <summary>The menu's own keys: Escape closes, Up/Down move the highlight, Enter chooses, and Tab
+        /// chooses too in the macro list (where Tab would otherwise commit the cell and lose the list).</summary>
         private bool HandleMenuKey(KeyEventArgs e)
         {
             if (!_menuOpen)
@@ -2909,7 +5652,7 @@ namespace AvaloniaSpreadsheet
                         at = 0;
                     }
 
-                    if (!_menuItems[at].IsSeparator)
+                    if (!_menuItems[at].IsSeparator && _menuItems[at].Enabled)
                     {
                         break;
                     }
@@ -2920,7 +5663,8 @@ namespace AvaloniaSpreadsheet
                 return true;
             }
 
-            if (e.Key == Key.Enter && _menuHot >= 0 && _menuHot < _menuItems.Count)
+            var choose = e.Key == Key.Enter || (e.Key == Key.Tab && _menuKind == MenuKind.Macro);
+            if (choose && _menuHot >= 0 && _menuHot < _menuItems.Count && _menuItems[_menuHot].Enabled)
             {
                 var run = _menuItems[_menuHot].Run;
                 CloseContextMenu();
@@ -2998,6 +5742,17 @@ namespace AvaloniaSpreadsheet
 
             if (!point.Properties.IsLeftButtonPressed)
             {
+                return;
+            }
+
+            // A toolbar button first: it sits above everything else, and a press on one opens its menu
+            // rather than starting a selection in the cell that happens to be underneath.
+            var button = ToolbarButtonAt(point.Position);
+            if (button >= 0)
+            {
+                Focus();
+                OpenToolbarMenu(button);
+                e.Handled = true;
                 return;
             }
 
@@ -3156,6 +5911,23 @@ namespace AvaloniaSpreadsheet
                 }
 
                 return;
+            }
+
+            // The toolbar's own hover: which button is lit, and its word beside it. When the pointer is up
+            // in the strip the rest of this method has nothing to say, so it stops here.
+            if (ShowToolbar)
+            {
+                var over = ToolbarButtonAt(point);
+                if (over != _toolbarHot)
+                {
+                    _toolbarHot = over;
+                    InvalidateVisual();
+                }
+
+                if (over >= 0)
+                {
+                    return;
+                }
             }
 
             // Dragging a scrollbar: the pointer's travel along the track, scaled to the scroll range.
@@ -3656,21 +6428,30 @@ namespace AvaloniaSpreadsheet
             _editIsNew = replace;
             _editText = text == null ? string.Empty : text!;
             _caret = _editText.Length;
+            // Editing a cell that already holds a formula shows the list for what is there, so "=Su" can be
+            // finished from the keyboard without remembering the rest of the name.
+            UpdateMacroPopup();
             InvalidateVisual();
         }
 
-        /// <summary>True when the fill drag is aiming somewhere it could actually fill.</summary>
+        /// <summary>True when the fill drag is aiming somewhere it could actually fill — down, right, up or
+        /// left, since the same maths runs either way.</summary>
         private bool HasFillTarget()
         {
-            return _draggingFill && (_fillRow > SelectionLastRow() || _fillColumn > SelectionLastColumn());
+            return _draggingFill &&
+                   (_fillRow > SelectionLastRow() || _fillColumn > SelectionLastColumn() ||
+                    _fillRow < SelectionFirstRow() || _fillColumn < SelectionFirstColumn());
         }
 
-        /// <summary>The block the fill would write, for the dashed preview.</summary>
+        /// <summary>The block the fill would write, for the dashed preview — in whichever direction it is
+        /// being dragged, so the box drawn is the box filled.</summary>
         private Rect PreviewRect()
         {
-            var first = CellRect(SelectionFirstRow(), SelectionFirstColumn());
+            var firstRow = Math.Min(_fillRow, SelectionFirstRow());
+            var firstColumn = Math.Min(_fillColumn, SelectionFirstColumn());
             var lastRow = Math.Max(_fillRow, SelectionLastRow());
             var lastColumn = Math.Max(_fillColumn, SelectionLastColumn());
+            var first = CellRect(firstRow, firstColumn);
             var last = CellRect(lastRow, lastColumn);
             return new Rect(first.X, first.Y, last.Right - first.X, last.Bottom - first.Y);
         }
@@ -3706,6 +6487,7 @@ namespace AvaloniaSpreadsheet
                     _caret--;
                 }
 
+                UpdateMacroPopup();             // where the caret is decides which '=' is being typed after
                 InvalidateVisual();
                 return true;
             }
@@ -3717,6 +6499,7 @@ namespace AvaloniaSpreadsheet
                     _caret++;
                 }
 
+                UpdateMacroPopup();
                 InvalidateVisual();
                 return true;
             }
@@ -3724,6 +6507,7 @@ namespace AvaloniaSpreadsheet
             if (e.Key == Key.Home)
             {
                 _caret = 0;
+                UpdateMacroPopup();
                 InvalidateVisual();
                 return true;
             }
@@ -3731,6 +6515,7 @@ namespace AvaloniaSpreadsheet
             if (e.Key == Key.End)
             {
                 _caret = _editText.Length;
+                UpdateMacroPopup();
                 InvalidateVisual();
                 return true;
             }
@@ -3743,6 +6528,7 @@ namespace AvaloniaSpreadsheet
                     _caret--;
                 }
 
+                UpdateMacroPopup();
                 InvalidateVisual();
                 return true;
             }
@@ -3754,6 +6540,7 @@ namespace AvaloniaSpreadsheet
                     _editText = _editText.Substring(0, _caret) + _editText.Substring(_caret + 1);
                 }
 
+                UpdateMacroPopup();
                 InvalidateVisual();
                 return true;
             }
@@ -3762,6 +6549,7 @@ namespace AvaloniaSpreadsheet
             {
                 _editText = string.Empty;
                 _caret = 0;
+                UpdateMacroPopup();
                 InvalidateVisual();
                 return true;
             }
@@ -3774,6 +6562,8 @@ namespace AvaloniaSpreadsheet
         {
             _editText = _editText.Substring(0, _caret) + text + _editText.Substring(_caret);
             _caret += text.Length;
+            // A '=' typed anywhere opens the macro list; any other letter refilters it.
+            UpdateMacroPopup();
             InvalidateVisual();
         }
 
@@ -3796,6 +6586,7 @@ namespace AvaloniaSpreadsheet
             _editText = string.Empty;
             _caret = 0;
             _editIsNew = false;
+            CloseMacroPopup();
 
             if (keep)
             {
@@ -3826,40 +6617,74 @@ namespace AvaloniaSpreadsheet
             InvalidateVisual();
         }
 
-        /// <summary>Writes the predicted series into the area the handle was dragged over.</summary>
+        /// <summary>
+        /// Writes the fill into the area the handle was dragged over — in any of the four directions.
+        ///
+        /// PER CELL, from the cell that destination copies: a FORMULA is the source's formula with every
+        /// relative address moved by the distance between the two cells (so =Sum(B2..B9) dragged one row
+        /// down reads =Sum(B3..B10), and a $ holds a part still), while anything else keeps the series
+        /// prediction it has always had — 1, 2 becomes 3, 4 …, Item1, Item2 becomes Item3, and a pattern
+        /// repeats. That split is what makes a column of totals beside a column of figures fill sensibly in
+        /// one gesture.
+        /// </summary>
         private void ApplyFill()
         {
+            var firstRow = SelectionFirstRow();
+            var firstColumn = SelectionFirstColumn();
             var lastRow = SelectionLastRow();
             var lastColumn = SelectionLastColumn();
-            if (_fillRow > lastRow)
+
+            // DOWN or UP: one pass per column of the source block.
+            if (_fillRow > lastRow || _fillRow < firstRow)
             {
+                var down = _fillRow > lastRow;
+                var count = down ? _fillRow - lastRow : firstRow - _fillRow;
+                var firstTarget = down ? lastRow + 1 : _fillRow;
+                var height = _fillSourceLastRow - _fillSourceFirstRow + 1;
                 for (var column = _fillSourceFirstColumn; column <= _fillSourceLastColumn; column++)
                 {
                     var source = ReadColumn(column, _fillSourceFirstRow, _fillSourceLastRow);
-                    var written = PredictSeries(source, _fillRow - lastRow);
+                    var written = PredictSeries(source, count, down ? 1 : -1);
                     for (var i = 0; i < written.Length; i++)
                     {
-                        SetCell(lastRow + 1 + i, column, written[i]);
+                        var row = firstTarget + i;
+                        var baseRow = _fillSourceFirstRow + i % height;
+                        var baseText = GetCell(baseRow, column);
+                        var value = baseText.Length > 0 && baseText[0] == '='
+                            ? "=" + ShiftFormula(baseText.Substring(1), row - baseRow, 0)
+                            : written[i];
+                        SetCell(row, column, value);
                     }
                 }
 
-                SelectRange(_fillSourceFirstRow, _fillSourceFirstColumn, _fillRow, lastColumn);
+                SelectRange(Math.Min(firstRow, _fillRow), firstColumn, Math.Max(lastRow, _fillRow), lastColumn);
                 return;
             }
 
-            if (_fillColumn > lastColumn)
+            // RIGHT or LEFT: the same, one pass per row.
+            if (_fillColumn > lastColumn || _fillColumn < firstColumn)
             {
+                var right = _fillColumn > lastColumn;
+                var count = right ? _fillColumn - lastColumn : firstColumn - _fillColumn;
+                var firstTarget = right ? lastColumn + 1 : _fillColumn;
+                var width = _fillSourceLastColumn - _fillSourceFirstColumn + 1;
                 for (var row = _fillSourceFirstRow; row <= _fillSourceLastRow; row++)
                 {
                     var source = ReadRow(row, _fillSourceFirstColumn, _fillSourceLastColumn);
-                    var written = PredictSeries(source, _fillColumn - lastColumn);
+                    var written = PredictSeries(source, count, right ? 1 : -1);
                     for (var i = 0; i < written.Length; i++)
                     {
-                        SetCell(row, lastColumn + 1 + i, written[i]);
+                        var column = firstTarget + i;
+                        var baseColumn = _fillSourceFirstColumn + i % width;
+                        var baseText = GetCell(row, baseColumn);
+                        var value = baseText.Length > 0 && baseText[0] == '='
+                            ? "=" + ShiftFormula(baseText.Substring(1), 0, column - baseColumn)
+                            : written[i];
+                        SetCell(row, column, value);
                     }
                 }
 
-                SelectRange(_fillSourceFirstRow, _fillSourceFirstColumn, lastRow, _fillColumn);
+                SelectRange(firstRow, Math.Min(firstColumn, _fillColumn), lastRow, Math.Max(lastColumn, _fillColumn));
             }
         }
 
@@ -3886,11 +6711,20 @@ namespace AvaloniaSpreadsheet
         }
 
         /// <summary>
-        /// Works out what the next values should be, from the ones it was given: a run of numbers
-        /// continues by its step (1, 2 becomes 3, 4 …; 2, 4 becomes 6, 8 …), a single number counts
-        /// up by one, "Item1, Item2" becomes "Item3", and anything else repeats the pattern cyclically.
+        /// Works out what the next values should be, from the ones it was given: a run of numbers continues
+        /// by its step (1, 2 becomes 3, 4 …; 2, 4 becomes 6, 8 …), a single number counts up by one,
+        /// "Item1, Item2" becomes "Item3", and anything else repeats the pattern cyclically.
+        ///
+        /// <paramref name="direction"/> is 1 when the fill was dragged forwards (down or right) and -1 when
+        /// it was dragged backwards (up or left): the same step, extended the other way — 3, 4 filled
+        /// upwards becomes 1, 2 — which is what "continue this series" means in both directions.
         /// </summary>
         private static string[] PredictSeries(IReadOnlyList<string> source, int count)
+        {
+            return PredictSeries(source, count, 1);
+        }
+
+        private static string[] PredictSeries(IReadOnlyList<string> source, int count, int direction)
         {
             var written = new string[count < 0 ? 0 : count];
             if (written.Length == 0)
@@ -3906,6 +6740,14 @@ namespace AvaloniaSpreadsheet
                 }
 
                 return written;
+            }
+
+            // How far the destination sits from the block's FIRST value: +1 is the value after a one-cell
+            // block, -1 the value before it, and so on for the whole run.
+            var distance = new int[written.Length];
+            for (var i = 0; i < written.Length; i++)
+            {
+                distance[i] = direction > 0 ? source.Count + i : i - count;
             }
 
             var decimals = DecimalsOf(source);
@@ -3925,10 +6767,10 @@ namespace AvaloniaSpreadsheet
 
                 if (steady)
                 {
-                    var last = numbers[numbers.Count - 1];
+                    var first = numbers[0];
                     for (var i = 0; i < written.Length; i++)
                     {
-                        written[i] = FormatNumber(last + step * (i + 1), decimals);
+                        written[i] = FormatNumber(first + step * distance[i], decimals);
                     }
 
                     return written;
@@ -3939,7 +6781,7 @@ namespace AvaloniaSpreadsheet
             {
                 for (var i = 0; i < written.Length; i++)
                 {
-                    written[i] = FormatNumber(numbers[0] + i + 1, decimals);
+                    written[i] = FormatNumber(numbers[0] + distance[i], decimals);
                 }
 
                 return written;
@@ -3947,13 +6789,13 @@ namespace AvaloniaSpreadsheet
 
             string? prefix;
             string? suffix;
-            int first;
+            int first1;
             int numberStep;
-            if (SplitTrailingNumber(source, out prefix, out suffix, out first, out numberStep))
+            if (SplitTrailingNumber(source, out prefix, out suffix, out first1, out numberStep))
             {
                 for (var i = 0; i < written.Length; i++)
                 {
-                    written[i] = prefix + (first + numberStep * (i + 1)).ToString(CultureInfo.InvariantCulture) + suffix;
+                    written[i] = prefix + (first1 + numberStep * distance[i]).ToString(CultureInfo.InvariantCulture) + suffix;
                 }
 
                 return written;
@@ -3961,7 +6803,13 @@ namespace AvaloniaSpreadsheet
 
             for (var i = 0; i < written.Length; i++)
             {
-                written[i] = source[i % source.Count];
+                var index = distance[i] % source.Count;
+                if (index < 0)
+                {
+                    index += source.Count;
+                }
+
+                written[i] = source[index];
             }
 
             return written;
@@ -4305,9 +7153,24 @@ namespace AvaloniaSpreadsheet
         /// decides (a reference off the sheet is #REF!, a range is clipped to the sheet).</summary>
         internal static bool TryReadAddress(string text, int at, out int row, out int column, out int used)
         {
+            bool ignored1;
+            bool ignored2;
+            return TryReadAnchoredAddress(text, at, out row, out column, out used, out ignored1, out ignored2);
+        }
+
+        /// <summary>
+        /// An address, with which parts of it were ANCHORED with a $ — what a copied formula needs to know
+        /// and what the evaluator can ignore. $B$2 is fixed in both directions, B$2 keeps its row and $B2
+        /// its column; a bare B2 moves with the copy, which is the whole point of a dollar sign.
+        /// </summary>
+        internal static bool TryReadAnchoredAddress(string text, int at, out int row, out int column,
+            out int used, out bool rowFixed, out bool columnFixed)
+        {
             row = 0;
             column = 0;
             used = 0;
+            rowFixed = false;
+            columnFixed = false;
             var index = at;
             while (index < text.Length && text[index] == '$')
             {
@@ -4357,10 +7220,122 @@ namespace AvaloniaSpreadsheet
                 return false;
             }
 
+            used = index - at;
             row = row1;
             column = column1;
-            used = index - at;
-            return true;
+            // A $ before the letters anchors the COLUMN, one before the digits anchors the ROW.
+            columnFixed = text[at] == '$';
+            rowFixed = dollars > 0;
+            return row > 0 && column > 0;
+        }
+
+        /// <summary>
+        /// A formula body with every RELATIVE reference moved by a fill's offset — what a formula MEANS in
+        /// its new home. Anchors do not move ($B$2 never does, B$2 keeps its row, $B2 its column), and a
+        /// reference that would land off the sheet becomes #REF! in the text: the one answer that tells the
+        /// truth about a cell that now points at nothing (what every other spreadsheet writes).
+        ///
+        /// Only whole addresses move. Text is never touched — a formula holding "A1" is QUOTING it — and
+        /// neither is a function name, because TryReadAnchoredAddress needs a letter run AND a digit run, and
+        /// a name that is followed by an opening bracket is not an address either.
+        /// </summary>
+        internal static string ShiftFormula(string body, int rowDelta, int columnDelta)
+        {
+            if (rowDelta == 0 && columnDelta == 0)
+            {
+                return body;
+            }
+
+            var builder = new System.Text.StringBuilder(body.Length + 8);
+            var i = 0;
+            while (i < body.Length)
+            {
+                var c = body[i];
+                if (c == '"')
+                {
+                    // A string literal, copied exactly — doubled quotes and all, the way the parser reads it.
+                    var start = i;
+                    i++;
+                    while (i < body.Length)
+                    {
+                        if (body[i] == '"')
+                        {
+                            if (i + 1 < body.Length && body[i + 1] == '"')
+                            {
+                                i += 2;
+                                continue;
+                            }
+
+                            i++;
+                            break;
+                        }
+
+                        i++;
+                    }
+
+                    builder.Append(body.Substring(start, i - start));
+                    continue;
+                }
+
+                int row;
+                int column;
+                int used;
+                bool rowFixed;
+                bool columnFixed;
+                if (TryReadAnchoredAddress(body, i, out row, out column, out used, out rowFixed, out columnFixed)
+                    && WholeToken(body, i, used))
+                {
+                    var movedRow = rowFixed ? row : row + rowDelta;
+                    var movedColumn = columnFixed ? column : column + columnDelta;
+                    if (movedRow < 1 || movedColumn < 1)
+                    {
+                        builder.Append(RefError);
+                    }
+                    else
+                    {
+                        builder.Append(columnFixed ? "$" : string.Empty).Append(ColumnName(movedColumn))
+                            .Append(rowFixed ? "$" : string.Empty)
+                            .Append(movedRow.ToString(CultureInfo.InvariantCulture));
+                    }
+
+                    i += used;
+                    continue;
+                }
+
+                builder.Append(c);
+                i++;
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>True when the address at <paramref name="at"/> stands alone: nothing that could make it
+        /// part of a longer name touches it, so a name like A1B is left as the name it is. A DOT is a
+        /// boundary when it is one of the two that spell a range (A1..B2) and not when it continues a name.</summary>
+        private static bool WholeToken(string text, int at, int used)
+        {
+            if (at > 0 && IsNameChar(text[at - 1]))
+            {
+                return false;
+            }
+
+            if (at + used >= text.Length)
+            {
+                return true;
+            }
+
+            var next = text[at + used];
+            if (IsNameChar(next))
+            {
+                return false;
+            }
+
+            return next != '.' || (at + used + 1 < text.Length && text[at + used + 1] == '.');
+        }
+
+        private static bool IsNameChar(char c)
+        {
+            return char.IsLetterOrDigit(c) || c == '_';
         }
 
         /// <summary>
@@ -4863,7 +7838,8 @@ namespace AvaloniaSpreadsheet
                 return new FormulaParser(_sheet, _row, _column, _text.Substring(start, end - start)).Work();
             }
 
-            /// <summary>One argument: a range (A1:B3 — only meaningful as an argument) or an expression.</summary>
+            /// <summary>One argument: a range (A1:B3, or the older A1..B3 — only meaningful as an
+            /// argument) or an expression.</summary>
             private FormulaArg Argument()
             {
                 SkipSpaces();
@@ -4877,9 +7853,22 @@ namespace AvaloniaSpreadsheet
                         probe++;
                     }
 
+                    // A range reads A1:B3 or A1..B3. The COLON is what this sheet writes (the macro list
+                    // and the shift-on-fill both keep to it) and what every spreadsheet taught; the older
+                    // two-dot form is still read, so a formula typed before this change is left alone.
+                    var separator = 0;
                     if (probe < _text.Length && _text[probe] == ':')
                     {
-                        probe++;
+                        separator = 1;
+                    }
+                    else if (probe + 1 < _text.Length && _text[probe] == '.' && _text[probe + 1] == '.')
+                    {
+                        separator = 2;
+                    }
+
+                    if (separator > 0)
+                    {
+                        probe += separator;
                         if (TryReadAddress(_text, probe, out var row2, out var column2, out var used2))
                         {
                             _at = probe + used2;
@@ -4912,6 +7901,10 @@ namespace AvaloniaSpreadsheet
                     case "MAX":
                     case "COUNT":
                     case "COUNTA":
+                    case "STDEV":
+                    case "STDDEV":
+                    case "STDEVP":
+                    case "STDDEVP":
                         return Aggregate(name, args);
                     case "ABS":
                         return One(name, args, Math.Abs);
@@ -5003,6 +7996,12 @@ namespace AvaloniaSpreadsheet
                         return FormulaValue.Of(numbers.Count == 0 ? 0d : Min(numbers));
                     case "MAX":
                         return FormulaValue.Of(numbers.Count == 0 ? 0d : Max(numbers));
+                    case "STDEV":
+                    case "STDDEV":
+                        return FormulaValue.Of(StdDev(numbers, true));
+                    case "STDEVP":
+                    case "STDDEVP":
+                        return FormulaValue.Of(StdDev(numbers, false));
                     default:
                         if (numbers.Count == 0)
                         {
@@ -5050,6 +8049,30 @@ namespace AvaloniaSpreadsheet
                 }
 
                 return value;
+            }
+
+            /// <summary>
+            /// STDEV / STDDEV is the SAMPLE standard deviation (divide by n−1) and STDEVP / STDDEVP the
+            /// population one (divide by n) — the difference matters for the handful of readings a sheet
+            /// this size usually holds. One number has no sample spread at all, which is named rather
+            /// than answered as a confident zero.
+            /// </summary>
+            private static double StdDev(List<double> numbers, bool sample)
+            {
+                if (numbers.Count == 0 || (sample && numbers.Count < 2))
+                {
+                    throw new FormulaError(DivisionByZero);
+                }
+
+                var mean = Sum(numbers) / numbers.Count;
+                var total = 0d;
+                for (var i = 0; i < numbers.Count; i++)
+                {
+                    var delta = numbers[i] - mean;
+                    total += delta * delta;
+                }
+
+                return Math.Sqrt(total / (sample ? numbers.Count - 1 : numbers.Count));
             }
 
             private FormulaValue One(string name, List<FormulaArg> args, Func<double, double> work)
@@ -5252,5 +8275,20 @@ namespace AvaloniaSpreadsheet
 
             return true;
         }
+    }
+
+    /// <summary>
+    /// Where the sheet's file dialogs left off, for this session. Static, so the NEXT dialog opens where the
+    /// last one was — which is what every desktop app does — and scoped to the process, which is the right
+    /// lifetime for a hint nobody asked to keep. (The charts' own ChartPickerMemory writes a file so that it
+    /// survives a restart; a sheet that has only just grown a File menu does not need that yet.)
+    /// </summary>
+    internal static class SheetPickerMemory
+    {
+        /// <summary>The folder Load… last read a workbook from.</summary>
+        internal static string? LastFolder;
+
+        /// <summary>The folder Save…, the PNG or the PDF last wrote to.</summary>
+        internal static string? LastExportFolder;
     }
 }

@@ -38,9 +38,15 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             kind: 'GrumpySheet',
             file: vb ? 'GrumpySheet.vb' : 'GrumpySheet.cs',
             bundled: /BUNDLED RESOURCE/,
-            // New in 0.12.9, so no older copy exists to refresh — the marker names the type itself,
-            // which is the token whose absence means "this file is not the sheet at all".
-            marker: 'GrumpySheet'
+            // New in 0.12.9, so no older copy exists to refresh — but the marker still has to name
+            // something only the CURRENT copy has, or a project that updated the sheet once would never
+            // be offered the next one: 2026-09-27 added the File/Print toolbar, the .xlsx reader and
+            // writer and the macro list (marker `ShowToolbarProperty`), then — the same day — the
+            // shift-a-copied-formula fill and its second handle (`ShiftFormula`), and then the A4 PAGE a
+            // job is composed on with the orientation question asked before it, which
+            // `PrintOrientationProperty` names and no earlier copy has. A marker is only ever replaced
+            // by a NEWER token, never by an older one.
+            marker: 'PrintOrientationProperty'
         },
         {
             kind: 'ChromeWindow',

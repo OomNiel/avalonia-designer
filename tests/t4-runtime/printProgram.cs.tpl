@@ -19,6 +19,7 @@
 // from the artefacts written here. Prints "PASS/FAIL name" lines and a final RESULT; exit 0 = passed.
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -30,6 +31,36 @@ using Avae.Printables;
 internal static class Program
 {
     private static int _fails;
+
+    /// <summary>
+    /// Waits for a task the way an APP does: PUMPING the dispatcher instead of blocking the thread that the
+    /// continuations are posted to. Blocking there (`.GetAwaiter().GetResult()`) is a trap in a driver with
+    /// no message loop, not a product problem — an app's loop is always running while a print awaits — and it
+    /// shows up on the SECOND print of the process: the first one usually completes its awaits inline, the
+    /// second finds work already queued and deadlocks. Symptom: the stub `lp` records the job and the driver
+    /// then hangs before the call returns.
+    /// </summary>
+    private static T Wait<T>(Task<T> task)
+    {
+        while (!task.IsCompleted)
+        {
+            Dispatcher.UIThread.RunJobs();
+            System.Threading.Thread.Sleep(2);
+        }
+
+        return task.GetAwaiter().GetResult();     // surface a failure the way the caller would see it
+    }
+
+    private static void Wait(Task task)
+    {
+        while (!task.IsCompleted)
+        {
+            Dispatcher.UIThread.RunJobs();
+            System.Threading.Thread.Sleep(2);
+        }
+
+        task.GetAwaiter().GetResult();
+    }
 
     private static void Check(bool cond, string name, string detail = "")
     {
@@ -204,9 +235,40 @@ internal static class Program
         // Back to the chart's own size, so the node side can check that the page it received is a real
         // 400 x 200 PDF with the chart on it — and that the stub was asked to print *that* file.
         chart.PrintPaper = ChartPaper.AsDrawn;
-        Check(chart.PrintAsync().GetAwaiter().GetResult(), "print-with-cups-true");
+        Check(Wait(chart.PrintAsync()), "print-with-cups-true");
         Check(failures == 1, "cups-print-is-not-a-failure", $"failures={failures}");
         Check(!chart.IsPrinting, "not-printing-after-the-run");
+
+        // ---------- and the same page again, this time SAYING what it is ----------
+        // A sheet composes an A4 page of its own and passes PrintPageSettings, because CUPS's pdftopdf
+        // follows the JOB's options rather than the PDF's page box: a queue whose saved defaults say
+        // portrait (a user's ~/.cups/lpoptions can pin it) prints a landscape page the wrong way round —
+        // measured on this very printer, 2026-09-27, with one and the same PDF. The stub `lp` records this
+        // second command line too, so the node side asserts it argument by argument. (This chart's page is
+        // its own size, so the A4 below is part of the test rather than a claim about this chart.)
+        //
+        // The two steps are separate on purpose, and the render is the FIRST of them: rendering and `lp`
+        // are what the helper does in one call, and when the driver blocked them together the second job of
+        // the process never got past the render — so the trace lines below say which half it was. The file
+        // overload is the one exercised, which is also the shape the sheet's own page takes.
+        var pageOptionsReachedLp = true;
+        var settingsPdf = Path.Combine(dir, "with-page-options.pdf");
+        try
+        {
+            Console.WriteLine("      [trace] rendering the page for the settings job…");
+            Wait(AvaloniaUI.PrintToPDF.Print.ToFileAsync(settingsPdf, new Visual[] { chart }));
+            Console.WriteLine("      [trace] rendered " + new FileInfo(settingsPdf).Length + " bytes");
+            Wait(GrumpyPrint.PrintFileAsync(settingsPdf, "Harness chart", null,
+                new PrintPageSettings { Landscape = true, PaperSize = "A4" }));
+            Console.WriteLine("      [trace] lp returned");
+        }
+        catch (Exception error)
+        {
+            pageOptionsReachedLp = false;
+            Console.WriteLine("      " + error.Message);
+        }
+
+        Check(pageOptionsReachedLp, "print-with-page-settings-true");
         window.Close();
     }
 
