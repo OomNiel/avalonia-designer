@@ -2,7 +2,9 @@
  * 'file' kind (Image Source, Window Icon, ChromeWindow TitleBarIcon), Items/ItemsSource,
  * read-only bound ItemsSource override, root vs non-root (Anchor for a direct Canvas child — free
  * placement — and for a direct DockPanel child — e.g. a Status Bar item / StatusDate, which has no
- * Dock property, so an edge Anchor docks it; Grid/StackPanel children get no Anchor). */
+ * Dock property, so an edge Anchor docks it; Grid/StackPanel children get no Anchor) and the ONE
+ * control that keeps a Dock row inside a Grid cell (the ProgressBar, whose dock then happens INSIDE
+ * that cell). */
 'use strict';
 const { DOMParser } = require('@xmldom/xmldom');
 const {
@@ -53,6 +55,78 @@ module.exports = async (t) => {
     t.equal(JSON.stringify(sheetDock && sheetDock.options),
         JSON.stringify(['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom']), 'props',
         'with the same choices as every other dockable control');
+    // --- The progress bar is dockable too (2026-09-28, asked for) ---
+    // A bar reports a job that runs across a FORM, so it is usually a BAND at an edge (under a toolbar,
+    // or along the bottom) rather than a thing placed at an exact spot — the same reason the sheet and
+    // the charts carry the row. Same ATTACHED key, so Avalonia reads it from the bar wherever it sits.
+    const pbEl = elFrom('<Canvas><ProgressBar x:Name="pb1" Value="25"/></Canvas>');
+    const pbChild = childEls(pbEl)[0];
+    const pbProps = propertyDefsFor(pbChild);
+    const pbDock = keyOf(pbProps, 'DockPanel.Dock');
+    t.ok(!!pbDock, 'props', 'the progress bar offers the Dock row');
+    t.equal(pbDock && pbDock.label, 'Dock', 'props', 'labelled Dock');
+    t.equal(JSON.stringify(pbDock && pbDock.options),
+        JSON.stringify(['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom']), 'props',
+        'with the same choices as every other dockable control');
+    t.equal(pbDock && pbDock.value, 'None', 'props',
+        'a bar on a Canvas shows None (free placement is not a dock)');
+    t.ok(!!pbDock && !!pbDock.desc, 'props', 'the row explains what docking will do to the bar');
+    // It is a row ON TOP of the bar's own: the progress rows are still there.
+    t.equal(keyOf(pbProps, 'Value').kind, 'number', 'props', 'the bar keeps its Value row');
+    t.ok(keyOf(pbProps, 'IsIndeterminate'), 'props', 'and its Indeterminate row');
+    t.equal(pbDock && pbDock.sectionId, 'layout', 'props', 'and it is filed under Layout, not Appearance');
+    // The row is only useful because the designer's Dock branch does NOT take the "fill the cell"
+    // shortcut for a bar — that shortcut stores no attribute, so the row would snap straight back to
+    // None. The two halves of the widened behaviour are pinned here (the wrap itself is unit-tested
+    // against the model, see xamlModel.test.js).
+    const dockSrc = require('fs')
+        .readFileSync(require('path').join(__dirname, '..', '..', 'src', 'designerPanel.ts'), 'utf8');
+    t.ok(/const dockInsideCell = parentIsGrid && localName\(el\.tagName\) === 'ProgressBar'/.test(dockSrc)
+        && /if \(parentIsGrid && !dockInsideCell\)/.test(dockSrc), 'props',
+        'the panel skips the fill-the-cell shortcut for a bar (so the dock really happens)');
+    t.ok(/pn === 'Grid' && localName\(el\.tagName\) === 'ProgressBar'\) return model\.wrapInGridCell\(el\)/.test(dockSrc),
+        'props', 'and gives the bar a DockPanel inside its own cell');
+    // A Canvas that lives INSIDE a DockPanel (a TAB PAGE's body — <Name>BodyN + <Name>BodyNCanvas — or
+    // a form's own Body canvas) is a dock region of its own: the control moves into that DockPanel in
+    // front of the Canvas (2026-09-29). Falling through wrapped it in a DockPanel inside the Canvas,
+    // where a Canvas sizes a child to its own desire — so Dock=Fill filled nothing there.
+    t.ok(/const owner = model\.moveIntoOwnerDockPanel\(el, parent\);/.test(dockSrc)
+        && /if \(owner\) return owner;/.test(dockSrc), 'props',
+        'a Canvas inside a DockPanel is treated as that panel\'s dock region (tab pages included)');
+    // A dock must also FILL the region it hands the control, and a themed control will not do that by
+    // itself (its ControlTheme centres it: a bar docked Left came out 220x4 — reported 2026-09-28 as
+    // "it only docks horizontally"). The panel therefore writes Stretch on the axis the dock leaves
+    // free, and takes it back when the dock is cleared. The bounds are measured for real in
+    // tests/t1-preview/dockFill.test.js — this is only the half that reads the panel's source.
+    t.ok(/\|\| value === 'Fill'\) \{\s*\n\s*el\.setAttribute\('VerticalAlignment', 'Stretch'\)/.test(dockSrc),
+        'props', 'a docked control is stretched on the axis the dock leaves free (Left/Right/Fill → height)');
+    t.ok(/\|\| value === 'Bottom' \|\| value === 'Fill'\) \{\s*\n\s*el\.setAttribute\('HorizontalAlignment', 'Stretch'\)/.test(dockSrc),
+        'props', 'and on the other axis for Top/Bottom/Fill (→ width)');
+    t.ok(/if \(el\.getAttribute\('VerticalAlignment'\) === 'Stretch'\) el\.removeAttribute\('VerticalAlignment'\)/.test(dockSrc)
+        && /if \(el\.getAttribute\('HorizontalAlignment'\) === 'Stretch'\) el\.removeAttribute\('HorizontalAlignment'\)/.test(dockSrc),
+        'props', 'and Dock=None takes that Stretch back (an alignment set by hand is left alone)');
+    // Inside a DockPanel the row reads back the dock the bar actually has (Fill is the implicit one).
+    const pbDocked = elFrom('<DockPanel LastChildFill="False"><ProgressBar x:Name="pb2" DockPanel.Dock="Bottom" Height="24"/><Canvas x:Name="Body"/></DockPanel>');
+    const pb2 = childEls(pbDocked).find((c) => (c.getAttribute('x:Name') || '') === 'pb2');
+    t.equal(keyOf(propertyDefsFor(pb2), 'DockPanel.Dock').value, 'Bottom', 'props',
+        'a docked bar reports the dock it has');
+    // The bar is the ONE control that keeps the Dock row inside a Grid cell (2026-09-28, asked for):
+    // a bar is a strip that reports a job, so a strip in a cell still wants an edge — and the designer
+    // honours it INSIDE the cell (it wraps the bar in a DockPanel that keeps the cell) instead of moving
+    // the bar out of the layout. Canvas.Left/Top stay hidden there: a Grid ignores them outright.
+    const pbInGrid = elFrom('<Grid><ProgressBar x:Name="pb3"/></Grid>');
+    const pb3 = childEls(pbInGrid)[0];
+    t.ok(!!keyOf(propertyDefsFor(pb3), 'DockPanel.Dock'), 'props',
+        'a bar in a Grid cell STILL offers Dock (its dock happens inside the cell)');
+    t.ok(!keyOf(propertyDefsFor(pb3), 'Canvas.Left') && !keyOf(propertyDefsFor(pb3), 'Canvas.Top'), 'props',
+        'but not Canvas.Left/Top — a Grid ignores those');
+    // Every OTHER control keeps the old rule: inside a cell there is no Dock row at all.
+    const gridOthers = elFrom('<Grid><Button x:Name="gb1"/><Image x:Name="gi1"/><ListBox x:Name="gl1"/></Grid>');
+    for (const child of childEls(gridOthers)) {
+        const nm = child.getAttribute('x:Name');
+        t.ok(!keyOf(propertyDefsFor(child), 'DockPanel.Dock'), 'props',
+            `${nm} in a Grid cell has NO Dock (the cell IS its layout)`);
+    }
     // --- A bare root Button (no element parent) gets no Anchor ---
     const rootBtn = elFrom('<Button x:Name="r1" Content="Root"/>');
     t.equal(!!keyOf(propertyDefsFor(rootBtn), 'chrome:AnchorHelper.Anchor'), false, 'props', 'root (parentless) Button has no Anchor');

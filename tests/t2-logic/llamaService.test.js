@@ -186,7 +186,7 @@ module.exports = async function (t) {
             kind: 'unit', unit: 'llama-server.service', scope: 'user', pid: 1918, enabled: true
         }));
         t.ok(/llama-server\.service/.test(withOwner[1]), 'status', 'the owner line names the unit');
-        t.ok(/Start \/ Stop in ⚙ Settings/.test(withOwner[1]), 'status',
+        t.ok(/Start \/ Stop in Code Fix\/AI-Assist Settings/.test(withOwner[1]), 'status',
             'and points at the control that can now stop it — the sentence this replaced said no button would');
         t.ok(!/leave it alone/.test(withOwner[1]), 'status', 'the old shrug is gone when the owner is known');
         const withoutOwner = llamaServerStatusLines({}, elsewhere);
@@ -209,6 +209,73 @@ module.exports = async function (t) {
             'and the dropdown writes its setting, so the choice survives a reload');
         t.ok(/fellBack && outcome\.why/.test(panel), 'wiring',
             'a fallback is reported with the reason the chosen way failed, never silently');
+
+        // ---------- the panel says what the two start modes ARE (asked 2026-09-29) ----------
+        // "The AI assist panel is a bit confusing, especially for novice users. Explain the diff between
+        // 'Start as a systemd user unit' and 'Start as this window's process'." The difference is LIFETIME
+        // (systemd owns the unit; VS Code owns the child), and it is now written where the choice is made —
+        // in the option labels themselves and in a sentence under the dropdown — rather than left to be
+        // inferred from the two phrases.
+        t.ok(/id="aiLlamaTargetHint"/.test(panel), 'copy', 'the dropdown carries its own explanation');
+        const hint = panel.slice(panel.indexOf('id="aiLlamaTargetHint"'), panel.indexOf('id="aiLlamaOwner"'))
+            .replace(/\s+/g, ' ');
+        t.ok(/systemd user unit/.test(hint) && /systemctl --user start/.test(hint), 'copy',
+            'naming the unit route and the command it runs');
+        t.ok(/this window's process/i.test(hint) && /stops when this window closes/.test(hint), 'copy',
+            'and the window-owned route with its lifetime — the actual difference');
+        t.ok(/ExecStart/.test(hint), 'copy',
+            'including the fact the unit serves its own model, so the Model box does not drive it');
+        t.ok(/safer one to try first/.test(hint), 'copy', 'with a recommendation a novice can follow');
+        t.ok(/the other one is tried and the reason is reported/.test(hint), 'copy',
+            'and the fallback spelled out, because it is not silent');
+        // The essence is always visible; the long version is a disclosure. Measured in Chromium against the
+        // real markup and stylesheet (2026-09-29, 1024x700): shown in full the explanation cost ~100px of a
+        // dialog that was already 141px taller than its box, and these boxes and copy are what the user
+        // asked for. The <summary> line is what a reader scans; the rest is one click away and stays in the
+        // DOM (so it is searchable and in the tab order).
+        t.ok(/<details>[\s\S]{0,80}<summary>What is the difference exactly\?<\/summary>/.test(hint), 'copy',
+            'the long version is a disclosure with a question a novice can recognise');
+        t.ok(!/<details open/.test(hint), 'copy', 'closed by default — the panel has no height to spare');
+        t.ok(/The two modes differ in who owns the process/.test(hint), 'copy',
+            'and the line that stays visible says what the choice is really about');
+        const options = panel.slice(panel.indexOf('id="aiLlamaTarget"'), panel.indexOf('</select>', panel.indexOf('id="aiLlamaTarget"')));
+        t.ok(/value="unit"[^>]*>[^<]*keeps running after VS Code closes/.test(options), 'copy',
+            'the unit option states its lifetime in the label itself');
+        t.ok(/value="process"[^>]*>[^<]*stops when VS Code closes/.test(options), 'copy',
+            'and so does the process option');
+
+        // ---------- the two config areas are boxed apart ----------
+        // "put the 'Model' and 'My llama-server' sections in bordered areas so that is easier to
+        // differentiate between the two" — the boxes are real containers, so the CSS has something to
+        // border, and each box's own heading says which of the two things it configures.
+        t.ok(/<div class="ai-block" id="aiBlockModel">/.test(panel) && /<div class="ai-block" id="aiBlockLlama">/.test(panel),
+            'boxes', 'Model and My llama-server are each wrapped in their own box');
+        const modelBox = panel.slice(panel.indexOf('id="aiBlockModel"'), panel.indexOf('id="aiBlockLlama"'));
+        t.ok(/id="aiModel"/.test(modelBox) && /id="aiOptions"/.test(modelBox) && /id="aiLoad"/.test(modelBox), 'boxes',
+            'the Model box holds the picker, its options and the load/unload buttons');
+        t.ok(!/id="aiLlamaStart"/.test(modelBox), 'boxes', 'and not the llama-server controls');
+        const llamaBox = panel.slice(panel.indexOf('id="aiBlockLlama"'), panel.indexOf('id="aiConventions"'));
+        t.ok(/id="aiLlamaTarget"/.test(llamaBox) && /id="aiLlamaStart"/.test(llamaBox) && /id="aiLlamaOwner"/.test(llamaBox),
+            'boxes', 'the llama-server box holds its dropdown, both buttons and the owner line');
+        t.ok(!/id="aiLoad"/.test(llamaBox), 'boxes', 'and none of the model controls');
+        const opens = (panel.match(/<div class="ai-block"/g) || []).length;
+        t.equal(opens, 2, 'boxes', 'exactly two boxes (House rules keeps its own divider style)');
+        // Progress and status are shared by every AI action, so they sit OUTSIDE both boxes: a "Load Model"
+        // progress line inside a box labelled "My llama-server" would be exactly the confusion this fixes.
+        const afterLlamaBox = panel.slice(panel.lastIndexOf('id="aiLlamaOwner"'), panel.indexOf('id="aiProgress"'));
+        t.ok(/<\/div>/.test(afterLlamaBox), 'boxes',
+            'the shared progress/status output is outside the boxes, not inside one of them');
+        const css = read('media/designer.css');
+        t.ok(/\.ai-block \{[^}]*border: 1px solid/.test(css), 'boxes', 'and .ai-block really draws a border');
+        t.ok(/\.ai-block-head \{[^}]*text-transform: uppercase/.test(css), 'boxes',
+            'with a heading rule so the box says what it is above its controls');
+        // The measurement that keeps this honest: the two boxes and the explanation cost ~110px in a dialog
+        // that already overflowed, so their chrome is tight on purpose. If someone enlarges it, this says
+        // what it was chosen against instead of leaving the number to be rediscovered.
+        const boxRule = /\.ai-block \{([^}]*)\}/.exec(css)?.[1] ?? '';
+        const pad = Number(/padding: \d+px (\d+)px \d+px/.exec(boxRule)?.[1] ?? 99);
+        t.ok(pad <= 8, 'boxes', `the box padding stays tight (found ${pad}px of side padding, was 10px)`);
+        t.ok(/\.ai-more summary/.test(css), 'boxes', 'and the disclosure has its own summary style');
 
         const js = read('media/designer.js');
         t.ok(/post\(\{ type: 'aiLlamaStart', target:/.test(js), 'wiring', 'the webview posts the Start intent');

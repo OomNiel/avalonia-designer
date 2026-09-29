@@ -901,6 +901,66 @@ export class XamlModel {
         }
     }
 
+    /**
+     * Moves `el` into the DockPanel that OWNS `canvas` — the panel whose free-placement surface that
+     * Canvas is — inserting it BEFORE the Canvas so the Canvas stays the DockPanel's last (fill) child
+     * and keeps whatever the docked control leaves.
+     *
+     * This is the shape of a TAB PAGE's body (`<Name>BodyN` DockPanel + `<Name>BodyNCanvas` Canvas) and
+     * of a form's own Body canvas, and it is what makes `DockPanel.Dock` mean something for a control
+     * dropped on either: without it the dock fell through to wrapping the control in a NEW DockPanel
+     * inside the Canvas — and a Canvas sizes a child to the child's own desire, so `Dock = Fill` filled
+     * nothing at all (reported 2026-09-29: *"any control with a Dock property does not dock properly in
+     * the tab canvas … If I delete the canvas from that page, controls like a splitpanel or a chart
+     * dock fill properly"*).
+     *
+     * Returns the DockPanel it moved into, or undefined when the Canvas has no DockPanel owner (then the
+     * caller keeps looking — a Canvas that is a SplitPanel pane body or a GrumpyPanel body is handled
+     * before this, and a loose Canvas is wrapped instead).
+     */
+    moveIntoOwnerDockPanel(el: Element, canvas: Element): Element | undefined {
+        const p = canvas.parentNode as Element | null;
+        if (!p || p.nodeType !== 1 || localName(p.tagName) !== 'DockPanel') return undefined;
+        this.moveTo(el, p);                       // strips Canvas.* (the dock owns the placement now)
+        p.insertBefore(el, canvas);               // before the Canvas = the Canvas stays the fill child
+        if (!p.getAttribute('LastChildFill')) p.setAttribute('LastChildFill', 'True');
+        return p;
+    }
+
+    /**
+     * Wraps `el` in a DockPanel that stays INSIDE the Grid cell `el` is in, so `DockPanel.Dock` has
+     * somewhere to act without the control leaving the cell the Grid put it in — the third of the
+     * three ways a dock is given a home (a SplitPanel pane body becomes a DockPanel, a Canvas child is
+     * wrapped in one, a root DockPanel gets the control as a pre-fill child; see the designer's
+     * `ensureDockPanelParent`).
+     *
+     * How the control sat in its cell moves to the wrapper — the cell coordinates (Grid.Row/Column and
+     * their spans), the margin and the two alignments — so the dock region is the region the control
+     * had, and the control inside it is docked against a plain panel edge. The control keeps everything
+     * else (its size, its own properties, its event attributes). Returns the new DockPanel.
+     *
+     * Only the ProgressBar asks for this: a bar is a strip that reports a job, and a strip belongs to an
+     * edge of its region — so the Dock row is offered inside a Grid cell too (asked for 2026-09-28).
+     * Every other control hides the row there, because for them a cell IS the layout.
+     */
+    wrapInGridCell(el: Element): Element {
+        const grid = el.parentNode as Element | null;
+        const wrapper = this.createElement(`<DockPanel x:Name="${this.uniqueName('DockPanel')}"/>`);
+        for (const at of ['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan',
+            'Margin', 'HorizontalAlignment', 'VerticalAlignment']) {
+            const v = el.getAttribute(at);
+            if (v) {
+                wrapper.setAttribute(at, v);
+                // The wrapper now carries the cell placement, so the control must not keep it too
+                // (a Margin would otherwise be applied twice, and an alignment would fight the dock).
+                el.removeAttribute(at);
+            }
+        }
+        if (grid && grid.nodeType === 1) grid.replaceChild(wrapper, el);
+        this.moveTo(el, wrapper);
+        return wrapper;
+    }
+
     /** Values of event-handler attributes on the element (e.g. "Button1_Click"). */
     eventHandlersOf(el: Element): string[] {
         const out: string[] = [];

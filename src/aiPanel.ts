@@ -1,4 +1,4 @@
-/* The AI section of the designer's ⚙ Settings panel — the extension half.
+/* The AI section of the designer's ⚙ Code Fix/AI-Assist Settings panel — the extension half.
  *
  * Why it lives here and not in `assistantUi.ts`: this is the *designer webview's* conversation. The panel
  * renders the panel's own markup (`designerPanel.ts` holds the HTML, `media/designer.js` the behaviour),
@@ -84,7 +84,7 @@ export interface PanelState {
      * (`assistant.ignoreHostCheck` is the escape hatch, and `host.overridden` says it was used).
      */
     host: HostGate;
-    /** Show the model's code as a diff before it is applied (⚙ Settings, `assistant.showDiff`). */
+    /** Show the model's code as a diff before it is applied (⚙ Code Fix/AI-Assist Settings, `assistant.showDiff`). */
     showDiff: boolean;
     /**
      * The native build of the built-in runtime (`assistant.bundledBackend`): `cpu` or `vulkan`.
@@ -287,7 +287,7 @@ export async function panelState(fresh = false): Promise<PanelState> {
     if (fresh) scanned = [];
     // Asked with a cache and a short patience (2026-09-17): this runs on every panel open, save and focus, and
     // the first `lms` call of a session starts LM Studio's service on the way — 20 s per call, twice per state,
-    // which is what made ⚙ Settings crawl the first time it was opened after a reload. `fresh` is the user's own
+    // which is what made ⚙ Code Fix/AI-Assist Settings crawl the first time it was opened after a reload. `fresh` is the user's own
     // Refresh list, so that one asks in full; the load and import flows do the same.
     const found = await discover(fresh ? { maxAgeMs: 0, cliTimeoutMs: 20000 } : { maxAgeMs: 15000, cliTimeoutMs: 3000 });
     const lookup = llamaServerBinary(cfg.get<string>('llamaServerPath', ''));

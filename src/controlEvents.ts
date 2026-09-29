@@ -28,7 +28,10 @@ export const DEFAULT_EVENT: Record<string, string> = {
     TextBox: 'TextChanged',
     HyperlinkButton: 'Click',
     CommandBarButton: 'Click',
-    CommandBarToggleButton: 'IsCheckedChanged'
+    CommandBarToggleButton: 'IsCheckedChanged',
+    // The Timer's one event: placing it wires the Tick handler (with its own TODO stub), the way
+    // WinForms' designer writes the Tick handler when you double-click the component in the tray.
+    Timer: 'Tick'
 };
 
 /**
@@ -75,6 +78,10 @@ export const EVENTS_BY_CONTROL: Record<string, string[]> = {
     NumericUpDown: ['ValueChanged', 'Spinned', 'KeyDown', 'KeyUp', 'GotFocus', 'LostFocus', 'Loaded', 'Unloaded', 'Tapped'],
     Slider: ['ValueChanged', 'PointerPressed', 'PointerReleased', 'KeyDown', 'KeyUp', 'GotFocus', 'LostFocus', 'Loaded', 'Unloaded', 'Tapped'],
     ProgressBar: ['ValueChanged', 'Loaded', 'Unloaded'],
+    // Timer (the bundled non-visual AvaloniaChrome.Timer): ONE event, Tick, raised on a WORKER thread.
+    // Loaded/Unloaded are not offered on purpose — starting and stopping is what Enabled (and
+    // Start/Stop) is for, and a Tick handler that also ran on load would be a surprise.
+    Timer: ['Tick'],
     DatePicker: ['SelectedDateChanged', 'KeyDown', 'KeyUp', 'GotFocus', 'LostFocus', 'Loaded', 'Unloaded', 'Tapped'],
     CalendarDatePicker: ['SelectedDateChanged', 'CalendarOpened', 'CalendarClosed', 'DateValidationError', 'KeyDown', 'KeyUp', 'GotFocus', 'LostFocus', 'Loaded', 'Unloaded', 'Tapped'],
     TimePicker: ['SelectedTimeChanged', 'KeyDown', 'KeyUp', 'GotFocus', 'LostFocus', 'Loaded', 'Unloaded', 'Tapped'],
@@ -269,6 +276,10 @@ export const EVENT_ARGS: Record<string, string> = {
 export const EVENT_ARGS_BY_CONTROL: Record<string, Record<string, string>> = {
     Window: { 'Opened': 'System.EventArgs', 'Closed': 'System.EventArgs' },
     WindowBase: { 'Opened': 'System.EventArgs', 'Closed': 'System.EventArgs' },
+    // The bundled non-visual Timer raises a plain EventHandler (no event data), so its stub says
+    // `System.EventArgs` — in VB that matters: a RoutedEventArgs handler would not match the event the
+    // component declares, which is a build error rather than a warning.
+    Timer: { 'Tick': 'System.EventArgs' },
     NumericUpDown: { 'ValueChanged': 'Avalonia.Controls.NumericUpDownValueChangedEventArgs' },
     DatePicker: { 'SelectedDateChanged': 'Avalonia.Controls.DatePickerSelectedValueChangedEventArgs' },
 };

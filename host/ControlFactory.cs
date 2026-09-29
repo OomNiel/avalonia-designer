@@ -152,6 +152,14 @@ public class ControlFactory
             // is a blank strip); Slider mirrors that with a movable thumb.
             ["ProgressBar"] = n => $"<ProgressBar x:Name=\"{n}\" Width=\"220\" Height=\"12\" Minimum=\"0\" Maximum=\"100\" Value=\"40\"/>",
             ["Slider"] = n => $"<Slider x:Name=\"{n}\" Width=\"220\" Height=\"24\" Minimum=\"0\" Maximum=\"100\" Value=\"40\" TickFrequency=\"10\"/>",
+            // Timer (2026-09-28): the NON-VISUAL component — the WinForms Timer idea. The bundled
+            // AvaloniaChrome.Timer ticks on a WORKER thread, so the snippet carries no size and no
+            // position (it draws nothing and takes no space; the designer's component tray lists it).
+            // Enabled starts FALSE, like the WinForms Timer in the designer: interval and start are
+            // the author's decisions, and a timer that began ticking the moment it was dropped would
+            // be a surprise. No Tick attribute either — the designer wires the handler, so the saved
+            // form never names a method its code-behind does not have yet.
+            ["Timer"] = n => $"<chrome:Timer x:Name=\"{n}\" Interval=\"1000\" Enabled=\"False\"/>",
             // Margin="0": the Fluent theme's own Separator margin shifts it a few pixels right/down, so a
             // dropped separator would not sit exactly where it was dropped (the T5 placement check, ±8px).
             ["Separator"] = n => $"<Separator x:Name=\"{n}\" Width=\"200\" Height=\"1\" Margin=\"0\" Background=\"#808080\"/>",
@@ -274,6 +282,10 @@ public class ControlFactory
         ["ProgressBar"] = typeof(ProgressBar),
         ["Slider"] = typeof(Slider),
         ["Separator"] = typeof(Separator),
+        // Timer: the designer's non-visual Timer component (a bundled AvaloniaChrome.Timer that ticks
+        // on a WORKER thread). Linked from resources/Timer.cs; it is invisible and 0x0, so it adds
+        // nothing to the picture — but the entry keeps the builder from standing in for the tag.
+        ["Timer"] = typeof(AvaloniaChrome.Timer),
         ["ToggleSwitch"] = typeof(ToggleSwitch),
         ["MaskedTextBox"] = typeof(MaskedTextBox),
         ["NumericUpDown"] = typeof(NumericUpDown),

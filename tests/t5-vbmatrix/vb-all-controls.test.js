@@ -114,6 +114,12 @@ function toolboxControls() {
     for (const cat of TOOLBOX_CATEGORIES) {
         for (const c of controlsForGroup(cat.group)) {
             if (!c.tag || c.tag === 'DataSet' || c.tag === 'CustomTitleBar') continue;
+            // The Timer is a COMPONENT, not a control (2026-09-28): it draws nothing and takes no
+            // space, so it has no place on the canvas to drop at, no bounds to check and no size row
+            // to audit — the drop strips its position on purpose. It is verified where that behaviour
+            // actually lives: its rows/events/file in tests/t2-logic/timer.test.js, the tray in t3,
+            // and the worker-thread tick (plus a real C#/VB compile) in tests/t4-runtime/timer.test.js.
+            if (c.tag === 'Timer') continue;
             if (seen.has(c.tag)) continue;
             seen.add(c.tag); out.push(c);
         }

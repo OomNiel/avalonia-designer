@@ -305,6 +305,27 @@ public partial class TestForm : Window
                 `cs ${tag}: deleting the control removes that handler`);
         }
 
+        // The Timer's Tick is a plain EventHandler, so its stub MUST take System.EventArgs — and the
+        // handler signature is not cosmetic: the Avalonia XAML compiler rejects a mismatched one while
+        // the language server does not (2026-09-29: the user's demo app showed a clean PROBLEMS pane and
+        // failed `dotnet build` with AVLN3000 on its `Tick="Timer1_Tick"` attribute, so it could never
+        // run). The TAG carries the EventArgs type — which is why the placement-time wiring has to pass
+        // it, and why this test drives the writer both ways.
+        for (const lang of ['cs', 'vb']) {
+            const withTag = tmpProject(lang);
+            await insertHandlerIntoCodeBehind(withTag.uri, 'Timer1_Tick', 'Tick', 'Timer');
+            const line = withTag.read().split('\n').find((l) => l.includes('Timer1_Tick')) || '';
+            t.ok(/System\.EventArgs/.test(line), 'timer-events',
+                `${lang}: the Timer's Tick stub takes System.EventArgs (the component raises EventHandler)`);
+            t.ok(!/RoutedEventArgs/.test(line), 'timer-events',
+                `${lang}: and never RoutedEventArgs — that signature does not compile against it`);
+            const noTag = tmpProject(lang);
+            await insertHandlerIntoCodeBehind(noTag.uri, 'Timer1_Tick', 'Tick');
+            const bare = noTag.read().split('\n').find((l) => l.includes('Timer1_Tick')) || '';
+            t.ok(/RoutedEventArgs/.test(bare), 'timer-events',
+                `${lang}: without the control's tag the stub falls back to RoutedEventArgs (the old bug)`);
+        }
+
         // VB: a named control gets a FindControl accessor, and Shapes/AvaloniaChrome imports when the
         // type needs them — all of which must go with the control.
         const vbBase = `Imports Avalonia.Controls
@@ -583,5 +604,52 @@ End Namespace
         t.ok(!!r && r.filePath.endsWith('TestForm.axaml.cs'), 'cb-create',
             'into the code-behind created a moment earlier');
         t.ok(/btnNew_Click/.test(p.read()), 'cb-create', 'and the method is really in that file');
+    }
+
+    // --- Code Fix…: lift a control the old dock path wrapped INSIDE its Canvas (reported 2026-09-29) ---
+    // "any control with a Dock property does not dock properly in the tab canvas … if I delete the
+    // canvas from that page, controls dock fill properly". The form runs, so the wrapper is invisible
+    // until the layout is wrong — and re-setting the property repairs one control at a time.
+    {
+        const { analyzeCodeBehind, applyLocalFix } = require('../../out/codeBehindCheck.js');
+        const wrap = (body) => {
+            const d = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-dockwrap-'));
+            fs.writeFileSync(path.join(d, 'Proj.csproj'), '<Project Sdk="Microsoft.NET.Sdk"/>\n');
+            const ax = path.join(d, 'TestForm.axaml');
+            fs.writeFileSync(ax, `<Window ${NS} x:Class="Proj.TestForm" Width="800" Height="450">\n  <TabControl x:Name="Tabs">\n    <TabItem Header="Page 1">\n      ${body}\n    </TabItem>\n  </TabControl>\n</Window>`);
+            fs.writeFileSync(path.join(d, 'TestForm.axaml.cs'), 'using Avalonia.Controls;\nnamespace Proj;\npublic partial class TestForm : Window\n{\n    private void InitializeComponent() { }\n}\n');
+            return { uri: Uri.file(ax), read: () => fs.readFileSync(ax, 'utf8') };
+        };
+        const page = (inner) => `<DockPanel x:Name="TabsBody1" LastChildFill="True">\n        <Canvas x:Name="TabsBody1Canvas">\n          ${inner}\n        </Canvas>\n      </DockPanel>`;
+        const wrapped = '<DockPanel x:Name="DockPanel1" LastChildFill="False"><ProgressBar x:Name="Bar1" DockPanel.Dock="Bottom" Canvas.Left="10" Canvas.Top="20"/></DockPanel>';
+
+        const p = wrap(page(wrapped));
+        const found = analyzeCodeBehind(p.uri, {}).issues.filter((i) => i.kind === 'lift-dock-wrapper');
+        t.equal(found.length, 1, 'dock-wrapper', 'the leftover wrapper is reported once');
+        t.ok(!!found[0] && found[0].severity === 'warning', 'dock-wrapper', 'as a warning — the form still runs');
+        t.ok(!!found[0] && /DockPanel1/.test(found[0].detail) && /TabsBody1/.test(found[0].detail), 'dock-wrapper',
+            'naming both the wrapper and the panel the control belongs in');
+        t.ok(!!found[0] && (found[0].alternatives ?? []).some((a) => a.kind === 'dismiss'), 'dock-wrapper',
+            'and it can be dismissed like every other fixable finding');
+
+        const msg = await applyLocalFix(p.uri, found[0], {});
+        const fixed = p.read();
+        t.ok(!/x:Name="DockPanel1"/.test(fixed), 'dock-wrapper', 'the wrapper is gone', fixed);
+        t.ok(/<DockPanel x:Name="TabsBody1"[\s\S]*?<ProgressBar x:Name="Bar1" DockPanel\.Dock="Bottom"[^>]*\/>[\s\S]*?<Canvas x:Name="TabsBody1Canvas"/.test(fixed),
+            'dock-wrapper', 'the bar is now a docked child of the page panel, in front of the Canvas', fixed);
+        t.ok(!/Canvas\.Left/.test(fixed) && !/Canvas\.Top/.test(fixed), 'dock-wrapper', 'its stale Canvas.Left/Top are dropped', fixed);
+        t.ok(/Moved Bar1 into TabsBody1/.test(msg), 'dock-wrapper', 'and the message says what moved where', msg);
+
+        // Nothing to report when the control is already docked in the panel (a form the designer wrote
+        // AFTER the fix), and nothing when the DockPanel is the user's own — the shape must match.
+        const healthy = wrap('<DockPanel x:Name="TabsBody1" LastChildFill="True"><ProgressBar x:Name="Bar1" DockPanel.Dock="Bottom" Height="24"/><Canvas x:Name="TabsBody1Canvas"/></DockPanel>');
+        t.equal(analyzeCodeBehind(healthy.uri, {}).issues.filter((i) => i.kind === 'lift-dock-wrapper').length, 0,
+            'dock-wrapper', 'a correctly docked control is not reported');
+        const hand = wrap(page('<DockPanel x:Name="Info"><TextBlock x:Name="T"/></DockPanel>'));
+        t.equal(analyzeCodeBehind(hand.uri, {}).issues.filter((i) => i.kind === 'lift-dock-wrapper').length, 0,
+            'dock-wrapper', 'nor is a hand-made DockPanel (not named DockPanelN by the dock code)');
+        const twoKids = wrap(page('<DockPanel x:Name="DockPanel9"><TextBlock x:Name="A"/><TextBlock x:Name="B"/></DockPanel>'));
+        t.equal(analyzeCodeBehind(twoKids.uri, {}).issues.filter((i) => i.kind === 'lift-dock-wrapper').length, 0,
+            'dock-wrapper', 'nor a wrapper that holds more than one control (not a dock artefact)');
     }
 };

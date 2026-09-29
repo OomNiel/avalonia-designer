@@ -54,6 +54,11 @@ const INFO: Record<string, ControlInfo> = {
         desc: 'Shows how far a task has got (a filled strip).',
         use: 'Use while loading or saving. Set Value (0-100) from code, or tick Indeterminate for a moving bar.'
     },
+    Timer: {
+        label: 'Timer',
+        desc: 'A component with no look of its own: every Interval milliseconds it calls your Tick handler, on a worker thread, so slow work cannot freeze the window.',
+        use: 'Use to poll something on a regular beat — a port, a file, a sensor, a clock — or to drive an animation step. Set Interval (in milliseconds) and tick Enabled to start it; the Tick handler must hand UI work back with Dispatcher.UIThread.Post(...). It appears in the Component Tray under the canvas, not on the canvas.'
+    },
     Slider: {
         label: 'Slider',
         desc: 'Lets the user pick a number by dragging a handle.',

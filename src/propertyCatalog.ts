@@ -75,6 +75,14 @@ const WATERFALL_COLOR_MODES = ['Sampleset', 'Value', 'Split'];
 const SURFACE_STYLES = ['GridMesh', 'GridMeshSolid', 'Solid'];
 const SURFACE_COLOR_BYS = ['Sampleset', 'Temperature'];
 const DOCK_OPTIONS = ['None', 'Fill', 'Left', 'Top', 'Right', 'Bottom'];
+/**
+ * Elements that are COMPONENTS rather than controls — WinForms' component-tray idea (2026-09-28). A
+ * component draws nothing and takes no space: it is offered no size rows (a Width on something that has
+ * none reads like a bug), it is never laid out, and the designer lists it in the COMPONENT TRAY under
+ * the canvas instead of on it. Today that is the one bundled non-visual type, `<chrome:Timer>` — the
+ * WinForms-Timer idea, ticking on a worker thread.
+ */
+export const NON_VISUAL_TAGS = new Set(['Timer']);
 // PathPicker.PathType — which platform dialog the Browse button opens. SaveFile need not exist yet
 // (it is the “choose where to save” variant).
 const PATH_TYPE = ['File', 'Folder', 'SaveFile'];
@@ -642,6 +650,18 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
     // editable "x,y" text. The designer stretches a Line on resize by scaling these points.
     // --- Progress, status & misc + the remaining input/button/shape gaps (2026-09-19) ---
     ProgressBar: [
+        // Dockable like every other control that can sit in a DockPanel (2026-09-28, asked for). A
+        // progress bar is usually a BAND at an edge of a form — a strip under a toolbar that reports a
+        // job, or a column beside the body — rather than a thing placed at an exact spot, so the row
+        // earns its place more here than for most controls. Choosing a real dock makes the designer
+        // wrap the bar in a DockPanel (when it is not already in one) and clear the free-axis size so
+        // it stretches to that edge; 'None' removes the attribute and leaves it where it was placed.
+        // The key is the ATTACHED DockPanel.Dock — Avalonia reads that from the bar wherever it sits,
+        // so no property of the bar's own is involved. (The sheet and the charts carry the same row.)
+        {
+            key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS,
+            desc: 'Pin the bar to an edge of a DockPanel: Left/Right give it a column of its own (the Width is its thickness), Top/Bottom a band (the Height is), and Fill takes what is left. The designer wraps the bar in a DockPanel for you if it is not already in one — including inside a Grid cell, where the wrap keeps the cell the bar is in.'
+        },
         { key: 'Value', label: 'Value', kind: 'number' },
         { key: 'Minimum', label: 'Minimum', kind: 'number' },
         { key: 'Maximum', label: 'Maximum', kind: 'number' },
@@ -658,6 +678,22 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
     ],
     Separator: [
         { key: 'Background', label: 'Colour', kind: 'color', options: COLORS }
+    ],
+    // Timer (2026-09-28) — the designer's NON-VISUAL component (the bundled AvaloniaChrome.Timer,
+    // which ticks on a WORKER thread). Its rows are the WinForms Timer's own pair, in the same units:
+    // Interval is MILLISECONDS (100 by default, exactly as WinForms) and Enabled is the running
+    // switch (the XAML attribute starts it, so no code is needed for a timer that runs). There is no
+    // size, position or colour row worth having — the component draws nothing and takes no space, and
+    // the designer lists it in the Component Tray instead of on the canvas.
+    Timer: [
+        {
+            key: 'Interval', label: 'Interval (ms)', kind: 'number', defaultValue: '100',
+            desc: 'How often Tick is called, in milliseconds — the same unit as the WinForms Timer (100 ms by default: ten times a second). Changing it while the timer runs takes effect on the next tick.'
+        },
+        {
+            key: 'Enabled', label: 'Enabled', kind: 'dropdown', options: BOOL,
+            desc: 'True while the timer is running. Setting it True here is all the form needs — the attribute starts the timer when the form is created — and Stop() / Enabled = False stops it. '
+        }
     ],
     ToggleSwitch: [
         { key: 'IsChecked', label: 'On', kind: 'dropdown', options: BOOL },
@@ -2169,7 +2205,11 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // whether the user of the form can type in it at all. 'PrintOrientation' joins them: which way
             // round the PAGE is, the one page setup row there is so far.
             'ShowHeaders', 'ShowFormulaBar', 'ShowToolbar', 'ShowScrollBars', 'AllowEditing',
-            'PrintOrientation'
+            'PrintOrientation',
+            // The Timer's two rows (2026-09-28) belong here rather than in Layout/Appearance: it has no
+            // size, no position and no look — Interval (how often it fires) and Enabled (whether it is
+            // running) are the whole of what a component's state IS.
+            'Interval', 'Enabled'
         ]
     }
 ];
@@ -2291,6 +2331,14 @@ export function propertyDefsFor(
     // an Anchor that compiles but does nothing is worse than no row.
     const anchorable = parentTag === 'Canvas' || (parentTag === 'DockPanel' && !parentIsTopLayout);
 
+    // A control inside a Grid cell is positioned/sized by the Grid, so Dock and Canvas.Left/Top are
+    // hidden there. The PROGRESS BAR is the exception for Dock (2026-09-28, asked for): a bar is a
+    // strip that reports a job, so a strip inside a cell still wants an edge — and the designer honours
+    // it INSIDE that cell (wrapping the bar in a DockPanel that keeps the cell, see the dock branch of
+    // the panel's setProperty), rather than moving the bar out of the layout. Canvas.Left/Top stay
+    // hidden for it too: a Grid ignores them outright.
+    const gridDockAllowed = inGrid && tag === 'ProgressBar';
+
     const templates: PropTemplate[] = [
         ...COMMON_PROPS,
         ...(isWindowLike || HAS_FONT_PROPS.has(tag) ? FONT_PROPS : []),
@@ -2301,7 +2349,12 @@ export function propertyDefsFor(
         ...(!isRoot && !isGrumpyPanel && anchorable ? ANCHOR_PROPS : [])
     ].filter((t) =>
         // A control inside a Grid cell is positioned/sized by the Grid.
-        !(inGrid && (t.key === 'DockPanel.Dock' || t.key === 'Canvas.Left' || t.key === 'Canvas.Top')) &&
+        !((inGrid && !gridDockAllowed && t.key === 'DockPanel.Dock')
+            || (inGrid && (t.key === 'Canvas.Left' || t.key === 'Canvas.Top'))) &&
+        // A COMPONENT has no size at all (the Timer draws nothing and takes no space), so it is offered
+        // no size rows: a row that writes Width onto something that has none reads like a bug.
+        !(NON_VISUAL_TAGS.has(tag)
+            && ['Width', 'Height', 'MinWidth', 'MinHeight', 'MaxWidth', 'MaxHeight'].indexOf(t.key) >= 0) &&
         // A Line's size IS its Start/End geometry — Width/Height would clip it, not stretch it
         // (resize is done by dragging the selection handles, which scale the points instead).
         !(tag === 'Line' && (t.key === 'Width' || t.key === 'Height'))

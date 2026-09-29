@@ -242,6 +242,8 @@ function generateProject(opts: GenerateOptions): void {
         grumpyPrintVb: readResource(context, 'resources/GrumpyPrint.vb'),
         sheetCs: readResource(context, 'resources/GrumpySheet.cs'),
         sheetVb: readResource(context, 'resources/GrumpySheet.vb'),
+        timerCs: readResource(context, 'resources/Timer.cs'),
+        timerVb: readResource(context, 'resources/Timer.vb'),
         followerCs: readResource(context, 'resources/ColumnFollower.cs'),
         followerVb: readResource(context, 'resources/ColumnFollower.vb'),
         vbBridgeDll: vbBridgeDllPath()

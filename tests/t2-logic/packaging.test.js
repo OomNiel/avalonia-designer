@@ -128,6 +128,28 @@ module.exports = async (t) => {
         'and everything else still activates it on demand through commands/views/custom editors');
     t.ok((contrib.customEditors || []).length >= 1, 'activation', 'the AXAML designer is a custom editor');
 
+    // ---------- 2b) other extensions: recommended, never required (decided 2026-09-29) ----------
+    // Asked to "list the dependencies in the Marketplace publish", and the audit answered otherwise: no
+    // line of this extension looks up `ms-dotnettools.csharp`, `ms-dotnettools.csdevkit`,
+    // `ms-dotnettools.vscode-dotnet-runtime` or `avaloniateam.vscode-avalonia`, and the only other
+    // extension it reads at all is the VB.NET Companion — optionally, to point a generated project's
+    // bridge settings at its DLL (absent → VB projects simply skip those settings). The one real
+    // prerequisite is the .NET SDK, which is not an extension and is already detected with its own
+    // message (`DOTNET_SDK_MISSING_MESSAGE`). `extensionDependencies` is therefore EMPTY on purpose:
+    // it is not a label but a gate — VS Code auto-installs what it lists and refuses to activate this
+    // extension until every one of them is present, which would break the designer in VSCodium, on an
+    // offline machine, under an enterprise `extensions.allowed` list that blocks Microsoft extensions,
+    // and for anyone who disables the third-party VB language service. Users are offered them instead:
+    // generated projects carry `.vscode/extensions.json` recommendations (pinned in
+    // `projectScaffold.test.js`), and the README/USER_MANUAL list them as optional extras.
+    t.ok(pkg.extensionDependencies === undefined || (Array.isArray(pkg.extensionDependencies)
+        && pkg.extensionDependencies.length === 0), 'dependencies',
+        'no hard extensionDependencies — a dependency list is a gate, and none of these is required',
+        JSON.stringify(pkg.extensionDependencies));
+    t.ok(pkg.extensionPack === undefined, 'dependencies',
+        'and no extensionPack either: a pack installs other extensions together with this one, which is '
+        + 'not what this extension is');
+
     // ---------- 3) the icon really is a Marketplace-grade PNG (>= 128x128) ----------
     const png = fs.readFileSync(path.join(ROOT, pkg.icon));
     const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

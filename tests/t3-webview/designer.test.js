@@ -16,7 +16,9 @@ const DESIGNER_CSS = path.join(__dirname, '..', '..', 'media', 'designer.css');
 
 const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomValue', 'canvasWrap',
     'toolbar',
-    'propsBody', 'propsEmpty', 'controlList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnViewLog', 'btnBackup', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
+    'propsBody', 'propsEmpty', 'controlList',
+    // the Component Tray (2026-09-28) — the strip that lists non-visual components (the Timer)
+    'componentTray', 'componentTrayList', 'btnUndo', 'btnRedo', 'btnNewForm', 'btnRefresh', 'btnCodeFix', 'btnViewLog', 'btnBackup', 'btnZoomIn', 'btnZoomOut', 'btnFit', 'btnClearSel',
     // Linux-only in the real webview: the extension omits them elsewhere (see setup's `omit`).
     'btnPublish', 'btnInstall',
     'menuDummies',
@@ -3955,6 +3957,38 @@ module.exports = async (t) => {
         t.equal(bordered.findIndex((cell2) => cell2.row === 2 && cell2.column === 2), -1, 'sheet-format',
             'while a cell that never asked for anything is still not written at all');
     }
+
+    // --- Component Tray: a Timer is a COMPONENT, not a control (2026-09-28) ---
+    // It draws nothing and takes no space, so the canvas can never show it and `controls` cannot
+    // carry it: the frame sends `components` instead and the strip under the canvas lists them.
+    const frameWith = (comps) => ({
+        type: 'frame', png: 'AA==', width: 800, height: 450,
+        controls: controls.map((c) => ({ name: c.name, type: c.type, x: c.x, y: c.y, width: c.w, height: c.h, locked: !!c.locked })),
+        components: comps
+    });
+    msg(frameWith([]));
+    t.equal($('componentTray').hidden, true, 'tray',
+        'with no components the tray hides itself (a form without them looks exactly as before)');
+    msg(frameWith([{ name: 'Timer1', type: 'Timer', enabled: true, interval: '1000' },
+    { name: 'Timer2', type: 'Timer', enabled: false, interval: '250' }]));
+    t.equal($('componentTray').hidden, false, 'tray', 'a component shows the tray');
+    const chips = [...$('componentTrayList').children];
+    t.equal(chips.length, 2, 'tray', 'one chip per component');
+    t.ok(chips[0].textContent.includes('Timer1'), 'tray', 'named after the component');
+    t.ok(chips[0].textContent.includes('1000 ms'), 'tray', 'quoting its interval');
+    t.ok(chips[0].textContent.includes('running'), 'tray', 'and that it is running');
+    t.ok(chips[1].textContent.includes('stopped'), 'tray', 'a disabled one says so');
+    t.ok(!!chips[0].querySelector('.trayDot.on') && !chips[1].querySelector('.trayDot.on'), 'tray',
+        'each with a state dot');
+    posted.length = 0;
+    chips[0].dispatchEvent(new s.window.MouseEvent('click', { bubbles: true }));
+    t.equal(posted[posted.length - 1], { type: 'select', name: 'Timer1' }, 'tray',
+        'clicking a chip selects the component (its Interval/Enabled rows follow in Properties)');
+    // The tray re-renders on the click (a component has no outline on the canvas, so the chip is the
+    // only feedback there is) — so the chips are re-queried rather than reused.
+    const chipsAfter = [...$('componentTrayList').children];
+    t.ok(chipsAfter[0].className.includes('sel'), 'tray', 'and the chip marks itself as the selection');
+    t.ok(!chipsAfter[1].className.includes('sel'), 'tray', 'while the other stays unselected');
 
     t.note('T3 done');
 };

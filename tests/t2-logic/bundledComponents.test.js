@@ -406,6 +406,13 @@ End Property`, true, 'GrumpyCharts'), false,
         'and the refresh uses the same two-place search');
     t.ok(!/\n\s*const dirs = \[path\.dirname\(proj\.projectUri/.test(ensure), 'open-notice',
         'the old one-place search is gone');
+    // …and it asks the SAME question the notice asks. It used to test the marker only, so a file the
+    // notice had just reported as stale could still be refused a write — the notice then returned at
+    // every open with nothing able to clear it (2026-09-28).
+    t.ok(ensure.includes('isStaleBundledCopy('), 'open-notice',
+        'the refresh uses the same content rule as the notice (detection and healing cannot drift apart)');
+    t.ok(!ensure.includes('!text.includes(spec.marker)'), 'open-notice',
+        'and the marker-only test is gone from the refresh');
 
     // --- A customised copy (bundled header removed) is NEVER touched ---
     t.equal(isStaleBundledCopy('public class ChromeWindow : Window { }  // heavily customised, no header', false, 'ChromeWindow'), false,
@@ -417,8 +424,8 @@ End Property`, true, 'GrumpyCharts'), false,
     // --- The language picks the right file names ---
     const vb = bundledComponentSpecs(true).map((s) => s.file).sort();
     const cs = bundledComponentSpecs(false).map((s) => s.file).sort();
-    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","GrumpyCharts.vb","GrumpyPrint.vb","GrumpySheet.vb","PathPicker.vb"]', 'spec', 'VB spec file names');
-    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","GrumpyCharts.cs","GrumpyPrint.cs","GrumpySheet.cs","PathPicker.cs"]', 'spec', 'C# spec file names');
+    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","GrumpyCharts.vb","GrumpyPrint.vb","GrumpySheet.vb","PathPicker.vb","Timer.vb"]', 'spec', 'VB spec file names');
+    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","GrumpyCharts.cs","GrumpyPrint.cs","GrumpySheet.cs","PathPicker.cs","Timer.cs"]', 'spec', 'C# spec file names');
 
     // ---------------------------------------------------------------- the version STAMP every copy carries
     // A release is where a project's copy and the extension's part company, so the version is stamped into
@@ -451,6 +458,31 @@ End Property`, true, 'GrumpyCharts'), false,
         'but one line different is stale — whatever that line is, and though every marker token is still there');
     t.equal(isStaleBundledCopy(shippedCs.replace(/\n/g, '\r\n'), false, 'GrumpyCharts', shippedCs), false, 'content',
         'line endings alone are not a difference (a project re-saved on Windows is not stale)');
+    // The release STAMP is not a difference either: it names the release, not the code. `bump-stamps.js`
+    // rewrites it in every resource the moment a dev cycle starts, so a project holding the shipped 0.13.0
+    // files differed from the 0.13.1 extension by that one comment line and nothing else — the notice
+    // called four fully-current files "older than the extension's copy" at every open, and pressing Update
+    // now changed nothing, because the refresh compared MARKERS (all present) while the notice compared
+    // content (reported 2026-09-28 from the GrumpyDesignerDemo test project).
+    const reStamped = shippedCs.replace(/BUNDLED-COPY: [\d.]+/, 'BUNDLED-COPY: 0.0.1');
+    t.equal(isStaleBundledCopy(reStamped, false, 'GrumpyCharts', shippedCs), false, 'content',
+        'a copy identical but for an older release stamp is NOT stale (only the code decides)');
+    t.equal(isStaleBundledCopy(reStamped.replace('RangeAxisCount', 'SomethingElse'), false, 'GrumpyCharts', shippedCs),
+        true, 'content', 'while a re-stamped copy that really differs is still stale');
+    // The other direction is guarded too, and it has to be: the refresh WRITES the shipped file, so a
+    // copy that came from a NEWER extension than the one running must never be called stale — that would
+    // be a silent downgrade of a project that is ahead of the editor. The stamp is the only place that
+    // direction is recorded.
+    t.equal(isStaleBundledCopy(shippedCs.replace(/BUNDLED-COPY: [\d.]+/, 'BUNDLED-COPY: 9.9.9'), false, 'GrumpyCharts',
+        shippedCs), false, 'content',
+        'a copy from a NEWER release is not stale (the same code, a newer stamp)');
+    t.equal(isStaleBundledCopy(
+        shippedCs.replace(/BUNDLED-COPY: [\d.]+/, 'BUNDLED-COPY: 9.9.9').replace('RangeAxisCount', 'SomethingElse'),
+        false, 'GrumpyCharts', shippedCs), false, 'content',
+        'and not even when its code differs — we do not overwrite a newer project with our older file');
+    t.equal(isStaleBundledCopy(shippedCs.replace(/BUNDLED-COPY: [\d.]+/, 'BUNDLED-COPY: hand-edited'), false,
+        'GrumpyCharts', shippedCs), false, 'content',
+        'an unreadable stamp is not newer by default (the content alone decides)');
     t.equal(isStaleBundledCopy(`${shippedCs}\n// local tweak\n`, false, 'GrumpyCharts', shippedCs), true, 'content',
         'and a copy with local edits is refreshable, exactly as the bundled-header rule always said');
     t.equal(isStaleBundledCopy('// my own chart file\nclass X { }', false, 'GrumpyCharts', shippedCs), false, 'content',

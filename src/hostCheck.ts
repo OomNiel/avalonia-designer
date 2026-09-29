@@ -229,7 +229,7 @@ export function assessHost(hardware: HardwareFacts, gpu: GpuFacts, overridden = 
 export function hostBlockMessage(gate: HostGate): string {
     const why = gate.reasons[0] ?? `This machine does not meet the local model requirements (${AI_MIN_AVAILABLE_GB} GB available memory).`;
     return `The AI assist is disabled on this machine: ${why} `
-        + 'You can override the check in the designer\'s ⚙ Settings → AI assist.';
+        + 'You can override the check in the designer\'s Code Fix/AI-Assist Settings (⚙ in the toolbar) → AI assist.';
 }
 
 // ---------------- the probe (the only part that touches the machine) ----------------

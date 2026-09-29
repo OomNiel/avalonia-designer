@@ -34,6 +34,7 @@ import { publishApp, installApp, packageState, watchForPackage, stopWatchingPack
 import { parseDataSet, serializeDataSet, DataSetSpec, DataTableSpec, sqliteTableName } from './dataSetModel';
 import { readDataSetFiles, resolvePreviewDb, gridPreviewColumns, gridPreviewHeaders } from './dataSetReader';
 import { generateCs, generateVb, generateXsd } from './dataSetGenerator';
+import { NON_VISUAL_TAGS } from './propertyCatalog';
 import { bundledComponentSpecs, isStaleBundledCopy, type BundledKind } from './bundledComponents';
 import { printSupportStateFor, addPrintSupport, PrintLanguage } from './printSupport';
 import { statusLines, repairWithAI } from './assistantUi';
@@ -467,13 +468,29 @@ function ensureDockPanelParent(model: XamlModel, el: Element): Element {
             const dock = dockIntoGrumpy(model, el, parent);
             if (dock) return dock;
         }
+        // A control on a Canvas that sits INSIDE a DockPanel docks within THAT panel: the Canvas is
+        // the panel's free-placement surface (its fill child), so the control moves in FRONT of the
+        // Canvas and the Canvas keeps what the docked control leaves. This is the shape of a TAB
+        // PAGE's body (`<Name>BodyN` DockPanel + `<Name>BodyNCanvas` Canvas) and of a form's own Body
+        // canvas. Falling through wrapped the control in a DockPanel *inside* the Canvas instead — and
+        // a Canvas sizes a child to the child's own desire, so Dock=Fill filled nothing (reported
+        // 2026-09-29: "any control with a Dock property does not dock properly in the tab canvas … if I
+        // delete the canvas from that page, controls like a splitpanel or a chart dock fill properly").
+        if (pnm === 'Canvas') {
+            const owner = model.moveIntoOwnerDockPanel(el, parent);
+            if (owner) return owner;
+        }
     }
 
     // Only free-positioning contexts (a Canvas or the window root itself) get wrapped/
-    // docked. A control inside a Grid/StackPanel/… must stay where its container put it.
+    // docked. A control inside a Grid/StackPanel/… must stay where its container put it —
+    // EXCEPT the ProgressBar, which is offered the Dock row inside a Grid cell as well: a bar is a
+    // strip that reports a job, so its dock is honoured INSIDE the cell it sits in (wrapped in a
+    // DockPanel that keeps that cell), never by being moved out of the layout (2026-09-28).
     if (parent && parent.nodeType === 1) {
         const pn = localName(parent.tagName);
         const windowLike = pn === 'Window' || /window$/i.test(pn);
+        if (pn === 'Grid' && localName(el.tagName) === 'ProgressBar') return model.wrapInGridCell(el);
         if (!windowLike && pn !== 'Canvas') return parent;
     }
 
@@ -545,6 +562,30 @@ function revertEmptyPaneBodies(model: XamlModel): boolean {
         }
     }
     return changed;
+}
+
+/** Tags whose element is a COMPONENT rather than a control — WinForms' component-tray idea. It draws
+ *  nothing and takes no space, so the canvas can never show it: the tray strip under the canvas lists
+ *  it, its Properties are edited from there, and the drop position means nothing to it (the position
+ *  attributes are stripped before it is saved). Today there is one: the bundled non-visual
+ *  <chrome:Timer>, which ticks on a worker thread (2026-09-28). */
+const COMPONENT_TAGS = NON_VISUAL_TAGS;
+
+/** The form's non-visual components, in document order — the tray's rows. `enabled` and `interval` are
+ *  what the tray quotes beside the name (a component has no picture to recognise it by). */
+function componentRowsOf(model: XamlModel): { name: string; type: string; enabled: boolean; interval: string }[] {
+    const out: { name: string; type: string; enabled: boolean; interval: string }[] = [];
+    for (const el of model.controlElements()) {
+        const tag = localName(el.tagName);
+        if (!COMPONENT_TAGS.has(tag)) continue;
+        out.push({
+            name: el.getAttribute('x:Name') || el.getAttribute('Name') || '',
+            type: tag,
+            enabled: (el.getAttribute('Enabled') || '').trim().toLowerCase() === 'true',
+            interval: el.getAttribute('Interval') || ''
+        });
+    }
+    return out;
 }
 
 /** The first real content child of the window root (e.g. the root DockPanel). */
@@ -1964,7 +2005,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     return;
                 }
                 case 'openCodeSettings': {
-                    // The toolbar's ⚙ Settings button: reply with the current code-check settings and the
+                    // The toolbar's ⚙ Code Fix/AI-Assist Settings button: reply with the current code-check settings and the
                     // whole AI section state (models, options, what is loaded).
                     await panel.webview.postMessage({
                         type: 'codeSettings',
@@ -2447,10 +2488,19 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                             const dockParent = el.parentNode as Element | null;
                             const parentIsGrid = !!dockParent && dockParent.nodeType === 1
                                 && localName(dockParent.tagName) === 'Grid';
-                            if (parentIsGrid) {
+                            // …but a ProgressBar IS offered the row in a Grid cell, so a dock choice
+                            // there must not take the "fill the cell" shortcut below: it is honoured for
+                            // real, by wrapping the bar in a DockPanel that stays in that cell.
+                            const dockInsideCell = parentIsGrid && localName(el.tagName) === 'ProgressBar';
+                            if (parentIsGrid && !dockInsideCell) {
                                 if (value !== 'None') {
                                     el.removeAttribute('Width');
                                     el.removeAttribute('Height');
+                                    // The cell is the region now, so the control has to fill it — see the
+                                    // Stretch note in the DockPanel branch below (a themed control ships a
+                                    // centred alignment of its own and would stay a thin line otherwise).
+                                    el.setAttribute('HorizontalAlignment', 'Stretch');
+                                    el.setAttribute('VerticalAlignment', 'Stretch');
                                 }
                                 value = '';
                             } else if (value === 'None') {
@@ -2459,6 +2509,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                                 // DockPanel's last child, drop LastChildFill so it does not
                                 // auto-fill the remaining space (that is what 'Fill' is for).
                                 value = '';
+                                // …and undo the Stretch a previous dock wrote: the control's own theme
+                                // alignment is what it had before, so leaving ours behind would keep a
+                                // never-docked control stretched. Only OURS goes (an alignment the user
+                                // chose by hand is left alone).
+                                if (el.getAttribute('VerticalAlignment') === 'Stretch') el.removeAttribute('VerticalAlignment');
+                                if (el.getAttribute('HorizontalAlignment') === 'Stretch') el.removeAttribute('HorizontalAlignment');
                                 const parent = el.parentNode as Element | null;
                                 // Inside a GrumpyPanel-based bar: Dock=None means "back to the free
                                 // body" — move the control out of the bar's dock band into its body.
@@ -2500,6 +2556,25 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                                         if (!el.getAttribute('Width')) el.setAttribute('Width', '200');
                                     } else if (value === 'Top' || value === 'Bottom') {
                                         if (!el.getAttribute('Height')) el.setAttribute('Height', '24');
+                                    }
+                                    // A dock hands the control a REGION, and the control has to FILL it —
+                                    // but most of them do not do that on their own: every THEMED control
+                                    // carries a centred alignment in its ControlTheme (Avalonia's
+                                    // ProgressBar ships VerticalAlignment=Center), so a bar docked Left
+                                    // came out as a 220x4 sliver floating in the middle of the column it
+                                    // was given, and Dock=Fill filled the width while staying 4 px tall —
+                                    // *"It should fill vertically as well"*, reported 2026-09-28 and
+                                    // measured against the real host: 220x4 at y=223 by itself, 220x450
+                                    // with Stretch. A LOCAL value beats the ControlTheme, so writing
+                                    // Stretch on the axis the dock leaves free is what makes the row mean
+                                    // what its own description already promised ("Left/Right give it a
+                                    // column of its own", "Fill takes what is left"). The axis the dock
+                                    // SIZES keeps its width/height above, so a band stays a band.
+                                    if (value === 'Left' || value === 'Right' || value === 'Fill') {
+                                        el.setAttribute('VerticalAlignment', 'Stretch');
+                                    }
+                                    if (value === 'Top' || value === 'Bottom' || value === 'Fill') {
+                                        el.setAttribute('HorizontalAlignment', 'Stretch');
                                     }
                                     // A DockPanel's LAST child always fills (LastChildFill=true) and its
                                     // Dock would be ignored — which is exactly why "nothing happens"
@@ -2617,6 +2692,18 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     }
                     const placedEl = doc.model.addControl(target, xaml, pos);
                     doc.model.removeDropHint();
+                    // A COMPONENT (the Timer) is not a control: it draws nothing and takes no space, so
+                    // the drop position means nothing to it. Any position/size the snippet carried is
+                    // stripped — a saved form should not claim a place for something that has none —
+                    // and the tray under the canvas lists it instead (see `components` in the frame).
+                    // The bundled file is copied in first, so the saved <chrome:Timer> compiles.
+                    if (placedEl && COMPONENT_TAGS.has(msg.tag)) {
+                        placedEl.removeAttribute('Canvas.Left');
+                        placedEl.removeAttribute('Canvas.Top');
+                        placedEl.removeAttribute('Width');
+                        placedEl.removeAttribute('Height');
+                        this.ensureTimerHelper(doc);
+                    }
                     // Bar controls (Menu / Status Bar) carry DockPanel.Dock in their snippet and are
                     // meant to pin to a form edge — NOT to float on the free Body canvas. If one was
                     // dropped on free space (a Canvas or the window root), move it into the form's
@@ -4313,6 +4400,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         }
         await panel.webview.postMessage({
             type: 'frame', ...frame, controls, menus, trees, previewTheme, formTitle,
+            // The non-visual COMPONENTS the form holds (its Timers), for the tray strip under the
+            // canvas: they have no bounds, so `controls` cannot carry them.
+            components: componentRowsOf(doc.model),
             // Every SplitPanel divider (as a draggable bar in design coords) so the webview can hit
             // it and drag it to resize the panes at design time.
             splitBars: splitBarsOf(controls),
@@ -4782,6 +4872,18 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         } catch { return false; }
     }
 
+    /** Timer (the bundled non-visual AvaloniaChrome.Timer behind the Toolbox's Timer tool) ships with
+     *  every NEW project, like GrumpyPanel / PathPicker. A project created before it existed needs the
+     *  file next to ChromeWindow — otherwise the saved <chrome:Timer> won't compile. It is the one
+     *  bundled file a project gets the moment a component is dropped, because the element is useless
+     *  without it and there is no canvas selection to notice the failure through. */
+    private ensureTimerHelper(doc: DesignerDocument): boolean {
+        const proj = findProject(doc.uri);
+        if (!proj) return false;
+        return this.ensureBundledFileIn(path.dirname(proj.projectUri.fsPath), proj.language === 'vb', 'Timer',
+            'the form holds a timer, which this project did not have yet');
+    }
+
     /**
      * The bundled files this project has, and which of them are OLDER than the extension's copy.
      * Only provable bundled boilerplate counts (`isStaleBundledCopy`: the bundled header is there and
@@ -5061,8 +5163,15 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 }
                 try {
                     const text = fs.readFileSync(p, 'utf8');
-                    if (spec.bundled.test(text) && !text.includes(spec.marker)) {
-                        fs.writeFileSync(p, fs.readFileSync(path.join(resourceRoot, spec.file), 'utf8'), 'utf8');
+                    // The SAME rule the notice asks (`staleBundledFiles`): provable bundled boilerplate
+                    // whose CONTENT differs from the copy we ship. Detection and healing must not drift
+                    // apart — the marker test alone asks "does it carry the newest token", so a project
+                    // whose copy differed in a way the marker cannot see was reported stale and then NOT
+                    // written by "Update now", which brought the very same notice back at every open
+                    // (reported 2026-09-28).
+                    const current = fs.readFileSync(path.join(resourceRoot, spec.file), 'utf8');
+                    if (isStaleBundledCopy(text, vb, spec.kind, current)) {
+                        fs.writeFileSync(p, current, 'utf8');
                         updated.push(spec.file);
                     }
                 } catch { /* never fail an edit over a stale helper */ }
@@ -6289,6 +6398,30 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 await this.render(doc, panel);
                 return `Unwired ${event} from ${issue.data?.control} — the form now matches your code.`;
             }
+            case 'lift-dock-wrapper': {
+                // A control the OLD dock path wrapped in a DockPanel INSIDE its Canvas (before
+                // 2026-09-29). A Canvas sizes a child to the child's own desire, so that wrapper was as
+                // small as the control and a Dock there did nothing at all — the form still RUNS, which
+                // is why this is repaired on request (🩺 Code Fix…) and not behind the user's back.
+                // Edit the MODEL, like `remove-inline-items`: the designer owns the XAML and would
+                // otherwise save its stale copy over a direct file edit.
+                const wrapper = doc.model.findByName(issue.data?.wrapper ?? '');
+                const canvas = wrapper?.parentNode as Element | null;
+                let child: Element | undefined;
+                for (let c = wrapper?.firstChild ?? null; c; c = c.nextSibling) {
+                    if ((c as Element).nodeType === 1) { child = c as Element; break; }
+                }
+                if (!wrapper || !canvas || !child) return 'That wrapper is already gone — re-run the check.';
+                const before = doc.model.serialize(true);
+                const owner = doc.model.moveIntoOwnerDockPanel(child, canvas);
+                if (!owner) return `${issue.data?.canvas || 'That Canvas'} is not inside a DockPanel — dock into a panel by hand.`;
+                if (wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+                this.notifyEdit(doc, panel, before);
+                await this.render(doc, panel);
+                const into = owner.getAttribute('x:Name') || owner.getAttribute('Name') || 'its panel';
+                return `Moved ${issue.data?.control || localName(child.tagName)} into ${into} — it docks there now, ` +
+                    `and the ${issue.data?.wrapper} wrapper is gone.`;
+            }
             default:
                 return applyLocalFix(doc.uri, issue, this.checkOptions(doc));
         }
@@ -7379,7 +7512,15 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         }
         // Fallback / first placement: create the code-behind stub FIRST so we never persist a
         // XAML event that has no method, then wire the attribute if it isn't already.
-        const result = await insertHandlerIntoCodeBehind(doc.uri, handler, eventName);
+        //
+        // The TAG goes with the event name (2026-09-29): the stub's parameter type comes from
+        // `eventArgsFor(event, tag)`, and without the tag an event that does NOT carry
+        // RoutedEventArgs — the bundled Timer's `Tick`, which is a plain EventHandler — was written
+        // as `(object sender, Avalonia.Interactivity.RoutedEventArgs e)`. That signature does not
+        // match the delegate the component declares, so the form COMPILED and then threw while
+        // loading (reported: *"It builds with no errors but does not run"*). The same-path
+        // 'addEvent' wiring has always passed the tag (see above); this is the one that didn't.
+        const result = await insertHandlerIntoCodeBehind(doc.uri, handler, eventName, localName(el.tagName));
         if (!result) {
             if (openEditor) {
                 void vscode.window.showInformationMessage(
@@ -7551,9 +7692,13 @@ ${publishButtons}      <span class="sep"></span>
       <button id="btnEqualV" title="Equal vertical spacing: 3+ controls spread with equal gaps between them (topmost &amp; bottommost stay put)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 3.5 H13"/><path d="M6.5 8 H13"/><path d="M6.5 12.5 H13"/><path d="M3 4.8 V11.2"/><path d="M1.6 6.3 L3 4.8 L4.4 6.3"/><path d="M1.6 9.7 L3 11.2 L4.4 9.7"/></svg></button>
       <button id="btnEqualH" title="Equal horizontal spacing: 3+ controls spread with equal gaps between them (leftmost &amp; rightmost stay put)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6.5 V13"/><path d="M8 6.5 V13"/><path d="M12.5 6.5 V13"/><path d="M4.8 3 H11.2"/><path d="M6.3 1.6 L4.8 3 L6.3 4.4"/><path d="M9.7 1.6 L11.2 3 L9.7 4.4"/></svg></button>
       <span id="status" data-stop="1">Ready</span>
-      <button id="btnCodeSettings" title="Settings: when the designer re-checks the code-behind against the form (when you return to the designer / on save / while typing / only manually) and whether controls with a missing handler get a ⚠ badge">⚙ Settings</button>
+      <button id="btnCodeSettings" title="Code Fix / AI-assist settings: when the designer re-checks the code-behind against the form (when you return to the designer / on save / while typing / only manually), whether controls with a missing handler get a ⚠ badge, and the whole local-model section (model, my llama-server, house rules)">⚙ Code Fix/AI-Assist Settings</button>
     </div>
     <div id="main">
+      <!-- The CANVAS COLUMN: the design surface (which scrolls) with the Component Tray pinned to its
+           bottom. The tray is part of the canvas, not a column of the row — it sat between the canvas
+           and the Properties panel until 2026-09-29, where it read as a third panel. -->
+      <div id="canvasArea">
       <div id="canvasWrap">
         <div id="rulerTop">
           <div id="rulerCorner"></div>
@@ -7575,6 +7720,18 @@ ${publishButtons}      <span class="sep"></span>
           <div id="crosshair" hidden><i id="chH"></i><i id="chV"></i></div>
           </div>
         </div>
+      </div>
+      <!-- Component Tray (2026-09-28) — WinForms' answer to a thing that has no picture: the Timer.
+           It is a component, not a control: it draws nothing and takes no space, so the canvas cannot
+           show it and the drop position means nothing to it. The strip lists what the form holds (a
+           chip per component, quoting its interval and whether it is running) and selecting a chip
+           selects the component, so its Interval/Enabled rows appear in the Properties panel and the
+           Delete key removes it. Hidden while the form has no components. It sits INSIDE the canvas
+           column (last child), so it hugs the bottom of the design surface and spans it. -->
+      <div id="componentTray" hidden>
+        <span id="componentTrayLabel" title="Non-visual components this form holds. They have no look of their own, so they live here instead of on the canvas.">Components</span>
+        <div id="componentTrayList"></div>
+      </div>
       </div>
       <div id="props">
         <div id="propsHeader">
@@ -7664,6 +7821,8 @@ ${publishButtons}      <span class="sep"></span>
               (Ctrl+Z), and the same checks run first: a name that already exists is refused, and the visibility is fixed.</p>
 
             <div id="aiBody" hidden>
+          <div class="ai-block" id="aiBlockModel">
+          <div class="ai-block-head">Model <span>— what this window loads</span></div>
           <label class="modal-field"><span>Model</span>
             <select id="aiModel"></select>
           </label>
@@ -7710,17 +7869,39 @@ ${publishButtons}      <span class="sep"></span>
             <button id="aiRemove" type="button" class="modal-btn warning">Remove Model</button>
             <button id="aiStatus" type="button" class="modal-btn">Status &amp; hardware check</button>
           </div>
-          <label class="modal-field"><span>My llama-server</span>
+          </div>
+
+          <div class="ai-block" id="aiBlockLlama">
+          <div class="ai-block-head">My llama-server <span>— your own server, outside VS Code</span></div>
+          <label class="modal-field"><span>Start it as</span>
             <select id="aiLlamaTarget">
-              <option value="unit">start as a systemd user unit</option>
-              <option value="process">start as this window's process</option>
+              <option value="unit">a systemd user unit — keeps running after VS Code closes</option>
+              <option value="process">this window's process — stops when VS Code closes</option>
             </select>
           </label>
           <div class="modal-buttons modal-buttons-tight">
             <button id="aiLlamaStart" type="button" class="modal-btn">Start server</button>
             <button id="aiLlamaStop" type="button" class="modal-btn">Stop server</button>
           </div>
+          <div id="aiLlamaTargetHint" class="ai-more">
+            <p class="modal-hint"><b>The two modes differ in who owns the process — and so in how long it lives.</b>
+              Start and Stop act on whatever serves the address above; if the way you chose fails, the other one is
+              tried and the reason is reported.</p>
+            <details>
+              <summary>What is the difference exactly?</summary>
+              <p class="modal-hint">A <b>systemd user unit</b> is a service that already exists under
+                <code>~/.config/systemd/user/</code> — Start runs <code>systemctl --user start</code>. It belongs to
+                systemd, not to VS Code: it keeps running after this window closes, it comes back at your next login if
+                the unit is enabled, and its own <code>ExecStart</code> decides which model and flags it serves — the
+                Model box above has no say in it. <b>This window's process</b> is <code>llama-server</code> started by
+                the designer, as a child of VS Code and with the model and options picked above: it stops when this
+                window closes, so nothing is left behind holding memory or the GPU, and it is the safer one to try
+                first.</p>
+            </details>
+          </div>
           <p class="modal-hint" id="aiLlamaOwner"></p>
+          </div>
+
           <div id="aiProgress" class="ai-progress" hidden></div>
           <pre id="aiStatusText" class="ai-status" hidden></pre>
 

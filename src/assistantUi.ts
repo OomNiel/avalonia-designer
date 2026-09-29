@@ -890,7 +890,7 @@ async function proposeMethod(
             : undefined
     };
 
-    // No diff wanted (⚙ Settings → "Show the proposal as a diff", `assistant.showDiff`): write it now.
+    // No diff wanted (⚙ Code Fix/AI-Assist Settings → "Show the proposal as a diff", `assistant.showDiff`): write it now.
     // Every rule that protects the file still ran above — a name that already exists was refused, the
     // visibility was corrected — and the write is the same `WorkspaceEdit` the Apply button uses, so
     // Ctrl+Z undoes it. What is skipped is the *review*, and that is the user's own choice (2026-09-16).
@@ -1113,7 +1113,7 @@ async function askDescription(input: {
         if (input.limited && estimateTokens(text) > input.allowance) {
             return `That is about ${estimateTokens(text)} tokens, and ${allowanceText(input.allowance)} is left `
                 + "for your sentence. Shorten it, or raise the model's window "
-                + '(avaloniaDesigner.assistant.loadContextLength) in the ⚙ Settings panel.';
+                + '(avaloniaDesigner.assistant.loadContextLength) in the Code Fix/AI-Assist Settings panel (⚙).';
         }
         return undefined;
     };
@@ -1721,7 +1721,7 @@ export async function addHubModel(): Promise<void> {
         'Later'
     );
     if (go !== 'Download') {
-        void vscode.window.showInformationMessage('Added — pick it in the ⚙ Settings panel and press Load Model when you want it.');
+        void vscode.window.showInformationMessage('Added — pick it in the Code Fix/AI-Assist Settings panel (⚙) and press Load Model when you want it.');
         return;
     }
     try {
@@ -1731,7 +1731,7 @@ export async function addHubModel(): Promise<void> {
                 await ensureModelFile(context, spec, progress, token);
             }
         );
-        void vscode.window.showInformationMessage(`${chosen.file} is ready — pick it in the ⚙ Settings panel and press Load Model.`);
+        void vscode.window.showInformationMessage(`${chosen.file} is ready — pick it in the Code Fix/AI-Assist Settings panel (⚙) and press Load Model.`);
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log(`Download of ${spec.id} failed: ${message}`);
@@ -1784,7 +1784,7 @@ function extensionVersion(): string {
 /**
  * The status report as text.
  *
- * One implementation for two surfaces: the dialog below and the designer's ⚙ Settings panel, which
+ * One implementation for two surfaces: the dialog below and the designer's ⚙ Code Fix/AI-Assist Settings panel, which
  * renders these exact lines. A panel that showed its own summary would eventually disagree with the
  * command, and "which is right?" is not a question a user should ever have about status output.
  */

@@ -19,7 +19,7 @@
  * current version ships. A genuinely customised file (header changed/removed) is left alone.
  */
 
-export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'GrumpyCharts' | 'GrumpyPrint' | 'GrumpySheet';
+export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'GrumpyCharts' | 'GrumpyPrint' | 'GrumpySheet' | 'Timer';
 
 export interface BundledSpec {
     kind: BundledKind;
@@ -217,6 +217,19 @@ export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
             // The newest member: the `lp` invocation itself. A copy that predates the CUPS path has no
             // such method (and the content comparison above would catch it too).
             marker: 'SendFileAsync'
+        },
+        {
+            kind: 'Timer',
+            file: vb ? 'Timer.vb' : 'Timer.cs',
+            // The non-visual Timer component (2026-09-28), copied into a project the first time a Timer is
+            // dropped (the Toolbox has no Timer of Avalonia's own — see the file's header) and refreshed
+            // from here like the other bundled files. Its header line is what proves a copy is ours.
+            bundled: /NON-VISUAL Timer component/,
+            // The newest member: the flag the preview host sets so a form being previewed starts no worker
+            // timer. A copy that predates it has no such member — and a copy that merely lacks the newer
+            // Timing semantics is caught by the content comparison above, which is the rule that matters
+            // most for a component nobody can see: a stale copy behaves differently with no visible clue.
+            marker: 'StartSuppressed'
         }
     ];
 }
@@ -235,18 +248,43 @@ export function bundledStampOf(text: string): string | null {
     return line ? line.slice(line.indexOf(BUNDLED_COPY_STAMP) + BUNDLED_COPY_STAMP.length).trim() : null;
 }
 
-/** Two copies of the same bundled file, ignoring line endings and trailing whitespace (a project written
- *  on another machine, or re-saved by an editor, must not read as "different"). */
+/** Two copies of the same bundled file, ignoring line endings, trailing whitespace and the
+ *  `BUNDLED-COPY:` release stamp (a project written on another machine, or re-saved by an editor, must
+ *  not read as "different").
+ *
+ *  The STAMP is deliberately part of what is ignored. It names the release a copy came from, not what
+ *  the copy does, and `tools/bump-stamps.js` rewrites it in every resource as soon as a dev cycle starts
+ *  — so while 0.13.1 was being built, a project holding the shipped 0.13.0 files differed from the
+ *  extension's copy by that one comment line and NOTHING else. The notice then said "older than the
+ *  extension's copy" for four files that were fully current, every time the designer was opened, and
+ *  no update could ever clear it: the refresh compared markers (all present) and so wrote nothing, while
+ *  the next open measured the content again and complained again (reported 2026-09-28, GrumpyDesignerDemo).
+ *  A REAL change still differs in the code below the stamp, which is what this test is for. */
 function sameBundledCopy(a: string, b: string): boolean {
-    const tidy = (s: string) => s.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '');
+    const tidy = (s: string) => s
+        .replace(/\r\n?/g, '\n')
+        .split('\n')
+        .filter((l) => !l.includes(BUNDLED_COPY_STAMP))
+        .map((l) => l.replace(/[ \t]+$/, ''))
+        .join('\n');
     return tidy(a) === tidy(b);
+}
+
+/** `-1` / `0` / `1` for two `major.minor.patch` stamps, or null when either is not that shape (an
+ *  unstamped copy, or one a user stamped by hand). */
+function compareStamps(a: string, b: string): number | null {
+    if (!/^\d+\.\d+\.\d+$/.test(a) || !/^\d+\.\d+\.\d+$/.test(b)) return null;
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+    return 0;
 }
 
 /**
  * True when `text` (the on-disk contents of a bundled component file) is an OLD copy of the extension's
  * own boilerplate, and may therefore be replaced by the current one.
  *
- * Two rules, because one alone is not enough:
+ * Three rules, because one alone is not enough:
  *
  *  1. **It must be provably ours** — the bundled header is there. A file the user wrote or rewrote is
  *     never touched.
@@ -257,7 +295,12 @@ function sameBundledCopy(a: string, b: string): boolean {
  *     while the app compiles the project's, and the old marker test could not see a change of that kind —
  *     the copy carried the previous marker token, so nothing was detected and the app kept two sliders
  *     where the preview showed four. The version STAMP says which release a copy came from; the CONTENT
- *     decides whether it is the same copy.
+ *     decides whether it is the same copy. (The stamp itself is not part of the content — see
+ *     `sameBundledCopy`.)
+ *  3. **It must not be NEWER than ours.** A copy stamped with a release ahead of the running extension
+ *     came from a newer extension than this one, so it is not ours to judge — and since the refresh
+ *     WRITES what we ship, calling it stale would silently DOWNGRADE the project. The stamp is the only
+ *     place that direction is written down, which is the other reason it is kept.
  *
  * `current` is optional so the question can still be asked without the extension's own copy at hand; the
  * answer is then the older marker test (what the pure callers and their fixtures rely on).
@@ -265,6 +308,11 @@ function sameBundledCopy(a: string, b: string): boolean {
 export function isStaleBundledCopy(text: string, vb: boolean, kind: BundledKind, current?: string): boolean {
     const spec = bundledComponentSpecs(vb).find((s) => s.kind === kind);
     if (!spec || !spec.bundled.test(text)) return false;
-    if (current != null && current !== '') return !sameBundledCopy(text, current);
+    if (current != null && current !== '') {
+        const mine = bundledStampOf(text);
+        const ours = bundledStampOf(current);
+        if (mine && ours && (compareStamps(mine, ours) ?? 0) > 0) return false;
+        return !sameBundledCopy(text, current);
+    }
     return !text.includes(spec.marker);
 }

@@ -85,7 +85,11 @@
          chart and copied into the same projects, so it is linked here too. Without PRINT_SUPPORT the
          host compiles its empty half — which is exactly the build that must keep working, since the
          headless previewer has no printer packages at all. -->
-    <Compile Include="../resources/GrumpyPrint.cs" Link="GrumpyPrint.cs" />
-  </ItemGroup>
+    <Compile Include="../resources/GrumpyPrint.cs" Link="GrumpyPrint.cs" />    <!-- Timer (the designer's non-visual Timer component, also copied into generated projects) is
+         linked so the programmatic builder can realise <chrome:Timer>. It is invisible and takes no
+         space, so it draws nothing — the link exists to stop the builder falling back to a stand-in
+         for a tag nobody else knows. The host ALSO sets Timer.StartSuppressed (Program.cs), because a
+         form being previewed must not leave worker timers running in the previewer process. -->
+    <Compile Include="../resources/Timer.cs" Link="Timer.cs" />  </ItemGroup>
 
 </Project>

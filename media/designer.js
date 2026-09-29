@@ -24,6 +24,10 @@
         propsBody: $('propsBody'),
         propsEmpty: $('propsEmpty'),
         controlList: $('controlList'),
+        // The Component Tray (2026-09-28): the strip under the canvas that lists the form's NON-VISUAL
+        // components (its Timers) — they have no bounds, so `frame.controls` cannot carry them.
+        componentTray: $('componentTray'),
+        componentTrayList: $('componentTrayList'),
         btnUndo: $('btnUndo'),
         btnRedo: $('btnRedo'),
         btnNewForm: $('btnNewForm'),
@@ -328,13 +332,16 @@
         // The toolbar CATEGORIES the user folded away (e.g. { align: true }). Every group starts
         // UNFOLDED; the same webview state as the Properties folds (see loadToolbarFolds).
         toolbarFolds: {},
-        // Which sections of the ⚙ Settings dialog are folded (e.g. { codeCheck: true } = hidden).
+        // Which sections of the ⚙ Code Fix/AI-Assist Settings dialog are folded (e.g. { codeCheck: true } = hidden).
         // Defaults: Code check folded, AI assist expanded; the choice is remembered per designer tab.
         settingsFolds: {},
         helpOpen: true,
         lastProps: null,
         clipboard: false,
         controlListKey: null,
+        // What the tray last drew — so it is only rebuilt when the components (or the selection) change.
+        componentTrayKey: null,
+        componentTrayListKey: null,
         recell: null, // { gridName, cells: { v: [], h: [] } } when the selected control is a Grid child
         // Divider bars of every SplitPanel (design coords) — a drag on one resizes the panes.
         splitBars: [],
@@ -952,11 +959,65 @@
             }
         }
         syncControlList();
+        renderComponentTray();
     }
 
     function syncControlList() {
         const cur = state.selected && state.selected.name ? state.selected.name : '';
         if (els.controlList.value !== cur) els.controlList.value = cur;
+    }
+
+    // ---------------- Component Tray (non-visual components: the Timer) ----------------
+    // A component has no look and no bounds, so the canvas cannot show it and there is nothing to click
+    // on it. WinForms draws such things in a tray under the form; this is that tray. Each chip quotes
+    // what a component is (its interval and whether it is running), selects it on click — so its
+    // Interval/Enabled rows arrive in Properties and Delete removes it — and the strip hides itself
+    // while the form holds no components at all, so a form without them looks exactly as before.
+    function componentItems() {
+        return (state.frame && state.frame.components) ? state.frame.components : [];
+    }
+
+    function renderComponentTray() {
+        if (!els.componentTray || !els.componentTrayList) return;
+        const items = componentItems();
+        els.componentTray.hidden = items.length === 0;
+        const sel = state.selected && state.selected.name ? state.selected.name : '';
+        const key = JSON.stringify(items) + '\u0000' + sel;
+        if (key === state.componentTrayKey) return;
+        state.componentTrayKey = key;
+        els.componentTrayList.innerHTML = '';
+        for (const it of items) {
+            const chip = document.createElement('button');
+            chip.className = 'trayChip' + (it.name === sel ? ' sel' : '');
+            chip.dataset.name = it.name;
+            chip.type = 'button';
+            const state_ = it.enabled ? 'running' : 'stopped';
+            chip.title = `${it.type} "${it.name}" — fires every ${it.interval || '100'} ms, ${state_}.` +
+                ' Click to edit its properties (Interval / Enabled); Delete removes it.';
+            const dot = document.createElement('i');
+            dot.className = 'trayDot ' + (it.enabled ? 'on' : 'off');
+            chip.appendChild(dot);
+            const nm = document.createElement('span');
+            nm.className = 'trayName';
+            nm.textContent = it.name || it.type;
+            chip.appendChild(nm);
+            const meta = document.createElement('span');
+            meta.className = 'trayMeta';
+            meta.textContent = (it.interval || '100') + ' ms · ' + state_;
+            chip.appendChild(meta);
+            chip.addEventListener('click', () => selectComponent(it));
+            els.componentTrayList.appendChild(chip);
+        }
+    }
+
+    /** Selects a component. It has no bounds, so it is selected as a zero-size item: the overlay draws
+     *  nothing (there is nothing to outline) and the Properties panel is the whole point. */
+    function selectComponent(it) {
+        const known = ctrlByName(it.name);
+        select(known || { name: it.name, type: it.type, x: 0, y: 0, w: 0, h: 0 });
+        // The chip must show the selection straight away: a component has no outline on the canvas to
+        // signal it, so the tray is the only feedback there is.
+        renderComponentTray();
     }
 
     els.controlList.addEventListener('change', () => {
@@ -1123,7 +1184,7 @@
         if (e.target === els.handlerModal) closeHandlerMenu(); // click outside closes
     });
 
-    // ---------------- code-check settings (toolbar ⚙ Settings) ----------------
+    // ---------------- code-check settings (toolbar ⚙ Code Fix/AI-Assist Settings) ----------------
     // Which trigger re-checks the code-behind (returning to the designer / on save / while typing /
     // only manually) and whether problem controls get a ⚠ badge. Stored in the user's settings.
     const CHECK_MODES = [
@@ -1133,7 +1194,7 @@
         ['manual', 'Only when I press Code Fix…', 'No automatic check at all — the original behaviour.']
     ];
     let settingsOpen = false;
-    // Set when the user presses ⚙ Settings. Without it, the extension's reply to a *save* (which carries
+    // Set when the user presses ⚙ Code Fix/AI-Assist Settings. Without it, the extension's reply to a *save* (which carries
     // the same `codeSettings` message) reopened the panel a moment after the user closed it — the flicker
     // they reported on 2026-09-15. Opening is a user action; filling is not.
     let settingsPending = false;
@@ -3574,7 +3635,7 @@
             case 'status':
                 els.status.textContent = msg.message;
                 // A long status can change how the toolbar wraps (it shares the last row with the
-                // ⚙ Settings button), so re-run the separator layout.
+                // ⚙ Code Fix/AI-Assist Settings button), so re-run the separator layout.
                 layoutToolbar();
                 break;
             case 'codeIssues':
@@ -3740,7 +3801,7 @@
     // ---------------- foldable toolbar categories ----------------
     // The toolbar is a FLAT flex box (so it wraps as before), so a category is defined by its
     // heading chip: everything after a `.tbg-head` belongs to it, up to the next heading or the
-    // `data-stop` marker (the status text and ⚙ Settings are never folded away). Groups start
+    // `data-stop` marker (the status text and ⚙ Code Fix/AI-Assist Settings are never folded away). Groups start
     // UNFOLDED; the folded set is remembered per designer tab, like the Properties sections.
     function toolbarHeads() {
         return els.toolbar ? Array.from(els.toolbar.querySelectorAll('.tbg-head')) : [];

@@ -41,7 +41,7 @@ export function activate(context: vscode.ExtensionContext): void {
         log(`activate start (vscode ${vscode.version})`);
         setActiveContext(context);
 
-        // The AI switch lives in the designer's ⚙ Settings panel, and its value gates every AI command
+        // The AI switch lives in the designer's ⚙ Code Fix/AI-Assist Settings panel, and its value gates every AI command
         // (see the `when` clauses in package.json): "when off, all AI features become unavailable" is a
         // promise the command palette has to keep too, not just the panel.
         const syncAiContext = () => {

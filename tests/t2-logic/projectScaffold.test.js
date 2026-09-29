@@ -69,6 +69,39 @@ module.exports = async (t) => {
         // Portability (§66 fix 1): generated projects must NOT carry a per-project vbnetcompanion
         // settings.json when no bridge DLL was detected on this machine (neither C# nor VB).
         t.ok(!fs.existsSync(sj), 'scaffold-vbnet', `${language}: no vbnet settings when no bridge DLL is found`);
+
+        // Which extensions the project asks for (2026-09-29). VS Code's own mechanism is
+        // `.vscode/extensions.json` — a PROMPT on first open, never a requirement: nothing in our
+        // manifest may declare these as dependencies, or a disabled language service would stop the
+        // designer from starting at all. Ids only, so the file stays portable between machines.
+        const ej = path.join(dir, '.vscode', 'extensions.json');
+        t.ok(fs.existsSync(ej), 'scaffold-recommend', `${language}: .vscode/extensions.json written`);
+        const raw = fs.readFileSync(ej, 'utf8');
+        const rec = JSON.parse(raw.replace(/^\s*\/\/.*$/gm, ''));
+        t.ok(Array.isArray(rec.recommendations) && rec.recommendations.length === 2, 'scaffold-recommend',
+            `${language}: exactly two recommendations (found ${JSON.stringify(rec.recommendations)})`);
+        t.ok(rec.recommendations.every((id) => /^[a-z0-9-]+\.[a-z0-9-]+$/.test(id)), 'scaffold-recommend',
+            `${language}: every id is publisher.extension`);
+        t.ok(rec.recommendations.includes('avaloniateam.vscode-avalonia'), 'scaffold-recommend',
+            `${language}: the Avalonia extension is recommended — it is what gives .axaml its IntelliSense`);
+        t.ok(!/\/home\/|\/usr\/|[A-Za-z]:\\\\/.test(raw), 'scaffold-recommend',
+            `${language}: ids only — no machine-specific path (§66 rule)`);
+        if (language === 'cs') {
+            // The C# extension is the only provider of the `coreclr` debugger launch.json uses, so it
+            // is what makes F5 work in a generated project (verified against its installed manifest:
+            // contributes.debuggers = coreclr, clr, dotnet, … / C# Dev Kit contributes none).
+            t.ok(rec.recommendations.includes('ms-dotnettools.csharp'), 'scaffold-recommend',
+                'cs: the C# extension is recommended (F5 debugging + the code-behind language service)');
+            t.ok(!rec.recommendations.includes('roies.vbnet-companion'), 'scaffold-recommend',
+                'cs: the VB companion is not — a C# project has no VB in it');
+            t.ok(!rec.recommendations.some((id) => id.startsWith('ms-dotnettools.csdevkit')), 'scaffold-recommend',
+                'cs: C# Dev Kit is left out: the Avalonia extension already requires it');
+        } else {
+            t.ok(rec.recommendations.includes('roies.vbnet-companion'), 'scaffold-recommend',
+                'vb: the VB.NET Companion is recommended — it is the VB code-behind language service');
+            t.ok(!rec.recommendations.includes('ms-dotnettools.csharp'), 'scaffold-recommend',
+                'vb: the C# extension is not — Dev Kit and the C# language service do nothing for VB');
+        }
     }
 
     // When the generator DOES locate the VB.NET Companion LanguageServer.dll on this machine, VB

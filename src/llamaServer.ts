@@ -411,7 +411,8 @@ export function llamaServerStatusLines(
         // says which unit holds it, so "who started it?" no longer needs a shrug. Without one — the two-arg
         // call this function has always had — the old sentence stands, because guessing would be worse.
         lines.push(ownerLine
-            ? `Started outside this window: ${ownerLine}. Start / Stop in ⚙ Settings → AI assist control it.`
+            ? `Started outside this window: ${ownerLine}. Start / Stop in Code Fix/AI-Assist Settings (⚙) → `
+            + 'My llama-server control it.'
             : 'Started outside this window — "Stop" and "Unload" leave it alone on purpose.');
         return lines;
     }

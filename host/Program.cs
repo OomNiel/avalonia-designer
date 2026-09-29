@@ -57,6 +57,12 @@ internal static class Program
             .UseSkia()
             .SetupWithoutStarting();
 
+        // A form being PREVIEWED must not run its timers (2026-09-28): the bundled
+        // <chrome:Timer> ticks on a worker thread, and the host renders a frame per keystroke, so
+        // every render of a form holding an enabled Timer would leave another worker timer running
+        // inside this process — for a preview nobody is watching tick. Real apps never set this.
+        AvaloniaChrome.Timer.StartSuppressed = true;
+
         // SQLite (design-time preview / schema inspection of the user's .db files).
         Batteries_V2.Init();
 

@@ -46,6 +46,10 @@ import { eventArgsFor, isKnownEventName, knownEventArgsFor } from './controlEven
 // Shared with the AI side, on purpose: one implementation of "the member a model sent", "a class wrapper" and
 // "wire this event into the form", so the checker and the generator can never disagree about them (2026-09-16).
 import { addXamlEventAttribute, enclosingTypeSpan, memberSignatures, unwrapMemberBlock } from './assistant';
+// The form itself: the dock-wrapper repair moves an element in the XAML tree, which is what the model is
+// for — the panel saves a form the same way (withDesignerHeader(model.serialize(true)), events kept).
+import { XamlModel, localName } from './xamlModel';
+import { withDesignerHeader } from './xamlHeader';
 
 // ---------------- model ----------------
 
@@ -68,7 +72,9 @@ export type LocalFixKind =
     | 'unbind-image'             // binding refers to a control / grid that no longer exists
     | 'remove-items-source'      // ItemsSource set on a control that no longer exists
     | 'add-import'               // missing Imports / using
-    | 'convert-chrome';          // ChromeWindow root, code-behind still Inherits Window
+    | 'convert-chrome'           // ChromeWindow root, code-behind still Inherits Window
+    | 'lift-dock-wrapper';       // a control the old dock path wrapped in a DockPanel INSIDE its Canvas
+// (it docks into the Canvas, so Dock = Fill fills nothing)
 
 /** Fixes that need the .adset spec / bundled resources, so the designer panel performs them. */
 export type PanelFixKind = 'regenerate-binding' | 'rebind-grid' | 'copy-bundled-helper'
@@ -414,6 +420,48 @@ function childSpan(text: string, openIndex: number): { count: number; start: num
  * object, and XAML itself refuses it on a type that cannot hold a name.
  */
 const NAME_IS_A_PROPERTY = new Set(['Axis', 'LineSeries', 'XYSeries', 'PieSlice', 'ChartCursor', 'GradientStop']);
+
+/**
+ * Controls the OLD dock path left wrapped in a DockPanel *inside* the Canvas they sit on (before
+ * 2026-09-29). It is what made a dock do nothing there: a Canvas sizes a child to the child's own
+ * desire, so the wrapper was only as big as the control and `Dock = Fill` filled nothing. The form
+ * still RUNS, which is why nobody sees it until the layout looks wrong.
+ *
+ * Recognised by SHAPE, never by guesswork: an auto-named `DockPanelN` (the name `uniqueName('DockPanel')`
+ * hands out) directly inside a `<Canvas>`, holding exactly ONE element child, where that Canvas has a
+ * DockPanel of its own to dock into (a tab page's body `<Name>BodyN`, or the form's root panel) — and
+ * the wrapper carries the `LastChildFill` the dock code wrote, or the child carries a `DockPanel.Dock`.
+ * A hand-made DockPanel is only touched when it matches all of that, and the fix is offered, not forced.
+ */
+function dockWrappersIn(text: string): { wrapper: string; canvas: string; owner: string; control: string; line: number }[] {
+    const out: { wrapper: string; canvas: string; owner: string; control: string; line: number }[] = [];
+    // Cheap guard: the model parse below only happens on a form that could hold one of these.
+    if (!/<DockPanel\b[^>]*\b(?:x:)?Name="DockPanel\d+"/.test(text)) return out;
+    let model: XamlModel;
+    try { model = new XamlModel(text); } catch { return out; }
+    for (const el of model.controlElements()) {
+        if (localName(el.tagName) !== 'DockPanel') continue;
+        const name = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+        if (!/^DockPanel\d+$/.test(name)) continue;
+        const canvas = el.parentNode as Element | null;
+        if (!canvas || canvas.nodeType !== 1 || localName(canvas.tagName) !== 'Canvas') continue;
+        const owner = canvas.parentNode as Element | null;
+        if (!owner || owner.nodeType !== 1 || localName(owner.tagName) !== 'DockPanel') continue;
+        const kids: Element[] = [];
+        for (let c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 1) kids.push(c as Element);
+        if (kids.length !== 1) continue;
+        if (!el.getAttribute('LastChildFill') && !kids[0].getAttribute('DockPanel.Dock')) continue;
+        const at = text.indexOf(`"${name}"`);
+        out.push({
+            wrapper: name,
+            canvas: canvas.getAttribute('x:Name') || canvas.getAttribute('Name') || '',
+            owner: owner.getAttribute('x:Name') || owner.getAttribute('Name') || '',
+            control: kids[0].getAttribute('x:Name') || kids[0].getAttribute('Name') || localName(kids[0].tagName),
+            line: at >= 0 ? lineAt(text, at) : 0
+        });
+    }
+    return out;
+}
 
 /** Reads the form's XAML (from the designer's in-memory copy when given) and extracts the facts the
  *  checks need: named controls, event wiring, the class/root type and the root namespace. */
@@ -1273,6 +1321,25 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
         });
     }
 
+    // ---- the old dock wrapper: a control docked inside its Canvas instead of its panel ----
+    // Before 2026-09-29 the dock code, finding no DockPanel to act in, wrapped the control in a NEW
+    // DockPanel inside the Canvas it sat on. A Canvas sizes a child to the child's own desire, so that
+    // wrapper was as small as the control and a dock there did NOTHING — the form still runs, which is
+    // why it is a warning: re-setting the Dock property repairs a form one control at a time, and this
+    // does the lot. (Reported 2026-09-29: "any control with a Dock property does not dock properly in
+    // the tab canvas … if I delete the canvas from that page, controls dock fill properly".)
+    for (const w of dockWrappersIn(ax.text)) {
+        add({
+            severity: 'warning', kind: 'lift-dock-wrapper', member: w.control, line: w.line, file: 'axaml',
+            title: `${w.control} is docked inside its Canvas, not inside the panel`,
+            detail: `An earlier version of the designer wrapped it in <DockPanel x:Name="${w.wrapper}"> ` +
+                `INSIDE <${w.canvas}>. A Canvas sizes a child to the child's own size, so a Dock there does ` +
+                `nothing (Dock = Fill filled nothing at all). Fix: move it into ${w.owner || 'the panel'} — ` +
+                'in front of the Canvas, as a docked child — and drop the wrapper.',
+            data: { wrapper: w.wrapper, canvas: w.canvas, owner: w.owner, control: w.control, name: w.control }
+        });
+    }
+
     // ---- 13) report-only: names / class mismatch ----
     for (const n of ax.invalidNames) {
         add({
@@ -1735,13 +1802,30 @@ export function terminateCsharpLineAt(line: string, column: number): string | un
 
 /** Applies an issue whose fix only needs the code-behind / XAML files. Returns a short report. */
 export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts: CheckOptions = {}): Promise<string> {
+    const data = issue.data ?? {};
+    // This repair is XAML-ONLY, so it runs before the code-behind guard below — a form with a leftover
+    // wrapper is fixed even when it has no code-behind to speak of.
+    if (issue.kind === 'lift-dock-wrapper') {
+        const text = opts.axamlText ?? readText(axamlUri.fsPath);
+        const model = new XamlModel(text);
+        const wrapper = model.findByName(String(data.wrapper ?? ''));
+        const canvas = wrapper ? wrapper.parentNode as Element | null : null;
+        const child = wrapper ? Array.from(wrapper.childNodes).find((n) => n.nodeType === 1) as Element | undefined : undefined;
+        if (!wrapper || !canvas || !child) return 'That wrapper is already gone — nothing to move.';
+        const owner = model.moveIntoOwnerDockPanel(child, canvas);
+        if (!owner) return `${data.canvas || 'That Canvas'} is not inside a DockPanel — dock into a panel by hand.`;
+        if (wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+        fs.writeFileSync(axamlUri.fsPath, withDesignerHeader(model.serialize(true)), 'utf8');
+        const into = owner.getAttribute('x:Name') || owner.getAttribute('Name') || 'its panel';
+        return `Moved ${data.control || localName(child.tagName)} into ${into} — it docks there now, and the ` +
+            `${data.wrapper} wrapper is gone.`;
+    }
     const codeFile = findCodeBehindFile(axamlUri);
     if (!codeFile) return 'No code-behind file to fix.';
     const read = (): string => readText(codeFile);
     const write = (s: string): void => { fs.writeFileSync(codeFile, s, 'utf8'); };
     const language: 'cs' | 'vb' = codeFile.toLowerCase().endsWith('.vb') ? 'vb' : 'cs';
     const controls = unionNamedControls(opts.controls ?? [], axamlFacts(axamlUri, opts.axamlText).names);
-    const data = issue.data ?? {};
 
     switch (issue.kind) {
         case 'rebuild-accessors': {

@@ -114,6 +114,12 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'ProgressBar', tag: 'ProgressBar', group: TOOLBOX_CATEGORY_PROGRESS },
     { label: 'Slider', tag: 'Slider', group: TOOLBOX_CATEGORY_PROGRESS },
     { label: 'Separator', tag: 'Separator', group: TOOLBOX_CATEGORY_PROGRESS },
+    // Timer (2026-09-28): the WinForms Timer idea — a NON-VISUAL component that calls a handler every
+    // Interval milliseconds. Avalonia ships no Timer control, so the Toolbox offers the bundled
+    // AvaloniaChrome.Timer, which ticks on a WORKER thread (System.Timers.Timer) so a slow handler
+    // cannot freeze the window. Being invisible it lives in the Component Tray under the canvas, not
+    // on the canvas (see the designer's tray strip).
+    { label: 'Timer', tag: 'Timer', group: TOOLBOX_CATEGORY_PROGRESS },
     { label: 'Menu', tag: 'Menu', group: TOOLBOX_CATEGORY_BARS },
     { label: 'StatusBar', tag: 'StatusBar', group: TOOLBOX_CATEGORY_BARS },
     { label: 'StatusDate', tag: 'StatusDate', group: TOOLBOX_CATEGORY_BARS },

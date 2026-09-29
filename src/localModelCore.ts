@@ -1,7 +1,7 @@
 /* The model layer with no UI attached: discovery, loading, unloading, status, scanning, importing.
  *
  * Why this exists: the same operations are now reachable from two front doors — the Command Palette
- * flows (quick picks and notifications) and the designer's ⚙ Settings panel (an inline block). Putting
+ * flows (quick picks and notifications) and the designer's ⚙ Code Fix/AI-Assist Settings panel (an inline block). Putting
  * the behaviour in one place is what keeps them from drifting; each front door only decides how to ask
  * and how to report. Nothing here shows a dialog, so `onProgress` is the only channel it has, and the
  * panel renders those messages inline while the palette shows them in a notification.
@@ -50,7 +50,7 @@ export interface CliResult {
      * True when the helper was killed at the timeout instead of answering.
      *
      * `lms` starts LM Studio's service on the way, so a status ask can block for the whole timeout — 20 s of it
-     * on this machine on 2026-09-17, twice per panel state, which is what made ⚙ Settings crawl on its first
+     * on this machine on 2026-09-17, twice per panel state, which is what made ⚙ Code Fix/AI-Assist Settings crawl on its first
      * open after a reload. The caller needs to be able to say "this answer is incomplete" rather than "you have
      * no models".
      */

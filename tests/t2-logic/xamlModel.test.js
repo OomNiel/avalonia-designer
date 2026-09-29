@@ -380,4 +380,83 @@ module.exports = async (t) => {
   auto.setExplicitName(auto.controlElements().find((e) => e.tagName.toLowerCase() === 'button'), 'real');
   t.equal(auto.namedControlSignature(), 'Body:Canvas|real:Button', 'signature',
     'while an explicit name is included');
+
+  // --- wrapInGridCell: the dock region a ProgressBar gets INSIDE its cell (2026-09-28) ---
+  // The bar keeps a Dock row in a Grid cell, so its dock has to be given a home without the bar
+  // leaving the layout: the wrapper takes how the bar sat in the cell and the bar becomes a plain
+  // DockPanel child, so `DockPanel.Dock` acts against the region the bar already had.
+  {
+    const g = new XamlModel(`<Window ${NS}><Grid x:Name="Layout">
+      <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <Canvas x:Name="Body" Grid.Row="0"/>
+      <ProgressBar x:Name="pb1" Grid.Row="1" Grid.Column="0" Margin="6,0,6,6" HorizontalAlignment="Left" Value="40"/>
+    </Grid></Window>`);
+    const bar = g.findByName('pb1');
+    const wrapper = g.wrapInGridCell(bar);
+    t.equal(wrapper.tagName.toLowerCase(), 'dockpanel', 'dockcell', 'the bar is wrapped in a DockPanel');
+    t.equal(bar.parentNode === wrapper, true, 'dockcell', 'and the bar lives inside it');
+    t.equal(wrapper.parentNode && wrapper.parentNode.getAttribute('x:Name'), 'Layout', 'dockcell',
+      'the wrapper stays in the Grid');
+    t.equal(wrapper.getAttribute('Grid.Row'), '1', 'dockcell', 'in the SAME cell (row)');
+    t.equal(wrapper.getAttribute('Grid.Column'), '0', 'dockcell', 'in the same cell (column)');
+    t.equal(wrapper.getAttribute('Margin'), '6,0,6,6', 'dockcell',
+      'the wrapper takes the margin, so the dock region is the region the bar had');
+    t.equal(wrapper.getAttribute('HorizontalAlignment'), 'Left', 'dockcell',
+      'and the alignment that placed it there');
+    t.equal(bar.hasAttribute('Grid.Row'), false, 'dockcell',
+      'the bar gives up its cell coordinates (the wrapper holds them now)');
+    t.equal(bar.hasAttribute('Margin'), false, 'dockcell', 'and its margin — it must not apply twice');
+    t.equal(bar.hasAttribute('HorizontalAlignment'), false, 'dockcell',
+      'and its alignment — that would fight the dock');
+    t.equal(bar.getAttribute('Value'), '40', 'dockcell', 'the bar keeps its own properties');
+    t.equal(g.findByName('pb1') === bar, true, 'dockcell', 'and is still findable by name');
+    // The dock then acts INSIDE the wrapper, exactly as it does anywhere else.
+    bar.setAttribute('DockPanel.Dock', 'Bottom');
+    wrapper.setAttribute('LastChildFill', 'False');
+    t.ok(/<ProgressBar[^>]*DockPanel\.Dock="Bottom"/.test(g.serialize(true)), 'dockcell',
+      'a Dock inside the wrapper serialises as ordinary DockPanel.Dock XAML');
+  }
+
+  // --- moveIntoOwnerDockPanel: a Canvas inside a DockPanel IS a dock region (2026-09-29) ---
+  // Reported: *"any control with a Dock property does not dock properly in the tab canvas … If I delete
+  // the canvas from that page, controls like a splitpanel or a chart dock fill properly."* A tab page's
+  // body is exactly this shape — <DockPanel Body1><Canvas Body1Canvas/></DockPanel> — and the dock used
+  // to fall through to wrapping the control in a DockPanel INSIDE the canvas, where a Canvas sizes a
+  // child to its own desire, so Dock = Fill filled nothing.
+  {
+    const g = new XamlModel(`<Window ${NS}><TabControl x:Name="Tabs">
+      <TabItem Header="Page 1">
+        <DockPanel x:Name="TabsBody1">
+          <Canvas x:Name="TabsBody1Canvas">
+            <ProgressBar x:Name="Chart1" Canvas.Left="10" Canvas.Top="20" Width="200" Height="120"/>
+          </Canvas>
+        </DockPanel>
+      </TabItem>
+    </TabControl></Window>`);
+    const el = g.findByName('Chart1');
+    const canvas = g.findByName('TabsBody1Canvas');
+    const owner = g.findByName('TabsBody1');
+    t.equal(el.parentNode === canvas, true, 'dockpanel', 'the control starts on the page canvas');
+    const returned = g.moveIntoOwnerDockPanel(el, canvas);
+    t.equal(returned === owner, true, 'dockpanel', 'it moves into the DockPanel that owns that canvas');
+    t.equal(el.parentNode === owner, true, 'dockpanel', 'and the control is a child of it now');
+    const kids = Array.from(owner.childNodes).filter((n) => n.nodeType === 1);
+    t.equal(kids[kids.length - 1] === canvas, true, 'dockpanel',
+      'the Canvas is STILL the last child — it keeps filling what the docked control leaves');
+    t.equal(kids.indexOf(el) < kids.indexOf(canvas), true, 'dockpanel',
+      'and the control sits in FRONT of it (a DockPanel lays its bands out in order)');
+    t.equal(el.hasAttribute('Canvas.Left') || el.hasAttribute('Canvas.Top'), false, 'dockpanel',
+      'the canvas coordinates go (the DockPanel owns the placement now)');
+    t.equal(el.getAttribute('Width'), '200', 'dockpanel',
+      'while the control keeps its own size — what to clear is the dock code\'s decision, not this move');
+    t.equal(owner.getAttribute('LastChildFill'), 'True', 'dockpanel',
+      'and the panel is told to fill with the Canvas, so the page body always covers the page');
+    // A Canvas with no DockPanel owner is NOT this case: the caller must keep looking (a loose Canvas is
+    // wrapped instead), so the helper answers with nothing and touches no element.
+    const loose = new XamlModel(`<Window ${NS}><Canvas x:Name="Body"><Button x:Name="b1"/></Canvas></Window>`);
+    const b1 = loose.findByName('b1');
+    t.equal(loose.moveIntoOwnerDockPanel(b1, loose.findByName('Body')), undefined, 'dockpanel',
+      'a Canvas whose parent is not a DockPanel is left for the caller');
+    t.equal(b1.parentNode === loose.findByName('Body'), true, 'dockpanel', 'and its control is untouched');
+  }
 };

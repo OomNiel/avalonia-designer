@@ -43,7 +43,7 @@ body {
 #toolbar {
     display: flex;
     /* Wrap onto a second row instead of squeezing the buttons when the panel gets narrow.
-       Breaks only happen between items, so a button is never split, and the ⚙ Settings button
+       Breaks only happen between items, so a button is never split, and the ⚙ Code Fix/AI-Assist Settings button
        (after the status text) simply rides along at the end of the last row. */
     flex-wrap: wrap;
     align-items: center;
@@ -78,7 +78,7 @@ body {
     flex: 0 0 auto;
 }
 
-/* The ⚙ Settings button sits at the FAR RIGHT, after the status text. */
+/* The ⚙ Code Fix/AI-Assist Settings button sits at the FAR RIGHT, after the status text. */
 #btnCodeSettings {
     margin-left: 8px;
     flex: 0 0 auto;
@@ -231,8 +231,21 @@ body {
     min-height: 0;
 }
 
+/* The CANVAS COLUMN (2026-09-29): the scrollable design surface with the Component Tray pinned at its
+   bottom. The tray used to be a sibling of #canvasWrap, i.e. a third column of #main between the canvas
+   and the Properties panel — it belongs to the canvas instead. */
+#canvasArea {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 #canvasWrap {
     flex: 1 1 auto;
+    /* It is a SCROLLING child of the canvas column now (2026-09-29), so it must be allowed to shrink
+       below its content's height — without this the column would grow instead of the surface scrolling. */
+    min-height: 0;
     overflow: auto;
     padding: 24px;
     display: flex;
@@ -1277,7 +1290,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     padding: 14px;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
     /* A modal taller than the window used to lose its top AND bottom off-screen: it is centred by
-       `.modal` and nothing scrolled. Measured (Chromium, real CSS + markup): the ⚙ Settings panel was
+       `.modal` and nothing scrolled. Measured (Chromium, real CSS + markup): the ⚙ Code Fix/AI-Assist Settings panel was
        1553 px tall, so its title sat 426 px above a 700 px viewport and Cancel/Save sat 1127 px below it.
        Never let the box exceed the window; scroll inside it instead. */
     max-height: calc(100vh - 28px);
@@ -1322,7 +1335,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 }
 
 /* The dialog's own "still arriving" marker, to the left of Cancel/Save (asked 2026-09-17): the AI section of
-   ⚙ Settings is filled from a state the extension has to ask the machine for, and on the first open after a
+   ⚙ Code Fix/AI-Assist Settings is filled from a state the extension has to ask the machine for, and on the first open after a
    window reload that is not instant. `margin-right: auto` keeps it against the left edge of the same row, so
    the buttons never move while it appears and disappears. */
 .modal-busy {
@@ -1372,7 +1385,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     cursor: default;
 }
 
-/* ---- AI assist section of the ⚙ Settings panel ----
+/* ---- AI assist section of the ⚙ Code Fix/AI-Assist Settings panel ----
    The switch is the first decision, the model the second, its settings the third: the flow the user asked
    for, so `#aiBody` is hidden until the switch is on and `#aiOptions` until a model is chosen. */
 .modal-sep {
@@ -1446,6 +1459,72 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 }
 
 /* The host check's verdict: the AI section is disabled and this is the reason. */
+/* ---- the two configuration boxes of the AI section: Model and My llama-server ----
+   They are different things with different lifetimes — weights this window loads, versus a server that may be
+   the developer's own systemd unit running before VS Code was opened — and unboxed they read as one long
+   column of controls (asked 2026-09-29: "put the 'Model' and 'My llama-server' sections in bordered areas so
+   that is easier to differentiate between the two"). */
+.ai-block {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 8px 8px;
+    margin: 8px 0;
+    background: rgba(127, 127, 127, 0.06);
+}
+
+.ai-block-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+    margin-bottom: 5px;
+}
+
+/* The sentence beside the box title is a hint, not a title: no capitals, no letterspacing. */
+.ai-block-head span {
+    font-size: 11px;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--fg-dim);
+}
+
+.ai-block>.modal-field:first-of-type {
+    margin-top: 4px;
+}
+
+.ai-block .modal-hint:last-child {
+    margin-bottom: 0;
+}
+
+/* The explanation of the two start modes: the two-line essence stays visible, the long version is one
+   click away. This dialog has no height to spare — measured in Chromium 2026-09-29 at 1024x700 the
+   content was already 141px taller than the box before these boxes and this copy existed, and the long
+   paragraph on its own cost another 60px. The text is in the DOM and in the tab order; the
+   <summary> is the part that must stay readable. */
+.ai-more summary {
+    font-size: 11px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    padding: 2px 0;
+}
+
+.ai-more summary:hover {
+    color: var(--fg);
+}
+
+.ai-more[open] summary,
+.ai-more summary:focus-visible {
+    margin-bottom: 4px;
+}
+
 .ai-blocked {
     margin: 6px 0;
     padding: 6px 8px;
@@ -1643,7 +1722,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     font-weight: 600;
 }
 
-/* Code-check settings modal (the toolbar's ⚙ Settings): one radio row per trigger. */
+/* Code-check settings modal (the toolbar's ⚙ Code Fix/AI-Assist Settings): one radio row per trigger. */
 .settings-modes {
     display: flex;
     flex-direction: column;
@@ -2149,7 +2228,7 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     width: min(90vw, 340px);
 }
 
-/* The ⚙ Settings panel carries the code-check choices *and* the whole AI section (model list, five
+/* The ⚙ Code Fix/AI-Assist Settings panel carries the code-check choices *and* the whole AI section (model list, five
    options with hints, three buttons, a progress line and the status report), so it needs more room than
    the small dialogs that share `.modal-narrow` — and its action row has to stay reachable while the rest
    scrolls, because Save is the last thing the user needs to press. */
@@ -2755,4 +2834,76 @@ body.pv-dark #menuDummies .menu-dummy-sep {
 
 .sheet-format-hint {
     margin: 0 0 8px;
+}
+
+/* Component Tray (2026-09-28) — the strip under the design surface that lists the form's NON-VISUAL
+   components (a Timer has no look of its own, so it can never be drawn on the canvas). A chip per
+   component: a state dot, the name, and what it is set to. Hidden while the form holds none, so a
+   form without components looks exactly as it did before. */
+#componentTray {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    padding: 4px 8px;
+    border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+    background: var(--vscode-sideBar-background, #252526);
+    font-size: 12px;
+}
+
+#componentTray[hidden] {
+    display: none;
+}
+
+#componentTrayLabel {
+    opacity: .7;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    white-space: nowrap;
+}
+
+#componentTrayList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.trayChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border: 1px solid var(--vscode-panel-border, #3c3c3c);
+    border-radius: 10px;
+    background: var(--vscode-editorWidget-background, #2d2d30);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.trayChip:hover {
+    border-color: var(--vscode-focusBorder, #0e639c);
+}
+
+.trayChip.sel {
+    border-color: var(--vscode-focusBorder, #0e639c);
+    background: var(--vscode-list-activeSelectionBackground, #094771);
+}
+
+.trayDot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #888;
+    flex: 0 0 auto;
+}
+
+.trayDot.on {
+    background: var(--vscode-charts-green, #4ec9b0);
+}
+
+.trayMeta {
+    opacity: .65;
+    white-space: nowrap;
 }

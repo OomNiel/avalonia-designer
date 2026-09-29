@@ -1,4 +1,4 @@
-/* The Command Palette front door for local models: the same operations the designer's ⚙ Settings panel
+/* The Command Palette front door for local models: the same operations the designer's ⚙ Code Fix/AI-Assist Settings panel
  * offers, asked for with quick picks and reported with notifications.
  *
  * WHAT THE SETUP REPLACES (2026-09-15). Doing it by hand meant knowing five things a developer should not
@@ -224,7 +224,7 @@ async function setUpLmStudioModel(model: LocalModel, facts: SetupFacts, found: D
 /**
  * Writes the three settings that make the feature work.
  *
- * Shared with the designer's ⚙ Settings panel, which performs exactly this step after a successful load
+ * Shared with the designer's ⚙ Code Fix/AI-Assist Settings panel, which performs exactly this step after a successful load
  * — one implementation, so the two front doors cannot end up pointing at different addresses.
  */
 export async function wireSettings(endpoint: string, modelIdentifier: string): Promise<void> {

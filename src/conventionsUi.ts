@@ -117,9 +117,9 @@ export async function learnConventions(): Promise<boolean> {
     void vscode.window.showInformationMessage(
         saved === chosen.length
             ? `${saved} house rule(s) saved. They are now part of every request to the local model — edit them `
-            + 'in the designer\'s ⚙ Settings panel under *Conventions*.'
+            + 'in the designer\'s Code Fix/AI-Assist Settings (⚙) under *House rules*.'
             : `Only ${saved} of ${chosen.length} rule(s) fitted: the list stops at ${MAX_CONVENTIONS}. Remove one `
-            + 'in the ⚙ Settings panel to make room.'
+            + 'in the ⚙ Code Fix/AI-Assist Settings panel to make room.'
     );
     return saved > 0;
 }

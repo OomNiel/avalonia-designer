@@ -422,7 +422,9 @@ End Class
     // ---------- 9) the ⚙ Settings surface exists (source level: the T3 fixture has no markup) ----------
     {
         const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'designerPanel.ts'), 'utf8');
-        t.ok(/id="btnCodeSettings"/.test(src), 'settings-ui', 'the toolbar has a ⚙ Settings button');
+        t.ok(/id="btnCodeSettings"/.test(src), 'settings-ui', 'the toolbar has a settings button');
+        t.ok(/>⚙ Code Fix\/AI-Assist Settings<\/button>/.test(src), 'settings-ui',
+            'named for everything it holds — the code check *and* the AI assist (renamed 2026-09-29)', src.match(/>⚙[^<]*</g));
         t.ok(src.indexOf('id="btnCodeSettings"') > src.indexOf('id="status"'), 'settings-ui',
             'and it sits at the right-hand end of the toolbar, after the status text');
         t.ok(/id="settingsModes"/.test(src) && /id="settingsBadges"/.test(src), 'settings-ui',

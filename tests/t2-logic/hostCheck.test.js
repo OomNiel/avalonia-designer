@@ -121,7 +121,7 @@ module.exports = async (t) => {
 
         const blocked = hc.hostBlockMessage(weak);
         t.ok(/AI assist is disabled on this machine/.test(blocked), 'message', 'the refusal is one sentence');
-        t.ok(/⚙ Settings/.test(blocked), 'message', 'that says where the override lives');
+        t.ok(/Code Fix\/AI-Assist Settings/.test(blocked), 'message', 'that says where the override lives', blocked);
         t.ok(/5\.0 GB/.test(blocked), 'message', 'and carries the reason the machine gave');
     }
 

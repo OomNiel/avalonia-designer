@@ -78,6 +78,11 @@ export interface ScaffoldOptions {
     sheetCs?: string;
     /** Contents of GrumpySheet.vb (bundled resource — see sheetCs). Optional. */
     sheetVb?: string;
+    /** Contents of Timer.cs (bundled resource — the non-visual Timer component the Toolbox offers:
+     *  the WinForms Timer idea, ticking on a worker thread). Optional, like the other bundled files. */
+    timerCs?: string;
+    /** Contents of Timer.vb (bundled resource — see timerCs). Optional. */
+    timerVb?: string;
     /** Contents of ColumnFollower.cs (bundled resource — the live one-column view a read-only
      *  control follows a bound DataGrid with). Optional: when omitted the file is not written, so
      *  tests that don't care about followers keep generating exactly the old file set. */
@@ -93,7 +98,7 @@ export interface ScaffoldOptions {
 
 /** Writes a complete, ready-to-run Avalonia project into projectPath. */
 export function generateProjectScaffold(opts: ScaffoldOptions): void {
-    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb, sheetCs, sheetVb, followerCs, followerVb, vbBridgeDll } = opts;
+    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb, sheetCs, sheetVb, timerCs, timerVb, followerCs, followerVb, vbBridgeDll } = opts;
     const rootNamespace = sanitize(name);
     const formName = MAIN_FORM_NAME;
 
@@ -109,6 +114,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (chartsCs) write(projectPath, 'GrumpyCharts.cs', chartsCs);
         if (grumpyPrintCs) write(projectPath, 'GrumpyPrint.cs', grumpyPrintCs);
         if (sheetCs) write(projectPath, 'GrumpySheet.cs', sheetCs);
+        if (timerCs) write(projectPath, 'Timer.cs', timerCs);
         if (followerCs) write(projectPath, 'ColumnFollower.cs', followerCs);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.cs', buildCsCodeBehind(formName, 'Window', rootNamespace, tpl.handlers));
@@ -124,6 +130,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (chartsVb) write(projectPath, 'GrumpyCharts.vb', chartsVb);
         if (grumpyPrintVb) write(projectPath, 'GrumpyPrint.vb', grumpyPrintVb);
         if (sheetVb) write(projectPath, 'GrumpySheet.vb', sheetVb);
+        if (timerVb) write(projectPath, 'Timer.vb', timerVb);
         if (followerVb) write(projectPath, 'ColumnFollower.vb', followerVb);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
         write(projectPath, 'MainWindow.axaml.vb', buildVbCodeBehind(formName, 'Window', tpl.handlers));
@@ -141,6 +148,12 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
     // saves every open file before each build).
     write(projectPath, '.vscode/launch.json', launchJson());
     write(projectPath, '.vscode/tasks.json', tasksJson());
+    // What the project wants installed, using VS Code's own mechanism: `.vscode/extensions.json`
+    // recommendations are a PROMPT, never a requirement. Nothing here is a hard dependency of the
+    // extension either (our manifest deliberately has no `extensionDependencies`, decided 2026-09-29):
+    // a designer that refuses to start without a third-party language service stops working the moment
+    // the user disables one — see the "Requirements" section of the manual.
+    write(projectPath, '.vscode/extensions.json', extensionsJson(language));
 }
 
 function write(projectPath: string, relPath: string, content: string): void {
@@ -351,6 +364,39 @@ function launchJson(): string {
             "request": "attach",
             "processId": "\${command:pickProcess}"
         }
+    ]
+}
+`;
+}
+
+/**
+ * The extensions a generated project wants, as VS Code's own recommendation file — ids only, so the
+ * file stays portable between machines (the §66 rule: nothing machine-specific goes into a project).
+ *
+ * Why each one, and why none of them is required:
+ *  - `avaloniateam.vscode-avalonia` gives `.axaml` its colours, snippets and IntelliSense in the TEXT
+ *    editor; the designer itself parses and writes the XAML without it. That extension declares its own
+ *    requirements (`ms-dotnettools.csdevkit` + `ms-dotnettools.vscode-dotnet-runtime`), so installing it
+ *    brings the whole Avalonia tooling set with it — which is why those two are never listed here.
+ *  - `ms-dotnettools.csharp` is the only provider of the `coreclr` debugger type `launch.json` uses —
+ *    for BOTH project languages, which is what makes F5 work in a project we generate (and it is the
+ *    C# code-behind's language service). Measured from the installed manifests 2026-09-29: it is the
+ *    only installed extension whose `contributes.debuggers` holds `coreclr` (clr, dotnet, blazorwasm,
+ *    monovsdbg, coreclr_mobile, monovsdbg_wasm too); C# Dev Kit contributes no debugger, and nothing
+ *    for VB.NET.
+ *  - `roies.vbnet-companion` is the VB code-behind's language service (third-party). VB projects also get
+ *    a project-local bridge configuration for it when the extension is installed — see `vbSettingsJson`.
+ */
+function extensionsJson(language: 'cs' | 'vb'): string {
+    const recommendations = language === 'cs'
+        ? ['avaloniateam.vscode-avalonia', 'ms-dotnettools.csharp']
+        : ['avaloniateam.vscode-avalonia', 'roies.vbnet-companion'];
+    return `{
+    // Extensions that make this project nicer to work on. VS Code offers to install them the first time
+    // the project is opened; none of them is required — the designer, the \`build\` task (Ctrl+Shift+B)
+    // and \`dotnet run\` all work without any of them.
+    "recommendations": [
+${recommendations.map((id) => `        "${id}"`).join(',\n')}
     ]
 }
 `;
