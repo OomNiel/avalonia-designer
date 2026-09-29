@@ -12,7 +12,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-27)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-29)
 
 ---
 
@@ -26,6 +26,7 @@
 5. [The Toolbox](#5-the-toolbox)
 6. [Adding a control to the canvas](#6-adding-a-control-to-the-canvas)
    - [Choosing events when you place a control](#choosing-events-when-you-place-a-control)
+   - [Components: the Timer, and the Component Tray (since 0.13.3)](#components-the-timer-and-the-component-tray-since-0133)
 7. [Selecting, moving, resizing, deleting](#7-selecting-moving-resizing-deleting)
 8. [The Properties panel](#8-the-properties-panel)
    - [Tab Items (TabControl)](#tab-items-tabcontrol)
@@ -171,7 +172,7 @@ search for *Grumpy's WYSIWYG Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.13.1`**, so the command above installs it; add `--force` to
+The current version is **`0.13.3`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -183,7 +184,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.13.1` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.13.3` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -211,6 +212,30 @@ automatically whenever the host source code changes.
 > `PATH`. If it is missing, the designer tells you so — *“The .NET SDK was not found on this
 > machine…”* — with a link to the download page, instead of failing silently.
 > (Generated projects additionally need a .NET SDK that supports `net10.0`, e.g. the .NET 10 SDK.)
+
+### Other extensions: none required, a few recommended
+
+**The designer needs no other extension.** It parses and writes the XAML itself, scaffolds the
+projects itself and finds the problems itself — by running `dotnet build` and reading the compiler's own
+output — so it does not depend on a language service, and disabling one cannot stop it. The manifest
+therefore declares **no `extensionDependencies`**: a dependency list is not a label but a *gate* (VS Code
+installs what it names and refuses to start the extension until all of it is present), which would take
+the designer down with a blocked Microsoft extension — VSCodium, an offline machine, an enterprise
+allow-list — or a language service you turned off.
+
+Three extensions make the code *around* the designer nicer. Every project the extension generates asks
+for the ones that fit its language in `.vscode/extensions.json`, and VS Code offers to install them the
+first time you open that project:
+
+| Extension | What it adds |
+|---|---|
+| **Avalonia for VSCode** (`avaloniateam.vscode-avalonia`) | `.axaml` colours, snippets and IntelliSense in the text editor, plus the Avalonia previewer. It requires *C# Dev Kit* and the *.NET Install Tool* itself, so installing it brings those along. Not needed for the designer itself, which renders the form on its own |
+| **C#** (`ms-dotnettools.csharp`) | the `coreclr` debugger type that the generated `launch.json` uses — for **both** project languages — which is what **F5** needs (building with `Ctrl+Shift+B` or `dotnet build` works regardless), plus the C# language service for the C# code-behind |
+| **VB.NET Companion** (`roies.vbnet-companion`) | the VB.NET language service (third-party). When it is present, VB projects we generate also get a project-local bridge configuration pointing at its language server; without it, a VB project still builds and runs, it just has no IntelliSense. VB projects only |
+
+Deliberately not on that list: **C# Dev Kit** and the **.NET Install Tool**. The Avalonia extension
+already requires both, C# Dev Kit is C#-only and contributes no debugger, and nothing here calls either
+one.
 
 ---
 
@@ -497,6 +522,46 @@ that control (a ⚠ marks one whose handler has been deleted — recreate it fro
 > tool, if it lands on the canvas. Let go somewhere else and the tool stays armed: the status bar says
 > *"Release on the canvas to place a Button, or click it (Esc cancels)."* — **click the canvas** to place
 > it, or `Esc` to drop it. **Click-then-click** always works, on every desktop.
+
+### Components: the Timer, and the Component Tray (since 0.13.3)
+
+Some things you put in a form are not *drawn* anywhere — a **Timer** is the one everybody knows from
+Windows Forms. It has no size, no position and no appearance, so it cannot be dropped “on” the canvas;
+it belongs to the form the way a property does.
+
+**Placing one.** Pick **Timer** in the Toolbox (under *Progress, status & misc*) and click the canvas like
+any other control. Nothing appears where you clicked — instead the Timer joins the **Component Tray**, the
+strip along the bottom of the design surface, and the Properties panel selects it straight away so you can
+set it up:
+
+- **Component Tray** lists every non-visual component the form holds, with its own name (`Timer1`).
+  Click an entry to select it (its properties load in the panel, exactly like a control's), and the
+  ✕ on the entry deletes it from the form.
+- It is a *list of what the form owns*, not a picture of it: a component never shows on the canvas, never
+  prints, and does not affect the layout.
+
+**Setting it up.** A Timer's every-day rows are `Interval` (milliseconds — `1000` is one second; the
+default is `100`, which is fast) and `Enabled` (ticked = it starts running as soon as the form opens).
+`Start()` and `Stop()` are there for code, and the property grid shows them with the rest.
+
+**Its event is `Tick`** — placing a Timer offers it exactly like a Button's `Click`, and the handler is
+created with the signature Avalonia demands (`Sub(sender As Object, e As EventArgs)`).
+
+```vb
+Private Sub Timer1_Tick(sender As Object, e As System.EventArgs) Handles Timer1.Tick
+    ' Runs every Interval milliseconds — while the form is open.
+    Label1.Text = DateTime.Now.ToString("HH:mm:ss")
+End Sub
+```
+
+> **It ticks on a worker thread** (since 0.13.3 — asked for as *“must behave similar to the MS Visual
+> Studio timer for WinForms”*). Avalonia has no Timer of its own, and its `DispatcherTimer` would run your
+> handler on the UI thread; `chrome:Timer` uses `System.Timers.Timer` instead, so the tick is a normal
+> background thread exactly like the WinForms `System.Timers.Timer`. **What that means for your code:**
+> touching a control from that handler is fine for simple things (changing `Text`, moving something), and if
+> you do heavier work, keep it short or hand it to the UI thread — the same rule as any WinForms timer.
+> A handler that *throws* is caught and written to the log instead of taking the app down, and the timer is
+> stopped and disposed when the form closes, so it cannot keep a closed window alive.
 
 ---
 
@@ -885,7 +950,8 @@ structural ones (the pasted wrapper, the unclosed braces) are repaired rather th
 
 It is a rule checker, not a compiler: a wrong type, a wrong API call or a missing `using` is still found by
 building, which is what **Build to verify** in the AI flow is for.
-| **Bundled helper missing** | `ExifImageLoader` / `ChromeWindow` / `AnchorHelper` / `GrumpyPanel` / `PathPicker` not in the project | copies the file in |
+| **Bundled helper missing** | `ExifImageLoader` / `ChromeWindow` / `AnchorHelper` / `GrumpyPanel` / `PathPicker` / `Timer` not in the project | copies the file in |
+| **Docked inside its canvas** | a control the *old* designer wrapped in a `DockPanel` **inside** the canvas it was dropped on (since 0.13.3) — the form runs, but `Dock=Fill` there fills nothing | moves the control into the panel that owns the canvas, in front of the canvas, and removes the wrapper |
 | **Missing `Imports`** | `BC30002 'Line' is not defined'` | adds the `Imports`/`using` |
 | **ChromeWindow mismatch** | root is `<chrome:ChromeWindow>` but the class still `Inherits Window` | changes the base class |
 | **Writing beside the app** | `File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "log.txt"), …)` | reported only — an installed app's folder is read-only |
@@ -1261,17 +1327,23 @@ is the usual case, and starting a second copy would put the same weights in memo
 (`owned_by: llamacpp`, or a `/props` with a `model_path`), so an LM Studio or Ollama server on a similar port is
 never mistaken for one.
 
-**Start / stop, and whose process it is.** The ⚙ panel has a *My llama-server* row for this, and the Command
-Palette has the same two commands. **Start server** brings it up the way the dropdown above the buttons says —
-*as a systemd user unit* (`systemctl --user start`, which survives a reload of this window) or *as this window's
-process* (a child that dies with the window) — and when the chosen way fails, the other one is tried, with the
-reason it fell back reported rather than hidden. **Stop server** stops whatever is serving the configured
-address, and it **always asks first**, in a dialog that names it: the unit with its uptime and whether it returns
-at login, or a plain process with its pid and command line. A unit belonging to the **system** manager is never
-acted on — an extension should not escalate — so the `sudo systemctl stop …` line is printed for you to run in a
-terminal, and a port held by something that is not a `llama-server` is reported rather than signaled. *Unload* in
-the panel frees the built-in runtime and the `llama-server` this window started, and names any server of yours
-that is still holding memory.
+**Start / stop, and whose process it is.** The **⚙ Code Fix/AI-Assist Settings** panel (that is the whole
+name of the toolbar button since 0.13.3 — it holds the code check *and* everything below) has a *My
+llama-server* box for this, and the Command Palette has the same two commands. **Start server** brings it up
+the way the dropdown above the buttons says — *a systemd user unit — keeps running after VS Code closes*, or
+*this window's process — stops when VS Code closes*. Those two are not flavours of the same thing: the unit
+belongs to systemd (it starts at login if it is enabled, and **its own `ExecStart` decides which model and
+flags it serves**, so the Model box above has no say in it), while the window's process is started by the
+designer as a child of VS Code **with the model and options you picked above**, and nothing is left behind
+when the window closes. The panel spells this out under the dropdown (*What is the difference exactly?*) and
+in the option labels themselves, because it is the first thing a beginner has to get right here. When the way
+you chose fails, the other one is tried, with the reason it fell back reported rather than hidden. **Stop
+server** stops whatever is serving the configured address, and it **always asks first**, in a dialog that names
+it: the unit with its uptime and whether it returns at login, or a plain process with its pid and command line.
+A unit belonging to the **system** manager is never acted on — an extension should not escalate — so the
+`sudo systemctl stop …` line is printed for you to run in a terminal, and a port held by something that is not
+a `llama-server` is reported rather than signaled. *Unload* in the panel frees the built-in runtime and the
+`llama-server` this window started, and names any server of yours that is still holding memory.
 
 **The line under those buttons answers "who started it?"** It is read from the machine instead of guessed: the
 process's own cgroup names its unit and systemd says since when and whether it comes back by itself, so *"nobody
@@ -1461,8 +1533,9 @@ Key points:
 
 ### Docking (the Dock property)
 
-**ListBox, Image, Panel, Grid, StackPanel, WrapPanel, TabControl, DataGrid, Menu, Status Bar and
-Split Panel** all have a **Dock** property in the Properties panel (a drop-down):
+**ListBox, Image, Panel, Grid, StackPanel, WrapPanel, TabControl, DataGrid, Menu, Status Bar,
+Split Panel, the charts, the spreadsheet and ProgressBar** all have a **Dock** property in the Properties
+panel (a drop-down):
 
 - **None** *(default)* — **no docking** is applied: the control is simply drawn in its last placed
   position (not pinned to an edge, not filling).
@@ -1511,6 +1584,17 @@ A typical layout:
 >   for Left/Right, Height for Top/Bottom) so the control never collapses out of view.
 > - The **Menu** tool defaults to `Dock=Top` and the **Status Bar** tool to `Dock=Bottom`, ready
 >   for a DockPanel layout.
+> - **A docked control fills the region it is given** (since 0.13.3). Every themed control carries a
+>   *centred* alignment of its own — Avalonia's ProgressBar ships `VerticalAlignment=Center` — so a bar
+>   docked `Left` used to come out as a 4-pixel sliver floating in the middle of its column, and
+>   `Dock=Fill` filled the width while staying 4 px tall. The designer now writes the alignment for the
+>   free axis itself, so a docked control stretches across its region. A value *you* typed is left alone.
+> - **A dock on a tab page acts inside that page** (since 0.13.3). Each tab page keeps its own canvas for
+>   free placement, and a docked control now moves into the **page's own panel**, in front of that canvas —
+>   which is what makes a chart or a split panel docked on a page fill the page. (Before the fix the panel
+>   was created *inside* the canvas, and a canvas sizes its child to the child's own wish, so nothing
+>   filled.) Forms made with the old designer can be repaired in one click: **🩺 Code Fix…** reports
+>   *“x is docked inside its Canvas, not inside the panel”* and moves it for you (§12).
 
 ### Split panels (the SplitPanel tool)
 

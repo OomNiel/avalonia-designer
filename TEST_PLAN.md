@@ -1,6 +1,25 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-27 · Status: **full suite green on this machine — 9,660 passed / 0 failed / 0 skipped (73 s)**
+Date: 2026-09-29 · Status: **full suite green on this machine — 9,876 passed / 0 failed / 0 skipped (81 s)**
+
+> 2026-09-29: **`0.13.3`** — a Timer and the tray that holds it, three dock faults and the follow-up that
+> would not start, the Code Fix that repairs the forms the old dock left behind, a settings panel renamed and
+> made to explain itself, and the extension's requirements audited. Suite **9,660 → 9,876**. New pins:
+> the Timer's surface (`Interval`/`Enabled`/`Start`/`Stop`/`Tick`) and its **worker-thread** tick — T4 runs a
+> real generated app whose handler proves it ran off the UI thread, wired through `Tick="…"` in XAML — the
+> tray's placement (in the canvas column, under the surface, and NOT rendered on the canvas) and its depth
+> guard, the dock geometry **as bounds rather than pixels** (T1: the themed sliver `220x4` versus `220x450`
+> filled, `Fill` `800x450`, `Bottom` `800x24`, and the tab-page case that used to fill nothing at all), the
+> `lift-dock-wrapper` finding and its repair (reported once, warning, dismissible; control moved into the
+> owning panel in front of the canvas with `Canvas.Left/Top` gone and `Dock` kept; and NOT reported for a
+> healthy form, a hand-made `DockPanel`, or a wrapper holding two children), the bundled-copy rules (the
+> `BUNDLED-COPY:` stamp is metadata and is filtered before comparison; a copy stamped newer is never stale;
+> the notice and the refresh ask the same question), the settings panel's copy and its two boxes (the two
+> lifetimes, `ExecStart`, the fallback sentence, the disclosure closed by default, box padding ≤ 8px), and
+> the **no-dependency decision** (a packaging check that `extensionDependencies`/`extensionPack` stay empty —
+> with the reasoning in the test) plus the per-language `.vscode/extensions.json` recommendations the scaffold
+> writes. Verified alongside: host build 0/0, the VB matrix compiling `Timer` into a real form, and the panel
+> measured in Chromium (`tools/measure-settings-panel.py`) before and after the boxes went in.
 
 > 2026-09-27: **`0.12.16` … `0.13.0`** — the spreadsheet got its file side and its page. `0.12.16` added the
 > control's own **File/Print toolbar**, a hand-written **`.xlsx` reader and writer** (one page at a time,
@@ -579,6 +598,33 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.13.3 (2026-09-29) — the Timer, the docks that did not fill, and a panel that explains itself
+
+**Why the suite grew by 216 checks for four user requests:** most of them are about layout, and layout is the
+one thing this repo refuses to reason about in the abstract — every dock claim below is a **bounds** assertion
+against the real previewer host, and the panel's height was measured in Chromium against the real stylesheet
+and markup rather than estimated.
+
+| Layer | What it pins |
+|---|---|
+| **T2 `timer.test.js`** | The bundled control's whole surface: `Interval` in milliseconds with its default, `Enabled` starting it, `Start`/`Stop`, the `Tick` event, a throwing handler being trapped rather than fatal, disposal when it leaves the tree, and `StartSuppressed` (the preview host must never arm a timer of its own). Plus the **tray**: `Timer` is in `NON_VISUAL_TAGS`, its size/position rows are filtered out of the catalog, its default event is `Tick` with `System.EventArgs`, and it is never dropped on the canvas. |
+| **T1 `dockFill.test.js`** | Pixels are not asserted — **bounds** are, because that is what the user was looking at. A themed `ProgressBar` docked `Left` *without* the alignment comes out `220x4` at y=223 (the `ControlTheme` centring it); with the fix it is `220x450`. `Fill` → `800x450`, `Bottom` → `800x24`, and a `Button` proves it is not a ProgressBar quirk. The tab-page case starts from the shape the old designer produced (a `DockPanel` inside the page's `Canvas`) and shows why it filled nothing. |
+| **T2 `xamlModel.test.js`** | `moveIntoOwnerDockPanel` (the control lands in front of the canvas, `LastChildFill` set, `Canvas.*` stripped) and `wrapInGridCell` (a bar in a cell keeps its cell: row/column/spans, margin and both alignments move to the wrapper). |
+| **T2 `codeBehind.test.js`** | The `lift-dock-wrapper` finding: reported once, as a **warning** (the form still runs), naming the wrapper and the panel it belongs in, dismissible like every other finding; after the fix the control is a docked child of the page panel **before** the canvas, `Canvas.Left/Top` gone, `Dock` kept, wrapper gone; and nothing is reported for a correctly docked control, a hand-made `DockPanel`, or a wrapper with two children. |
+| **T2 `bundledComponents.test.js`** | The stamp line is metadata, not content (a project holding exactly the shipped files is not “older”), the notice and the refresh use the **same** rule, and a copy stamped **newer** than ours is never stale (the refresh writes, so it would be a silent downgrade). |
+| **T2 `llamaService.test.js`** | The copy the user asked for: the two lifetimes in the option labels, `systemctl --user start` and `ExecStart` in the explanation, the fallback sentence, the disclosure **closed** by default, both boxes holding their own controls and not the other's, and the shared progress/status output **outside** both. |
+| **T2 `packaging.test.js`** | `extensionDependencies` and `extensionPack` stay **empty** — the decision from the audit, with the reason written next to it so a future reader does not “fix” it. |
+| **T2 `projectScaffold.test.js`** | `.vscode/extensions.json` is written for both languages, is valid JSON with exactly two `publisher.extension` ids, carries no machine-specific path (§66), and differs per language: C# gets the Avalonia and C# extensions, VB.NET the Avalonia extension and the VB.NET Companion. |
+| **T3 `designer.test.js`** | The tray in the webview: rendering, selection, deletion, and the state keys it remembers. |
+| **T4 `timer.test.js`** | A real generated app: the timer's handler runs, the tick is **not** on the UI thread, and the wiring survives as `Tick="…"` in the XAML of a project that builds. |
+| **T5 `vb-all-controls.test.js`** | The VB matrix skips the canvas matrix for the Timer (it has no visual size) and still compiles it into a real form. |
+
+**The bug the tests could not see, kept on the record:** after the tab-page dock fix the user's app **built with no
+errors and would not start** — `AVLN3000`, because the event-handler stub written at *placement* time was
+generated without the control's tag and produced `RoutedEventArgs` where the XAML compiler wanted
+`System.EventArgs`. Only a real `dotnet build` of a real project named it; the class of bug is that a handler
+signature is checked by the XAML compiler and by nothing else here.
 
 ### 0.13.1 (2026-09-27) — cell borders, a workbook that keeps them, and a designer that lands you in the form
 

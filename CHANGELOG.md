@@ -6,11 +6,165 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.13.1` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.13.3` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.13.3] - 2026-09-29 · *a Timer for the tray, docks that fill, and a panel that names itself*
+
+Four things asked for in one session and the bugs they turned up: a **Timer component** with a **Component
+Tray** to hold it, three dock faults (a bar that docked as a 4-pixel sliver, a dock on a **tab page** that did
+nothing at all, and the app that then would not start), a **Code Fix** that repairs the forms the old dock path
+left behind, and a **settings panel** renamed for what it holds and made to explain the one choice in it that
+nobody could guess. Plus the bundled-copy notice that kept coming back, and an audit of what this extension
+does — and does not — need installed.
+
+### Added — the Timer, and the tray that holds it
+
+- **`chrome:Timer`, in both twins** (`resources/Timer.cs` / `.vb`), asked for as *"Can be add a Timer control to
+  our toolbox? This new control must behave similar to the MS Visual studio timer for winforms."* Avalonia has
+  no non-visual component of its own, and `DispatcherTimer` would drag every tick back onto the UI thread, so
+  the control is built on **`System.Timers.Timer`**: **the tick runs on a worker thread**, `Interval` is in
+  milliseconds (default `100`), `Enabled` starts it as soon as it is set, `Start()` / `Stop()` do it by hand,
+  and `event Tick` is the WinForms-shaped surface. A handler that **throws** is caught and traced rather than
+  allowed to take the process down, and the timer is **disposed when it leaves the visual tree**. Static
+  `StartSuppressed` lets the preview host load a form that arms a timer without the designer's own render
+  starting to tick.
+- **A component is not a control, so it does not get dropped on the canvas.** The Timer has no position and no
+  size, and the designer now says so: it joins `NON_VISUAL_TAGS`, the size/position rows disappear from the
+  Properties panel for it, `Interval` and `Enabled` sit in the behaviour section, and its default event is
+  **`Tick`** with `System.EventArgs` — which is the signature the XAML compiler demands (`AVLN0004` if it is
+  wrong, and VB is strict about it).
+- **The Component Tray** — a strip along the bottom of the design surface listing every non-visual component
+  of the form, selectable exactly like a control so its properties can be edited, so a Timer is never invisible
+  in a form that obviously uses one. Asked to sit at the bottom of the canvas rather than between the canvas
+  and the Properties panel, where it read as a third panel. Reached from the toolbox like any other control:
+  dropping it adds it to the tray, not to the canvas.
+
+### Fixed — three dock faults, each reported when the previous fix was tested
+
+- **The ProgressBar got a `Dock` row** (*"add a Dock property for the ProgressBar control"*), the attached
+  `DockPanel.Dock` row the sheet, the charts and the panels already carry — and, because a bar is usually put
+  *inside* a cell, a bar in a **Grid cell keeps the row**: its dock is honoured **within that cell** by moving
+  the cell's coordinates, margin and alignments onto a DockPanel that stays in the cell. Multi-select docking
+  stays excluded, as asked.
+- **A docked control now FILLS the region the dock hands it** (*"The added Dock property only docks
+  horizontally (fills the width). It should fill vertically as well."*). The dock edge, the thickness and
+  `LastChildFill` were all correct; the missing piece was the **alignment** — every themed control carries a
+  centred one in its own `ControlTheme` (Avalonia's ProgressBar ships `VerticalAlignment=Center`), so a bar
+  docked `Left` came out **`220x4` floating at y=223**, a sliver in the middle of the column it had been
+  given, and `Dock=Fill` filled the width while staying 4 px tall. A themed `Button` collapses the same way
+  (`220x13`). The Dock branch now writes `VerticalAlignment=Stretch` for Left/Right/Fill and
+  `HorizontalAlignment=Stretch` for Top/Bottom/Fill — a **local** value beats the theme — while the axis the
+  dock sizes keeps its Width/Height, and `Dock=None` takes exactly that `Stretch` back (a literal value only,
+  so a hand-set alignment survives). Measured against the real host rather than guessed: Left `220x450`,
+  Fill `800x450`, Bottom `800x24` unchanged.
+- **A dock on a tab page did nothing at all** (*"any control with a Dock property does not dock properly in the
+  tab canvas … If I delete the canvas from that page, controls like a splitpanel or a chart dock fill
+  properly."*) — and the user's own diagnosis was the answer: a control dropped on a tab page's Canvas fell
+  through to the older branch that wraps it in a **new DockPanel INSIDE that Canvas**, and a Canvas sizes a
+  child to the child's *own* desire, so the wrapper was as small as the control and `Dock=Fill` filled nothing.
+  `XamlModel.moveIntoOwnerDockPanel` now moves the control **in front of** the Canvas, into the DockPanel that
+  owns it (the tab page's `<Name>BodyN`, or the form's own body panel) and sets `LastChildFill` — the Canvas
+  stays the fill child and keeps whatever the docked control leaves. Deleting the Canvas by hand had always
+  worked because it removed the wrapper path entirely.
+- **…and the test app then failed to start**, which is the part worth remembering: it *built* with no errors
+  and the designer looked right. `dotnet build` on the user's project named it — `AVLN3000`, because the
+  event-handler stub written when a control is **placed** is generated from the control's own tag, and that tag
+  was not being passed along any more (`RoutedEventArgs` where the XAML compiler wanted `System.EventArgs`).
+  Passing `localName(el.tagName)` fixed it, the app ran again, and the class of bug is now on the record: a
+  wrong handler signature is caught by a real XAML compile and by **nothing else** in this repo.
+
+### Added — 🩺 Code Fix… repairs the forms the old dock left behind
+
+- **A new finding, `lift-dock-wrapper`**: an auto-named `DockPanelN` sitting directly inside a `<Canvas>` that
+  itself lives in a DockPanel, holding **exactly one** element child, where that wrapper carries `LastChildFill`
+  or the child carries a `DockPanel.Dock` — the shape only the old dock path could produce. Reported as a
+  **warning**, not an error, because the form still runs: it is the layout that is wrong. Dismissible like every
+  other finding, and included in **Fix all**.
+- **The repair** lifts the control into the panel that owns the Canvas, **in front of** the Canvas, drops its
+  now-meaningless `Canvas.Left/Top`, keeps its `DockPanel.Dock` and deletes the wrapper. With the form open in
+  the designer the **model** is edited (the designer owns the XAML — a direct file write would be overwritten by
+  its next save); `applyLocalFix` keeps a file-writing twin, placed **before** the code-behind guard, so a form
+  with no code-behind at all is repaired too.
+- **Detection never guesses**: a healthy form, a hand-made `DockPanel`, or a wrapper holding two children is not
+  reported (each pinned by a test), and nothing is applied without the user asking.
+
+### Changed — the settings panel is named for what it holds, and explains itself
+
+- **`⚙ Settings` is now `⚙ Code Fix/AI-Assist Settings`**, because that is what is behind it: the code-check
+  triggers and the ⚠ badge, *and* the whole local-model section. Every message that pointed at the old name was
+  updated with it (the host-check override, the llama-server status line, the model-download notices, the house
+  rules saved notice) so nothing sends you looking for a button that no longer exists.
+- **The two llama-server start modes are explained where the choice is made**, asked for as *"Explain the diff
+  between 'Start as a systemd user unit' and 'Start as this window's process'"*. The option labels now carry the
+  difference that matters — *keeps running after VS Code closes* versus *stops when VS Code closes* — and a
+  **disclosure** answers *What is the difference exactly?*: the unit belongs to systemd (it starts at login, and
+  its own `ExecStart` decides which model and flags it serves, so the Model box has no say in it), while the
+  window's process is a child of VS Code started with the model and options chosen above, and stops with the
+  window.
+- **`Model` and `My llama-server` are separate bordered boxes**, each with a heading that says which of the two
+  things it configures, because unboxed they read as one long column of controls. The **shared** output — the
+  progress line and the status report, which any AI action can write — deliberately stays **outside** both: a
+  "Load Model" progress line inside a box labelled *My llama-server* would be exactly the confusion the boxes
+  remove.
+- **The height was measured, not guessed** (`tools/measure-settings-panel.py`, the real markup and the real
+  stylesheet in Chromium): at 1024x700 with the model options open, the dialog was **already 141 px taller than
+  its box** before this change; the boxes and the copy were trimmed until they cost **~110 px** (the long
+  explanation moved into the disclosure, the box chrome tightened), and the pinned Save/Cancel row stays
+  reachable. The numbers are in the tests, so the next edit has something to be measured against.
+
+### Changed — what this extension needs, and what it only recommends
+
+- Asked to *"verify that .NET Install Tool / Avalonia for VSCode / C# / C# Dev Kit / VB.NET Companion are
+  required … and make sure it is listed as dependencies in the Marketplace publish"* — and the audit answered
+  **no**. No line of this extension looks any of them up; the diagnostics it shows come from its **own**
+  `dotnet build` and the compiler's output, its XAML is parsed by its own model, and the only other extension the
+  code reads at all is the **VB.NET Companion**, optionally, to point a generated VB project's bridge settings
+  at its language server. The real prerequisite is the **.NET SDK**, which is not an extension and already
+  reports itself by name when it is missing.
+- **The manifest therefore keeps no `extensionDependencies`** — and that is a decision, not an omission: a
+  dependency list is not a label but a **gate** (VS Code installs what it names and refuses to activate the
+  extension until all of it is present), so it would take the designer down with a blocked Microsoft extension
+  (VSCodium, an offline machine, an enterprise `extensions.allowed` list) or with a language service you chose
+  to disable. Pinned by a new packaging check, with the reasoning in the test.
+- **New projects ask for the extensions that fit them** instead, using VS Code's own mechanism:
+  `.vscode/extensions.json` now ships with every generated project — `avaloniateam.vscode-avalonia` +
+  `ms-dotnettools.csharp` for C#, `avaloniateam.vscode-avalonia` + `roies.vbnet-companion` for VB.NET — so a
+  beginner is *prompted* and nothing is forced. Ids only, so the file stays portable between machines.
+- Two of the five are never listed separately, and the reason is worth keeping: the Avalonia extension
+  **requires** C# Dev Kit and the .NET Install Tool itself, and C# Dev Kit contributes **no debugger** — the
+  `coreclr` type a generated `launch.json` uses comes from the **C#** extension, and it is needed for **both**
+  languages, not just C#.
+- **README's "Status and prerequisites" and the manual's §3** now spell all of that out.
+
+### Fixed — the bundled-copy notice that would not go away
+
+- Reported as *"every time i open the designer in my test project (GrumpyDesignerDemo) i get this message, and
+  it does come again even after updating"*, naming `ChromeWindow.cs`, `AnchorHelper.cs`, `PathPicker.cs` and
+  `GrumpyCharts.cs`. Two defects, both in the notice/refresh pair: **`sameBundledCopy` counted the
+  `BUNDLED-COPY:` stamp line as content** — and `tools/bump-stamps.js` rewrites that line in all 20 bundled
+  files the moment a dev cycle starts, so a project holding exactly the shipped files differed by that one
+  comment line and read as "older than the extension's copy" for ever — and **the notice and the refresh asked
+  different questions**: the notice used the content rule while "Update now" used the marker rule, so the four
+  files carried every marker, the refresh wrote nothing, and the same notice came back at the next open.
+- **One rule now, asked by both**, and a guard with it: a copy whose stamp is **newer** than ours is never
+  stale, because the refresh *writes* the shipped file — without that it would silently downgrade a project made
+  by a newer build of the extension.
+
+### Verified
+
+- Suite **9,876 passed / 0 failed / 0 skipped**; the previewer host builds 0 warnings / 0 errors; the VB matrix
+  compiles every new row (including `Timer`) into a real form.
+- New tests: the Timer's surface and its worker-thread tick (`t2`, `t4` — a real app whose handler proves it ran
+  off the UI thread, bound through `Tick="…"` in XAML), the tray's placement and depth guard (`t2`, `t3`), the
+  dock geometry **as bounds** rather than pixels (`t1`: a themed sliver versus a filled region, and the tab-page
+  case), the lift-dock-wrapper finding and repair (`t2`, including the forms it must *not* report), the bundled
+  copy rules (`t2`), the panel's copy and its two boxes (`t2`), and the no-dependency decision (`t2`
+  packaging).
+
 
 ## [0.13.1] - 2026-09-27 · *cell borders, a workbook that keeps them — and a designer that lands you in the form*
 

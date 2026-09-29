@@ -47,7 +47,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.13.1`**, so the command above installs it (add `-force` to reinstall, or to
+The current version is **`0.13.3`**, so the command above installs it (add `-force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -56,11 +56,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.13.1.vsix --force
+code --install-extension avalonia-designer-0.13.3.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.13.1` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.13.3` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -68,8 +68,9 @@ code --install-extension avalonia-designer-0.13.1.vsix --force
 
 Either way, **reload the window** afterwards (`Ctrl+Shift+P` → *Developer: Reload Window*). The
 previewer host is compiled with the **.NET SDK** the first time you open a form — see
+[Status and prerequisites](#status-and-prerequisites) below and
 [USER_MANUAL.md §3](https://github.com/OomNiel/avalonia-designer/blob/main/USER_MANUAL.md#3-installation--first-run)
-for the prerequisites.
+for what else is worth having.
 
 ## 1. The preview is real
 
@@ -145,6 +146,14 @@ The striking part: it is never destructive. Every finding offers a **“keep my 
 the XAML and the code agree again. A handler you **renamed** by hand is offered as a one-click
 **re-point** instead of an empty new stub, so the body you wrote is never lost.
 
+**It also repairs older forms.** A version of the designer before 0.13.3 could leave a control docked
+inside a `DockPanel` that sat *inside* the canvas it was dropped on — and a canvas sizes a child to the
+child's own desire, so `Dock=Fill` there filled nothing. Those forms still run, which is why the finding is
+a warning and not an error: **🩺 Code Fix…** reports *“x is docked inside its Canvas, not inside the panel”*
+and the fix lifts the control into the panel that owns the canvas, drops its now-meaningless `Canvas.Left`/`Top`
+and removes the wrapper. A hand-made `DockPanel` is never touched — the shape has to match, and nothing is
+ever applied on its own.
+
 ## 5. It creates complete run-ready projects
 
 Not just forms. **Avalonia: New Form** covers Window/UserControl with five templates (Blank, Login,
@@ -174,8 +183,10 @@ out again, leaving the file exactly as it was.
 ## 7. Bundled helper controls and charts, copied in and kept in sync
 
 File and Folder **path pickers** (platform dialog via `TopLevel.StorageProvider`, no extra package),
-a cross-platform **dark titlebar** (`ChromeWindow`), `GrumpyPanel`, `AnchorHelper`, `ColumnFollower`
-and `ExifImageLoader`. Each is copied into your project the first time it is needed — and re-copied by
+a cross-platform **dark titlebar** (`ChromeWindow`), `GrumpyPanel`, `AnchorHelper`, `ColumnFollower`,
+`ExifImageLoader` and a **`Timer`** — a non-visual component that ticks on a **worker thread** (`Interval`,
+`Enabled`, `Start()`/`Stop()`, `Tick`) and is held in the designer's **Component Tray** rather than on the
+canvas. Each is copied into your project the first time it is needed — and re-copied by
 **Code Fix…** for projects that predate it.
 
 Seven **self-drawing charts** join them in the same bundled file style (`GrumpyCharts.cs` / `.vb`, no
@@ -274,6 +285,15 @@ checkbox, a drop-down, a colour, a toolbar button) applies the moment you click 
 Multi-select with six alignments, same-width/same-height and equal spacing (vertical and horizontal).
 Dock, Grid-cell and anchor handling with a cell highlight and drag-to-re-cell; dot grid with
 snap-to-grid; cross-hair guides; rulers; zoom/fit.
+
+**A dock fills the region it is given.** The dock edge, the thickness and `LastChildFill` were always right,
+but every themed control carries a *centred* alignment of its own, so a bar docked left came out as a
+4-pixel sliver floating in the middle of its column — the dock now writes the alignment for the free axis.
+An **unplaced component is still part of the form**: the **Component Tray** along the bottom of the canvas
+lists every non-visual control the form holds (a `Timer`), selectable like a control so its properties can be
+edited in the same panel. And a dock on a **tab page** acts *inside that page*: the control moves into the
+page's own panel, while the page keeps its canvas — which is what makes a chart or a split panel docked on a
+page fill the page instead of collapsing to nothing.
 
 Split panels are designed visually, controls can be moved between containers without breaking their
 code-behind, and **undo/redo (5 levels) also reverts code-behind changes**.
@@ -474,6 +494,24 @@ just what the settings point at, so "did my load take?" is answerable from the p
   live and how it got there.
 - VS Code **1.85+**; the **.NET SDK** (the preview host is built with it — the designer names the
   missing SDK with a download link rather than failing silently). Generated projects target `net10.0`.
+  Everything else the designer does — parsing XAML, scaffolding projects, finding problems (it runs
+  `dotnet build` and reads the compiler's own output) — needs **no other extension**.
+- **No extension dependencies.** The manifest declares none on purpose: a dependency list is not a label
+  but a gate — VS Code installs what it names and refuses to start the extension until all of it is there,
+  so a blocked Microsoft extension (VSCodium, an offline machine, an enterprise allow-list) or a disabled
+  language service would take the designer down with it.
+- **Recommended, not required** — the code *around* the designer gets nicer with these, and every project
+  we generate asks for the ones that fit its language in `.vscode/extensions.json` (VS Code offers to
+  install them the first time the project is opened):
+
+| Extension | What it adds |
+|---|---|
+| [Avalonia for VSCode](https://marketplace.visualstudio.com/items?itemName=AvaloniaTeam.vscode-avalonia) — `avaloniateam.vscode-avalonia` | `.axaml` colours, snippets and IntelliSense in the text editor, plus the Avalonia previewer. It requires *C# Dev Kit* and the *.NET Install Tool* itself, so those come with it |
+| [C#](https://marketplace.visualstudio.com/items?itemName=ms-dotnettools.csharp) — `ms-dotnettools.csharp` | the `coreclr` debugger type the generated `launch.json` uses — **both** languages' projects, which is what **F5** needs — and the C# language service for the C# code-behind |
+| [VB.NET Companion](https://marketplace.visualstudio.com/items?itemName=roies.vbnet-companion) — `roies.vbnet-companion` | the VB.NET language service (third-party); when it is present, VB projects we generate also get a project-local bridge configuration for it (VB projects) |
+
+*C# Dev Kit* and the *.NET Install Tool* are not listed separately: the Avalonia extension already
+requires both, and C# Dev Kit is C#-only and contributes no debugger, so it adds nothing to the VB.NET half.
 - Both the preview host and generated projects use **Avalonia 12.1.1** — one version, so what you
   design is what you run.
 - **MIT** licensed.

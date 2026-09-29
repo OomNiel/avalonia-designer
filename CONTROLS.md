@@ -581,6 +581,7 @@ Drawing shapes that render as vector graphics on the design surface.
 | Control | XAML tag | What it does | Designer |
 |---------|----------|--------------|----------|
 | ProgressBar | `ProgressBar` | Indicates the progress of an operation. | ✅ Toolbox |
+| | | *Has a **Dock** row in the Properties panel; inside a **Grid cell** the dock is honoured **within that cell** (since 0.13.2), and the dock stretches the bar across the region it is given (0.13.3).* | |
 | TickBar | `TickBar` | Used to draw a control's tick marks (used by `Slider`). | — |
 | Slider | `Slider` | Lets the user select a value from a range by dragging a Thumb. | ✅ Toolbox |
 | RangeBase | `RangeBase` | Base class for controls that display a value within a range (`Slider`/`ProgressBar`). | — (base class) |
@@ -617,6 +618,7 @@ Drawing shapes that render as vector graphics on the design surface.
 | Control | XAML tag | What it does | Designer |
 |---------|----------|--------------|----------|
 | **XY-Tracker** (toolbox) | `TextBlock` + timer | A live **W x H px** display. Dropped on a container it reports that container's size; dropped on a Status Bar (or added as a Status item) it reports the **form's** client size and hugs the right edge. | ✅ Toolbox *(composition)* |
+| **Timer** (toolbox, since 0.13.3) | `chrome:Timer` | The WinForms-shaped **non-visual** component: `Interval` (ms, default 100), `Enabled`, `Start()` / `Stop()` and a `Tick` event that fires on a **worker thread** (`System.Timers.Timer` — Avalonia has no timer of its own, and its `DispatcherTimer` would tick on the UI thread). It has no size and no appearance, so placing one adds it to the **Component Tray** under the canvas instead of the canvas itself; its `Tick` is wired like any other event and takes `System.EventArgs`. Bundled with every project (`resources/Timer.cs` / `.vb`). | ✅ Toolbox *(component)* |
 
 ---
 

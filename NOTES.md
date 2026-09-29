@@ -28,7 +28,7 @@ dotnet build host/PreviewerHost.csproj -c Debug   # → host/bin/Debug/net8.0/Pr
 ### Packaging / installing
 ```bash
 npm run package                                              # vsce package (pinned @vscode/vsce@2.15.0)
-code --install-extension avalonia-designer-0.13.1.vsix --force
+code --install-extension avalonia-designer-0.13.3.vsix --force
 npm run publish:stable                                       # Marketplace publish (needs VSCE_PAT)
 ```
 - `activationEvents` is **`["workspaceContains:**/*.axaml"]`** — the extension wakes in a window whose
@@ -4717,3 +4717,142 @@ of the “is this cell empty” rule in the designer kept in step, so probe it r
 Suite **9,660 passed / 0 failed**; host 0 warnings / 0 errors; artefact `avalonia-designer-0.13.1.vsix`
 (**124 files, 1,527,476 B**, sha256 `a82ac92b…` — recorded in PUBLISHING.md, which is *not* packaged, so the
 figure is the shipped file's own).
+
+---
+
+### §165 — a Timer, and the tray that holds it (2026-09-29, 0.13.3)
+
+Asked for in one sentence: *“Can be add a Timer control to our toolbox? This new control must behave similar to
+the MS Visual studio timer for winforms. Does Avalonia offer a timer control already?”* Two of those are
+questions and one is the spec, so both got answered in the code.
+
+- **Avalonia has no non-visual timer component.** It has `DispatcherTimer`, which is a *UI-thread* timer — the
+  WinForms mental model is `System.Timers.Timer`, whose `Elapsed` runs on a **worker thread**, and that is what
+  the user asked for (“must behave similar … for winforms”). So the bundled control
+  (`resources/Timer.cs` / `.vb`, the same twin-pair pattern as every other helper) wraps
+  **`System.Timers.Timer`**: `Interval` (ms, default `100`), `Enabled` auto-start, `Start()` / `Stop()`, and
+  `event Tick`. It is a `Control` subclass with `IsVisible` never true and no rendering — a component.
+- **A ticking timer must not take the app down.** An exception inside `System.Timers.Timer`'s callback is thrown
+  on a thread pool thread and would kill the process, so the handler is invoked in a try/catch that **traces and
+  swallows** — the same decision the model server makes for a broken handler. `OnDetachedFromVisualTree`
+  disposes the timer, so a closed form cannot be kept alive by its own tick.
+- **`StartSuppressed` is a static the preview host sets (`host/Program.cs`).** The designer renders a form in a
+  headless host; a form that arms a `Timer` at load would otherwise start ticking inside the designer, forever,
+  once per render. This is the same class of problem as `StartSuppressed`-style guards in the bundled charts —
+  a *design-time* switch that the app never sets.
+- **The Toolbox says “component” by behaviour, not by a label.** The Timer joins `NON_VISUAL_TAGS`
+  (`src/propertyCatalog.ts`), which (a) filters the size/position rows out of the Properties panel — the
+  `width`/`height`/`Canvas.Top` rows would be lies for something that is never drawn — and (b) routes the drop
+  to the **Component Tray** instead of the canvas. `controlEvents.ts` gives it `Tick` as its default event and
+  `System.EventArgs` as the handler signature (`AVLN0004`/`AVLN3000` if that is wrong — VB is strict, see §166).
+- **The Component Tray is part of the canvas column** (`#canvasArea` wraps the surface and the tray; the tray is
+  its last child and `flex: 0 0 auto`). The user asked for it at the **bottom of the canvas** after seeing the
+  first cut — where it was a sibling of the canvas column and therefore read as a third panel next to
+  Properties. Its state keys are per-form, its rows are selectable like controls (so the Properties panel can
+  edit them), and it is *not* rendered on the surface — a component has no pixels by definition.
+- **The lesson that came with it:** a new control type needs *three* independent wiring points to work —
+  the toolbox/tray entry, the property catalog (including where the rows are filed), and the **host's snippet +
+  type map** (`host/ControlFactory.cs`), plus the resource link in `PreviewerHost.csproj`. Missing the last one
+  makes the designer preview fail on a form the app itself compiles, which is exactly the asymmetry the next
+  section is about.
+
+Suite 9,799 at the end of the timer work alone.
+
+### §166 — three dock faults, in the order the user found them (2026-09-29, 0.13.2 → 0.13.3)
+
+**1. A `Dock` row for the ProgressBar** (*“add a Dock property for the ProgressBar control”*). It was the only
+control of its kind without one. Two subtleties: a bar is usually put *inside a Grid cell*, and moving it out of
+the cell to dock would destroy the layout — so the row is kept **in** the cell and the dock is honoured *within*
+it: `XamlModel.wrapInGridCell` moves `Grid.Row`/`Column`/spans, `Margin` and both alignments onto a fresh
+DockPanel that stays in the cell, then moves the bar in. And **multi-select docking stays excluded**
+(`MULTI_PROP_EXCLUDE`) — “No multiselect docking” was explicit.
+
+**2. “It only docks horizontally.”** The dock edge, the thickness and `LastChildFill` were all right, and the bar
+still came out `220x4` floating at y=223. Cause: **every themed control carries a centred alignment in its own
+`ControlTheme`** — Avalonia's ProgressBar ships `VerticalAlignment=Center` — so docking *gave* it a column and
+the theme laid it out 4 px tall in the middle of that column. A themed `Button` collapses the same way
+(`220x13`), which is how we know it is not a ProgressBar bug. Fix: the Dock branch writes
+`VerticalAlignment=Stretch` for Left/Right/Fill and `HorizontalAlignment=Stretch` for Top/Bottom/Fill, the
+in-cell branch does the same, and `Dock=None` takes exactly that value back — **only a literal `'Stretch'`**, so
+a hand-set alignment survives. Measured, not guessed: T1 `dockFill.test.js` asserts **bounds**, because pixels
+are an artifact of the theme and the bounds are what the user was looking at.
+
+**3. “A dock on a tab page does nothing.”** The user's own diagnosis was the answer: *“If I delete the canvas
+from that page, controls like a splitpanel or a chart dock fill properly.”* Delete the canvas and the wrapper
+path disappears — so the wrapper was the bug. `ensureDockPanelParent` fell through to the branch that wraps a
+control in a **new DockPanel inside the parent Canvas**, and **a Canvas sizes a child to the child's own
+desire**: the wrapper was as small as the control, so `Dock=Fill` filled nothing. `XamlModel.moveIntoOwnerDockPanel`
+now moves the control **in front of** the Canvas, into the DockPanel that owns it (a tab page's `<Name>BodyN`,
+or the form's own body panel) and sets `LastChildFill` — the Canvas stays the fill child, so the page keeps its
+free-placement surface and the docked control gets its region.
+
+**4. …and then the user's app would not start** — the one worth remembering, because the form *built with no
+errors*. `dotnet build` on **their** project said `AVLN3000`: the event-handler stub written at *placement*
+time is generated from the control's own tag, and passing nothing made every stub take `RoutedEventArgs`,
+which the XAML compiler refuses for an event whose args are `EventArgs`. The fix is one argument
+(`localName(el.tagName)`), and the lesson is bigger than the fix: **a handler signature is checked by the XAML
+compiler and by nothing else in this repo** — no unit test, no jsdom, not the PROBLEMS pane's C# server — so
+“it builds” must be said about the *test project*, never about the generated snippet alone.
+
+### §167 — Code Fix repairs what the old dock left behind (2026-09-29, 0.13.3)
+
+The three fixes above stop *new* damage; the old designer's output stays broken in every project made before
+them, which is exactly the kind of thing this extension fixes instead of documenting. New finding kind
+**`lift-dock-wrapper`** (`src/codeBehindCheck.ts`):
+
+- **Detection is by shape, and the shape is narrow on purpose:** an auto-named `DockPanel\d+` (the name
+  `uniqueName('DockPanel')` hands out) directly inside a `<Canvas>` that itself sits in a DockPanel, holding
+  **exactly one** element child, where the wrapper carries `LastChildFill` or the child carries a
+  `DockPanel.Dock`. A hand-made `DockPanel` is only touched when it matches *all* of that — and the finding is a
+  **warning**, because the form still runs; it is the layout that is wrong. It is dismissible like every other
+  finding and it is included in **Fix all**.
+- **The fix edits the MODEL when the designer owns the form** (`applyCodeIssue`), and `applyLocalFix` keeps a
+  file-writing twin for every other caller — placed **before** the `findCodeBehindFile` guard, so a form with no
+  code-behind at all can still be repaired. That ordering is the interesting part: this repair is XAML-only, and
+  the guard's early return used to be the first thing a fix hit.
+- Verified on the user's own test app: it has **no** leftover wrappers (their dock edits were made after the
+  fix), so the finding is there for other projects rather than for that one — worth saying in the release
+  notes instead of implying a repair that never happens.
+
+### §168 — the panel that named itself, and the requirements audit (2026-09-29, 0.13.3)
+
+**Renaming a button is not a rename.** `⚙ Settings` became **`⚙ Code Fix/AI-Assist Settings`**, and the part
+that mattered was finding *everywhere the old name was used as directions*: the host-check override message,
+the llama-server status line, the model-download notices, the house-rules saved notice — a user told to look
+in “⚙ Settings” is a user looking for a button that no longer exists. `src/*.ts` comments were renamed with it.
+
+**Explaining the two start modes** (*“Explain the diff between 'Start as a systemd user unit' and 'Start as this
+window's process'”*) turned out to be a copy problem with a height budget: the option labels now carry the
+lifetime (“keeps running after VS Code closes” / “stops when VS Code closes”), a **`<details>`** answers *What
+is the difference exactly?* with the part a beginner cannot guess (the unit's own `ExecStart` picks the model, so
+the Model box has no say in it), and the two stop being confusable because **Model** and **My llama-server** are
+now separate bordered boxes with headings — while the **shared** progress/status output stays *outside* both,
+because a “Load Model” line inside a box labelled *My llama-server* would be the original confusion again.
+
+**The height was measured, not estimated** (`tools/measure-settings-panel.py`, real markup + real stylesheet in
+Chromium at 1024x700): with the model options open the dialog was **already 141 px taller than its box** before
+this change, and the first draft of the boxes and copy cost another 238 px on top. Moving the long explanation
+into the disclosure and tightening `.ai-block` brought the addition down to ~110 px; the sticky Save/Cancel row
+stays reachable in every state. Pinned in `t2-logic/llamaService.test.js` — including *box padding ≤ 8px*,
+because that number is a decision, not a taste.
+
+**And the audit that said “no”.** Asked to verify that **.NET Install Tool / Avalonia for VSCode / C# / C# Dev
+Kit / VB.NET Companion** are required and to “make sure it is listed as dependencies in the Marketplace
+publish”, the answer from the code is: none of them. Nothing looks any of those up (`getExtension` is used for
+exactly one id — `roies.vbnet-companion`, optionally, to write a generated VB project's bridge settings), the
+diagnostics the designer shows come from its **own** `dotnet build`, and the real prerequisite is the **.NET
+SDK**, which is not an extension and already names itself when missing. Two facts worth keeping:
+`ms-dotnettools.csharp` is the **only** extension on this machine whose `contributes.debuggers` contains
+`coreclr` (the type a generated `launch.json` uses — for **both** languages), and
+`avaloniateam.vscode-avalonia` **requires** `ms-dotnettools.csdevkit` + `ms-dotnettools.vscode-dotnet-runtime`
+itself, so those two never need listing.
+
+`extensionDependencies` therefore stays **empty, deliberately** — it is not a label but a **gate**: VS Code
+installs what it names and refuses to activate the extension until all of it is present, which would take the
+designer down with a blocked Microsoft extension (VSCodium, offline, an enterprise `extensions.allowed` list) or
+with a language service the user disabled. `t2-logic/packaging` now asserts the emptiness with the reasoning
+next to it, so the next reader does not “fix” it. What users get instead is VS Code's own mechanism: every
+generated project carries **`.vscode/extensions.json`** with the two ids that fit its language (Avalonia + C#
+for C#; Avalonia + the VB.NET Companion for VB) — ids only, so the file stays portable (§66), pinned in
+`t2-logic/projectScaffold`.
+

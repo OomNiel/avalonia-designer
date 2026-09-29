@@ -17,6 +17,52 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-09-29, eighteenth session — 0.13.3: a Timer, docks that fill, and a panel that names itself)
+
+Long, mixed session: the user alternated between feature requests, bug reports from testing them, and one
+question about what the extension actually needs installed. The pattern that worked, again: **reproduce and
+measure** (the real previewer host for layout, real Chromium for the panel, `dotnet build` of the user's own
+project for a runtime failure), then fix the cause, then pin it.
+
+- **A `Timer` component** (`chrome:Timer`, both twins) — asked for as a WinForms-shaped timer, and answered
+  honestly: Avalonia has none, and its `DispatcherTimer` ticks on the UI thread, so the control wraps
+  `System.Timers.Timer` and **ticks on a worker thread**. `Interval` (ms), `Enabled`, `Start()`/`Stop()`,
+  `Tick` with `System.EventArgs`; a throwing handler is trapped and traced; it disposes when it leaves the
+  tree; `StartSuppressed` keeps the preview host from arming one.
+- **The Component Tray** under the canvas holds it — a component has no size, so it is not dropped on the
+  surface; it is listed, selectable and editable there (asked to move the tray to the bottom of the canvas
+  after the first cut read as a third panel next to Properties).
+- **Three dock faults, in the order testing found them:** a `Dock` row for the ProgressBar (kept **inside a
+  Grid cell**, honoured within it); *“only docks horizontally”* — every themed control carries a centred
+  alignment, so the dock now writes `Stretch` on the free axis (measured: `220x4` → `220x450`); and a dock on
+  a **tab page** doing nothing at all — the old path wrapped the control in a DockPanel *inside* the page's
+  Canvas, and a Canvas sizes a child to its own desire, so `moveIntoOwnerDockPanel` moves it in front of the
+  Canvas instead.
+- **…and the app that then would not start** (the user's report): it *built* clean. `dotnet build` on their
+  project named `AVLN3000` — the placement-time handler stub was generated without the control's tag, so it
+  took `RoutedEventArgs` where the XAML compiler wanted `System.EventArgs`. One argument fixed it; the lesson
+  is in NOTES §166.
+- **Code Fix… now repairs the old dock's forms** — new `lift-dock-wrapper` finding (warning, dismissible,
+  included in Fix all) with a shape-only detection rule and a repair that edits the designer's **model** when
+  the form is open, or the file when it is not (placed *before* the code-behind guard, so a form with no
+  code-behind is fixed too).
+- **The settings panel was renamed and explained** (*“Code Fix/AI-Assist Settings”*), its two llama-server
+  start modes now state their lifetime in the option labels plus a *What is the difference exactly?*
+  disclosure, and **Model** / **My llama-server** became separate bordered boxes. Height was **measured**
+  (the dialog was already 141 px over its box; the additions were trimmed to ~110 px) — NOTES §168.
+- **The requirements audit answered “none of the five”.** No `extensionDependencies` (deliberate: it is a
+  gate, not a label) — instead `.vscode/extensions.json` recommendations in every generated project, and a
+  README/manual section explaining what is required (the .NET SDK) and what is merely nice to have.
+- **Docs:** `CHANGELOG.md` `[0.13.3]`, README (version refs, Timer, dock behaviour, Code Fix repair,
+  requirements), `USER_MANUAL.md` (§6 components, §12 finding row, §15 docking notes, §3 requirements,
+  revision date), `CONTROLS.md` (Timer row, ProgressBar dock note), `TEST_PLAN.md` (status 9,876 + the 0.13.3
+  log entry), `NOTES.md` §165–§168, `PUBLISHING.md`'s record, this file.
+- **State:** suite **9,876 passed / 0 failed**, host 0 warnings / 0 errors, version **0.13.3** (20 bundled
+  stamps), committed, tagged **`v0.13.3`** and released on GitHub with the VSIX attached.
+- **Open for the user:** the **Marketplace upload** is theirs (portal → *Update* →
+  `avalonia-designer-0.13.3.vsix`, *Pre-release* unchecked; the listing has carried `0.11.0` since
+  2026-09-20, so one upload spans `0.12.0` … `0.13.3`). And **reload the window** after installing locally.
+
 ## Where the last session left off (2026-09-27, seventeenth session — 0.13.1: cell borders, and a designer that lands you in the form)
 
 The session opened with the spreadsheet's last cosmetic gap — *“polish the spreadsheet appearance … when
