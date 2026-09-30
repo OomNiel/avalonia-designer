@@ -443,6 +443,48 @@ module.exports = async (t) => {
     const kids = Array.from(owner.childNodes).filter((n) => n.nodeType === 1);
     t.equal(kids[kids.length - 1] === canvas, true, 'dockpanel',
       'the Canvas is STILL the last child — it keeps filling what the docked control leaves');
+    // A docked control's MARGIN is not a position. A negative one is always a leftover of dragging the
+    // control around a free-placement Canvas, and the host draws it at its own box plus that margin —
+    // so `Margin="-724,0,0,0"` pushed a docked command bar 724 px left of the band it had just been
+    // given, which the user reads as "it does not dock" (reported 2026-09-30). A POSITIVE margin is
+    // spacing the author chose, and is left alone.
+    {
+      const stray = new XamlModel(`<Window ${NS}><DockPanel x:Name="Root" LastChildFill="True">
+        <Canvas x:Name="Body"/></DockPanel></Window>`);
+      const canvas = stray.findByName('Body');
+      const loose = stray.createElement('<Button x:Name="b1" Width="200" Margin="-724,0,0,0"/>');
+      canvas.appendChild(loose);
+      stray.moveIntoOwnerDockPanel(loose, canvas);
+      t.equal(loose.hasAttribute('Margin'), false, 'dockpanel',
+        'a stale NEGATIVE margin goes when the control is docked (it would draw it out of its band)');
+      const spaced = stray.createElement('<Button x:Name="b2" Width="200" Margin="6,0,6,0"/>');
+      canvas.appendChild(spaced);
+      stray.moveIntoOwnerDockPanel(spaced, canvas);
+      t.equal(spaced.getAttribute('Margin'), '6,0,6,0', 'dockpanel',
+        'while a margin the author chose (spacing) is kept — only the drag leftover goes');
+    }
+
+    // …and a DRAG must not be able to create one in the first place: inside a DockPanel the control is
+    // placed by its band, so the margin a drag writes can never go negative (2026-09-30 — this is how
+    // the reported `Margin="-724,0,0,0"` on a Top-docked bar was produced: dragging it around).
+    {
+      const g = new XamlModel(`<Window ${NS}><DockPanel x:Name="Root" LastChildFill="True">
+        <chrome:GrumpyCommandBar x:Name="bar1" DockPanel.Dock="Top" Height="36"/>
+        <Canvas x:Name="Body"/></DockPanel></Window>`);
+      const bar = g.findByName('bar1');
+      const at = { x: 0, y: 54, width: 800, height: 36 };
+      // Drag it 300 px left and 200 px up, the way the canvas drag reports a delta.
+      g.move(bar, -300, -200, at);
+      const margin = (bar.getAttribute('Margin') || '').split(',').map(Number);
+      t.equal(margin.every((v) => !(v < 0)), true, 'dockdrag',
+        'a docked control cannot be dragged out of its band: no margin component may go negative');
+      t.equal(bar.getAttribute('DockPanel.Dock'), 'Top', 'dockdrag',
+        'and its dock is untouched — the band still owns its placement');
+      // A positive inset is still allowed (that is what a Margin row is for).
+      g.move(bar, 8, 4, at);
+      t.equal(bar.getAttribute('Margin'), '8,4,0,0', 'dockdrag',
+        'while dragging it right/down writes a positive inset, as before');
+    }
     t.equal(kids.indexOf(el) < kids.indexOf(canvas), true, 'dockpanel',
       'and the control sits in FRONT of it (a DockPanel lays its bands out in order)');
     t.equal(el.hasAttribute('Canvas.Left') || el.hasAttribute('Canvas.Top'), false, 'dockpanel',
@@ -458,5 +500,153 @@ module.exports = async (t) => {
     t.equal(loose.moveIntoOwnerDockPanel(b1, loose.findByName('Body')), undefined, 'dockpanel',
       'a Canvas whose parent is not a DockPanel is left for the caller');
     t.equal(b1.parentNode === loose.findByName('Body'), true, 'dockpanel', 'and its control is untouched');
+  }
+
+  // --- dock bands: a Top/Bottom child has to sit in the panel's BAND GROUP --------------------
+  //
+  // A DockPanel takes each child's slice out of what is LEFT of the remaining rectangle, in child
+  // order — so a Top/Bottom band only spans the full width while it comes before every child docked
+  // Left/Right (and a child with no Dock at all is Left). Measured against the real host on the
+  // user's demo form 2026-09-30: the bar the designer had appended as the LAST child of
+  // `<DockPanel Name="Root">` rendered 76x24 at x=724 (TabControl1 had already taken 724 of 800 px),
+  // while the same bar in front of the Body canvas rendered 0,54 800x24 — the Menu's own band.
+  {
+    const demo = () => new XamlModel(
+      `<Window ${NS}><DockPanel Name="Root" LastChildFill="False">`
+      + '<chrome:GrumpyStatus x:Name="Status" DockPanel.Dock="Bottom" Height="26"/>'
+      + '<Menu x:Name="Menu1" DockPanel.Dock="Top" Height="24"/>'
+      + '<Canvas Name="Body"/>'
+      + '<TabControl x:Name="TabControl1" Width="724"/>'
+      + '<chrome:GrumpyCommandBar x:Name="Bar" DockPanel.Dock="Top" Height="24"/>'
+      + '</DockPanel></Window>');
+    const kidsOf = (m, name) => Array.from(m.findByName(name).childNodes).filter((n) => n.nodeType === 1)
+      .map((n) => n.getAttribute('x:Name') || n.getAttribute('Name'));
+
+    // The saved shape from the user's form: the band is in the panel but AFTER the Left-docked
+    // TabControl, so its Dock Top buys it the leftovers. The repair moves it into the band group.
+    const m1 = demo();
+    const bar1 = m1.findByName('Bar');
+    t.equal(kidsOf(m1, 'Root').join(','), 'Status,Menu1,Body,TabControl1,Bar', 'dockband',
+      'the form as saved: the bar is the LAST child, after the Left-docked TabControl');
+    t.equal(m1.placeDockedBand(bar1), true, 'dockband', 'the band is moved out of the leftovers');
+    t.equal(kidsOf(m1, 'Root').join(','), 'Status,Menu1,Bar,Body,TabControl1', 'dockband',
+      'and lands in front of the first child that would eat its width (the Body canvas) — the Menu\'s band group');
+    // …and it now walks the same path the Menu does: every child before it is a Top/Bottom band,
+    // so its slice is taken from the FULL panel width (that is the 800 px the host measured).
+    const k1 = kidsOf(m1, 'Root');
+    t.equal(k1.slice(0, k1.indexOf('Bar')).every((n) => n === 'Status' || n === 'Menu1'), true, 'dockband',
+      'nothing that eats the width precedes it any more');
+
+    // Idempotent: once it spans its panel there is nothing to fix, so opening the form again (or a
+    // second Save) changes nothing at all.
+    t.equal(m1.placeDockedBand(bar1), false, 'dockband', 'a band that already spans the panel is left alone');
+    t.equal(kidsOf(m1, 'Root').join(','), 'Status,Menu1,Bar,Body,TabControl1', 'dockband', 'and nothing moved');
+    t.equal(m1.normaliseDockBands(), 0, 'dockband', 'so the document-wide repair finds no work');
+
+    // A form that already lays out correctly is NOT reshuffled — the Menu is a band sitting after a
+    // Bottom band, and moving it would put it after the content.
+    const good = new XamlModel(
+      `<Window ${NS}><DockPanel Name="Root">`
+      + '<chrome:GrumpyStatus x:Name="Status" DockPanel.Dock="Bottom" Height="26"/>'
+      + '<Menu x:Name="Menu1" DockPanel.Dock="Top" Height="24"/>'
+      + '<Canvas Name="Body"/></DockPanel></Window>');
+    t.equal(good.normaliseDockBands(), 0, 'dockband', 'a correctly ordered form is opened untouched');
+    t.equal(kidsOf(good, 'Root').join(','), 'Status,Menu1,Body', 'dockband', 'child order unchanged');
+
+    // The document-wide repair is what fixes a form already saved by an older build — the user does
+    // not have to re-dock the control by hand.
+    const m2 = demo();
+    t.equal(m2.normaliseDockBands(), 1, 'dockband', 'opening the saved form repairs exactly the one band');
+    t.equal(kidsOf(m2, 'Root').join(','), 'Status,Menu1,Bar,Body,TabControl1', 'dockband',
+      'the bar is in the Menu\'s band group');
+
+    // A BOTTOM band is blocked by the same siblings, and one that is blocked by another band is not.
+    const mBottom = demo();
+    const status = mBottom.findByName('Status');
+    mBottom.findByName('Body').parentNode.appendChild(status); // pretend it was appended last
+    t.equal(mBottom.placeDockedBand(status), true, 'dockband', 'a Bottom band is recovered the same way');
+    t.equal(kidsOf(mBottom, 'Root').indexOf('Status') < kidsOf(mBottom, 'Root').indexOf('Body'), true, 'dockband',
+      'and lands before the content as well');
+
+    // Left/Right children stack in order and keep their whole band whatever their position, and a
+    // control in a Grid/StackPanel has no DockPanel to be reordered in.
+    const side = demo();
+    const tab = side.findByName('TabControl1');
+    t.equal(side.placeDockedBand(tab), false, 'dockband', 'a Left-docked child is never reordered');
+    const grid = new XamlModel(`<Window ${NS}><Grid><Button x:Name="b" DockPanel.Dock="Top"/></Grid></Window>`);
+    t.equal(grid.placeDockedBand(grid.findByName('b')), false, 'dockband',
+      'and a DockPanel.Dock outside a DockPanel does nothing');
+
+    // Dropping a band from the toolbox goes through the same rule, so a drop can never leave the
+    // bar in the leftovers in the first place.
+    const m3 = demo();
+    const dropped = m3.addControl(m3.findByName('Root'),
+      '<chrome:GrumpyCommandBar x:Name="Bar2" DockPanel.Dock="Top" Height="36">'
+      + '<StackPanel x:Name="Bar2Items" Orientation="Horizontal"/></chrome:GrumpyCommandBar>');
+    t.equal(kidsOf(m3, 'Root').join(','), 'Status,Menu1,Bar2,Body,TabControl1,Bar', 'dockband',
+      'a dropped Top-band lands in the band group, not after the content');
+    t.equal(dropped.getAttribute('DockPanel.Dock'), 'Top', 'dockband', 'and keeps the edge its snippet named');
+  }
+
+  // --- the size floor: a themed minimum beats an explicit Height, so the writer adds the companion ------
+  // Reported 2026-09-29, twice: *"the Height adjustment property for the Command Bar control is ignored"*
+  // and then, after the first fix shipped, *"still cant set height to smaller than 30"* — because that
+  // fix only covered the Properties panel while the **canvas resize handles** write Width/Height straight
+  // onto the element (`resize()`); dragging or typing were therefore different stories. The rule now lives
+  // in the model, and these are the doors it is reached through.
+  {
+    const form = () => new XamlModel(`<Window ${NS}><DockPanel x:Name="Root">`
+      + `<CommandBar x:Name="bar" DockPanel.Dock="Top" Height="30" Width="800"/>`
+      + `<Canvas x:Name="Body"/></DockPanel></Window>`);
+    const FLOOR = { bar: { w: 0, h: 48 } };
+
+    // Typing a number in the panel = setProperty, exactly what the webview's row posts.
+    const typed = form();
+    typed.sizeFloors = FLOOR;
+    const bar = typed.findByName('bar');
+    typed.setProperty(bar, 'Height', '20');
+    t.equal(bar.getAttribute('Height'), '20', 'size-floor', 'the typed height is written');
+    t.equal(bar.getAttribute('MinHeight'), '20', 'size-floor',
+      'and so is the companion minimum, so the control can really BE 20');
+
+    // Dragging the resize handle = resize(), the door the first attempt missed.
+    const dragged = form();
+    dragged.sizeFloors = FLOOR;
+    const dbar = dragged.findByName('bar');
+    dragged.resize(dbar, 0, -10, { x: 0, y: 0, width: 800, height: 30 }, 's');
+    t.equal(dbar.getAttribute('Height'), '20', 'size-floor', 'a dragged height is written too');
+    t.equal(dbar.getAttribute('MinHeight'), '20', 'size-floor',
+      'with the same companion — dragging and typing cannot disagree');
+
+    // Growing past the floor takes the companion back; so does clearing the row.
+    dragged.setProperty(dbar, 'Height', '60');
+    t.equal(dbar.getAttribute('Height'), '60', 'size-floor', 'a height above the floor is written');
+    t.equal(dbar.hasAttribute('MinHeight'), false, 'size-floor',
+      'and the companion the designer wrote is taken back — the form stays tidy');
+    dragged.setProperty(dbar, 'Height', '');
+    t.equal(dbar.hasAttribute('Height'), false, 'size-floor', 'clearing the row removes the height');
+
+    // A control with no themed floor is never given an attribute nobody asked for.
+    const plain = form();
+    plain.sizeFloors = { bar: { w: 0, h: 0 } };
+    const pbar = plain.findByName('bar');
+    plain.setProperty(pbar, 'Height', '20');
+    t.equal(pbar.getAttribute('Height'), '20', 'size-floor', 'a plain control takes the height as typed');
+    t.equal(pbar.hasAttribute('MinHeight'), false, 'size-floor', 'and gains no minimum');
+
+    // A minimum the USER typed is theirs: shrinking below it is left alone (the panel shows the size
+    // their own minimum produces — the truth), and nothing is overwritten behind their back.
+    const theirs = form();
+    theirs.sizeFloors = FLOOR;
+    const tbar = theirs.findByName('bar');
+    tbar.setAttribute('MinHeight', '64');
+    theirs.setProperty(tbar, 'Height', '20');
+    t.equal(tbar.getAttribute('MinHeight'), '64', 'size-floor', 'a hand-set MinHeight is never rewritten');
+
+    // No frame yet (an element the host did not report) = no floor known = no guessing.
+    const unknown = form();
+    unknown.setProperty(unknown.findByName('bar'), 'Height', '20');
+    t.equal(unknown.findByName('bar').hasAttribute('MinHeight'), false, 'size-floor',
+      'an unreported control (no frame yet) is left to the framework');
   }
 };

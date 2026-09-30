@@ -81,6 +81,11 @@
          reason: without it the builder would fall back to an empty stand-in and a designed sheet
          would preview BLANK — the failure mode of a missing TypeMap entry, which throws nothing. -->
     <Compile Include="../resources/GrumpySheet.cs" Link="GrumpySheet.cs" />
+    <!-- GrumpyCommandBar (the bundled AvaloniaChrome command bar that replaced the withdrawn
+         CommandBar family, 2026-09-29) is linked for the same reason as the others: a dropped bar must
+         preview as the real thing — a row of the real items with the real chrome — or the designer
+         would show a stand-in for the one control whose WHOLE POINT is that its Height is honest. -->
+    <Compile Include="../resources/GrumpyCommandBar.cs" Link="GrumpyCommandBar.cs" />
     <!-- GrumpyPrint (the CUPS printer path the chart falls back to on Linux) is bundled with the
          chart and copied into the same projects, so it is linked here too. Without PRINT_SUPPORT the
          host compiles its empty half — which is exactly the build that must keep working, since the

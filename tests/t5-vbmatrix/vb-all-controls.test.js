@@ -145,7 +145,11 @@ module.exports = async (t) => {
     // renders a stand-in (Border/Button/ToggleButton). Their real-tag XAML + every listed property
     // are still compile-verified against Avalonia 12.1.1 in Phase D (the authoritative gate).
     const AV12_PREVIEW = new Set(['GroupBox', 'HyperlinkButton', 'CommandBar', 'CommandBarButton', 'CommandBarToggleButton', 'CommandBarSeparator']);
-    t.equal(controls.length, 53, 'toolbox', 'all placeable controls enumerated',
+    // 53 until 2026-09-29; 50 after it: the four CommandBar-family tiles were retired (the real
+    // Avalonia types still render and save — see toolboxProvider) and the bundled GrumpyCommandBar
+    // took their place in the Bars category. The count is pinned on purpose: it is the one place a
+    // tool that exists in the sidebar but never gets compiled here would show up as a silent drop.
+    t.equal(controls.length, 50, 'toolbox', 'all placeable controls enumerated',
         `${controls.length}: ${controls.map((c) => c.tag).join(', ')}`);
     const tags = controls.map((c) => c.tag);
 
@@ -300,6 +304,17 @@ module.exports = async (t) => {
         if (snippets['GrumpyStatus']) {
             try { await insertStatusDateClock(Uri.file(axamlPath), `${snippets['GrumpyStatus'].name}Date`); }
             catch (e) { t.fail('GrumpyStatus', 'codebehind', `insertStatusDateClock: ${e.message}`); }
+        }
+
+        // The GrumpyCommandBar's snippet is a WORKING sample: its File Open… / File Save… buttons carry
+        // Click attributes, so the two dialog handlers must exist or the XAML names methods that aren't
+        // there (AVLN3000) — exactly like the StatusDate clock above. This is what the designer's drop
+        // path does for the user, so the matrix has to do it to build what a user would get.
+        if (snippets['GrumpyCommandBar']) {
+            try {
+                const { insertCommandBarFileHandlers } = require('../../out/codeBehind.js');
+                await insertCommandBarFileHandlers(Uri.file(axamlPath), snippets['GrumpyCommandBar'].name);
+            } catch (e) { t.fail('GrumpyCommandBar', 'codebehind', `insertCommandBarFileHandlers: ${e.message}`); }
         }
 
         // XYTracker Loaded handlers: XYTracker1 sits on the Body canvas → container mode (reports

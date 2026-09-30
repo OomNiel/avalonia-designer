@@ -652,4 +652,289 @@ End Namespace
         t.equal(analyzeCodeBehind(twoKids.uri, {}).issues.filter((i) => i.kind === 'lift-dock-wrapper').length, 0,
             'dock-wrapper', 'nor a wrapper that holds more than one control (not a dock artefact)');
     }
+
+    // --- Code Fix…: a TAB PAGE that lost its Canvas (reported 2026-09-30) ----------------------------
+    // "On the Buttons tab, I can't freely relocate the controls, why?" — because the page's Canvas (the
+    // free-placement surface the designer's own tab snippet writes as the DockPanel's fill child) had
+    // been deleted, leaving every control as a DockPanel child. No Dock means LEFT, so each one got a
+    // band with no position of its own: a drag wrote a Margin instead of Canvas.Left/Top and could only
+    // nudge it. Measured on the user's own form before the repair: four controls as four columns at
+    // x=30/170/330/530, and dragging Button1 by (40,30) wrote Margin="18,11,0,0" → "58,41,0,0".
+    {
+        const { analyzeCodeBehind, applyLocalFix } = require('../../out/codeBehindCheck.js');
+        const pageForm = (body, extra = '') => {
+            const d = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-pagecanvas-'));
+            fs.writeFileSync(path.join(d, 'Proj.csproj'), '<Project Sdk="Microsoft.NET.Sdk"/>\n');
+            const ax = path.join(d, 'TestForm.axaml');
+            fs.writeFileSync(ax, `<Window ${NS} x:Class="Proj.TestForm" Width="800" Height="450">\n`
+                + '  <TabControl x:Name="Tabs">\n    <TabItem Header="Buttons">\n      ' + body + '\n    </TabItem>\n'
+                + '    <TabItem Header="Fine">\n      <DockPanel x:Name="TabsBody2">\n        <Canvas x:Name="TabsBody2Canvas"/>\n      </DockPanel>\n    </TabItem>\n'
+                + '  </TabControl>\n' + extra + '</Window>');
+            fs.writeFileSync(path.join(d, 'TestForm.axaml.cs'),
+                'using Avalonia.Controls;\nnamespace Proj;\npublic partial class TestForm : Window\n{\n    private void InitializeComponent() { }\n}\n');
+            return { dir: d, uri: Uri.file(ax), read: () => fs.readFileSync(ax, 'utf8') };
+        };
+        // The page as the user's form had it: four controls, no Canvas, and the LastChildFill the dock
+        // workaround left behind.
+        const stripped = '<DockPanel x:Name="TabsBody1" LastChildFill="False">\n'
+            + '        <Button x:Name="Button1" Content="Click me..." Width="120" Height="32" Margin="18,11,0,0"/>\n'
+            + '        <CheckBox x:Name="CheckBox1" Width="120" Margin="20,59,0,0"/>\n'
+            + '        <TextBlock x:Name="Pinned1" Text="a deliberate band" DockPanel.Dock="Bottom"/>\n'
+            + '      </DockPanel>';
+        // What the host MEASURED (the page's own origin at 12,140).
+        const bounds = [
+            { name: 'TabsBody1', x: 12, y: 140, width: 776, height: 334 },
+            { name: 'Button1', x: 30, y: 156, width: 120, height: 32 },
+            { name: 'CheckBox1', x: 170, y: 156, width: 120, height: 32 }
+        ];
+        const find = (p) => analyzeCodeBehind(p.uri, { bounds }).issues.filter((i) => i.kind === 'restore-page-canvas');
+
+        const p = pageForm(stripped);
+        const found = find(p);
+        t.equal(found.length, 1, 'page-canvas', 'the page with no Canvas is reported exactly once');
+        t.equal(found[0].severity, 'warning', 'page-canvas', 'as a warning — the form still runs');
+        t.equal(found[0].data.body, 'TabsBody1', 'page-canvas', 'naming the page body');
+        t.equal(found[0].data.canvas, 'TabsBody1Canvas', 'page-canvas',
+            'and the Canvas the designer gives a page (<name>BodyNCanvas)');
+        t.equal(found[0].data.count, '2', 'page-canvas',
+            'counting the controls that have no Dock (the deliberate band is NOT one of them)');
+        t.ok(/can't be moved freely/.test(found[0].title), 'page-canvas',
+            'and the title says what the user experiences, not what the markup looks like');
+        t.ok((found[0].alternatives ?? []).some((a) => a.kind === 'dismiss'), 'page-canvas',
+            'it can be dismissed like every other fixable finding');
+
+        // The repair, driven the way the panel drives it (the same issue object, so the MEASURED
+        // positions travel with it).
+        const msg = await applyLocalFix(p.uri, found[0], { bounds });
+        const fixed = p.read();
+        t.ok(/<Canvas x:Name="TabsBody1Canvas">/.test(fixed), 'page-canvas', 'the page Canvas is back');
+        t.ok(!/LastChildFill="False"/.test(fixed), 'page-canvas',
+            'and the leftover LastChildFill="False" is gone (the Canvas must be the FILL child)');
+        t.ok(/<Button x:Name="Button1"[^>]*Canvas\.Left="18" Canvas\.Top="16"/.test(fixed), 'page-canvas',
+            'Button1 lands where the host measured it (30-12, 156-140), not where its band Margin said');
+        t.ok(/<CheckBox x:Name="CheckBox1"[^>]*Canvas\.Left="158" Canvas\.Top="16"/.test(fixed), 'page-canvas',
+            'and so does CheckBox1 — the four columns keep the places the user sees them in');
+        t.ok(!/Margin=/.test(fixed), 'page-canvas', 'a band-relative Margin is not a position — it goes');
+        const pinned = /<TextBlock x:Name="Pinned1"[^>]*\/>/.exec(fixed)[0];
+        t.ok(/DockPanel\.Dock="Bottom"/.test(pinned) && !/Canvas\.Left/.test(pinned), 'page-canvas',
+            'a child with an EXPLICIT Dock stays the band it was asked to be');
+        t.ok(fixed.indexOf('<Canvas x:Name="TabsBody1Canvas">') > fixed.indexOf('Pinned1'), 'page-canvas',
+            'and the Canvas is the last child, so it fills the page');
+        t.ok(/Put TabsBody1Canvas back on the TabsBody1 page and moved 2 controls/.test(msg), 'page-canvas',
+            'the message names the Canvas and how many controls moved', msg);
+
+        // Done is done: a second run finds nothing (the fix must not become its own next finding).
+        t.equal(find(p).length, 0, 'page-canvas', 'after the repair the page is not reported again');
+
+        // A page that still HAS its Canvas is never reported — that is the healthy shape this fix makes.
+        const healthy = pageForm('<DockPanel x:Name="TabsBody1">\n        <Canvas x:Name="TabsBody1Canvas"/>\n      </DockPanel>');
+        t.equal(find(healthy).length, 0, 'page-canvas', 'a page with its Canvas is left alone');
+        // …including the OTHER tab page in the same form, which has one.
+        t.equal(analyzeCodeBehind(healthy.uri, { bounds }).issues.some((i) => i.data && i.data.body === 'TabsBody2'),
+            false, 'page-canvas', 'and a different page is judged on its own markup');
+
+        // NOT every page without a Canvas is broken. One undocked child with LastChildFill left on is
+        // the deliberate "this control fills the page" page — the sheet and chart tabs of the user's own
+        // form are exactly that, and the first version of this rule reported them too (3 findings on
+        // their form, only 1 of them real, caught by running the rule against the real file).
+        const fills = pageForm('<DockPanel x:Name="TabsBody1">\n        <chrome:GrumpySheet x:Name="Sheet1"/>\n      </DockPanel>');
+        t.equal(find(fills).length, 0, 'page-canvas',
+            'a page whose single control FILLS it is deliberate, not broken');
+        const oneBand = pageForm('<DockPanel x:Name="TabsBody1" LastChildFill="False">\n        <Button x:Name="Only1" Width="120" Height="32"/>\n      </DockPanel>');
+        t.equal(find(oneBand).length, 1, 'page-canvas',
+            'but LastChildFill="False" makes even one child a band — that page is broken');
+        const twoBands = pageForm('<DockPanel x:Name="TabsBody1">\n        <Button x:Name="A" Width="120"/>\n        <Button x:Name="B" Width="120"/>\n      </DockPanel>');
+        t.equal(find(twoBands).length, 1, 'page-canvas',
+            'as is a page where only the last of several children could ever fill');
+
+        // Without a frame the Margin is the only position available — the fix still works, it just has
+        // less to go on (and says so by moving nothing it cannot place).
+        const noFrame = pageForm(stripped);
+        const noBounds = analyzeCodeBehind(noFrame.uri, {}).issues.filter((i) => i.kind === 'restore-page-canvas');
+        t.equal(noBounds.length, 1, 'page-canvas', 'the finding does not depend on a rendered frame');
+        await applyLocalFix(noFrame.uri, noBounds[0], {});
+        t.ok(/<Button x:Name="Button1"[^>]*Canvas\.Left="18" Canvas\.Top="11"/.test(noFrame.read()), 'page-canvas',
+            'and the fallback uses the Margin it had (18,11)');
+
+        // A form with NO code-behind still gets it: this rule is about the markup, and the analysis used
+        // to stop at "No code-behind file found" before any rule ran.
+        const bare = pageForm(stripped);
+        fs.rmSync(path.join(bare.dir, 'TestForm.axaml.cs'));
+        const kinds = analyzeCodeBehind(bare.uri, { bounds }).issues.map((i) => i.kind);
+        t.ok(kinds.includes('report-only') && kinds.includes('restore-page-canvas'), 'page-canvas',
+            'a form with no code-behind reports the markup finding too', kinds.join(','));
+    }
+
+    // --- the command bar's sample file dialogs (2026-09-30) -------------------------------
+    // "Those buttons must implement file open and file save dialogs": the bar's toolbox snippet
+    // carries a File Open… and a File Save… button, and the drop writes the code that makes them open
+    // Avalonia's own dialogs. An empty stub would compile — and do nothing, which is exactly the
+    // complaint that killed the Menu-copy that shipped first.
+    {
+        const { commandBarFileHandlers, insertCommandBarFileHandlers } =
+            require('../../out/codeBehind.js');
+        t.equal(commandBarFileHandlers('bar1').open, 'bar1Open_Click', 'cmd-dialogs',
+            'the Open button names bar1Open_Click (the snippet writes the same attribute)');
+        t.equal(commandBarFileHandlers('bar1').save, 'bar1Save_Click', 'cmd-dialogs',
+            'and the Save button bar1Save_Click');
+
+        for (const lang of ['cs', 'vb']) {
+            const p = tmpProject(lang);
+            await insertCommandBarFileHandlers(p.uri, 'bar1');
+            const text = p.read();
+            t.ok(/bar1Open_Click/.test(text), 'cmd-dialogs', `${lang}: the Open handler is written`);
+            t.ok(/bar1Save_Click/.test(text), 'cmd-dialogs', `${lang}: and the Save handler`);
+            // The dialog API itself — the whole point of the sample.
+            t.ok(/OpenFilePickerAsync/.test(text) && /FilePickerOpenOptions/.test(text), 'cmd-dialogs',
+                `${lang}: Open uses the real file-open picker`);
+            t.ok(/SaveFilePickerAsync/.test(text) && /FilePickerSaveOptions/.test(text), 'cmd-dialogs',
+                `${lang}: Save uses the real file-save picker`);
+            // Types are fully qualified: a generated code-behind has no `using Avalonia.Platform.Storage`.
+            t.ok(!/using Avalonia\.Platform\.Storage|Imports Avalonia\.Platform\.Storage/.test(text),
+                'cmd-dialogs', `${lang}: and it never edits the form's using/Imports block`);
+            t.ok(/Avalonia\.Controls\.TopLevel\.GetTopLevel\((this|Me)\)/.test(text), 'cmd-dialogs',
+                `${lang}: works from a Window AND a UserControl (TopLevel.GetTopLevel, not StorageProvider)`);
+            // The picked path is shown in the bar's own box — and looked up by NAME, so renaming or
+            // deleting that box cannot break the build.
+            t.ok(/bar1Path/.test(text), 'cmd-dialogs', `${lang}: the picked path goes into bar1Path`);
+            t.ok(/FindControl/.test(text), 'cmd-dialogs',
+                `${lang}: which is resolved by name (FindControl), so a renamed box is not a compile error`);
+            // The handlers must be REAL bodies, not the designer's empty stubs.
+            t.ok(!/TODO: Handle .*bar1(Open|Save)_Click/.test(text), 'cmd-dialogs',
+                `${lang}: with real bodies — not the "TODO: Handle" stub the event wiring writes`);
+            // …and readable: the code the user will look at first is indented like the code around it.
+            // (Measured in the regenerated matrix 2026-09-30: the continuation line came out at the
+            // same indent as its `if`, which reads as a mistake even though it compiles.)
+            t.ok(lang === 'cs' ? /^ {12}box\.Text = /m.test(text) : /^ {12}(Dim box|If box)/m.test(text),
+                'cmd-dialogs', `${lang}: the body is indented in steps, not flattened`);
+
+            // Idempotent: dropping a second bar (or re-dropping) must not duplicate them.
+            const once = p.read();
+            await insertCommandBarFileHandlers(p.uri, 'bar1');
+            t.equal(p.read(), once, 'cmd-dialogs', `${lang}: writing twice changes nothing`);
+            t.equal((p.read().match(/bar1Open_Click/g) || []).length, 1, 'cmd-dialogs',
+                `${lang}: one declaration — the only other mention lives in the .axaml`);
+
+            // A handler the USER has written is theirs: the missing one is added, the existing one is
+            // left byte-for-byte alone.
+            const q = tmpProject(lang);
+            const marker = lang === 'cs' ? '// my own open handler' : "' my own open handler";
+            const mine = lang === 'cs'
+                ? `using Avalonia.Controls;\nnamespace Proj;\npublic partial class TestForm : Window\n{\n`
+                + `    public TestForm()\n    {\n        InitializeComponent();\n    }\n`
+                + `    private async void bar1Open_Click(object sender, Avalonia.Interactivity.RoutedEventArgs e)\n`
+                + `    {\n        ${marker}\n        await System.Threading.Tasks.Task.CompletedTask;\n    }\n}\n`
+                : `Imports Avalonia.Controls\nNamespace Proj\n    Partial Public Class TestForm\n`
+                + `        Inherits Window\n        Public Sub New()\n            InitializeComponent()\n`
+                + `        End Sub\n        Private Async Sub bar1Open_Click(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)\n`
+                + `            ${marker}\n        End Sub\n    End Class\nEnd Namespace\n`;
+            fs.writeFileSync(path.join(q.dir, lang === 'cs' ? 'TestForm.axaml.cs' : 'TestForm.axaml.vb'),
+                mine, 'utf8');
+            await insertCommandBarFileHandlers(q.uri, 'bar1');
+            const after = q.read();
+            t.ok(after.includes(marker), 'cmd-dialogs',
+                `${lang}: a handler the user already wrote keeps its body (never overwritten)`);
+            t.equal((after.match(/bar1Open_Click/g) || []).length, 1, 'cmd-dialogs',
+                `${lang}: and is not declared twice`);
+            t.ok(after.includes('bar1Save_Click'), 'cmd-dialogs',
+                `${lang}: while the missing one is still added`);
+            t.ok(/SaveFilePickerAsync/.test(after), 'cmd-dialogs',
+                `${lang}: with its real dialog code`);
+        }
+
+        // A form with no code-behind yet gets one — the same guarantee the clock handler gives.
+        {
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-cmddialog-'));
+            fs.writeFileSync(path.join(dir, 'Proj.csproj'), '<Project Sdk="Microsoft.NET.Sdk"/>\n');
+            const axamlPath = path.join(dir, 'TestForm.axaml');
+            fs.writeFileSync(axamlPath, AXAML.replace('Click="btnTest_Click"', 'Click="bar1Open_Click"'));
+            await insertCommandBarFileHandlers(Uri.file(axamlPath), 'bar1');
+            const made = path.join(dir, 'TestForm.axaml.cs');
+            t.ok(fs.existsSync(made), 'cmd-dialogs', 'the code-behind is created when the form has none');
+            const text = fs.existsSync(made) ? fs.readFileSync(made, 'utf8') : '';
+            t.ok(/bar1Open_Click/.test(text) && /bar1Save_Click/.test(text), 'cmd-dialogs',
+                'with both dialog handlers inside the class');
+            t.ok(/InitializeComponent/.test(text), 'cmd-dialogs', 'and the class the XAML expects');
+        }
+    }
+
+    // --- the missing-import rule vs QUALIFIED code (reported 2026-09-30) ----------------------------
+    // "In my GrumpyDesignerDemo test app problems pane: Imports Avalonia.Platform.Storage is missing …
+    // fails as (BC30002 / CS0246)". The file in question builds 0/0 — it is the code-behind the designer
+    // itself wrote for the command bar's File Open… / File Save… buttons, which names its types FULLY
+    // QUALIFIED on purpose (so the form's own using/Imports block is never edited). The rule tested
+    // `\bFilePickerOpenOptions\b` against the whole file, so it matched the TAIL of
+    // `Avalonia.Platform.Storage.FilePickerOpenOptions` and demanded an import for a name that is already
+    // qualified. `StorageProvider` was in that list for the same reason and is worse: it is also a
+    // PROPERTY (`TopLevel.StorageProvider`), so the bare name is no evidence of a type use at all.
+    {
+        const { analyzeCodeBehind } = require('../../out/codeBehindCheck.js');
+        const { insertCommandBarFileHandlers } = require('../../out/codeBehind.js');
+        const codeBehindOf = (lang) => path.join(lang === 'cs' ? 'TestForm.axaml.cs' : 'TestForm.axaml.vb');
+        const writeMember = (p, lang, member) => {
+            const file = path.join(p.dir, codeBehindOf(lang));
+            const text = fs.readFileSync(file, 'utf8');
+            // C#'s template ends with the class's closing brace; the VB one ends with `End Namespace`,
+            // so the member goes before `End Class` wherever that is (anchoring both to the end of file
+            // silently inserted nothing in VB — and the test then "passed" on an empty file).
+            const withMember = lang === 'cs'
+                ? text.replace(/\n}\s*$/, `\n${member}\n}\n`)
+                : text.replace(/\n([ \t]*)End Class/, `\n${member}\n$1End Class`);
+            if (!withMember.includes(member)) throw new Error(`${lang}: the test member was not inserted`);
+            fs.writeFileSync(file, withMember, 'utf8');
+        };
+        const storageFindings = (p) => analyzeCodeBehind(p.uri,
+            { axamlText: fs.readFileSync(path.join(p.dir, 'TestForm.axaml'), 'utf8'), controls: [] })
+            .issues.filter((i) => i.kind === 'add-import' && /Platform\.Storage/.test(i.title));
+
+        // 1) the code the DESIGNER writes must never be reported: run the real generator, then the real
+        //    checker over its output.
+        const generated = tmpProject('cs');
+        await insertCommandBarFileHandlers(generated.uri, 'bar1');
+        t.ok(/Avalonia\.Platform\.Storage\.FilePickerOpenOptions/.test(generated.read()), 'import-rule',
+            'the generated dialog handler really does name its types fully qualified');
+        t.equal(storageFindings(generated).length, 0, 'import-rule',
+            'and the checker does NOT ask for an import that file does not need');
+
+        // 2) …while every genuinely unqualified use is still caught — the rule has to keep earning its keep.
+        for (const [lang, member, what] of [
+            ['cs', '    public void Pick() { var o = new FilePickerOpenOptions { AllowMultiple = false }; }',
+                'cs: an unqualified new FilePickerOpenOptions without the using'],
+            ['cs', '    public void All() { var a = FilePickerFileTypes.All; }',
+                'cs: an unqualified static FilePickerFileTypes member'],
+            ['cs', '    private static void Save(IStorageProvider storage, FilePickerSaveOptions picker) { }',
+                "cs: the chart helper's own IStorageProvider signature"],
+            ['vb', '    Public Sub Pick()\n        Dim o = New FilePickerOpenOptions With {.AllowMultiple = False}\n    End Sub',
+                'vb: New FilePickerOpenOptions without Imports']
+        ]) {
+            const p = tmpProject(lang);
+            writeMember(p, lang, member);
+            t.equal(storageFindings(p).length, 1, 'import-rule', `${what} IS reported`);
+        }
+
+        // 3) the PROPERTY is not a type: a bare `StorageProvider.…` call must never produce this finding
+        //    — it is the shape the designer's own handlers use (`top.StorageProvider.OpenFilePickerAsync`).
+        for (const lang of ['cs', 'vb']) {
+            const p = tmpProject(lang);
+            writeMember(p, lang, lang === 'cs'
+                ? '    public void Go() { var f = StorageProvider.OpenFilePickerAsync(null); }'
+                : '    Public Sub Go()\n        Dim f = StorageProvider.OpenFilePickerAsync(Nothing)\n    End Sub');
+            t.equal(storageFindings(p).length, 0, 'import-rule',
+                `${lang}: the StorageProvider property alone never demands an import`);
+        }
+
+        // 4) and WITH the import present nothing is reported, in either language.
+        for (const lang of ['cs', 'vb']) {
+            const p = tmpProject(lang);
+            const file = path.join(p.dir, codeBehindOf(lang));
+            const importLine = lang === 'cs' ? 'using Avalonia.Platform.Storage;\n' : 'Imports Avalonia.Platform.Storage\n';
+            const text = fs.readFileSync(file, 'utf8');
+            fs.writeFileSync(file, (lang === 'cs' ? importLine + text : importLine + text), 'utf8');
+            writeMember(p, lang, lang === 'cs'
+                ? '    public void Pick() { var o = new FilePickerOpenOptions(); }'
+                : '    Public Sub Pick()\n        Dim o = New FilePickerOpenOptions()\n    End Sub');
+            t.equal(storageFindings(p).length, 0, 'import-rule',
+                `${lang}: an unqualified use WITH the import is not reported`);
+        }
+    }
 };

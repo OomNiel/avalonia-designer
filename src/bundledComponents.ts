@@ -19,7 +19,7 @@
  * current version ships. A genuinely customised file (header changed/removed) is left alone.
  */
 
-export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'GrumpyCharts' | 'GrumpyPrint' | 'GrumpySheet' | 'Timer';
+export type BundledKind = 'ChromeWindow' | 'AnchorHelper' | 'PathPicker' | 'GrumpyCharts' | 'GrumpyPrint' | 'GrumpySheet' | 'Timer' | 'GrumpyCommandBar';
 
 export interface BundledSpec {
     kind: BundledKind;
@@ -34,6 +34,16 @@ export interface BundledSpec {
 /** The bundled component files for a project's language (vb vs cs). */
 export function bundledComponentSpecs(vb: boolean): BundledSpec[] {
     return [
+        {
+            kind: 'GrumpyCommandBar',
+            file: vb ? 'GrumpyCommandBar.vb' : 'GrumpyCommandBar.cs',
+            bundled: /BUNDLED-COPY|BUNDLED RESOURCE/,
+            // The command bar (2026-09-29) is the newest bundled file, so no project holds a copy that
+            // predates the class itself — but the marker still has to name something only the CURRENT
+            // copy has, because the file WILL grow (an item kind, a bar property) and a project holding
+            // today's copy must then be offered the new one. A marker only ever moves FORWARD.
+            marker: 'SpacingProperty'
+        },
         {
             kind: 'GrumpySheet',
             file: vb ? 'GrumpySheet.vb' : 'GrumpySheet.cs',

@@ -222,6 +222,15 @@
         dataSave: $('dataSave'),
         dataCancel: $('dataCancel'),
         sliceModal: $('sliceModal'),
+        cmdModal: $('cmdModal'),
+        cmdTitle: $('cmdTitle'),
+        cmdRows: $('cmdRows'),
+        cmdAdd: $('cmdAdd'),
+        cmdSpacing: $('cmdSpacing'),
+        cmdSummary: $('cmdSummary'),
+        cmdHint: $('cmdHint'),
+        cmdSave: $('cmdSave'),
+        cmdCancel: $('cmdCancel'),
         sheetModal: $('sheetModal'),
         sheetTitle: $('sheetTitle'),
         sheetRows: $('sheetRows'),
@@ -3323,6 +3332,9 @@
                     // 'Edit cells…' opens the spreadsheet editor — the grid whose cells are written into
                     // the form as <spread:SheetCell> elements.
                     if (p.key === 'Cells') openSheetEditor(msg.name, msg.sheetInfo || {});
+                    // 'Edit items…' opens the command bar's item editor — one row per item, each written
+                    // into the bar's row as a real Avalonia child control.
+                    if (p.key === 'Commands') openCommandEditor(msg.name, msg.commandInfo || {});
                 });
                 control = btn;
             } else if (p.kind === 'file') {
@@ -3582,6 +3594,22 @@
     window.addEventListener('message', (e) => {
         const msg = e.data;
         switch (msg.type) {
+            case 'commandIconPicked': {
+                // The icon the extension bundled for one of the Commands editor's rows. The row may have
+                // moved or been removed while the dialog was open, so the index is bounds-checked.
+                if (cmdEdit) {
+                    const index = Number(msg.index);
+                    if (index >= 0 && index < cmdEdit.items.length) {
+                        const item = cmdEdit.items[index];
+                        item.iconFile = String(msg.uri || '');
+                        item.iconFileLabel = String(msg.label || '');
+                        item.icon = '';
+                        renderCommandRows();
+                        els.cmdHint.textContent = `Bundled “${item.iconFileLabel}” into Assets and used it as this item’s icon.`;
+                    }
+                }
+                break;
+            }
             case 'sheetsResult': {
                 // The extension's answer to the Data Selector's page-list request. A late answer for a
                 // file the user has already changed away from is ignored (the editor is a live dialog).
@@ -7130,6 +7158,416 @@
         }
         sheetSyncFormatBar();
     }
+
+    // ---- The Commands editor (GrumpyCommandBar, 2026-09-30) ---------------------------------------
+    // A bar's items are REAL Avalonia controls in its named row, so this editor is a list of rows — one
+    // per item — and not a grid of cells. The KIND drop-down is the first thing in a row: it decides
+    // which controls the row is meant for, and the fields a kind does not use are disabled rather than
+    // removed, so the columns stay put while the eye moves down them. Nothing is written until Save,
+    // which posts the whole list: the panel replaces the bar row's children with it.
+    let cmdEdit = null;
+
+    /** The name prefix a new item of each kind gets, matching the names the designer's own snippets use. */
+    const CMD_NAME_PREFIX = {
+        Label: 'lbl', TextBox: 'txt', Button: 'btn', Separator: 'sep',
+        ToggleButton: 'tgl', RadioButton: 'rad', IconButton: 'ico'
+    };
+
+    function cmdKindInfo(kind) {
+        return (cmdEdit ? cmdEdit.kinds.find((k) => k.kind === kind) : null) || null;
+    }
+
+    /** A unique item name of the shape the designer uses (`btn1`, `txt2`, …). */
+    function cmdNewName(kind) {
+        const prefix = CMD_NAME_PREFIX[kind] || 'item';
+        const used = new Set(cmdEdit.items.map((i) => i.name));
+        for (let n = 1; n < 1000; n++) {
+            if (!used.has(prefix + n)) return prefix + n;
+        }
+        return prefix + '1';
+    }
+
+    /** The handler a newly chosen event gets — the same `control_Event` shape the designer writes. */
+    function cmdHandlerFor(name, event) {
+        return name && event ? name + '_' + event : '';
+    }
+
+    function openCommandEditor(name, info) {
+        cmdEdit = {
+            name: name || null,
+            spacing: info.spacing === '' || info.spacing === undefined || info.spacing === null
+                ? '6' : String(info.spacing),
+            kinds: Array.isArray(info.kinds) ? info.kinds : [],
+            icons: Array.isArray(info.icons) ? info.icons : [],
+            items: (Array.isArray(info.items) ? info.items : []).map((i) => Object.assign({}, i))
+        };
+        els.cmdTitle.textContent = 'Items' + (cmdEdit.name ? ' \u2014 ' + cmdEdit.name : '');
+        els.cmdSpacing.value = cmdEdit.spacing;
+        els.cmdHint.textContent = '';
+        renderCommandRows();
+        els.cmdModal.hidden = false;
+    }
+
+    function closeCommandEditor() {
+        els.cmdModal.hidden = true;
+        cmdEdit = null;
+    }
+
+    /** A <select> of the kinds, or a fixed label for an item this editor does not know. */
+    function cmdKindCell(td, item, index) {
+        if (item.other) {
+            td.textContent = 'Other — ' + item.other;
+            return;
+        }
+        const select = document.createElement('select');
+        select.dataset.field = 'kind';
+        select.dataset.index = String(index);
+        cmdEdit.kinds.forEach((k) => {
+            const option = document.createElement('option');
+            option.value = k.kind;
+            option.textContent = k.label;
+            if (k.kind === item.kind) option.selected = true;
+            select.appendChild(option);
+        });
+        td.appendChild(select);
+    }
+
+    /** A plain text input bound to a field of the item at `index`. */
+    function cmdInputCell(td, field, item, index, disabled, placeholder) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.dataset.field = field;
+        input.dataset.index = String(index);
+        input.value = item[field] === undefined || item[field] === null ? '' : String(item[field]);
+        if (disabled) input.disabled = true;
+        if (placeholder) input.placeholder = placeholder;
+        td.appendChild(input);
+    }
+
+    /** The icon cell: the built-in set, a “From file…” button, and what was imported from disk. The
+     *  controls STAY where they are and are disabled for a kind with no icon, so the row's columns do not
+     *  move as the kind changes — the same rule the field cells follow. */
+    function cmdIconCell(td, item, index, info) {
+        const select = document.createElement('select');
+        select.dataset.field = 'icon';
+        select.dataset.index = String(index);
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = item.iconFile ? '(from file)' : '(none)';
+        select.appendChild(none);
+        cmdEdit.icons.forEach((icon) => {
+            const option = document.createElement('option');
+            option.value = icon.name;
+            option.textContent = icon.label;
+            if (icon.name === item.icon && !item.iconFile) option.selected = true;
+            select.appendChild(option);
+        });
+        if (item.iconFile || !info || !info.icon) select.disabled = true;
+        td.appendChild(select);
+
+        const pick = document.createElement('button');
+        pick.type = 'button';
+        pick.className = 'modal-btn cmd-mini';
+        pick.textContent = 'From file…';
+        pick.title = 'Copy an image from this machine into the project\u2019s Assets folder and use it here';
+        pick.dataset.pick = String(index);
+        if (!info || !info.icon) pick.disabled = true;
+        td.appendChild(pick);
+
+        if (item.iconFile) {
+            const label = document.createElement('span');
+            label.className = 'cmd-iconfile';
+            label.textContent = item.iconFileLabel || item.iconFile.split('/').pop();
+            label.title = item.iconFile;
+            td.appendChild(label);
+            const clear = document.createElement('button');
+            clear.type = 'button';
+            clear.className = 'modal-btn cmd-mini';
+            clear.textContent = '\u00d7';
+            clear.title = 'Go back to a built-in icon';
+            clear.dataset.clearicon = String(index);
+            td.appendChild(clear);
+        }
+    }
+
+    /** The event cell: the events that make sense for the kind, and the handler method it names. */
+    function cmdEventCell(td, item, index, info) {
+        const select = document.createElement('select');
+        select.dataset.field = 'event';
+        select.dataset.index = String(index);
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = '(none)';
+        select.appendChild(none);
+        if (info && info.event) {
+            const option = document.createElement('option');
+            option.value = info.event;
+            option.textContent = info.event;
+            if (item.event === info.event) option.selected = true;
+            select.appendChild(option);
+        }
+        if (!info || !info.event) select.disabled = true;
+        td.appendChild(select);
+    }
+
+    function renderCommandRows() {
+        if (!cmdEdit) return;
+        els.cmdRows.textContent = '';
+        cmdEdit.items.forEach((item, index) => {
+            const info = cmdKindInfo(item.kind);
+            const tr = document.createElement('tr');
+            tr.dataset.index = String(index);
+            // A CHILD item (a submenu entry the bar copied from the Menu bar) is indented and carries
+            // the marker below, so the table shows the same hierarchy the bar draws. The depth travels
+            // with the item — moving it up or down does not make it a parent again.
+            const depth = Math.max(0, Number(item.child) || 0);
+            tr.dataset.child = String(depth);
+            if (item.other) tr.className = 'cmd-other';
+            else if (depth > 0) tr.classList.add('cmd-child');
+
+            const order = document.createElement('td');
+            order.className = 'cmd-actions';
+            if (!item.other) {
+                const up = document.createElement('button');
+                up.type = 'button'; up.className = 'modal-btn cmd-mini'; up.textContent = '\u2191';
+                up.title = 'Move up'; up.dataset.move = String(index); up.dataset.dir = '-1';
+                const down = document.createElement('button');
+                down.type = 'button'; down.className = 'modal-btn cmd-mini'; down.textContent = '\u2193';
+                down.title = 'Move down'; down.dataset.move = String(index); down.dataset.dir = '1';
+                order.appendChild(up);
+                order.appendChild(down);
+            }
+            tr.appendChild(order);
+
+            const kindTd = document.createElement('td');
+            kindTd.className = 'cmd-kind' + (depth > 0 ? ` cmd-indent-${Math.min(depth, 3)}` : '');
+            if (depth > 0) {
+                const mark = document.createElement('span');
+                mark.className = 'cmd-childmark';
+                mark.textContent = '\u21B3';            // ↳ a submenu entry, not a top-level one
+                mark.title = depth === 1
+                    ? 'Child item: this entry sits inside a submenu of the Menu bar'
+                    : `Child item: nested ${depth} levels deep in the Menu bar`;
+                kindTd.appendChild(mark);
+            }
+            cmdKindCell(kindTd, item, index);
+            tr.appendChild(kindTd);
+
+            const nameTd = document.createElement('td');
+            cmdInputCell(nameTd, 'name', item, index, !!item.other,
+                info && info.event ? 'required for an event' : 'optional');
+            tr.appendChild(nameTd);
+
+            const textTd = document.createElement('td');
+            cmdInputCell(textTd, 'text', item, index, !info || !info.caption);
+            tr.appendChild(textTd);
+
+            const widthTd = document.createElement('td');
+            widthTd.className = 'cmd-narrow';
+            cmdInputCell(widthTd, 'width', item, index, !!item.other, 'auto');
+            tr.appendChild(widthTd);
+
+            const heightTd = document.createElement('td');
+            heightTd.className = 'cmd-narrow';
+            cmdInputCell(heightTd, 'height', item, index, !!item.other, 'auto');
+            tr.appendChild(heightTd);
+
+            const iconTd = document.createElement('td');
+            cmdIconCell(iconTd, item, index, info);
+            tr.appendChild(iconTd);
+
+            const sizeTd = document.createElement('td');
+            sizeTd.className = 'cmd-narrow';
+            cmdInputCell(sizeTd, 'iconSize', item, index, !info || !info.icon, '16');
+            tr.appendChild(sizeTd);
+
+            const groupTd = document.createElement('td');
+            cmdInputCell(groupTd, 'group', item, index, !info || !info.group, 'group');
+            tr.appendChild(groupTd);
+
+            const eventTd = document.createElement('td');
+            cmdEventCell(eventTd, item, index, info);
+            tr.appendChild(eventTd);
+
+            const handlerTd = document.createElement('td');
+            cmdInputCell(handlerTd, 'handler', item, index, !info || !info.event, 'auto');
+            tr.appendChild(handlerTd);
+
+            const remove = document.createElement('td');
+            remove.className = 'cmd-actions';
+            if (!item.other) {
+                const del = document.createElement('button');
+                del.type = 'button'; del.className = 'modal-btn cmd-mini warning'; del.textContent = '\u2715';
+                del.title = 'Remove this item'; del.dataset.remove = String(index);
+                remove.appendChild(del);
+            }
+            tr.appendChild(remove);
+
+            els.cmdRows.appendChild(tr);
+        });
+        const known = cmdEdit.items.filter((i) => !i.other).length;
+        const others = cmdEdit.items.length - known;
+        els.cmdSummary.textContent = `${known} item${known === 1 ? '' : 's'}`
+            + (others > 0 ? ` + ${others} kept as they are` : '');
+        const hint = cmdKindInfo('Button');
+        if (hint && els.cmdHint.textContent === '') els.cmdHint.textContent = hint.hint;
+    }
+
+    /** Reads the table back into items. The DOM is the source of truth here, so nothing is lost to a
+     *  stale copy of a field the user typed into and never blurred. */
+    function commandItemsFromTable() {
+        const items = [];
+        cmdEdit.items.forEach((item, index) => {
+            if (item.other) return;         // kept by the model, never rewritten from here
+            const row = els.cmdRows.querySelector(`tr[data-index="${index}"]`);
+            const read = (field) => {
+                const el = row ? row.querySelector(`[data-field="${field}"]`) : null;
+                return el ? el.value : '';
+            };
+            const name = read('name').trim();
+            const event = read('event');
+            items.push({
+                kind: read('kind'),
+                name: name,
+                text: read('text'),
+                width: read('width').trim(),
+                height: read('height').trim(),
+                icon: read('icon'),
+                iconFile: item.iconFile || '',
+                iconSize: read('iconSize').trim(),
+                // The child depth is NOT a field in the table — it rides on the row, so it survives
+                // every edit and save (the model writes it back as `Classes="cmdChild"` + indent).
+                child: Math.max(0, Number(row && row.dataset.child) || 0),
+                group: read('group').trim(),
+                event: event,
+                handler: read('handler').trim() || cmdHandlerFor(name, event)
+            });
+        });
+        return items;
+    }
+
+    function addCommandItem() {
+        if (!cmdEdit || cmdEdit.kinds.length === 0) return;
+        // A Button is the shape most bars start with; the row's drop-down changes it from there.
+        const info = cmdKindInfo('Button') || cmdEdit.kinds[0];
+        const kind = info.kind;
+        cmdEdit.items.push({
+            kind: kind, name: cmdNewName(kind),
+            text: info.caption ? info.label : '', width: '', height: '',
+            icon: kind === 'IconButton' ? (cmdEdit.icons[0] ? cmdEdit.icons[0].name : '') : '',
+            iconFile: '', iconSize: '', group: '', event: '', handler: '',
+            child: 0                     // a new item is a top-level one; children come from the Menu
+        });
+        renderCommandRows();
+        const rows = els.cmdRows.querySelectorAll('input[data-field="name"]');
+        const last = rows[rows.length - 1];
+        if (last) { last.focus(); last.select(); }
+    }
+
+    els.cmdAdd.addEventListener('click', addCommandItem);
+    els.cmdCancel.addEventListener('click', closeCommandEditor);
+    els.cmdSave.addEventListener('click', () => {
+        if (!cmdEdit) return;
+        vscode.postMessage({
+            type: 'saveCommands',
+            name: cmdEdit.name,
+            spacing: String(Math.max(0, Math.round(Number(els.cmdSpacing.value) || 0))),
+            items: commandItemsFromTable()
+        });
+        closeCommandEditor();
+    });
+    // One delegate for the whole table: rows are rebuilt often, so per-element listeners would leak.
+    els.cmdRows.addEventListener('change', (e) => {
+        if (!cmdEdit) return;
+        const target = e.target;
+        const index = Number(target && target.dataset ? target.dataset.index : -1);
+        if (!(index >= 0) || index >= cmdEdit.items.length) return;
+        if (target.dataset.field === 'event') {
+            // Choosing an event (or '(none)') moves the item's handler with it: an event without a method
+            // would leave the form naming something the code-behind does not have.
+            const item = cmdEdit.items[index];
+            item.event = target.value;
+            item.handler = cmdHandlerFor(item.name, item.event);
+            const row = els.cmdRows.querySelector(`tr[data-index="${index}"]`);
+            const handlerInput = row ? row.querySelector('[data-field="handler"]') : null;
+            if (handlerInput) handlerInput.value = item.handler;
+            return;
+        }
+        if (target.dataset.field !== 'kind') return;
+        const previous = cmdEdit.items[index];
+        const info = cmdKindInfo(target.value);
+        // The kind changed: keep what still applies, drop what does not (an icon on a Text Box would be
+        // an attribute the control hasn't got), and re-render the row's fields around the new kind.
+        const next = {
+            kind: target.value,
+            name: previous.name,
+            text: info && info.caption ? previous.text : '',
+            width: previous.width,
+            height: previous.height,
+            icon: info && info.icon ? (previous.icon || (cmdEdit.icons[0] ? cmdEdit.icons[0].name : '')) : '',
+            iconFile: info && info.icon ? previous.iconFile : '',
+            iconSize: info && info.icon ? previous.iconSize : '',
+            group: info && info.group ? previous.group : '',
+            event: info && info.event ? previous.event : '',
+            handler: info && info.event ? previous.handler : ''
+        };
+        if (info && info.event && next.event && !next.handler) next.handler = cmdHandlerFor(next.name, next.event);
+        cmdEdit.items[index] = next;
+        renderCommandRows();
+    });
+    els.cmdRows.addEventListener('input', (e) => {
+        if (!cmdEdit) return;
+        const target = e.target;
+        if (!target || !target.dataset || target.dataset.field !== 'name') return;
+        const index = Number(target.dataset.index);
+        if (!(index >= 0) || index >= cmdEdit.items.length) return;
+        const item = cmdEdit.items[index];
+        const was = item.name;
+        item.name = target.value.trim();
+        // The handler follows the name while it is still the auto-generated one, so renaming a button
+        // does not leave `button1_Click` behind on a control called `save`.
+        const row = els.cmdRows.querySelector(`tr[data-index="${index}"]`);
+        const handlerInput = row ? row.querySelector('[data-field="handler"]') : null;
+        if (handlerInput && (!item.handler || item.handler === cmdHandlerFor(was, item.event))) {
+            item.handler = cmdHandlerFor(item.name, item.event);
+            handlerInput.value = item.handler;
+        }
+    });
+    els.cmdRows.addEventListener('click', (e) => {
+        if (!cmdEdit) return;
+        const target = e.target;
+        if (!target || !target.dataset) return;
+        if (target.dataset.move !== undefined) {
+            const index = Number(target.dataset.move);
+            const dir = Number(target.dataset.dir);
+            const to = index + dir;
+            if (index < 0 || index >= cmdEdit.items.length || to < 0 || to >= cmdEdit.items.length) return;
+            const moved = cmdEdit.items.splice(index, 1)[0];
+            cmdEdit.items.splice(to, 0, moved);
+            renderCommandRows();
+            return;
+        }
+        if (target.dataset.remove !== undefined) {
+            const index = Number(target.dataset.remove);
+            if (index >= 0 && index < cmdEdit.items.length) cmdEdit.items.splice(index, 1);
+            renderCommandRows();
+            return;
+        }
+        if (target.dataset.clearicon !== undefined) {
+            const index = Number(target.dataset.clearicon);
+            if (index >= 0 && index < cmdEdit.items.length) {
+                cmdEdit.items[index].iconFile = '';
+                cmdEdit.items[index].iconFileLabel = '';
+            }
+            renderCommandRows();
+            return;
+        }
+        if (target.dataset.pick !== undefined) {
+            // The image itself is chosen by the EXTENSION (it owns the file dialog); the answer comes back
+            // as 'commandIconPicked' with the row's index, because the dialog is asynchronous.
+            vscode.postMessage({ type: 'pickCommandIcon', name: cmdEdit.name, index: Number(target.dataset.pick) });
+        }
+    });
 
     function openSheetEditor(name, info) {
         const rows = Math.max(1, Math.min(500, Math.floor(Number(info.rows) || 50)));

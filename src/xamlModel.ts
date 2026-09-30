@@ -1,6 +1,7 @@
 import { DOMParser } from '@xmldom/xmldom';
 import { CHROME_TITLEBAR_HEIGHT } from './formTemplates';
 import { EVENT_ARGS, EVENTS_BY_CONTROL } from './controlEvents';
+import { sizeFloorCompanion } from './propertyCatalog';
 
 /** Local (namespace-stripped) name of a tag, e.g. "chrome:ChromeWindow" -> "ChromeWindow". */
 export function localName(tagName: string): string {
@@ -77,6 +78,14 @@ export const CHARTS_TAGS = [
  *  as CHARTS_TAGS above: sheetCells.ts imports THIS module, so the xmlns:spread declaration cannot be
  *  ensured by importing it back. */
 export const SHEET_TAGS = ['GrumpySheet'];
+
+/**
+ * The bundled AvaloniaChrome command bar (2026-09-29) — the replacement for Avalonia's withdrawn
+ * CommandBar family. Its ITEMS are ordinary Avalonia children, so only the tag itself is special:
+ * a snippet or a Commands-editor write must make the root declare xmlns:chrome for the XAML to
+ * compile. Kept as a list for symmetry with CHARTS_TAGS / SHEET_TAGS.
+ */
+export const COMMAND_BAR_TAGS = ['GrumpyCommandBar'];
 
 /**
  * Tags that are single-content containers (ContentControl / HeaderedContentControl
@@ -156,6 +165,20 @@ export interface Bounds { x: number; y: number; width: number; height: number; }
  */
 export class XamlModel {
     doc: Document;
+
+    /**
+     * The size each control's own ControlTheme forbids going below, by control name — the `MinWidth`/
+     * `MinHeight` the preview HOST reports for that control as it actually has them, refreshed with
+     * every frame by the panel. Empty until the first render, and 0 means "no floor".
+     *
+     * Why it lives here: a themed control's minimum beats an explicit `Height` (Avalonia's CommandBar
+     * theme ships `MinHeight="48"`, so `Height="30"` renders 48 tall and the user's number looks
+     * ignored — reported 2026-09-29). EVERY write of an explicit size has to know about it, and the
+     * first attempt at this fix only covered the Properties panel: the canvas resize handled wrote
+     * `Width`/`Height` directly (`resize()` below), so dragging the bar was still floored while typing
+     * a number worked. One rule, one place, every writer.
+     */
+    sizeFloors: Record<string, { w: number; h: number }> = {};
     private autoNames = new Map<Element, string>();
 
     constructor(xml: string) {
@@ -363,7 +386,7 @@ export class XamlModel {
         // GrumpyPanel / PathPicker are the bundled AvaloniaChrome controls (like ChromeWindow) —
         // their snippets use the `chrome` prefix, so the root must declare xmlns:chrome for the
         // XAML to compile.
-        if (localName(el.tagName) === 'GrumpyPanel' || localName(el.tagName) === 'PathPicker') {
+        if (localName(el.tagName) === 'GrumpyPanel' || localName(el.tagName) === 'PathPicker' || localName(el.tagName) === 'GrumpyCommandBar') {
             this.ensureChromeNamespace();
         }
         // GrumpyCharts is a second bundled control set (AvaloniaCharts) — its snippets use the
@@ -426,8 +449,72 @@ export class XamlModel {
                 el.setAttribute('Canvas.Left', String(Math.round(pos.x)));
                 el.setAttribute('Canvas.Top', String(Math.round(pos.y)));
             }
+            // A snippet that names its own edge (Menu / Status Bar / Command Bar) is a BAND, and a
+            // band appended after the panel's other children is handed only the leftovers — see
+            // `placeDockedBand`. No-op for every other container.
+            this.placeDockedBand(el);
         }
         return el;
+    }
+
+    /**
+     * Puts a Top/Bottom-docked child into its DockPanel's BAND GROUP.
+     *
+     * A DockPanel walks its children IN ORDER and takes each child's slice out of what is left of the
+     * remaining rectangle — so a Top/Bottom band spans the full remaining WIDTH only while it comes
+     * before every child docked Left/Right, and a child with no `DockPanel.Dock` at all defaults to
+     * Left. A band placed after such a child gets the leftovers instead: measured on the demo form
+     * 2026-09-30, a bar the designer had appended as the LAST child of `<DockPanel Name="Root">`
+     * rendered **76x24 at x=724** (TabControl1, docked Left by default, had already taken 724 of the
+     * 800 px), while the very same bar in front of the Body canvas rendered **0,54 800x24** — a
+     * full-width band under the Menu, exactly like the Menu itself. That is the whole of *"Dock Top
+     * does not fill the complete top space"* / *"refer to the Menu bar which docks are correct"*: the
+     * Menu is right because nothing precedes it, and the bar was wrong only because of where it sat
+     * in the child list.
+     *
+     * Only the first sibling that would eat the width is used as the insertion point, and only when
+     * such a sibling actually PRECEDES the child — a band that already spans its panel is left alone,
+     * so this never reshuffles a well-formed form. Returns true when the child had to move.
+     */
+    placeDockedBand(el: Element): boolean {
+        const parent = el.parentNode as Element | null;
+        if (!parent || parent.nodeType !== 1) return false;
+        if (localName(parent.tagName) !== 'DockPanel') return false;
+        const edge = (el.getAttribute('DockPanel.Dock') || '').trim().toLowerCase();
+        if (edge !== 'top' && edge !== 'bottom') return false; // Left/Right keep their band in any order
+        // Property elements (<Menu.Styles>) are not laid out, so they never stand in the way.
+        const kids = elementChildren(parent).filter((k) => !localName(k.tagName).includes('.'));
+        const myIndex = kids.indexOf(el);
+        const beforeMe = myIndex >= 0 ? kids.slice(0, myIndex) : kids; // a fresh element lands LAST
+        const blocker = beforeMe.find((k) => {
+            const e = (k.getAttribute('DockPanel.Dock') || '').trim().toLowerCase();
+            return e !== 'top' && e !== 'bottom';
+        });
+        if (!blocker) return false; // nothing is eating our width — leave the child where it is
+        parent.insertBefore(el, blocker);
+        return true;
+    }
+
+    /**
+     * Repairs every DockPanel in the document: a Top/Bottom-docked child that a Left/Right-docked (or
+     * undocked = Left) sibling stands in front of is moved back into its band group. Run when a
+     * document is opened, so a form saved by an earlier build — where the drop appended the band last
+     * and the panel got `LastChildFill="False"` as the workaround — shows the band it asked for
+     * without the user having to re-dock the control by hand. Returns how many children moved.
+     */
+    normaliseDockBands(): number {
+        let moved = 0;
+        const walk = (el: Element): void => {
+            if (localName(el.tagName) === 'DockPanel') {
+                // Snapshot the list: placeDockedBand moves children around while we iterate.
+                for (const kid of elementChildren(el).filter((k) => !localName(k.tagName).includes('.'))) {
+                    if (this.placeDockedBand(kid)) moved++;
+                }
+            }
+            for (const kid of elementChildren(el)) walk(kid);
+        };
+        walk(this.root);
+        return moved;
     }
 
     /** Parses a single-element XAML fragment and returns the element (not yet attached). */
@@ -443,6 +530,9 @@ export class XamlModel {
     setProperty(el: Element, key: string, value: string): void {
         // Rotation isn't a plain attribute — it's written as a RenderTransform property element.
         if (key === 'Angle') { this.setImageAngle(el, value); return; }
+        // An explicit size can be floored by the control's own theme: writing it means writing the
+        // companion minimum too (see `writeSize`).
+        if (key === 'Width' || key === 'Height') { this.writeSize(el, key, value); return; }
         // A Rectangle's single 'Corner Radius' (designer-only key) is stored as RadiusX AND
         // RadiusY — they are always identical, so one field writes/clears both.
         if (key === 'Radius') {
@@ -588,7 +678,15 @@ export class XamlModel {
             return;
         }
         const m = parseMargin(el.getAttribute('Margin'));
-        el.setAttribute('Margin', `${round1(m.l + dx)},${round1(m.t + dy)},${round1(m.r)},${round1(m.b)}`);
+        // INSIDE A DOCKPANEL A MARGIN CANNOT GO NEGATIVE. A docked control is placed by its band, and
+        // Avalonia draws it at the band's rect plus its margin — so dragging one left/up used to write
+        // `Margin="-724,0,0,0"`, which drew a Top-docked command bar 724 px outside its own band and
+        // left the top of the form looking EMPTY (reported 2026-09-30: *"Dock Top does not fill the
+        // complete top space"*). A POSITIVE margin is a legitimate inset and still passes through, and a
+        // control on a Canvas keeps its free coordinates (that branch returns above).
+        const docked = !!parent && localName(parent.tagName) === 'DockPanel';
+        const keep = (v: number): number => (docked ? Math.max(0, round1(v)) : round1(v));
+        el.setAttribute('Margin', `${keep(m.l + dx)},${keep(m.t + dy)},${keep(m.r)},${keep(m.b)}`);
     }
 
     resize(el: Element, dx: number, dy: number, bounds: Bounds, corner: string): void {
@@ -622,8 +720,35 @@ export class XamlModel {
             const mt = corner.includes('n') ? Math.round(m.t + dy) : m.t;
             el.setAttribute('Margin', `${ml},${mt},${m.r},${m.b}`);
         }
-        el.setAttribute('Width', String(Math.round(w)));
-        el.setAttribute('Height', String(Math.round(h)));
+        // Through writeSize, NOT setAttribute: a dragged height is the same promise as a typed one, and a
+        // themed control's own minimum would silently clamp it otherwise (the CommandBar reported on
+        // 2026-09-29: dragging it kept it 48 tall while the Properties row appeared to work).
+        this.writeSize(el, 'Width', String(Math.round(w)));
+        this.writeSize(el, 'Height', String(Math.round(h)));
+    }
+
+    /** The floor this control's theme puts under `key` ('Width'/'Height'), 0 when it has none. */
+    sizeFloorFor(el: Element, key: 'Width' | 'Height'): number {
+        const name = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+        const floor = this.sizeFloors[name];
+        if (!floor) return 0;
+        return key === 'Height' ? floor.h : floor.w;
+    }
+
+    /**
+     * Writes `Width`/`Height` — and the companion `MinWidth`/`MinHeight` that makes the value WIN over
+     * the control's own themed minimum (`sizeFloorFor` + `sizeFloorCompanion`, which is where the rule
+     * itself lives and is tested). Everything that sets a size goes through here: the Properties panel's
+     * rows, a multi-select edit, the same-width/height tools, the canvas resize handles, and the dock's
+     * thickness — so the behaviour cannot differ by door.
+     */
+    writeSize(el: Element, key: 'Width' | 'Height', value: string): void {
+        const minKey = key === 'Height' ? 'MinHeight' : 'MinWidth';
+        const companion = sizeFloorCompanion(value, el.getAttribute(key), el.getAttribute(minKey),
+            this.sizeFloorFor(el, key));
+        if (companion !== undefined) this.setProperty(el, minKey, companion);
+        if (value === '') el.removeAttribute(key);
+        else el.setAttribute(key, value);
     }
 
     /**
@@ -924,6 +1049,15 @@ export class XamlModel {
         this.moveTo(el, p);                       // strips Canvas.* (the dock owns the placement now)
         p.insertBefore(el, canvas);               // before the Canvas = the Canvas stays the fill child
         if (!p.getAttribute('LastChildFill')) p.setAttribute('LastChildFill', 'True');
+        // A docked control's MARGIN is not a position, and a negative one is always a leftover of
+        // dragging it around a free-placement Canvas: the host draws a child at its own box plus its
+        // margin, so `Margin="-724,0,0,0"` pushed a docked command bar 724 px left of the band it was
+        // given — which reads as "it does not dock" (reported 2026-09-30). A margin the user chose
+        // (a positive one, i.e. spacing) is left alone.
+        const margin = el.getAttribute('Margin');
+        if (margin && margin.trim().split(/[\s,]+/).some((part) => Number(part) < 0)) {
+            el.removeAttribute('Margin');
+        }
         return p;
     }
 

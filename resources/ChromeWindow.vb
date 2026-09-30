@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.13.3
+' BUNDLED-COPY: 0.13.19
 ' ============================================================================
 '  ChromeWindow.vb — Reusable frameless Avalonia window with a built-in
 '  "LinuxHelper-style" custom titlebar (dark bar, icon, centred title,
@@ -34,7 +34,16 @@ Imports Avalonia.Layout
 Imports Avalonia.Media
 Imports Avalonia.Styling
 
-Namespace AvaloniaChrome
+' Global. is REQUIRED (fixed 2026-09-29). A VB project sets RootNamespace to the project's own name, so a
+' plain `Namespace AvaloniaChrome` declares `<Project>.AvaloniaChrome`; VB then resolves the
+' UNQUALIFIED name `AvaloniaChrome.ChromeWindow` to that root-relative namespace, which SHADOWS the real
+' one — and every chrome type that IS declared globally (PathPicker, GrumpyPanel, GrumpyCharts, the
+' generated GrumpyCommandBar) disappears with it. Measured in a generated VB project: one twin written
+' without Global. fails the whole build with "BC30002: Type 'AvaloniaChrome.ChromeWindow' is not
+' defined", pointing at the code-behind rather than at the file that caused it. With Global. the CLR
+' namespace is exactly AvaloniaChrome (identical when RootNamespace is empty, so nothing else changes).
+' Timer.vb was the other twin missing it. NEVER write a bundled VB namespace without Global.
+Namespace Global.AvaloniaChrome
 
     ''' <summary>
     ''' A frameless <see cref="Window"/> with a built-in custom titlebar and

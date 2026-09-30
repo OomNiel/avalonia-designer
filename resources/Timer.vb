@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.13.3
+' BUNDLED-COPY: 0.13.19
 ' ============================================================================
 '  Timer.vb — a NON-VISUAL Timer component for a form (the WinForms Timer idea).
 '  (The C# twin is resources/Timer.cs — keep the two in step.)
@@ -43,7 +43,16 @@
 '  Version-agnostic across Avalonia 11.x/12.x (uses only the stable Control API and the BCL).
 ' ============================================================================
 
-Namespace AvaloniaChrome
+' Global. is REQUIRED (fixed 2026-09-29). A VB project sets RootNamespace to the project's own name, so a
+' plain `Namespace AvaloniaChrome` declares `<Project>.AvaloniaChrome`; VB then resolves the
+' UNQUALIFIED name `AvaloniaChrome.ChromeWindow` to that root-relative namespace, which SHADOWS the real
+' one — and every chrome type that IS declared globally (this Timer, PathPicker, GrumpyPanel, the
+' generated GrumpyCommandBar) disappears with it. Measured in a generated VB project: one twin written
+' without Global. fails the whole build with "BC30002: Type 'AvaloniaChrome.ChromeWindow' is not
+' defined", pointing at the code-behind rather than at the file that caused it. With Global. the CLR
+' namespace is exactly AvaloniaChrome (identical when RootNamespace is empty, so nothing else changes).
+' ChromeWindow.vb was the other twin missing it. NEVER write a bundled VB namespace without Global.
+Namespace Global.AvaloniaChrome
 
     ''' <summary>
     ''' A form component that calls <see cref="Tick"/> every <see cref="Interval"/> milliseconds on a

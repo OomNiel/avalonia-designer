@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { XamlModel, localName, SINGLE_CONTENT_TAGS, isEventAttribute, CHARTS_TAGS } from './xamlModel';
 import { isSheetTag, sheetInfoOf, writeSheetCells, writeSheetTracks } from './sheetCells';
+import { isCommandBarTag, commandItemsOf, commandRow, writeCommandItems, itemKindInfo, COMMAND_ITEM_KINDS, COMMAND_ICONS, COMMAND_ROW_SPACING_DEFAULT } from './commandItems';
 import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
     chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush, chartSlicesOf, writeChartSlices,
@@ -12,7 +13,7 @@ import {
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
 import { propertyDefsFor, opacityToXaml, defaultFor, THEME_COLOR_KEYS, multiCommonProps, isStatusClock, statusClockSample } from './propertyCatalog';
-import { defaultEventFor, hasDefaultEvent, handlerChoice, insertHandlerIntoCodeBehind, findHandlerInCodeBehind, insertStatusDateClock, insertXyTrackerClock, XyTrackerMode, getStatusDateSettings, setStatusDateSettings, removeHandlersFromCodeBehind, removeOrphanedHandlersForControls, renameControlInCodeBehind, syncVbAccessors, namedControlsInAxaml, unionNamedControls, findCodeBehindFile, convertCodeBehindToChrome, findItemsSourceBinding, bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet, removeItemsSourceBinding, bindFollowerToColumn, bindImageToGrid, unbindImageFromGrid, hasDataImageBinding, DataSetBindingRef, DataImageRef } from './codeBehind';
+import { defaultEventFor, hasDefaultEvent, handlerChoice, insertHandlerIntoCodeBehind, insertCommandBarFileHandlers, findHandlerInCodeBehind, insertStatusDateClock, insertXyTrackerClock, XyTrackerMode, getStatusDateSettings, setStatusDateSettings, removeHandlersFromCodeBehind, removeOrphanedHandlersForControls, renameControlInCodeBehind, syncVbAccessors, namedControlsInAxaml, unionNamedControls, findCodeBehindFile, convertCodeBehindToChrome, findItemsSourceBinding, bindControlToAsset, bindControlToDataSet, unbindControlFromDataSet, removeItemsSourceBinding, bindFollowerToColumn, bindImageToGrid, unbindImageFromGrid, hasDataImageBinding, DataSetBindingRef, DataImageRef } from './codeBehind';
 import {
     analyzeCodeBehind, applyLocalFix, backupCodeBehind, publishIssues, controlsForCheck, issueSignature,
     CodeIssue, CheckOptions, DataSetContext, DataSetFollowerInfo, DataSetGridInfo, DataSetImageInfo
@@ -400,7 +401,18 @@ function mirrorAnchorDock(el: Element, value: string): void {
     const top = parent.parentNode as Element | null;
     if (top && top.nodeType === 1 && /window|usercontrol|chrome/i.test(localName(top.tagName))) return;
     const dock = dockEdgeForAnchor(value);
-    if (dock) el.setAttribute('DockPanel.Dock', dock);
+    if (!dock) return;
+    el.setAttribute('DockPanel.Dock', dock);
+    // The control is now placed by its band, so any free-positioning leftovers must go with it — a
+    // NEGATIVE margin especially: it draws the control outside the band it was just given, which reads
+    // as "the dock did nothing" (see XamlModel.move, and the report of 2026-09-30). Only a negative
+    // margin goes; a positive one is the author's inset (status-bar items live on `Margin="8,0,0,0"`).
+    el.removeAttribute('Canvas.Left');
+    el.removeAttribute('Canvas.Top');
+    const margin = el.getAttribute('Margin');
+    if (margin && margin.trim().split(/[\s,]+/).some((part) => Number(part) < 0)) {
+        el.removeAttribute('Margin');
+    }
 }
 
 /**
@@ -452,7 +464,14 @@ function paneBodyAsDockPanel(model: XamlModel, paneBody: Element): Element {
 
 function ensureDockPanelParent(model: XamlModel, el: Element): Element {
     const parent = el.parentNode as Element | null;
-    if (parent && localName(parent.tagName) === 'DockPanel') return parent;
+    if (parent && localName(parent.tagName) === 'DockPanel') {
+        // Already a DockPanel child — but a Top/Bottom band must also sit in the panel's BAND GROUP,
+        // in front of the children that would eat its width. Being in a DockPanel is not enough: a
+        // band appended after a Left-docked sibling is handed only the leftovers (see
+        // XamlModel.placeDockedBand — 76x24 at x=724 instead of a 800 px band).
+        model.placeDockedBand(el);
+        return parent;
+    }
 
     // A control dropped inside a SplitPanel pane docks WITHIN that pane (a pane is a region of the
     // split, not the form) — convert the pane's free-placement Canvas body into a DockPanel so the
@@ -1577,6 +1596,22 @@ function splitPanes(grid: Element, containerName: string): Element[] {
     return out;
 }
 
+/**
+ * Builds the model for an .axaml read from disk, repairing DockPanel band order on the way in.
+ *
+ * An earlier build docked a band by APPENDING it and flipping the panel's `LastChildFill` to False,
+ * which left the child after every Left-docked sibling — where a DockPanel hands a Top band only the
+ * leftovers (measured on the demo form: 76x24 at x=724 instead of a 800 px strip) while the Menu, a
+ * band that happens to come first, looked right. The repair is a pure reorder of children that are
+ * already docked, only when a sibling is actually standing in the way, so a form that lays out
+ * correctly is opened byte-for-byte unchanged (comments aside, which serialising drops anyway).
+ */
+function loadModel(text: string): XamlModel {
+    const model = new XamlModel(text);
+    model.normaliseDockBands();
+    return model;
+}
+
 /** In-memory document backed by an XamlModel. */
 export class DesignerDocument implements vscode.CustomDocument {
     model: XamlModel;
@@ -1592,7 +1627,7 @@ export class DesignerDocument implements vscode.CustomDocument {
     static async create(uri: vscode.Uri): Promise<DesignerDocument> {
         const data = await vscode.workspace.fs.readFile(uri);
         const text = Buffer.from(data).toString('utf8');
-        return new DesignerDocument(uri, new XamlModel(text));
+        return new DesignerDocument(uri, loadModel(text));
     }
 
     /**
@@ -1670,7 +1705,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     const doc = this.docs.get(key);
                     if (!panel || !doc || doc.dirty) return;
                     try {
-                        doc.model = new XamlModel(e.document.getText());
+                        doc.model = loadModel(e.document.getText());
+                        // A fresh model knows no floors — and the first edit after an undo is exactly when
+                        // nobody looks, so hand them back straight away (see refreshSizeFloors).
+                        this.refreshSizeFloors(doc);
                         void this.render(doc, panel);
                     } catch {
                         /* keep old model if the file is temporarily invalid */
@@ -1989,7 +2027,10 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         // a change on every refresh and needlessly rebuild the model.
                         if (text != null && withDesignerHeader(text) !== withDesignerHeader(doc.model.serialize(true))) {
                             try {
-                                doc.model = new XamlModel(text);
+                                doc.model = loadModel(text);
+                                // A fresh model knows no floors — and the first edit after an undo is exactly when
+                                // nobody looks, so hand them back straight away (see refreshSizeFloors).
+                                this.refreshSizeFloors(doc);
                                 doc.markSaved();
                             } catch {
                                 /* keep the current model if the file is mid-edit / temporarily invalid */
@@ -2537,6 +2578,29 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                                 ensureDockPanelParent(doc.model, el);
                                 const parent = el.parentNode as Element | null;
                                 const inDockPanel = !!parent && localName(parent.tagName) === 'DockPanel';
+                                if (!inDockPanel) {
+                                    // THE CONTROL IS INSIDE A CONTAINER THAT CANNOT DOCK IT — a
+                                    // GrumpyCommandBar's own frame (a Border), a Grid, a StackPanel.
+                                    // `ensureDockPanelParent` deliberately leaves it where its
+                                    // container put it, and then there is nowhere for a Dock to act.
+                                    //
+                                    // NOTHING IS WRITTEN. 'Fill' and 'None' are the designer's own
+                                    // WORDS, not Avalonia values (Avalonia's Dock is Left/Top/Right/
+                                    // Bottom), so falling through to the generic write put
+                                    // `DockPanel.Dock="Fill"` in the form — which does not compile:
+                                    // "AVLN3000: Unable to find suitable setter or adder for property
+                                    // Dock … for argument System.String" (reported 2026-09-30 on
+                                    // GrumpyCommandBar1Items, the item row INSIDE a command bar).
+                                    // The user is told, because a row that silently does nothing is
+                                    // the other half of the same complaint.
+                                    void vscode.window.showInformationMessage(
+                                        `Dock needs a DockPanel around the control: `
+                                        + `${el.getAttribute('x:Name') || el.getAttribute('Name') || localName(el.tagName)} `
+                                        + `sits inside a <${localName((parent ?? el).tagName)}>, which places its own children. `
+                                        + 'Drop the control on the form body (or wrap it in a DockPanel) and the Dock will take effect.'
+                                    );
+                                    return;
+                                }
                                 if (inDockPanel) {
                                     // Make docking actually work: clear leftover free-positioning
                                     // (Margin, Canvas.*) and the explicit size on the FREE axis so
@@ -2550,12 +2614,16 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                                     // Clear the FREE-axis size (the control stretches to fill it) but
                                     // keep/ensure the THICKNESS-axis size, so a docked strip stays
                                     // visible when switching docks (e.g. Left -> Bottom must not vanish).
-                                    if (value === 'Left' || value === 'Right' || value === 'Fill') el.removeAttribute('Height');
-                                    if (value === 'Top' || value === 'Bottom' || value === 'Fill') el.removeAttribute('Width');
+                                    // Both go through the model's own size writer, so clearing a size takes
+                                    // a companion minimum the designer wrote with it, and setting one below
+                                    // the control's themed floor writes that minimum (a CommandBar cannot be
+                                    // 24 px tall — its theme floors it at 48).
+                                    if (value === 'Left' || value === 'Right' || value === 'Fill') doc.model.writeSize(el, 'Height', '');
+                                    if (value === 'Top' || value === 'Bottom' || value === 'Fill') doc.model.writeSize(el, 'Width', '');
                                     if (value === 'Left' || value === 'Right') {
-                                        if (!el.getAttribute('Width')) el.setAttribute('Width', '200');
+                                        if (!el.getAttribute('Width')) doc.model.writeSize(el, 'Width', String(Math.max(200, doc.model.sizeFloorFor(el, 'Width'))));
                                     } else if (value === 'Top' || value === 'Bottom') {
-                                        if (!el.getAttribute('Height')) el.setAttribute('Height', '24');
+                                        if (!el.getAttribute('Height')) doc.model.writeSize(el, 'Height', String(Math.max(24, doc.model.sizeFloorFor(el, 'Height'))));
                                     }
                                     // A dock hands the control a REGION, and the control has to FILL it —
                                     // but most of them do not do that on their own: every THEMED control
@@ -2582,6 +2650,14 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                                     // so the user's choice actually applies:
                                     //   side dock on the last child -> LastChildFill=False (it docks)
                                     //   Fill                        -> move to last + LastChildFill=True
+                                    //
+                                    // A Top/Bottom band is placed by its band group, not by the
+                                    // LastChildFill toggle: a band is only honoured as a full-width
+                                    // strip while it comes before the children docked Left (or not
+                                    // docked at all, which means Left). Moving it there is what makes
+                                    // a re-docked bar behave like the Menu instead of a stub in the
+                                    // corner — the second half of 2026-09-30's report.
+                                    if (value === 'Top' || value === 'Bottom') doc.model.placeDockedBand(el);
                                     let isLastChild = true;
                                     for (let sib = el.nextSibling; sib; sib = sib.nextSibling) {
                                         if (sib.nodeType === 1) { isLastChild = false; break; }
@@ -2641,7 +2717,23 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                         if (value && CHROME_ROOT_PROPS.has(msg.key) && localName(el.tagName) === 'ChromeWindow') {
                             this.ensureBundledComponentsCurrent(doc);
                         }
+                        // A Height/Width below the floor the control's own theme sets is silently
+                        // clamped (Avalonia's CommandBar ships MinHeight=48, so Height="30" rendered 48
+                        // and the row looked dead) — `XamlModel.setProperty` writes the companion
+                        // minimum that makes the user's number win, for every path that sets a size.
                         doc.model.setProperty(el, msg.key, value);
+                        // …and it says so in the designer's own log, because "the number is written but
+                        // the control ignores it" is a claim that needs the two facts that explain it:
+                        // what the theme floors the control at, and what the XAML now holds.
+                        if (msg.key === 'Height' || msg.key === 'Width') {
+                            const minKey = msg.key === 'Height' ? 'MinHeight' : 'MinWidth';
+                            const floor = doc.model.sizeFloorFor(el, msg.key);
+                            aiLog(this.context, `Size edit: ${msg.key}="${value || '(cleared)'}" on `
+                                + `${el.getAttribute('x:Name') || el.getAttribute('Name') || localName(el.tagName)}`
+                                + ` — the control's own floor is ${floor > 0 ? `${floor} px` : 'none'}`
+                                + `${floor > 0 ? `, so the designer wrote ${minKey}="${el.getAttribute(minKey) || ''}"` : ''}`
+                                + `; XAML now ${msg.key}="${el.getAttribute(msg.key) || '(none)'}"`);
+                        }
                     }
                     this.notifyEdit(doc, panel, before);
                     await this.render(doc, panel);
@@ -2712,6 +2804,18 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     if (placedEl && placedEl.hasAttribute('DockPanel.Dock')) {
                         try { ensureDockPanelParent(doc.model, placedEl); }
                         catch { /* leave it where it was dropped */ }
+                    }
+                    // A GrumpyCommandBar arrives with WORKING sample items — a File Open… and a File
+                    // Save… button that open Avalonia's own file dialogs — and their handlers are real
+                    // code, not empty stubs (asked 2026-09-30: "Those buttons must implement file open
+                    // and file save dialogs"). Written once, on the drop; if the user deletes them the
+                    // designer does not put them back.
+                    if (placedEl && isCommandBarTag(localName(placedEl.tagName))) {
+                        const barName = placedEl.getAttribute('x:Name') || placedEl.getAttribute('Name') || '';
+                        if (barName) {
+                            try { await insertCommandBarFileHandlers(doc.uri, barName); }
+                            catch { /* a form with no code-behind keeps the sample buttons without code */ }
+                        }
                     }
                     // A freshly placed control with NO explicit Dock must not silently become
                     // DockPanel 'Fill' just because it lands as the DockPanel's last child (a plain
@@ -2830,6 +2934,12 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     // <chrome:PathPicker> will not compile.
                     if (msg.tag === 'PathPicker' || msg.tag === 'PathPickerFolder') {
                         this.ensurePathPickerHelper(doc);
+                    }
+                    // Grumpy Command Bar: every project that predates it needs GrumpyCommandBar.cs/.vb
+                    // next to ChromeWindow, or the saved <chrome:GrumpyCommandBar> — and every item
+                    // written inside it — will not compile.
+                    if (msg.tag === 'GrumpyCommandBar') {
+                        this.ensureGrumpyCommandBarHelper(doc);
                     }
                     // Charts: same story — a project created before GrumpyCharts existed needs
                     // GrumpyCharts.cs/.vb next to ChromeWindow, or the saved <charts:…> won't compile.
@@ -3506,6 +3616,59 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     await this.sendProperties(doc, panel, msg.name);
                     return;
                 }
+                case 'saveCommands': {
+                    // 'Edit items…' on a GrumpyCommandBar: the bar's items (real child controls in its
+                    // named row) and the row's spacing. The list is rewritten whole — the editor is the
+                    // source of truth for the kinds it knows, while a control the user dropped into the
+                    // bar by hand is carried over (see writeCommandItems).
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || !isCommandBarTag(localName(el.tagName))) return;
+                    const before = doc.model.serialize(true);
+
+                    // Event handlers FIRST, and only for the items whose stub really landed: the item
+                    // element names its handler, so an event written without one leaves the form naming a
+                    // method that does not exist and the app will not compile. An item whose stub could
+                    // not be inserted (no code-behind could be found or created) is saved WITHOUT the
+                    // event, and the editor is told why.
+                    const items = Array.isArray(msg.items) ? msg.items : [];
+                    const noStub: string[] = [];
+                    for (const raw of items) {
+                        if (!raw || typeof raw !== 'object') continue;
+                        const item = raw as Record<string, unknown>;
+                        const event = String(item.event ?? '');
+                        const handler = String(item.handler ?? '');
+                        if (!event || !handler) continue;
+                        let landed = false;
+                        try {
+                            landed = !!(await insertHandlerIntoCodeBehind(
+                                doc.uri, handler, event, itemKindInfo(String(item.kind ?? ''))?.tag));
+                        } catch { landed = false; }
+                        if (!landed) {
+                            item.event = '';
+                            item.handler = '';
+                            noStub.push(handler);
+                        }
+                    }
+                    writeCommandItems(doc.model, el, items);
+                    const row = commandRow(el);
+                    if (row) {
+                        const spacing = String(msg.spacing ?? '');
+                        doc.model.setProperty(row, 'Spacing',
+                            spacing === '' ? String(COMMAND_ROW_SPACING_DEFAULT) : spacing);
+                    }
+                    // The saved <chrome:GrumpyCommandBar> needs the project's bundled copy to be current.
+                    this.ensureGrumpyCommandBarHelper(doc);
+                    this.notifyEdit(doc, panel, before);
+                    await this.render(doc, panel);
+                    await this.sendProperties(doc, panel, msg.name);
+                    if (noStub.length > 0) {
+                        void vscode.window.showWarningMessage(
+                            `Could not add a handler for ${noStub.join(', ')} — the item was saved without its event. `
+                            + 'Open the form\'s code-behind (or use the designer once) and try again.'
+                        );
+                    }
+                    return;
+                }
                 case 'requestSheets': {
                     // The Data Selector's page dropdown asks for the workbook's own sheet names. The
                     // HOST reads them (it has the file system and the zip reader); a file that cannot
@@ -3892,9 +4055,50 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                     void vscode.window.showInformationMessage(`Bundled "${path.basename(picked[0].fsPath)}" into Assets and set ${key} to ${avares}.`);
                     return;
                 }
+                case 'pickCommandIcon': {
+                    // "From file…" in the Commands editor: pick an image on this machine and use it as
+                    // an item's icon. The file is BUNDLED into the project (bundledProjectFile copies it
+                    // into `Assets`, registers `Assets/**` as an AvaloniaResource and hands back the
+                    // `avares://` URI) rather than referenced by an absolute path: a bar whose icon lives
+                    // at `/home/me/pictures/save.png` would break for everyone else — and on the author's
+                    // own machine as soon as the file moves. The reply carries the row INDEX, because the
+                    // editor may have several icon items and the dialog is asynchronous.
+                    const picked = await (async () => {
+                        const startFolder = lastPickerFolder('icon');
+                        const chosen = await vscode.window.showOpenDialog({
+                            canSelectMany: false,
+                            filters: { Icons: ['png', 'jpg', 'jpeg', 'bmp', 'ico', 'webp'], 'All files': ['*'] },
+                            defaultUri: startFolder ? vscode.Uri.file(startFolder) : undefined,
+                            title: 'Select an icon for this item'
+                        });
+                        if (!chosen || chosen.length === 0) return undefined;
+                        await rememberPickerFile('icon', chosen[0].fsPath);
+                        return chosen[0].fsPath;
+                    })();
+                    if (!picked) return;
+                    const proj = findProject(doc.uri);
+                    if (!proj) {
+                        void vscode.window.showWarningMessage(
+                            'No .csproj/.vbproj found near this form, so the icon can\'t be bundled into it. '
+                            + 'Copy the file into the project yourself and type its avares:// URI instead.'
+                        );
+                        return;
+                    }
+                    const avares = this.bundleProjectFile(proj, picked);
+                    if (!avares) {
+                        void vscode.window.showErrorMessage('Could not copy the icon into the project\'s Assets folder.');
+                        return;
+                    }
+                    void panel.webview.postMessage({
+                        type: 'commandIconPicked',
+                        index: Number(msg.index ?? -1),
+                        uri: avares,
+                        label: path.basename(picked)
+                    });
+                    return;
+                }
                 case 'pickItemsSource': {
                     // Items Source asset picker: manages EVERY way a control's items can be bound —
-                    // a DataSet table (the same binding the DataSet designer's "Bind to control"
                     // dropdown creates) or a code collection. From here you can bind, switch, or
                     // clear, and each action stays in sync with the owning .adset (and repaints any
                     // DataSet designer panel that has that file open), so the two entry points to
@@ -4335,6 +4539,7 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             grids
         );
         this.frames.set(doc.uri.toString(), frame);
+        this.refreshSizeFloors(doc);
         // Dynamic Image-in-Grid tracking: an Image placed in a Grid cell follows its cell's CURRENT
         // size — whenever the cell resizes (grid resized, rows/columns edited, form resized), its
         // Width/Height are updated to keep filling the cell. The frame's gridCells hold the new cell
@@ -4830,6 +5035,27 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             fs.copyFileSync(src, p);
             void vscode.window.showInformationMessage(
                 `Added ${file} (GrumpyPanel is bundled with new projects — copied it in so this one compiles).`
+            );
+            return true;
+        } catch { return false; }
+    }
+
+    /** GrumpyCommandBar (the bundled AvaloniaChrome command bar that replaces Avalonia's own CommandBar
+     *  family, 2026-09-29) ships with every NEW project, like GrumpyPanel. A project created before it
+     *  existed needs the file next to ChromeWindow — otherwise the saved <chrome:GrumpyCommandBar>, and
+     *  every item written inside it, won't compile. Copy it in when it's missing. */
+    private ensureGrumpyCommandBarHelper(doc: DesignerDocument): boolean {
+        try {
+            const proj = findProject(doc.uri);
+            if (!proj) return false;
+            const file = proj.language === 'vb' ? 'GrumpyCommandBar.vb' : 'GrumpyCommandBar.cs';
+            const p = path.join(path.dirname(proj.projectUri.fsPath), file);
+            if (fs.existsSync(p)) return false;
+            const src = path.join(this.context.extensionUri.fsPath, 'resources', file);
+            if (!fs.existsSync(src)) return false;
+            fs.copyFileSync(src, p);
+            void vscode.window.showInformationMessage(
+                `Added ${file} (the Grumpy Command Bar is bundled with new projects — copied it in so this one compiles).`
             );
             return true;
         } catch { return false; }
@@ -5422,6 +5648,18 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         if (isSheetTag(localName(el.tagName))) {
             msg.sheetInfo = sheetInfoOf(el);
         }
+        // GrumpyCommandBar: the Commands editor's working copy — the bar's items, in row order, plus the
+        // row's own spacing. Same reason as the sheet's cells: the items are child ELEMENTS, so no
+        // property row can carry them, and the editor must open with what the form actually holds.
+        if (isCommandBarTag(localName(el.tagName))) {
+            const row = commandRow(el);
+            msg.commandInfo = {
+                items: commandItemsOf(doc.model, el),
+                spacing: row ? (row.getAttribute('Spacing') || '') : '',
+                kinds: COMMAND_ITEM_KINDS.map((k) => ({ kind: k.kind, label: k.label, caption: k.caption !== 'none', icon: k.icon, group: k.group, event: k.event, hint: k.hint })),
+                icons: COMMAND_ICONS.map((i) => ({ name: i.name, label: i.label }))
+            };
+        }
         await panel.webview.postMessage(msg);
     }
 
@@ -5599,6 +5837,32 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         return 28;
     }
 
+    /**
+     * Hands the model what the HOST says each control's own theme forbids going below — the `MinWidth`/
+     * `MinHeight` it reports as the control actually has them. Every explicit size the designer writes
+     * goes through `XamlModel.writeSize`, which needs this to write the companion minimum that lets the
+     * user's number win: Avalonia's CommandBar theme ships `MinHeight="48"`, so `Height="30"` rendered 48
+     * tall and the Properties row looked dead (reported 2026-09-29).
+     *
+     * Called after every frame AND after the model is re-parsed (undo, reload from disk), because a fresh
+     * `XamlModel` knows nothing — and the very first edit after an undo is exactly when nobody looks.
+     */
+    private refreshSizeFloors(doc: DesignerDocument): void {
+        const frame = this.frames.get(doc.uri.toString());
+        doc.model.sizeFloors = {};
+        if (!frame) return;
+        const num = (v: string | undefined): number => {
+            const n = Number(v);
+            return Number.isFinite(n) && n > 0 ? n : 0;
+        };
+        for (const c of frame.controls ?? []) {
+            if (!c.name) continue;
+            const w = num(c.values?.MinWidth);
+            const h = num(c.values?.MinHeight);
+            if (w > 0 || h > 0) doc.model.sizeFloors[c.name] = { w, h };
+        }
+    }
+
     /** The selected control's effective (theme-resolved) values from the last preview frame.
      *  The root (unnamed) control is matched by name === null. */
     private effectiveFor(doc: DesignerDocument, name: string | null | undefined): Record<string, string> | undefined {
@@ -5744,10 +6008,17 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private checkOptions(doc: DesignerDocument): CheckOptions {
         const axamlText = doc.model.serialize(true);
         const proj = findProject(doc.uri);
+        // The last frame's MEASURED geometry rides along: the page-Canvas repair has to place the controls
+        // it moves, and a DockPanel band's Margin is not a position (it is what the band left over).
+        const frame = this.frames.get(doc.uri.toString());
         return {
             axamlText,
             controls: controlsForCheck(doc.uri, axamlText, doc.model.namedControls()),
-            dataSet: proj ? this.codeCheckDataSetContext(path.dirname(proj.projectUri.fsPath)) : undefined
+            dataSet: proj ? this.codeCheckDataSetContext(path.dirname(proj.projectUri.fsPath)) : undefined,
+            bounds: frame?.controls
+                ? frame.controls.filter((c) => !!c.name)
+                    .map((c) => ({ name: c.name as string, x: c.x, y: c.y, width: c.width, height: c.height }))
+                : undefined
         };
     }
 
@@ -6458,10 +6729,16 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             label: 'Grumpy\'s WYSIWYG Designer edit',
             undo: () => {
                 doc.model = new XamlModel(before);
+                // A fresh model knows no floors — and the first edit after an undo is exactly when
+                // nobody looks, so hand them back straight away (see refreshSizeFloors).
+                this.refreshSizeFloors(doc);
                 void this.render(doc, panel);
             },
             redo: () => {
                 doc.model = new XamlModel(after);
+                // A fresh model knows no floors — and the first edit after an undo is exactly when
+                // nobody looks, so hand them back straight away (see refreshSizeFloors).
+                this.refreshSizeFloors(doc);
                 void this.render(doc, panel);
             }
         });
@@ -7140,6 +7417,9 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
         h.index = target;
         const step = h.states[target];
         doc.model = new XamlModel(step.xaml);
+        // A fresh model knows no floors — and the first edit after an undo is exactly when
+        // nobody looks, so hand them back straight away (see refreshSizeFloors).
+        this.refreshSizeFloors(doc);
         if (step.codeBehindPath && step.codeBehind != null) {
             try { fs.writeFileSync(step.codeBehindPath, step.codeBehind, 'utf8'); } catch { /* ignore */ }
         }
@@ -8076,6 +8356,44 @@ ${publishButtons}      <span class="sep"></span>
         <div class="modal-buttons">
           <button id="seriesCancel" type="button" class="modal-btn">Cancel</button>
           <button id="seriesSave" type="button" class="modal-btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+    <div id="cmdModal" class="modal" hidden>
+      <div class="modal-box modal-commands">
+        <h3 id="cmdTitle">Items</h3>
+        <p class="modal-hint">One row per item. <b>Kind</b> chooses what the item is — a Label, a Text Box,
+          a Button, a Separator, a Toggle Button, a Radio Button or an Icon Button — and only the fields that
+          kind has stay enabled. Each item is written into the form as a REAL Avalonia control inside the
+          bar's row, so it types, checks and clicks exactly as it will at run time. An item that carries an
+          <b>Event</b> needs a <b>Name</b>: the handler method is added to the code-behind for you, and an item
+          whose handler could not be added is saved without its event rather than left naming a method that
+          does not exist. <b>Icon</b> offers the built-in set; <b>From file…</b> takes an image from this
+          machine and copies it into the project's <code>Assets</code> folder (referenced as
+          <code>avares://…</code>), so the form keeps working when it is moved or shared. A control this
+          editor does not know — a ComboBox you dropped into the bar by hand — is shown as <i>Other</i> and
+          left exactly as it is.</p>
+        <div class="cmd-bar">
+          <button id="cmdAdd" type="button" class="modal-btn">+ Add item</button>
+          <label class="cmd-field">Item spacing
+            <input id="cmdSpacing" type="number" min="0" max="80" step="1"></label>
+          <span id="cmdSummary" class="cmd-summary"></span>
+        </div>
+        <div class="cmd-wrap">
+          <table class="cmd-table">
+            <thead>
+              <tr>
+                <th></th><th>Kind</th><th>Name</th><th>Text</th><th>Width</th><th>Height</th>
+                <th>Icon</th><th>Icon size</th><th>Group</th><th>Event</th><th>Handler</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="cmdRows"></tbody>
+          </table>
+        </div>
+        <div id="cmdHint" class="cmd-hinttext"></div>
+        <div class="modal-buttons">
+          <button id="cmdCancel" type="button" class="modal-btn">Cancel</button>
+          <button id="cmdSave" type="button" class="modal-btn primary">Save</button>
         </div>
       </div>
     </div>

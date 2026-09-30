@@ -538,6 +538,41 @@ export const CONTROL_PROPS: Record<string, PropTemplate[]> = {
         { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
         { key: 'Padding', label: 'Padding', kind: 'text' }
     ],
+    // GrumpyCommandBar (2026-09-29) — the bundled chrome:GrumpyCommandBar that replaced Avalonia's own
+    // CommandBar family in the Toolbox. It is a Border, so the chrome rows are the same four the panel
+    // offers (plus Padding, which is the room between the frame and the items). Foreground is the bar's
+    // TEXT colour and the one row with behaviour behind it: the class registers the INHERITING text
+    // Foreground, so setting it here colours every item that sets none of its own.
+    // The ITEMS are not rows — they are real child controls in the bar's named row, edited in the
+    // Commands editor (the `Commands` button row below), exactly like the sheet's cells.
+    GrumpyCommandBar: [
+        // Usually docked to an edge of a DockPanel (Top under a menu, Bottom above a status strip), the
+        // same row the sheet and the charts carry for the same reason.
+        {
+            key: 'DockPanel.Dock', label: 'Dock', kind: 'dropdown', options: DOCK_OPTIONS,
+            desc: 'Pin the bar to an edge of a DockPanel: Top/Bottom give it a band across the form (its Height is the band\'s), Left/Right a column. The designer wraps the bar in a DockPanel for you when it is not already in one.'
+        },
+        {
+            key: 'Commands', label: 'Edit items…', kind: 'button',
+            desc: 'Open the items editor: add, remove and reorder what sits in the bar, and pick each item\'s kind from a drop-down — Label, Text Box, Button, Separator, Toggle Button, Radio Button or an icon button. Every item is a REAL Avalonia control, so it types, checks and clicks as it will at runtime; give one an event and its handler is written into the code-behind for you. What you leave is saved into the form as ordinary child elements inside the bar\'s row.'
+        },
+        { key: 'Background', label: 'Background', kind: 'text', desc: 'The bar\'s fill. A bar is usually a little darker (or lighter) than the form behind it.' },
+        { key: 'BorderBrush', label: 'Border Brush', kind: 'text' },
+        {
+            key: 'BorderThickness', label: 'Border Thickness', kind: 'text',
+            desc: 'Per side, so the usual bar rule is a single bottom line: 0,0,0,1.'
+        },
+        { key: 'CornerRadius', label: 'Corner Radius', kind: 'text' },
+        { key: 'Padding', label: 'Padding', kind: 'text', desc: 'Room between the frame and the first/last item.' },
+        {
+            key: 'Foreground', label: 'Text Colour', kind: 'text',
+            desc: 'The bar\'s text colour. Child text INHERITS it (Avalonia\'s Foreground does), so one value here colours every label, caption and field in the bar that does not set its own.'
+        }
+        // The gap between items is NOT a row: it belongs to the bar's item ROW (the StackPanel inside,
+        // written by the snippet and by the editor), and a property key that is not a real XAML
+        // attribute would be written straight onto the element by the VB-compile matrix and fail it.
+        // The Commands editor sets it, where the items it separates are in front of you.
+    ],
     // PathPicker (the bundled AvaloniaChrome.PathPicker — a path TextBox + Browse button that opens
     // the platform's file/folder dialog). Path Type picks WHICH dialog; Selected Path is the result
     // (two-way — set it to pre-fill, read it in code).
@@ -1907,6 +1942,49 @@ export function defaultFor(key: string): string | undefined {
 }
 
 /**
+ * What the companion `MinHeight`/`MinWidth` must become when the user sets a Height/Width — the whole
+ * decision, in one pure function so it can be tested without a webview, a host or a document.
+ *
+ * Reported 2026-09-29: *"the Height adjustment property for the Command Bar control is ignored"*. Nothing
+ * in the designer was ignoring it: **Avalonia's `CommandBar` theme carries `MinHeight="48"`**, and a
+ * MINIMUM beats an explicit Height, so `Height="30"` renders 48 tall — and the Properties panel's row,
+ * which deliberately shows the *rendered* size, snapped back to 48. Measured one control at a time
+ * against the real host: `TextBox`/`ComboBox`/`CheckBox`/`NumericUpDown`/`MaskedTextBox` floor at **32**
+ * (plus `MinWidth` **64**), `CommandBarButton`/`…ToggleButton` at **40**, `CommandBarSeparator` at **24**,
+ * and a plain `Button` at none.
+ *
+ * The fix is the same move the Dock row makes with the alignment — write what makes the user's value win:
+ * a companion minimum equal to the value they typed.
+ *
+ * @param value   the Height/Width the user just set ('' = the row was cleared back to the default)
+ * @param current the element's Height/Width BEFORE this edit (null when it had none)
+ * @param existing the element's MinHeight/MinWidth before this edit (null when it had none)
+ * @param floor   the floor the control's own theme imposes, from the preview frame (0 when none)
+ * @returns `undefined` to leave the attribute alone, `''` to remove it, else the value to write
+ *
+ * Rules, and why:
+ *  - a minimum the USER typed is theirs — this never overwrites one (the panel then shows the size their
+ *    own minimum produces, which is the truth);
+ *  - the companion this writes is always exactly as large as the Height/Width it was written with, so a
+ *    minimum equal to the current size is recognised as ours — and is dropped again when the control grows
+ *    past its floor, or when the row is cleared;
+ *  - nothing happens at all while the value is at or above the floor: a themed control's default look is
+ *    not to be pinned by an attribute nobody asked for.
+ */
+export function sizeFloorCompanion(value: string, current: string | null, existing: string | null, floor: number): string | undefined {
+    // `@xmldom/xmldom` answers `''` — not `null` — for an attribute that is not there, so "absent" is both.
+    // Missing this made the first version of the fix a no-op on a real document while the unit tests, which
+    // passed null, were green: the empty string read as "a minimum the user typed" and every write was skipped.
+    const missing = (s: string | null): boolean => s === null || s === '';
+    const number = (s: string | null): number => (s === null || s === '' ? Number.NaN : Number(s));
+    const ours = !missing(existing) && !missing(current) && number(existing) === number(current);
+    if (!missing(existing) && !ours) return undefined;
+    const want = number(value);
+    if (value !== '' && Number.isFinite(want) && floor > 0 && want < floor) return value;
+    return ours ? '' : undefined;
+}
+
+/**
  * Effective Dock value for the Properties panel. Avalonia has no literal `Fill` Dock value,
  * so the designer stores Fill as NO `DockPanel.Dock` attribute + the control being the LAST
  * child of a DockPanel whose `LastChildFill` is not False. That state is therefore shown as
@@ -2029,15 +2107,28 @@ for (const tag of ['GrumpyLinePlot', 'GrumpyXYPlot', 'GrumpyBarPlot', 'GrumpyAre
 // ---------------- Properties panel sections ----------------
 /**
  * The Properties panel files its rows into these sections — ALWAYS in this order, for every
- * toolbox control: the popup editors first, then layout/size, appearance, text, data and behavior.
+ * toolbox control: the control's own items editor first (only a GrumpyCommandBar has one), then the
+ * popup editors, layout/size, appearance, text, data and behavior.
  * Inside a section the keys listed here also fix the order, so a colour row, a size row or the
  * Anchor row is always in the same place whichever control is selected. Every key the catalog can
  * produce must be listed somewhere (a test asserts it) — anything unmapped falls back to the last
  * section, and a designer editor button always lands in `editors`.
  */
-export type PropSectionId = 'editors' | 'layout' | 'appearance' | 'text' | 'data' | 'behavior';
+export type PropSectionId = 'itemsEditor' | 'editors' | 'layout' | 'appearance' | 'text' | 'data' | 'behavior';
 
 export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }[] = [
+    {
+        // The GrumpyCommandBar's ITEMS EDITOR, on its own above everything else.
+        //
+        // The bar's contents are what the control IS: the frame rows below (background, border,
+        // padding, text colour) only wrap them, so the one row that opens the editor has to be the
+        // first thing in the panel, not a button buried in Data next to secondary payload properties.
+        // Only a GrumpyCommandBar carries a `Commands` row, so every other control's panel starts
+        // with `editors` exactly as before — and because the webview prints a heading only where its
+        // rows actually are, no other control ever shows an empty "Items Editor" (asked 2026-09-30).
+        id: 'itemsEditor', label: 'Items Editor',
+        keys: ['Commands']
+    },
     {
         id: 'editors', label: 'Editors',
         // Everything the designer edits through a popup editor (`kind: 'button'`) — whether it is
@@ -2159,6 +2250,8 @@ export const PROP_SECTIONS: { id: PropSectionId; label: string; keys: string[] }
             // GrumpySheet: the Cells editor, for the same reason — it is where a sheet's contents are,
             // and the geometry the rows below it set describes the grid it draws.
             'Cells',
+            // (The GrumpyCommandBar's Commands editor is NOT listed here: it opens the bar's own
+            // "Items Editor" section, which sits at the very top of the panel — see PROP_SECTIONS.)
             'ItemsSource', 'SelectedItem', 'SelectedIndex',
             'PathType', 'SelectedPath', 'Filter', 'InitialFolder', 'IsPathReadOnly',
             'AutoGenerateColumns', 'IsReadOnly',
@@ -2230,6 +2323,17 @@ const SECTION_OF_KEY = (() => {
 const LAST_SECTION = PROP_SECTIONS[PROP_SECTIONS.length - 1];
 
 /**
+ * The section an UNLISTED `kind: 'button'` row falls back to — looked up by id, never by position:
+ * the panel's first section is the Items Editor, which belongs to one control and must not collect
+ * other controls' buttons.
+ */
+const EDITORS_SECTION = (() => {
+    const index = PROP_SECTIONS.findIndex((s) => s.id === 'editors');
+    if (index < 0) throw new Error('PROP_SECTIONS must define the editors section');
+    return { id: PROP_SECTIONS[index].id, label: PROP_SECTIONS[index].label, index, order: 500 };
+})();
+
+/**
  * Files every row into its section and orders the whole list: the pinned identity rows first, then
  * the sections in `PROP_SECTIONS` order, and inside a section the canonical key order. Rows a
  * control adds dynamically (an editor button, a Grid-cell row, a SplitPanel pane border, …) that
@@ -2241,7 +2345,7 @@ export function groupPropertyRows(rows: PropDef[]): PropDef[] {
         const pinned = PINNED_PROP_KEYS.has(row.key);
         // A designer editor button is ALWAYS in 'Editors', even one a future control adds unlisted.
         const section = hit ?? (row.kind === 'button'
-            ? { id: PROP_SECTIONS[0].id, label: PROP_SECTIONS[0].label, index: 0, order: 500 }
+            ? EDITORS_SECTION
             : { id: LAST_SECTION.id, label: LAST_SECTION.label, index: PROP_SECTIONS.length - 1, order: 500 });
         return { row, i, pinned, index: pinned ? -1 : section.index, order: pinned ? 0 : section.order, section };
     });
@@ -2311,6 +2415,17 @@ export function propertyDefsFor(
     // Canvas.Left/Top have no effect there (a Grid child's size is managed by its cell), so
     // hide them for direct Grid children.
     const inGrid = parentTag === 'Grid';
+    // …and an element INSIDE A COMMAND BAR (the bar itself, or the item row it holds): the BAR places
+    // its items (and the Commands editor chooses their order), so a Dock has nothing to act on and a
+    // Canvas coordinate has no canvas. Offering them is not just useless — the Dock row could not be
+    // honoured at all there, and the designer's own word for "fill" is `Fill`, which Avalonia's Dock
+    // enum does not have; writing it failed the build with "AVLN3000: Unable to find suitable setter …
+    // for property Dock … for argument System.String" (reported 2026-09-30, on the item row of a
+    // GrumpyCommandBar). The writer refuses to write it now; the row is not offered either, so the two
+    // halves of the rule cannot drift.
+    const insideCommandBar = parentTag === 'GrumpyCommandBar'
+        || (!!parentEl && !!parentEl.parentNode && (parentEl.parentNode as Node).nodeType === 1
+            && localName((parentEl.parentNode as Element).tagName) === 'GrumpyCommandBar');
     // The Anchor property: on a CANVAS it is WinForms-style free anchoring (keeps a fixed
     // distance from the anchored edges; opposite edges stretch). Inside a DOCKPANEL — e.g. a
     // Status Bar strip — a StatusDate/TextBlock has no Dock property of its own, so an edge
@@ -2338,23 +2453,30 @@ export function propertyDefsFor(
     // the panel's setProperty), rather than moving the bar out of the layout. Canvas.Left/Top stay
     // hidden for it too: a Grid ignores them outright.
     const gridDockAllowed = inGrid && tag === 'ProgressBar';
+    // A COMPONENT (NON_VISUAL_TAG — today only the bundled <chrome:Timer>) declares no
+    // size, position, alignment, colour or anchor of its own: it draws nothing and takes no
+    // space, so every Layout / Appearance / Behavior row from the common catalog would be a no-op
+    // or a lie on it (a Width an Avalonia Timer has none of; an Anchor it ignores; an Enabled
+    // checkbox that duplicates the Timer's own). The component keeps ONLY the rows its class
+    // actually declares — for the Timer, Interval and Enabled — which is the whole of what a
+    // component's state IS. The Name / Type / Theme identity rows are added separately (above) and
+    // are retained — they describe the element, not a property the Timer has.
+    const isComponent = NON_VISUAL_TAGS.has(tag);
 
     const templates: PropTemplate[] = [
-        ...COMMON_PROPS,
-        ...(isWindowLike || HAS_FONT_PROPS.has(tag) ? FONT_PROPS : []),
+        ...(isComponent ? [] : COMMON_PROPS),
+        ...(isComponent ? [] : (isWindowLike || HAS_FONT_PROPS.has(tag) ? FONT_PROPS : [])),
         ...typeTemplates,
         // GrumpyPanel carries a DEDICATED 8-position Anchor that is offered wherever the panel
         // sits (non-root) — it replaces the generic Canvas/DockPanel-gated Anchor for the panel.
-        ...(!isRoot && isGrumpyPanel ? GRUMPY_ANCHOR_PROPS : []),
-        ...(!isRoot && !isGrumpyPanel && anchorable ? ANCHOR_PROPS : [])
+        ...(isComponent ? [] : (!isRoot && isGrumpyPanel ? GRUMPY_ANCHOR_PROPS : [])),
+        ...(isComponent ? [] : (!isRoot && !isGrumpyPanel && anchorable ? ANCHOR_PROPS : []))
     ].filter((t) =>
         // A control inside a Grid cell is positioned/sized by the Grid.
         !((inGrid && !gridDockAllowed && t.key === 'DockPanel.Dock')
             || (inGrid && (t.key === 'Canvas.Left' || t.key === 'Canvas.Top'))) &&
-        // A COMPONENT has no size at all (the Timer draws nothing and takes no space), so it is offered
-        // no size rows: a row that writes Width onto something that has none reads like a bug.
-        !(NON_VISUAL_TAGS.has(tag)
-            && ['Width', 'Height', 'MinWidth', 'MinHeight', 'MaxWidth', 'MaxHeight'].indexOf(t.key) >= 0) &&
+        // A command bar places its own items — see `insideCommandBar`.
+        !(insideCommandBar && (t.key === 'DockPanel.Dock' || t.key === 'Canvas.Left' || t.key === 'Canvas.Top')) &&
         // A Line's size IS its Start/End geometry — Width/Height would clip it, not stretch it
         // (resize is done by dragging the selection handles, which scale the points instead).
         !(tag === 'Line' && (t.key === 'Width' || t.key === 'Height'))
@@ -2367,11 +2489,16 @@ export function propertyDefsFor(
     const props: PropDef[] = [
         { key: '__name__', label: 'Name', kind: 'text', value: el.getAttribute('x:Name') || el.getAttribute('Name') || '' },
         { key: '__type__', label: 'Type', kind: 'text', value: el.tagName },
-        {
+        // The Theme row is a component's ONLY Appearance row — System/Custom is a choice between two
+        // ways of colouring a control that draws nothing. Leaving it on the Timer put an Appearance
+        // section on the panel with a single row whose two answers are indistinguishable (asked
+        // 2026-09-30: "remove the Appearance section from the Timer properties panel. Only relevant
+        // items must be listed"). The identity rows that describe the ELEMENT stay.
+        ...(isComponent ? [] : [{
             key: '__theme__', label: 'Theme', kind: 'dropdown', options: ['System', 'Custom'],
             value: hasCustomColors(el) ? 'Custom' : 'System', advanced: false,
             desc: 'System: follow the OS theme (no fixed colours). Custom: use the colours you set below.'
-        }
+        } as PropDef])
     ];
     // A StatusDate live clock (a TextBlock whose Loaded handler ticks a clock) offers beginner-
     // friendly Date/Time format pickers (System = OS format, or pick a shown example) + a preview.
@@ -2674,8 +2801,9 @@ export function propertyDefsFor(
             desc: 'Width of the border drawn around each pane of the split panel.'
         });
     }
-    // A control placed inside a Grid can be moved to a specific cell.
-    if (!isRoot && el.parentNode && (el.parentNode as Element).nodeType === 1
+    // A control placed inside a Grid can be moved to a specific cell. A COMPONENT is never offered
+    // a cell position — it draws nothing, so which cell it sits in is meaningless.
+    if (!isRoot && !isComponent && el.parentNode && (el.parentNode as Element).nodeType === 1
         && localName((el.parentNode as Element).tagName) === 'Grid') {
         const gridParent = el.parentNode as Element;
         const rows = gridDefinitionCount(gridParent, 'rows') || 1;

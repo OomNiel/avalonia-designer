@@ -45,10 +45,14 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'Toggle Switch', tag: 'ToggleSwitch', group: TOOLBOX_CATEGORY_BUTTONS },
     // --- Avalonia 12 controls (real tags saved; the 11 preview host draws approximations) ---
     { label: 'Hyperlink Button', tag: 'HyperlinkButton', group: TOOLBOX_CATEGORY_BUTTONS },
-    { label: 'Command Bar', tag: 'CommandBar', group: TOOLBOX_CATEGORY_BUTTONS },
-    { label: 'Command Bar Button', tag: 'CommandBarButton', group: TOOLBOX_CATEGORY_BUTTONS },
-    { label: 'Command Bar Toggle Button', tag: 'CommandBarToggleButton', group: TOOLBOX_CATEGORY_BUTTONS },
-    { label: 'Command Bar Separator', tag: 'CommandBarSeparator', group: TOOLBOX_CATEGORY_BUTTONS },
+    // The Command Bar family (CommandBar / CommandBarButton / CommandBarToggleButton /
+    // CommandBarSeparator) is deliberately NOT offered any more (2026-09-29). Its ControlTheme floors
+    // a Command Bar at MinHeight=48, so a Height the user types is silently ignored and the control
+    // reads as broken; the designer's own answer is a min-height companion the row has to explain.
+    // The replacement is the bundled `chrome:GrumpyCommandBar` (see the Bars category), which is a
+    // plain panel with no theme, so an explicit Height always wins. The real Avalonia types are still
+    // rendered, described and saved — a form that already contains one keeps working — they are just
+    // no longer things you can add to a new form.
     { label: 'Image', tag: 'Image', group: TOOLBOX_CATEGORY_INPUT },
     // MaskedTextBox constrains typing to a mask (e.g. a phone number); NumericUpDown is a number box
     // with spinners; PathIcon draws an icon from path data (no image file needed).
@@ -124,6 +128,13 @@ const CONTROL_CATALOG: ControlDefinition[] = [
     { label: 'StatusBar', tag: 'StatusBar', group: TOOLBOX_CATEGORY_BARS },
     { label: 'StatusDate', tag: 'StatusDate', group: TOOLBOX_CATEGORY_BARS },
     { label: 'GrumpyStatus', tag: 'GrumpyStatus', group: TOOLBOX_CATEGORY_BARS },
+    // Grumpy Command Bar (2026-09-29) — the bundled `chrome:GrumpyCommandBar`, the replacement for the
+    // withdrawn Command Bar family (see the note in the Buttons category). It is a chrome panel with no
+    // ControlTheme, so an explicit Height is never floored; it holds REAL Avalonia children (Label,
+    // TextBox, Button, Toggle Button, Radio Button, Separator, icon buttons) which its own **Commands**
+    // editor — a modal in the Properties panel — adds, reorders and configures. Docker/anchoring/
+    // dock-thickness all treat it as an ordinary control.
+    { label: 'Grumpy Command Bar', tag: 'GrumpyCommandBar', group: TOOLBOX_CATEGORY_BARS },
     // --- Dev Helpers (design-time / debugging conveniences) ---
     { label: 'XY-Tracker', tag: 'XYTracker', group: TOOLBOX_CATEGORY_DEV },
     // Not a form control — a designer action: converts a Window's default title bar to the

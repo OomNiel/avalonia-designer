@@ -179,6 +179,11 @@ const INFO: Record<string, ControlInfo> = {
         desc: 'A reusable docking-region panel: a framed box you drop controls into freely, which can also dock dock-able controls to its edges.',
         use: 'Drop it on any canvas or panel. Controls you drop inside land freely (like the form body); set a dock-able control\'s Dock (Left/Top/Right/Bottom) and it pins to that edge of the panel while the free body shrinks. Style the frame with Border Thickness / Border Brush / Background; the Theme row switches between the System look and your Custom colours. Its own Anchor (8 positions) pins the whole panel to its container.'
     },
+    GrumpyCommandBar: {
+        label: 'Grumpy Command Bar',
+        desc: 'A command strip of your own: a titled bar holding ordinary Avalonia controls — a label, a text box, a button, a toggle, a radio button, a separator or an icon button.',
+        use: 'Drop it on the form and dock it to whichever edge you want (Properties → Dock). Items are added and configured in the Commands editor: open it from the Commands row and pick each item\'s kind from the drop-down, then set its text, name, size, icon and event. Every item is a REAL Avalonia control, so it types, checks and clicks as it will at runtime, and an item\'s event handler is generated in the code-behind for you. Unlike Avalonia\'s own Command Bar there is no floor on its Height — whatever you type is what you get.'
+    },
     StatusDate: {
         label: 'Status Date / Time',
         desc: 'A live clock that shows the current system date and time (in the OS date/time format).',

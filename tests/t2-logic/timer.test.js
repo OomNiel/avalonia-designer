@@ -55,7 +55,30 @@ module.exports = async (t) => {
     t.equal(by('Enabled') && by('Enabled').sectionId, 'behavior', 'props', 'and so is Enabled');
     t.ok(!by('Width') && !by('Height'), 'props',
         'no Width/Height rows for a component that takes no space (and writes neither)');
-    // The rows must name the component's OWN (CLR) properties — the bundled class declares them, and
+    // A component has no layout / appearance / behavior of its own, so the panel MUST NOT offer the
+    // common rows — only the two the Timer class actually declares (Interval + Enabled). The only
+    // other rows are the identity rows (Name / Type), which describe the element itself.
+    const propertyRows = rows.filter((r) => !r.key.startsWith('__'));
+    t.equal(propertyRows.length, 2, 'props',
+        'the component offers ONLY its own property rows — nothing from the common catalog leaks in');
+    t.equal(propertyRows.map((r) => r.key).join(','), 'Interval,Enabled', 'props',
+        'Interval and Enabled are the only rows the Timer carries');
+    // …and NOT the Theme row either: it is a component's only Appearance row, and System/Custom is a
+    // choice between two ways of colouring a control that draws nothing. It dragged a one-row
+    // "Appearance" section onto the panel (asked 2026-09-30 to remove it).
+    t.equal(rows.some((r) => r.key === '__theme__'), false, 'props',
+        'no Theme row on a component — it has no colours for System/Custom to choose between');
+    t.equal(rows.some((r) => r.sectionId === 'appearance'), false, 'props',
+        'so the panel shows no Appearance section at all');
+    t.equal(rows.some((r) => r.sectionId === 'layout'), false, 'props', 'and no Layout & size section');
+    t.equal([...new Set(rows.map((r) => r.sectionId).filter(Boolean))].join(','), 'behavior', 'props',
+        'Behavior is the only section a component has');
+    for (const key of ['Margin', 'HorizontalAlignment', 'VerticalAlignment', 'IsVisible', 'IsEnabled',
+        'IsHitTestVisible', 'IsTabStop', 'Focusable', 'TabIndex', 'Opacity', 'ZIndex',
+        'Canvas.Left', 'Canvas.Top', 'chrome:AnchorHelper.Anchor']) {
+        t.ok(!by(key), 'props', `no common ${key} row on a component that has no ${key.split('.').pop()}`);
+    }
+    // The two rows must name the component's OWN (CLR) properties — the bundled class declares them, and
     // a row for a property the class does not have would write XAML that fails to compile.
     const csText = read('resources/Timer.cs');
     for (const key of ['Interval', 'Enabled']) {

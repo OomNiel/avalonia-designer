@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.13.3
+// BUNDLED-COPY: 0.13.19
 // ============================================================================
 //  Timer.cs — a NON-VISUAL Timer component for a form (the WinForms Timer idea).
 //

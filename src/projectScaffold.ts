@@ -78,6 +78,12 @@ export interface ScaffoldOptions {
     sheetCs?: string;
     /** Contents of GrumpySheet.vb (bundled resource — see sheetCs). Optional. */
     sheetVb?: string;
+    /** Contents of GrumpyCommandBar.cs (bundled resource — the AvaloniaChrome command bar behind the
+     *  Toolbox's Grumpy Command Bar tool, whose items are ordinary Avalonia children). Optional, like
+     *  the other bundled files: a project that never holds one is generated exactly as before. */
+    barCs?: string;
+    /** Contents of GrumpyCommandBar.vb (bundled resource — see barCs). Optional. */
+    barVb?: string;
     /** Contents of Timer.cs (bundled resource — the non-visual Timer component the Toolbox offers:
      *  the WinForms Timer idea, ticking on a worker thread). Optional, like the other bundled files. */
     timerCs?: string;
@@ -98,7 +104,7 @@ export interface ScaffoldOptions {
 
 /** Writes a complete, ready-to-run Avalonia project into projectPath. */
 export function generateProjectScaffold(opts: ScaffoldOptions): void {
-    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb, sheetCs, sheetVb, timerCs, timerVb, followerCs, followerVb, vbBridgeDll } = opts;
+    const { language, tpl, name, projectPath, chromeCs, chromeVb, anchorCs, anchorVb, exifCs, exifVb, grumpyCs, grumpyVb, pathPickerCs, pathPickerVb, chartsCs, chartsVb, grumpyPrintCs, grumpyPrintVb, sheetCs, sheetVb, barCs, barVb, timerCs, timerVb, followerCs, followerVb, vbBridgeDll } = opts;
     const rootNamespace = sanitize(name);
     const formName = MAIN_FORM_NAME;
 
@@ -114,6 +120,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (chartsCs) write(projectPath, 'GrumpyCharts.cs', chartsCs);
         if (grumpyPrintCs) write(projectPath, 'GrumpyPrint.cs', grumpyPrintCs);
         if (sheetCs) write(projectPath, 'GrumpySheet.cs', sheetCs);
+        if (barCs) write(projectPath, 'GrumpyCommandBar.cs', barCs);
         if (timerCs) write(projectPath, 'Timer.cs', timerCs);
         if (followerCs) write(projectPath, 'ColumnFollower.cs', followerCs);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));
@@ -130,6 +137,7 @@ export function generateProjectScaffold(opts: ScaffoldOptions): void {
         if (chartsVb) write(projectPath, 'GrumpyCharts.vb', chartsVb);
         if (grumpyPrintVb) write(projectPath, 'GrumpyPrint.vb', grumpyPrintVb);
         if (sheetVb) write(projectPath, 'GrumpySheet.vb', sheetVb);
+        if (barVb) write(projectPath, 'GrumpyCommandBar.vb', barVb);
         if (timerVb) write(projectPath, 'Timer.vb', timerVb);
         if (followerVb) write(projectPath, 'ColumnFollower.vb', followerVb);
         write(projectPath, 'MainWindow.axaml', buildAxaml(tpl, formName, 'Window', rootNamespace, rootNamespace));

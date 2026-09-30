@@ -349,6 +349,26 @@ End Property`, true, 'GrumpyCharts'), false,
             `resources/${name} ships the current marker (so it is never called stale)`);
     }
 
+    // EVERY BUNDLED VB TWIN MUST DECLARE ITS NAMESPACE WITH `Global.` (added 2026-09-29).
+    // A VB project sets RootNamespace to the project's own name, so a plain `Namespace AvaloniaChrome`
+    // declares `<Project>.AvaloniaChrome` — and VB then resolves the unqualified name
+    // `AvaloniaChrome.ChromeWindow` to THAT, shadowing the real namespace. One twin written without
+    // Global. therefore fails the whole project with "BC30002: Type 'AvaloniaChrome.ChromeWindow' is not
+    // defined", blaming the code-behind instead of the file that caused it. Measured in a generated VB
+    // project (Timer.vb and ChromeWindow.vb both had the defect; both were fixed with this one word).
+    // The test is a loop over resources/*.vb, so a NEW twin cannot be added without it either. A file
+    // that declares NO namespace is left alone: ExifImageLoader.vb is a `Friend Module` used only from
+    // code (never named in XAML), and VB resolves it relative to the project's root namespace, which is
+    // exactly what its generated callers expect.
+    for (const name of fs.readdirSync(path.join(ROOT, 'resources')).filter((f) => f.endsWith('.vb'))) {
+        const text = fs.readFileSync(path.join(ROOT, 'resources', name), 'utf8');
+        const declared = /^Namespace (\S+)\s*$/m.exec(text);
+        if (!declared) continue;
+        t.equal(declared[1].startsWith('Global.'), true, 'vb-namespace',
+            `resources/${name} declares it as Global.… — without Global. it becomes <Project>.<Namespace> `
+            + 'and shadows the real one for the whole VB project', declared[1]);
+    }
+
     // The refresh is TRIGGERED where the XAML that needs it is written: the two chart editors, and the
     // document save — so a project whose chart file is old heals as soon as the form is saved, which is
     // exactly the step that broke ChartTestCS.
@@ -424,8 +444,8 @@ End Property`, true, 'GrumpyCharts'), false,
     // --- The language picks the right file names ---
     const vb = bundledComponentSpecs(true).map((s) => s.file).sort();
     const cs = bundledComponentSpecs(false).map((s) => s.file).sort();
-    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","GrumpyCharts.vb","GrumpyPrint.vb","GrumpySheet.vb","PathPicker.vb","Timer.vb"]', 'spec', 'VB spec file names');
-    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","GrumpyCharts.cs","GrumpyPrint.cs","GrumpySheet.cs","PathPicker.cs","Timer.cs"]', 'spec', 'C# spec file names');
+    t.equal(JSON.stringify(vb), '["AnchorHelper.vb","ChromeWindow.vb","GrumpyCharts.vb","GrumpyCommandBar.vb","GrumpyPrint.vb","GrumpySheet.vb","PathPicker.vb","Timer.vb"]', 'spec', 'VB spec file names');
+    t.equal(JSON.stringify(cs), '["AnchorHelper.cs","ChromeWindow.cs","GrumpyCharts.cs","GrumpyCommandBar.cs","GrumpyPrint.cs","GrumpySheet.cs","PathPicker.cs","Timer.cs"]', 'spec', 'C# spec file names');
 
     // ---------------------------------------------------------------- the version STAMP every copy carries
     // A release is where a project's copy and the extension's part company, so the version is stamped into

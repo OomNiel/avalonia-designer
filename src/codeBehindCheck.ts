@@ -73,7 +73,8 @@ export type LocalFixKind =
     | 'remove-items-source'      // ItemsSource set on a control that no longer exists
     | 'add-import'               // missing Imports / using
     | 'convert-chrome'           // ChromeWindow root, code-behind still Inherits Window
-    | 'lift-dock-wrapper';       // a control the old dock path wrapped in a DockPanel INSIDE its Canvas
+    | 'lift-dock-wrapper'        // a control the old dock path wrapped in a DockPanel INSIDE its Canvas
+    | 'restore-page-canvas';     // a tab page whose Canvas (its free-placement surface) was deleted
 // (it docks into the Canvas, so Dock = Fill fills nothing)
 
 /** Fixes that need the .adset spec / bundled resources, so the designer panel performs them. */
@@ -172,6 +173,13 @@ export interface CheckOptions {
     /** Named controls the designer knows about (union of the saved file + the in-memory model). */
     controls?: { name: string; type: string }[];
     dataSet?: DataSetContext;
+    /**
+     * The last render frame's measured geometry, by control name. Used by the fixes that have to put a
+     * control somewhere sensible (the page-Canvas repair): the numbers come from the host measuring the
+     * REAL layout, so the repair keeps what the user sees instead of guessing from a Margin that a
+     * DockPanel band had already distorted.
+     */
+    bounds?: { name: string; x: number; y: number; width: number; height: number }[];
 }
 
 export interface CheckResult {
@@ -463,8 +471,81 @@ function dockWrappersIn(text: string): { wrapper: string; canvas: string; owner:
     return out;
 }
 
-/** Reads the form's XAML (from the designer's in-memory copy when given) and extracts the facts the
- *  checks need: named controls, event wiring, the class/root type and the root namespace. */
+/**
+ * TAB PAGES WHOSE CANVAS IS GONE: a `<TabName>Body<N>` DockPanel directly inside a TabItem with no
+ * Canvas child.
+ *
+ * Every tab page the designer creates is `<DockPanel x:Name="{tab}BodyN"><Canvas x:Name="{tab}BodyNCanvas"/></DockPanel>`
+ * — the Canvas is the page's FREE-PLACEMENT surface, and with the DockPanel's default LastChildFill it is
+ * the child that fills the page. Delete that Canvas (nothing stops you: unlike the form's own `Body`
+ * canvas and a GrumpyPanel's body, a page canvas is not locked) and every control left on the page
+ * becomes a DockPanel child: no `DockPanel.Dock` means LEFT, so each one gets its own band and has no
+ * position of its own any more. Dropping or dragging then writes a `Margin` instead of
+ * `Canvas.Left/Top` and a drag can only nudge the control inside its band.
+ *
+ * That is exactly what the user hit (2026-09-30: "On the Buttons tab, I can't freely relocate the
+ * controls, why?"), measured on their demo before the repair: four controls as four columns at
+ * x=30/170/330/530, and dragging Button1 by (40,30) wrote Margin="18,11,0,0" → "58,41,0,0".
+ */
+function pageBodiesWithoutCanvas(
+    text: string,
+    bounds?: { name: string; x: number; y: number; width: number; height: number }[]
+): { body: string; line: number; movable: { name: string; x: number; y: number }[] }[] {
+    const out: { body: string; line: number; movable: { name: string; x: number; y: number }[] }[] = [];
+    // Cheap guard: the model parse below only happens on a form that could hold a page body.
+    if (!/<DockPanel\b[^>]*\b(?:x:)?Name="[^"]*Body\d+"/.test(text)) return out;
+    let model: XamlModel;
+    try { model = new XamlModel(text); } catch { return out; }
+    for (const el of model.controlElements()) {
+        if (localName(el.tagName) !== 'DockPanel') continue;
+        const body = el.getAttribute('x:Name') || el.getAttribute('Name') || '';
+        if (!/Body\d+$/.test(body)) continue;
+        // …a TAB PAGE: the DockPanel's parent is the TabItem whose content it is.
+        const page = el.parentNode as Element | null;
+        if (!page || page.nodeType !== 1 || localName(page.tagName) !== 'TabItem') continue;
+        const kids: Element[] = [];
+        for (let c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 1) kids.push(c as Element);
+        if (kids.some((k) => localName(k.tagName) === 'Canvas')) continue;   // the free surface is there
+        // NOT every page without a Canvas is broken. A page holding ONE undocked control with
+        // LastChildFill left on is the deliberate "this control fills the page" page — the sheet and
+        // chart tabs of the user's own demo are exactly that, and the first version of this rule nagged
+        // about them (measured 2026-09-30: 3 findings on their form, only 1 of them real). What is left
+        // broken is a page that CANNOT place its controls: more than one undocked child (only the last
+        // one can fill; the rest are bands) or LastChildFill turned off, which makes every child a band.
+        const undocked = kids.filter((k) => !k.getAttribute('DockPanel.Dock') && !localName(k.tagName).includes('.'));
+        const fillOff = (el.getAttribute('LastChildFill') || '').toLowerCase() === 'false';
+        if (undocked.length <= 1 && !fillOff) continue;
+        // WHERE the controls are now, straight from the host's last frame: a band-relative Margin is
+        // not a position (it is what the band left over), so the measured rectangle minus the page's own
+        // origin is the only honest answer. Without a frame the Margin is the fallback.
+        const origin = bounds?.find((b) => b.name === body);
+        const movable = undocked
+            .map((k) => {
+                const name = k.getAttribute('x:Name') || k.getAttribute('Name') || localName(k.tagName);
+                const at = bounds?.find((b) => b.name === name);
+                const fallback = marginXY(k.getAttribute('Margin') || '');
+                return {
+                    name,
+                    x: at && origin ? Math.max(0, Math.round(at.x - origin.x)) : Math.round(fallback.x),
+                    y: at && origin ? Math.max(0, Math.round(at.y - origin.y)) : Math.round(fallback.y)
+                };
+            });
+        const at = text.indexOf(`"${body}"`);
+        out.push({ body, line: at >= 0 ? lineAt(text, at) : 0, movable });
+    }
+    return out;
+}
+
+/** The left/top of a Margin, for the fallback position when no frame geometry is available. */
+function marginXY(margin: string): { x: number; y: number } {
+    const parts = margin.split(',').map((v) => parseFloat(v.trim()));
+    return {
+        x: Number.isFinite(parts[0]) ? parts[0] : 0,
+        y: Number.isFinite(parts[1]) ? parts[1] : 0
+    };
+}
+
+/** Reads the form's XAML (from the designer's in-memory copy when given) and extracts the facts the *  checks need: named controls, event wiring, the class/root type and the root namespace. */
 export function axamlFacts(axamlUri: vscode.Uri, axamlText?: string): AxamlFacts {
     const text = (axamlText ?? readText(axamlUri.fsPath)).replace(/\uFEFF/g, '');
     const facts: AxamlFacts = {
@@ -798,6 +879,60 @@ export function enclosingMethod(codeFile: string, text: string, line: number): M
 }
 
 /**
+ * THE FORM'S OWN MARKUP: findings that need no code-behind at all. These rules run whether the
+ * form has a code-behind or not — the analysis stops at "No code-behind file found" before any
+ * other rule runs, and these are repairs to the XAML itself, so they must not be lost with it.
+ */
+function xamlOnlyIssues(ax: AxamlFacts, opts: CheckOptions): (Omit<CodeIssue, 'id'> & { id?: string })[] {
+    const out: (Omit<CodeIssue, 'id'> & { id?: string })[] = [];
+    // ---- the old dock wrapper: a control docked inside its Canvas instead of its panel ----
+    // Before 2026-09-29 the dock code, finding no DockPanel to act in, wrapped the control in a NEW
+    // DockPanel inside the Canvas it sat on. A Canvas sizes a child to the child's own desire, so that
+    // wrapper was as small as the control and a dock there did NOTHING — the form still runs, which is
+    // why it is a warning: re-setting the Dock property repairs a form one control at a time, and this
+    // does the lot. (Reported 2026-09-29: "any control with a Dock property does not dock properly in
+    // the tab canvas … if I delete the canvas from that page, controls dock fill properly".)
+    for (const w of dockWrappersIn(ax.text)) {
+        out.push({
+            severity: 'warning', kind: 'lift-dock-wrapper', member: w.control, line: w.line, file: 'axaml',
+            title: `${w.control} is docked inside its Canvas, not inside the panel`,
+            detail: `An earlier version of the designer wrapped it in <DockPanel x:Name="${w.wrapper}"> ` +
+                `INSIDE <${w.canvas}>. A Canvas sizes a child to the child's own size, so a Dock there does ` +
+                `nothing (Dock = Fill filled nothing at all). Fix: move it into ${w.owner || 'the panel'} — ` +
+                'in front of the Canvas, as a docked child — and drop the wrapper.',
+            data: { wrapper: w.wrapper, canvas: w.canvas, owner: w.owner, control: w.control, name: w.control }
+        });
+    }
+
+    // ---- a tab page that LOST its Canvas: its controls are dock bands, not placed controls ----
+    // The Canvas is the page's free-placement surface (see `pageBodiesWithoutCanvas`). Without it a
+    // drop or a drag writes a Margin instead of Canvas.Left/Top and can only nudge a control inside the
+    // band it was given, which reads as "I can't freely relocate the controls" (2026-09-30). The fix
+    // puts the Canvas back where the designer's own tab snippet has it — the page's fill child — and
+    // moves the undocked controls into it at the positions the host last measured.
+    for (const p of pageBodiesWithoutCanvas(ax.text, opts.bounds)) {
+        out.push({
+            severity: 'warning', kind: 'restore-page-canvas', member: p.body, line: p.line, file: 'axaml',
+            title: `The ${p.body} page has no Canvas — its controls can't be moved freely`,
+            detail: `A tab page is <DockPanel x:Name="${p.body}"><Canvas x:Name="${p.body}Canvas"/></DockPanel>: `
+                + `the Canvas is the page's free-placement surface, and it is gone. Every control left on the `
+                + `page is a DockPanel child, so each one gets a band (no Dock = Left) and a drag can only `
+                + `nudge it by its Margin. Fix: put <Canvas x:Name="${p.body}Canvas"/> back as the page's `
+                + `fill child and move ${p.movable.length === 1 ? 'the control' : `the ${p.movable.length} controls`} `
+                + 'that has no Dock into it, where they can be dragged anywhere again.',
+            data: {
+                body: p.body,
+                canvas: `${p.body}Canvas`,
+                count: String(p.movable.length),
+                positions: JSON.stringify(p.movable)
+            }
+        });
+    }
+
+    return out;
+}
+
+/**
  * Analyses the form's code-behind against its XAML (+ the DataSet context the designer supplies)
  * and returns every problem it can explain. Never throws.
  */
@@ -805,6 +940,13 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
     const ax = axamlFacts(axamlUri, opts.axamlText);
     const codeFile = findCodeBehindFile(axamlUri);
     if (!codeFile) {
+        // The form's own MARKUP can still be wrong — and fixable — with no code-behind to check, so
+        // those findings come through here too (they used to be unreachable on such a form).
+        const markup: CodeIssue[] = xamlOnlyIssues(ax, opts).map((i) => ({
+            ...i,
+            alternatives: [...(i.alternatives ?? []), dismissAlternative()],
+            id: i.id ?? `${i.kind}:${i.member ?? i.title}:${i.line ?? 0}`
+        }));
         return {
             language: 'vb',
             issues: [{
@@ -813,7 +955,7 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
                 kind: 'report-only',
                 title: 'No code-behind file found',
                 detail: 'This form has no .axaml.cs / .axaml.vb sibling that declares its class, so event handlers cannot be checked or generated.'
-            }]
+            }, ...markup]
         };
     }
     const text = readText(codeFile);
@@ -1296,7 +1438,25 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
         /\bAs\s+(?:Line|Rectangle|Ellipse|Arc|Sector|Polygon|Polyline|Path|Shape)\b/.test(code.body));
     needImport('AvaloniaChrome', /\bAs\s+(?:GrumpyPanel|ChromeWindow|PathPicker)\b/.test(code.body));
     needImport('AvaloniaSpreadsheet', /\bAs\s+GrumpySheet\b/.test(code.body));
-    needImport('Avalonia.Platform.Storage', /\b(?:FilePickerFileTypes|StorageProvider|FilePickerOpenOptions)\b/.test(code.body));
+    // Avalonia.Platform.Storage is the one rule whose types are used by code the DESIGNER writes (the
+    // command bar's File Open…/File Save… handlers), so it has two traps the `As <Type>` rules above do
+    // not have:
+    //   1. a QUALIFIED reference needs no import. `new Avalonia.Platform.Storage.FilePickerOpenOptions`
+    //      is exactly what those handlers write — fully qualified on purpose, so the form's own
+    //      using/Imports block is never edited — and a bare `\bFilePickerOpenOptions\b` test matched the
+    //      tail of it, reporting "Imports Avalonia.Platform.Storage is missing" on a file that compiles
+    //      (reported 2026-09-30 on the user's demo: MainWindow.axaml.cs, build 0/0, error in the
+    //      Problems pane only).
+    //   2. `StorageProvider` is ALSO a property (`TopLevel.StorageProvider`), so the bare name is not
+    //      evidence of a type use at all. A reference preceded by a dot is a member access — not this
+    //      rule's business.
+    // Both are the same test: the name is used UNQUALIFIED (nothing before it but a non-identifier,
+    // which `(?<![\w.])` is).
+    const usesUnqualified = (names: string): boolean =>
+        new RegExp(`(?<![\\w.])(?:${names})\\b`).test(code.body);
+    needImport('Avalonia.Platform.Storage',
+        usesUnqualified('FilePickerFileTypes|FilePickerOpenOptions|FilePickerSaveOptions|FilePickerFileType'
+            + '|IStorageFile|IStorageItem|IStorageProvider'));
     needImport('System.Data', /\bAs\s+(?:DataTable|DataRow|DataSet)\b/.test(code.body));
     needImport('Avalonia.Input', /\bAs\s+(?:PointerEventArgs|KeyEventArgs|TappedEventArgs)\b/.test(code.body));
 
@@ -1321,24 +1481,8 @@ export function analyzeCodeBehind(axamlUri: vscode.Uri, opts: CheckOptions = {})
         });
     }
 
-    // ---- the old dock wrapper: a control docked inside its Canvas instead of its panel ----
-    // Before 2026-09-29 the dock code, finding no DockPanel to act in, wrapped the control in a NEW
-    // DockPanel inside the Canvas it sat on. A Canvas sizes a child to the child's own desire, so that
-    // wrapper was as small as the control and a dock there did NOTHING — the form still runs, which is
-    // why it is a warning: re-setting the Dock property repairs a form one control at a time, and this
-    // does the lot. (Reported 2026-09-29: "any control with a Dock property does not dock properly in
-    // the tab canvas … if I delete the canvas from that page, controls dock fill properly".)
-    for (const w of dockWrappersIn(ax.text)) {
-        add({
-            severity: 'warning', kind: 'lift-dock-wrapper', member: w.control, line: w.line, file: 'axaml',
-            title: `${w.control} is docked inside its Canvas, not inside the panel`,
-            detail: `An earlier version of the designer wrapped it in <DockPanel x:Name="${w.wrapper}"> ` +
-                `INSIDE <${w.canvas}>. A Canvas sizes a child to the child's own size, so a Dock there does ` +
-                `nothing (Dock = Fill filled nothing at all). Fix: move it into ${w.owner || 'the panel'} — ` +
-                'in front of the Canvas, as a docked child — and drop the wrapper.',
-            data: { wrapper: w.wrapper, canvas: w.canvas, owner: w.owner, control: w.control, name: w.control }
-        });
-    }
+    // ---- the form's own markup: the old dock wrapper, and a page that lost its Canvas ----
+    for (const i of xamlOnlyIssues(ax, opts)) add(i);
 
     // ---- 13) report-only: names / class mismatch ----
     for (const n of ax.invalidNames) {
@@ -1819,6 +1963,51 @@ export async function applyLocalFix(axamlUri: vscode.Uri, issue: CodeIssue, opts
         const into = owner.getAttribute('x:Name') || owner.getAttribute('Name') || 'its panel';
         return `Moved ${data.control || localName(child.tagName)} into ${into} — it docks there now, and the ` +
             `${data.wrapper} wrapper is gone.`;
+    }
+    // The page-Canvas repair is XAML-ONLY too, and it is the other half of the same story: a page whose
+    // free-placement surface was deleted, leaving every control as a dock band.
+    if (issue.kind === 'restore-page-canvas') {
+        const text = opts.axamlText ?? readText(axamlUri.fsPath);
+        const model = new XamlModel(text);
+        const body = model.findByName(String(data.body ?? ''));
+        if (!body || localName(body.tagName) !== 'DockPanel') return 'That page is already gone — nothing to restore.';
+        const kids: Element[] = [];
+        for (let c = body.firstChild; c; c = c.nextSibling) if (c.nodeType === 1) kids.push(c as Element);
+        if (kids.some((k) => localName(k.tagName) === 'Canvas')) return 'That page already has its Canvas.';
+        const positions = new Map<string, { x: number; y: number }>();
+        try {
+            for (const p of JSON.parse(String(data.positions ?? '[]')) as { name: string; x: number; y: number }[]) {
+                positions.set(p.name, { x: p.x, y: p.y });
+            }
+        } catch { /* a stage without positions falls back to the Margin */ }
+        // The name the designer's own tab snippet uses, made unique in case it is taken.
+        const canvasName = model.uniqueName(String(data.canvas ?? `${data.body}Canvas`));
+        const canvas = model.createElement(`<Canvas x:Name="${canvasName}"/>`);
+        const moved: string[] = [];
+        for (const kid of kids) {
+            if (kid.getAttribute('DockPanel.Dock')) continue;   // an explicit Dock is a decision — it stays
+            if (localName(kid.tagName).includes('.')) continue; // a property element is not a control
+            const name = kid.getAttribute('x:Name') || kid.getAttribute('Name') || '';
+            const at = positions.get(name);
+            const fallback = marginXY(kid.getAttribute('Margin') || '');
+            const x = at ? at.x : Math.round(fallback.x);
+            const y = at ? at.y : Math.round(fallback.y);
+            // The Margin was the band's inset, not a position — it goes with the band.
+            kid.removeAttribute('Margin');
+            canvas.appendChild(kid);
+            kid.setAttribute('Canvas.Left', String(Math.max(0, x)));
+            kid.setAttribute('Canvas.Top', String(Math.max(0, y)));
+            moved.push(name || localName(kid.tagName));
+        }
+        // The Canvas goes LAST: it is the DockPanel's fill child (which is what makes it fill the page).
+        // A leftover LastChildFill="False" — written by the dock workaround — would turn it into one more
+        // band, so it goes too.
+        if ((body.getAttribute('LastChildFill') || '').toLowerCase() === 'false') body.removeAttribute('LastChildFill');
+        body.appendChild(canvas);
+        fs.writeFileSync(axamlUri.fsPath, withDesignerHeader(model.serialize(true)), 'utf8');
+        const what = moved.length === 1 ? '1 control' : `${moved.length} controls`;
+        return `Put ${canvasName} back on the ${data.body} page and moved ${what} into it`
+            + (moved.length > 0 ? ` (${moved.join(', ')}) — they can be dragged anywhere on the page again.` : '.');
     }
     const codeFile = findCodeBehindFile(axamlUri);
     if (!codeFile) return 'No code-behind file to fix.';

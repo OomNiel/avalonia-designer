@@ -9,7 +9,7 @@
 const { DOMParser } = require('@xmldom/xmldom');
 const {
     propertyDefsFor, PROP_SECTIONS, CONTROL_PROPS, COMMON_PROPS, FONT_PROPS, ANCHOR_PROPS,
-    GRUMPY_ANCHOR_PROPS, CHROME_WINDOW_PROPS, hasCustomColors, THEME_COLOR_KEYS
+    GRUMPY_ANCHOR_PROPS, CHROME_WINDOW_PROPS, hasCustomColors, THEME_COLOR_KEYS, sizeFloorCompanion
 } = require('../../out/propertyCatalog.js');
 
 const NS = 'xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:chrome="using:AvaloniaChrome" xmlns:spread="using:AvaloniaSpreadsheet"';
@@ -25,6 +25,9 @@ function elFrom(xml) {
 }
 const keyOf = (props, k) => props.find((p) => p.key === k);
 const childEls = (el) => Array.from(el.childNodes).filter((n) => n.nodeType === 1);
+const fs = require('fs');
+const path = require('path');
+const read = (p) => fs.readFileSync(path.join(__dirname, '..', '..', p), 'utf8');
 
 module.exports = async (t) => {
     t.section('propertyCatalog');
@@ -374,6 +377,26 @@ module.exports = async (t) => {
             'the webview hides advanced rows until Show advanced is ticked');
     }
 
+    // --- The Theme row belongs to controls that DRAW something (a component has no Appearance) ---
+    // It is a component's only Appearance row, so leaving it on the Timer left the panel with a
+    // one-row section whose two answers mean the same thing (asked 2026-09-30). Every real control
+    // keeps it, because there the row decides whether the fixed colours below it are used.
+    {
+        const timer = elFrom('<DockPanel><chrome:Timer x:Name="tm1"/></DockPanel>');
+        const timerRows = propertyDefsFor(childEls(timer)[0]);
+        t.equal(!!keyOf(timerRows, '__theme__'), false, 'theme',
+            'the Timer (a component that draws nothing) has no Theme row');
+        t.equal(timerRows.some((r) => r.sectionId === 'appearance'), false, 'theme',
+            'and therefore no Appearance section');
+        for (const xml of ['<Canvas><Button x:Name="b9" Content="Go"/></Canvas>',
+            '<Canvas><TextBlock x:Name="t9" Text="hi"/></Canvas>',
+            '<chrome:GrumpyPanel x:Name="gp9"/>', '<Canvas><Border x:Name="bd9"/></Canvas>']) {
+            const p = propertyDefsFor(childEls(elFrom(xml))[0] || elFrom(xml));
+            t.equal(!!keyOf(p, '__theme__'), true, 'theme',
+                `${xml.split(' ')[0].replace(/[<:]/g, '')} keeps its Theme row (it draws colours)`);
+        }
+    }
+
     // --- Designer editor buttons are ALWAYS in the first section ('Editors') ---
     {
         const p = propertyDefsFor(elFrom('<DataGrid x:Name="d1"/>'));
@@ -381,6 +404,56 @@ module.exports = async (t) => {
         t.equal(keyOf(p, 'Columns').sectionId, 'editors', 'sections', 'DataGrid Columns editor is in Editors');
         t.equal(p.filter((r) => r.sectionId)[0].sectionId, 'editors', 'sections', 'Editors is the very first section');
         t.equal(keyOf(p, 'Rows').section, 'Editors', 'sections', 'the row carries the section label too');
+    }
+
+    // --- The GrumpyCommandBar's brand-new "Items Editor" section (2026-09-30) ---
+    // The bar's CONTENTS are what the control is — the frame rows only wrap them — so its editor is
+    // no longer a button buried in Data but the first section of the panel, above Layout & size.
+    {
+        const bar = elFrom('<chrome:GrumpyCommandBar x:Name="GrumpyCommandBar1" Height="36">'
+            + '<StackPanel x:Name="GrumpyCommandBar1Items" Orientation="Horizontal"/></chrome:GrumpyCommandBar>');
+        const p = propertyDefsFor(bar);
+        const editor = keyOf(p, 'Commands');
+        t.equal(!!editor, true, 'items-editor', 'the bar still offers the Commands button');
+        t.equal(editor.section, 'Items Editor', 'items-editor', 'its section is named "Items Editor"');
+        t.equal(editor.sectionId, 'itemsEditor', 'items-editor', 'with its own section id');
+        t.equal(editor.kind, 'button', 'items-editor', 'and it is still a popup-editor button');
+        // …and it is the FIRST thing after the pinned identity rows, i.e. above the frame rows.
+        const sections = p.filter((r) => r.sectionId);
+        t.equal(sections[0].sectionId, 'itemsEditor', 'items-editor', 'Items Editor is the first section');
+        t.equal(sections[0].key, 'Commands', 'items-editor', 'and it holds the editor button');
+        t.equal(p[0].key, '__name__', 'items-editor', 'the identity rows stay pinned above every section');
+        t.equal(p[1].key, '__type__', 'items-editor', 'Name then Type, as always');
+        // The section is declared before 'editors' in the canonical order, and the bar's own panel
+        // follows that order (an out-of-order panel would print the headings in a different order).
+        t.equal(PROP_SECTIONS[0].id, 'itemsEditor', 'items-editor', 'declared as the very first section');
+        t.equal(PROP_SECTIONS[0].label, 'Items Editor', 'items-editor', 'with the label the user asked for');
+        const seen = [...new Set(p.map((r) => r.sectionId).filter(Boolean))];
+        t.equal(seen, PROP_SECTIONS.map((s) => s.id).filter((id) => seen.indexOf(id) >= 0), 'items-editor',
+            'the bar\'s sections appear in the canonical order');
+        // The bar's frame rows are untouched, only the editor moved out of Data.
+        t.equal(keyOf(p, 'Background').sectionId, 'appearance', 'items-editor', 'Background stays in Appearance');
+        t.equal(keyOf(p, 'DockPanel.Dock').sectionId, 'layout', 'items-editor', 'Dock stays in Layout & size');
+        t.equal(p.some((r) => r.sectionId === 'data'), false, 'items-editor',
+            'and Data no longer holds the editor (the bar has no other Data row)');
+
+        // NO OTHER CONTROL grows an empty "Items Editor": only the bar carries a Commands row, and the
+        // webview prints a heading only where its rows are — so every other panel starts at Editors.
+        for (const xml of ['<DataGrid x:Name="d9"/>', '<Button x:Name="b9" Content="Go"/>',
+            '<chrome:GrumpySheet x:Name="s9"/>', '<TreeView x:Name="tv9"/>']) {
+            const other = propertyDefsFor(elFrom(xml));
+            t.equal(other.some((r) => r.sectionId === 'itemsEditor'), false, 'items-editor',
+                `${xml.split(' ')[0].replace('<', '')} gets no Items Editor section`);
+        }
+        // …and the fallback for an UNLISTED editor button is still 'Editors', looked up by id — the
+        // panel's first section is the bar's private one and must never collect another control's
+        // buttons. (A hidden button is what a future control would add; here we check the rule itself.)
+        const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'propertyCatalog.ts'), 'utf8');
+        t.ok(/const EDITORS_SECTION = \(\(\) => \{\s*const index = PROP_SECTIONS\.findIndex\(\(s\) => s\.id === 'editors'\);/
+            .test(src), 'items-editor',
+            'the unlisted-button fallback finds Editors by id, never by position');
+        t.ok(/EDITORS_SECTION\s*$/m.test(src) || /: EDITORS_SECTION\b/.test(src), 'items-editor',
+            'and that constant is what an unlisted button falls back to');
     }
 
     // --- Coverage guard: every property the catalog can emit is filed in a section ---
@@ -429,5 +502,201 @@ module.exports = async (t) => {
             t.ok(!el.getAttribute('Background'), 'theme', `${tag} Background is gone on System`);
             t.equal(keyOf(propertyDefsFor(el), '__theme__').value, 'System', 'theme', `${tag} is back on System`);
         }
+    }
+
+    // ---------- a themed control's own minimum beats the user's Height ----------
+    // Reported 2026-09-29: *"the Height adjustment property for the Command Bar control is ignored"*.
+    // Nothing ignored it: Avalonia's CommandBar theme carries MinHeight=48 and a MINIMUM beats an explicit
+    // Height, so Height="30" renders 48 tall and the panel's row (which shows the rendered size) snapped
+    // back. Measured against the real host: CommandBar 48, TextBox/ComboBox/CheckBox/NumericUpDown/
+    // MaskedTextBox 32 (+MinWidth 64), CommandBarButton/ToggleButton 40, CommandBarSeparator 24, Button 0.
+    // The rule below is what the designer writes as a companion minimum so the user's number wins.
+    t.section('size floor (a themed minimum vs the user\'s Height/Width)');
+    {
+        // Below the floor: the companion is written, exactly as the user typed it.
+        t.equal(sizeFloorCompanion('30', null, null, 48), '30', 'floor',
+            'a Height below the control\'s floor gets a companion MinHeight');
+        // `@xmldom/xmldom` answers '' for an attribute that is not there — which is what a real document
+        // hands the rule, and reading that as "a minimum the user typed" made the first fix a no-op on a
+        // real form while these tests (passing null) stayed green. Both spellings of absent must behave
+        // identically.
+        t.equal(sizeFloorCompanion('30', '30', '', 48), '30', 'floor',
+            'an EMPTY MinHeight (xmldom\'s missing attribute) is treated as none');
+        t.equal(sizeFloorCompanion('30', '', '', 48), '30', 'floor',
+            'and an empty Height is no different from a missing one');
+        t.equal(sizeFloorCompanion('30', '200', null, 48), '30', 'floor',
+            'whatever the Height was before (here a full-width 200)');
+        // A MinHeight ATTRIBUTE in the XAML is the user's (a theme floor is not written into the form), and
+        // it is never overwritten — the panel then shows the size their own minimum produces.
+        t.equal(sizeFloorCompanion('30', '30', '48', 48), undefined, 'floor',
+            'a MinHeight already written in the XAML is left alone');
+        // At or above the floor: nothing is added — a themed control keeps its own look.
+        t.equal(sizeFloorCompanion('48', null, null, 48), undefined, 'floor', 'Height == floor needs no companion');
+        t.equal(sizeFloorCompanion('80', null, null, 48), undefined, 'floor', 'nor does a larger one');
+        t.equal(sizeFloorCompanion('30', null, null, 0), undefined, 'floor',
+            'and a control with no floor (a Button) is never touched');
+        // Growing past the floor again takes OUR companion back (a minimum equal to the size we wrote is
+        // ours — and redundant either way).
+        t.equal(sizeFloorCompanion('80', '30', '30', 48), '', 'floor',
+            'growing past the floor removes the companion the designer wrote');
+        t.equal(sizeFloorCompanion('', '30', '30', 48), '', 'floor',
+            'and clearing the row (back to Auto) removes it too');
+        t.equal(sizeFloorCompanion('', null, null, 48), undefined, 'floor',
+            'while clearing a row that has none writes nothing');
+        // A minimum the USER typed is theirs: it is never overwritten, even when it makes the Height
+        // impossible — the panel then shows the size their own minimum produces.
+        t.equal(sizeFloorCompanion('30', '200', '64', 48), undefined, 'floor',
+            'a hand-set MinHeight is left alone');
+        t.equal(sizeFloorCompanion('80', '200', '64', 48), undefined, 'floor',
+            'even when the row is then raised');
+        // Not a number: no NaN is ever written into a form.
+        for (const v of ['Auto', 'auto', '50%', 'abc']) {
+            t.equal(sizeFloorCompanion(v, null, null, 48), undefined, 'floor', `"${v}" is left to the framework`);
+        }
+        t.equal(sizeFloorCompanion('30.5', null, null, 48), '30.5', 'floor', 'a fractional size is written as typed');
+        t.equal(sizeFloorCompanion('30', null, null, Number.NaN), undefined, 'floor',
+            'an unknown floor (no frame reported yet) changes nothing');
+
+        // The write sites, at source level: the rule lives in the MODEL, so every door goes through it —
+        // the Properties panel, a multi-select edit, the same-width/height tools, the placement code, and
+        // the **canvas resize handles**, which is the door the first attempt missed (it wrote
+        // Width/Height straight onto the element, so dragging a CommandBar was still floored while typing
+        // a number worked — reported straight after the first fix shipped).
+        const panel = read('src/designerPanel.ts');
+        const model = read('src/xamlModel.ts');
+        t.ok(/sizeFloors: Record<string, \{ w: number; h: number \}> = \{\}/.test(model), 'floor-wiring',
+            'the model holds the floors the host reported for each control');
+        t.ok(/if \(key === 'Width' \|\| key === 'Height'\) \{ this\.writeSize\(el, key, value\); return; \}/.test(model),
+            'floor-wiring', 'and setProperty routes every size write through writeSize');
+        t.ok(/writeSize\(el: Element, key: 'Width' \| 'Height', value: string\)/.test(model) && /sizeFloorFor\(el, key\)/.test(model),
+            'floor-wiring', 'which writes the companion minimum when the control\'s theme floors the value');
+        const resizes = model.slice(model.indexOf('resize(el: Element'));
+        t.ok(/this\.writeSize\(el, 'Width'/.test(resizes) && /this\.writeSize\(el, 'Height'/.test(resizes),
+            'floor-wiring', 'the canvas resize handles included — the door that was missed');
+        t.ok(!/el\.setAttribute\('Height', String\(Math\.round\(h\)\)\)/.test(resizes), 'floor-wiring',
+            'and no write in resize() bypasses it any more');
+        t.ok(/the panel fills it from every frame|doc\.model\.sizeFloors = \{\}/.test(panel), 'floor-wiring',
+            'the panel refreshes the floors from each preview frame');
+        t.ok(/doc\.model\.writeSize\(el, 'Height', String\(Math\.max\(24, doc\.model\.sizeFloorFor\(el, 'Height'\)\)\)\)/.test(panel)
+            && /doc\.model\.writeSize\(el, 'Width', String\(Math\.max\(200, doc\.model\.sizeFloorFor\(el, 'Width'\)\)\)\)/.test(panel),
+            'floor-wiring',
+            'the dock thickness is the larger of the sensible one and the floor (a CommandBar cannot be 24 tall)');
+        // The floors must also survive a re-parse: undo, reload and the history steps all build a fresh
+        // XamlModel, which knows nothing — and the first edit right after an undo is exactly when nobody
+        // looks for the companion that should have been written.
+        t.ok(/private refreshSizeFloors\(doc: DesignerDocument\): void/.test(panel), 'floor-wiring',
+            'the panel refreshes the floors in one place');
+        const refreshes = (panel.match(/this\.refreshSizeFloors\(doc\);/g) || []).length;
+        t.ok(refreshes >= 6, 'floor-wiring',
+            `after every frame AND after every model re-parse (found ${refreshes} call sites, need >= 6)`);
+        const host = read('host/XamlRenderer.cs');
+        t.ok(/AddViaReflection\("MinWidth", InvariantNumber\);\s*\n\s*AddViaReflection\("MinHeight", InvariantNumber\);/.test(host),
+            'floor-wiring', 'and the host reports MinWidth/MinHeight as the control actually has them');
+    }
+
+    // --- The per-control panel AUDIT ------------------------------------------------
+    // Every toolbox control's panel, checked against the rule the Timer's Appearance section broke:
+    // "Only relevant items must be listed in a control properties panel" (asked 2026-09-30). A row
+    // that cannot do anything on the control it is offered for is not a cosmetic problem — it is a
+    // row the user can set with no effect, or a dropdown with nothing in it, and nothing else in the
+    // suite would notice (the T5 property audit checks that listed rows ROUND-TRIP; this one checks
+    // they are the RIGHT rows).
+    //
+    // One check per RULE, with the offending controls listed in the detail: a hundred passes hide the
+    // one failure, and a hundred failures bury it.
+    {
+        const NON_VISUAL = new Set(['Timer']);
+        // Rows the catalog adds at runtime (designer editors and bindings), which belong to no tag
+        // template — see the `props.push` sites in propertyCatalog.ts.
+        const DYNAMIC_KEYS = new Set([
+            'AutoSizeToCell', 'Axis', 'Columns', 'Cursors', 'DataSelector', 'Grid.Column', 'Grid.Row',
+            'Grid.Defs', 'Items', 'Legend', 'MenuItems', 'Rows', 'Series', 'Slices', 'SplitLayout',
+            'SplitPanelPaneBorder', 'Splitters', 'StatusDate.Date', 'StatusDate.Time', 'StatusDate.Preview',
+            'StatusItems', 'TreeItems', 'UndoRedoDepth'
+        ]);
+        const sharedKeys = new Set([...COMMON_PROPS, ...FONT_PROPS, ...ANCHOR_PROPS,
+        ...GRUMPY_ANCHOR_PROPS, ...CHROME_WINDOW_PROPS].map((t) => t.key));
+        const metaKeys = new Set(['__name__', '__type__', '__theme__']);
+        const sectionIds = PROP_SECTIONS.map((s) => s.id);
+
+        // Every control the catalog knows, plus the ones it recognises by NAME rather than tag (a
+        // Status Bar is a Border named StatusBarN, a SplitPanel a Border named SplitPanelN).
+        const probes = Object.keys(CONTROL_PROPS).map((tag) => [tag, `<${tag === 'GrumpySheet' ? 'chrome:GrumpySheet' : tag} x:Name="${tag}1"/>`]);
+        for (const [label, xml] of [
+            ['StatusBar (Border named StatusBarN)', '<Border x:Name="StatusBar1"/>'],
+            ['GrumpyStatus (GrumpyPanel named GrumpyStatusN)', '<chrome:GrumpyPanel x:Name="GrumpyStatus1"/>'],
+            ['GrumpyCommandBar', '<chrome:GrumpyCommandBar x:Name="GrumpyCommandBar1">'
+                + '<StackPanel x:Name="GrumpyCommandBar1Items" Orientation="Horizontal"/></chrome:GrumpyCommandBar>']
+        ]) probes.push([label, xml]);
+
+        const problems = { dupes: [], dead: [], buried: [], leaks: [], order: [], sections: [] };
+        // Where the popup editors live. Most are in the SAME section as the thing they edit (the
+        // sheet's Cells in Data, a chart's Gradient in Appearance, its DataSelector in Data) — that is
+        // deliberate, so they are reported rather than failed; what the audit does enforce is that a
+        // button row is never left unfiled (rule 8), which is what hides an editor in the wrong place.
+        const buttonHomes = new Set();
+        let probed = 0;
+        for (const [label, xml] of probes) {
+            let el;
+            try { el = elFrom(xml); } catch { problems.sections.push(`${label}: unparsable probe`); continue; }
+            let rows;
+            try { rows = propertyDefsFor(el); } catch (e) { problems.sections.push(`${label}: ${e.message}`); continue; }
+            probed++;
+
+            // 1) no row twice (a duplicate key means two rows writing the same attribute).
+            const keys = rows.map((r) => r.key);
+            const dupes = keys.filter((k, i) => keys.indexOf(k) !== i);
+            if (dupes.length) problems.dupes.push(`${label}: ${[...new Set(dupes)].join(', ')}`);
+
+            for (const r of rows) {
+                // 2) a row that cannot do anything: a dropdown with no options is a dead control; a
+                //    row with no label is unreadable. Both are silently useless in the panel.
+                if (r.kind === 'dropdown' && (!Array.isArray(r.options) || r.options.length === 0)) {
+                    problems.dead.push(`${label}.${r.key} (empty dropdown)`);
+                }
+                if (!r.label && !r.key.startsWith('__')) problems.dead.push(`${label}.${r.key} (no label)`);
+                // 3) WHERE an editor button sits, reported (see `buttonHomes`).
+                if (r.kind === 'button') buttonHomes.add(`${label}.${r.key} → ${r.sectionId || '(none)'}`);
+                // 4) traceability: a row is either the control's own, one of the shared catalog rows,
+                //    a meta row, or one of the runtime rows. Anything else leaked in from another
+                //    control's panel — which is how a no-op row gets offered.
+                const own = (CONTROL_PROPS[label] || []).some((t) => t.key === r.key);
+                if (!own && !sharedKeys.has(r.key) && !metaKeys.has(r.key) && !DYNAMIC_KEYS.has(r.key)
+                    && label !== xml && !/^(StatusBar|GrumpyStatus|GrumpyCommandBar)/.test(label)) {
+                    problems.leaks.push(`${label}.${r.key}`);
+                }
+                // 5) NO-OP ROWS ON A COMPONENT: the Timer draws nothing, so a colour/size/position row
+                //    on it can only lie (this is the rule that removed its Appearance section).
+                if (NON_VISUAL.has(label) && r.sectionId && r.sectionId !== 'behavior') {
+                    problems.dead.push(`${label}.${r.key} (${r.sectionId} row on a component that draws nothing)`);
+                }
+                // 6) the rows a component must never carry, by name.
+                if (NON_VISUAL.has(label) && ['Width', 'Height', 'Margin', 'Background', 'Foreground',
+                    'BorderBrush', 'BorderThickness', 'CornerRadius', 'Opacity', '__theme__',
+                    'chrome:AnchorHelper.Anchor', 'HorizontalAlignment', 'IsVisible'].includes(r.key)) {
+                    problems.dead.push(`${label}.${r.key} (visual row on a component)`);
+                }
+            }
+
+            // 7) the sections a panel shows are a subsequence of the canonical order — a panel whose
+            //    headings come out in a different order means a row was filed by hand somewhere.
+            const seen = [...new Set(rows.map((r) => r.sectionId).filter(Boolean))];
+            const canonical = sectionIds.filter((id) => seen.includes(id));
+            if (seen.join(',') !== canonical.join(',')) {
+                problems.order.push(`${label}: ${seen.join(',')} (expected ${canonical.join(',')})`);
+            }
+            // 8) …and every row is filed at all (an unfiled row would land in the last section).
+            const unfiled = rows.filter((r) => !r.key.startsWith('__') && !r.sectionId);
+            if (unfiled.length) problems.sections.push(`${label}: ${unfiled.map((r) => r.key).join(', ')} unfiled`);
+        }
+
+        t.ok(probed >= 40, 'audit', `the audit really walked the toolbox (${probed} controls)`);
+        t.equal(problems.dupes, [], 'audit', 'no control offers the same row twice');
+        t.equal(problems.dead, [], 'audit', 'no dead rows (empty dropdown, no label, or a no-op row on a component)');
+        t.equal(problems.leaks, [], 'audit', 'every row comes from the control\'s own template or a shared catalog row');
+        t.equal(problems.order, [], 'audit', 'each panel\'s sections appear in the canonical order');
+        t.equal(problems.sections, [], 'audit', 'every panel builds, and every row is filed in a section');
+        t.note(`${buttonHomes.size} editor buttons, e.g. `
+            + [...buttonHomes].filter((b) => !/→ (editors|itemsEditor)$/.test(b)).slice(0, 6).join(', '));
     }
 };

@@ -25,6 +25,9 @@ const IDS = ['canvas', 'preview', 'overlayLayer', 'selection', 'status', 'zoomVa
     'contextMenu', 'ctxDelete', 'ctxCut', 'ctxCopy', 'ctxPaste', 'ctxMoveToContainer', 'ctxAddEvent',
     'eventModal', 'eventTitle', 'eventHint', 'eventList', 'eventRemember', 'eventRememberWrap', 'eventSkip', 'eventWire',
     'sliceModal', 'sliceTitle', 'sliceList', 'sliceFields', 'sliceHead', 'sliceAdd', 'sliceDel', 'sliceSave', 'sliceCancel',
+    // the Commands editor for a GrumpyCommandBar (2026-09-30): the item table, the spacing box, the
+    // add button, the running summary and the one-line hint under the table.
+    'cmdModal', 'cmdTitle', 'cmdRows', 'cmdAdd', 'cmdSpacing', 'cmdSummary', 'cmdHint', 'cmdSave', 'cmdCancel',
     'dataModal', 'dataTitle', 'dataKind', 'dataFields', 'dataHead', 'dataSave', 'dataCancel',
     // the Cells editor for a GrumpySheet (2026-09-27): the grid, its size boxes, the name box and the
     // fx input the active cell is typed in, plus the formatting bar added with the formatting phase.
@@ -3989,6 +3992,206 @@ module.exports = async (t) => {
     const chipsAfter = [...$('componentTrayList').children];
     t.ok(chipsAfter[0].className.includes('sel'), 'tray', 'and the chip marks itself as the selection');
     t.ok(!chipsAfter[1].className.includes('sel'), 'tray', 'while the other stays unselected');
+
+    // ---- the Commands editor (GrumpyCommandBar, 2026-09-30) ------------------------------------------
+    // The bar's items are REAL Avalonia children in a named row, so this editor is the only way they are
+    // ever written by hand — and every mistake here is silent. A kind the drop-down cannot produce, a
+    // caption on a control that has no Content, an icon left on a Text Box, an item whose event names a
+    // handler nobody generated, or an item the user never touched being dropped on the way out: all of
+    // those save, compile and are wrong. These checks pin the round trip, the per-kind fields, the icon
+    // file picker's message, and the exact shape of what Save posts.
+    {
+        const sh = setup();
+        const cmdKindLabels = ['Label', 'Text Box', 'Button', 'Separator', 'Toggle Button', 'Radio Button', 'Icon Button'];
+        sh.msg({
+            type: 'properties', name: 'bar1',
+            properties: [{ key: 'Commands', label: 'Edit items…', kind: 'button', value: 'Edit items…' }],
+            commandInfo: {
+                spacing: '8',
+                kinds: [
+                    { kind: 'Label', label: 'Label', caption: true, icon: false, group: false, event: '', hint: 'Read-only text.' },
+                    { kind: 'TextBox', label: 'Text Box', caption: true, icon: false, group: false, event: 'TextChanged', hint: 'An editable field.' },
+                    { kind: 'Button', label: 'Button', caption: true, icon: true, group: false, event: 'Click', hint: 'A push button.' },
+                    { kind: 'Separator', label: 'Separator', caption: false, icon: false, group: false, event: '', hint: 'A thin rule.' },
+                    { kind: 'ToggleButton', label: 'Toggle Button', caption: true, icon: true, group: false, event: 'IsCheckedChanged', hint: 'Stays down.' },
+                    { kind: 'RadioButton', label: 'Radio Button', caption: true, icon: false, group: true, event: 'IsCheckedChanged', hint: 'One of a set.' },
+                    { kind: 'IconButton', label: 'Icon Button', caption: true, icon: true, group: false, event: 'Click', hint: 'A button with an icon.' }
+                ],
+                icons: [{ name: 'save', label: 'Save' }, { name: 'print', label: 'Print' }],
+                items: [
+                    { kind: 'Label', name: 'lbl1', text: 'Name:', width: '', height: '', icon: '', iconFile: '', iconSize: '', group: '', event: '', handler: '' },
+                    { kind: 'Button', name: 'btn1', text: 'Save', width: '80', height: '', icon: '', iconFile: '', iconSize: '', group: '', event: 'Click', handler: 'btn1_Click' },
+                    { kind: 'Label', name: '', text: '', width: '', height: '', icon: '', iconFile: '', iconSize: '', group: '', event: '', handler: '', other: 'ComboBox' }
+                ]
+            }
+        });
+
+        const openButton = sh.$('propsBody').querySelector('[data-prop-key="Commands"]');
+        t.ok(!!openButton, 'cmd-editor', 'the Commands row renders a button (or the editor is unreachable)');
+        openButton.dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal(sh.$('cmdModal').hidden, false, 'cmd-editor', 'clicking it opens the item editor');
+
+        const rows = () => [...sh.$('cmdRows').querySelectorAll('tr')];
+        t.equal(rows().length, 3, 'cmd-editor', 'one row per item the form holds');
+        t.equal(sh.$('cmdSpacing').value, '8', 'cmd-editor', 'the spacing box shows the row’s own gap');
+        const field = (index, name) => sh.$('cmdRows').querySelector(`tr[data-index="${index}"] [data-field="${name}"]`);
+        t.equal(field(0, 'kind').value, 'Label', 'cmd-editor', 'each row shows its kind');
+        t.equal(field(0, 'text').value, 'Name:', 'cmd-editor', 'and its caption');
+        t.equal(field(1, 'handler').value, 'btn1_Click', 'cmd-editor', 'and the handler its event names');
+        t.equal(field(1, 'event').value, 'Click', 'cmd-editor', 'with the event itself selected');
+        t.equal(field(2, 'kind'), null, 'cmd-editor',
+            'a control the editor does not know (a ComboBox) has no kind drop-down at all');
+        t.ok(rows()[2].textContent.includes('ComboBox'), 'cmd-editor',
+            'it is shown as “Other” instead, so the user can see it is kept, not lost');
+        t.ok(sh.$('cmdSummary').textContent.includes('2 items'), 'cmd-editor',
+            'the summary counts the editable items');
+        t.ok(sh.$('cmdSummary').textContent.includes('kept as they are'), 'cmd-editor',
+            'and says the unknown one is being kept');
+        // The kinds the drop-down offers are exactly the ones the model knows.
+        const offered = [...field(0, 'kind').options].map((o) => o.textContent);
+        t.equal(offered.join(','), cmdKindLabels.join(','), 'cmd-editor',
+            'the kind drop-down offers all seven kinds, in order');
+
+        // Per-kind fields: a Separator has no caption, no icon and no event; a Text Box has no icon but
+        // does have an event; a Radio Button gets the group box.
+        field(1, 'kind').value = 'Separator';
+        field(1, 'kind').dispatchEvent(new sh.window.Event('change', { bubbles: true }));
+        t.equal(field(1, 'text').disabled, true, 'cmd-fields', 'a Separator has no caption field');
+        t.equal(field(1, 'icon').disabled, true, 'cmd-fields', 'no icon choice either');
+        t.equal(field(1, 'event').disabled, true, 'cmd-fields', 'and no event row');
+        t.equal(field(1, 'group').disabled, true, 'cmd-fields', 'nor a radio group');
+        field(1, 'kind').value = 'RadioButton';
+        field(1, 'kind').dispatchEvent(new sh.window.Event('change', { bubbles: true }));
+        t.equal(field(1, 'group').disabled, false, 'cmd-fields', 'a Radio Button DOES get the group box');
+        t.equal(field(1, 'icon').disabled, true, 'cmd-fields', 'but still no icon');
+        field(1, 'kind').value = 'IconButton';
+        field(1, 'kind').dispatchEvent(new sh.window.Event('change', { bubbles: true }));
+        t.equal(field(1, 'icon').disabled, false, 'cmd-fields', 'an Icon Button gets the icon drop-down');
+        t.equal(field(1, 'icon').value, 'save', 'cmd-fields',
+            'pre-filled with the first built-in icon, so the row is never blank');
+
+        // The handler follows the name while it is still generated: renaming must not leave btn1_Click.
+        field(1, 'kind').value = 'Button';
+        field(1, 'kind').dispatchEvent(new sh.window.Event('change', { bubbles: true }));
+        field(1, 'event').value = 'Click';
+        field(1, 'event').dispatchEvent(new sh.window.Event('change', { bubbles: true }));
+        field(1, 'name').value = 'saveButton';
+        field(1, 'name').dispatchEvent(new sh.window.Event('input', { bubbles: true }));
+        t.ok(/^saveButton_/.test(field(1, 'handler').value), 'cmd-editor',
+            'renaming an item moves its handler with it, so the method and the control never disagree');
+
+        // "From file…" asks the EXTENSION for the picture (it owns the dialog) and carries the row index.
+        const pick = sh.$('cmdRows').querySelector('[data-pick="1"]');
+        t.ok(!!pick, 'cmd-icon', 'an icon item offers a From file… button');
+        pick.dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const asked = sh.posted.filter((m) => m.type === 'pickCommandIcon').pop();
+        t.equal(JSON.stringify(asked), JSON.stringify({ type: 'pickCommandIcon', name: 'bar1', index: 1 }),
+            'cmd-icon', 'clicking it asks the extension to bundle an icon for THAT row');
+        t.ok(!sh.posted.some((m) => m.type === 'saveCommands'), 'cmd-icon',
+            'and nothing is saved just by picking a file — Save is still the only write');
+
+        // The answer fills that row: the built-in choice is replaced, and the file is named on the row.
+        sh.msg({ type: 'commandIconPicked', index: 1, uri: 'avares://App/Assets/save.png', label: 'save.png' });
+        t.ok(rows()[1].textContent.includes('save.png'), 'cmd-icon',
+            'the picked file is shown on the row it was picked for');
+        t.equal(sh.$('cmdRows').querySelector('[data-field="icon"][data-index="1"]').disabled, true, 'cmd-icon',
+            'and the built-in list is disabled while a file icon is used (one icon, not two)');
+        sh.$('cmdRows').querySelector('[data-clearicon="1"]')
+            .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal(sh.$('cmdRows').querySelector('[data-field="icon"][data-index="1"]').disabled, false, 'cmd-icon',
+            'the × puts the row back on the built-in set');
+
+        // Add, reorder and remove work on the list the SAVE will carry.
+        sh.$('cmdAdd').dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal(rows().length, 4, 'cmd-editor', '+ Add item appends a row');
+        const addedKind = field(3, 'kind');
+        t.equal(addedKind.value, 'Button', 'cmd-editor', 'a new item starts as a Button — the usual bar item');
+        t.ok(/^btn\d+$/.test(field(3, 'name').value), 'cmd-editor',
+            'with a name in the designer’s own shape (btn1, btn2 …)');
+        sh.$('cmdRows').querySelector('[data-move="3"][data-dir="-1"]')
+            .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.ok(/^btn\d+$/.test(field(2, 'name') ? field(2, 'name').value : ''), 'cmd-editor',
+            '↑ moves the item up the list');
+        sh.$('cmdRows').querySelector('[data-remove="2"]')
+            .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal(rows().length, 3, 'cmd-editor', '✕ removes it again');
+
+        // Save posts the whole list — and never the item this editor does not understand.
+        sh.$('cmdSpacing').value = '10';
+        sh.$('cmdSave').dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const saved = sh.posted.filter((m) => m.type === 'saveCommands').pop();
+        t.ok(!!saved, 'cmd-save', 'Save posts saveCommands');
+        t.equal(saved.name, 'bar1', 'cmd-save', 'naming the bar');
+        t.equal(saved.spacing, '10', 'cmd-save', 'the row spacing it was given');
+        t.equal(saved.items.length, 2, 'cmd-save',
+            'two items — the ComboBox is left for the model to keep, not rewritten as a Label');
+        t.equal(saved.items.map((i) => i.kind).join(','), 'Label,Button', 'cmd-save',
+            'with the kinds the table shows');
+        t.equal(saved.items[0].text, 'Name:', 'cmd-save', 'their captions');
+        t.ok(typeof saved.items[1].handler === 'string', 'cmd-save',
+            'and a handler for every item that carries an event');
+        t.equal(sh.$('cmdModal').hidden, true, 'cmd-save', 'and the dialog closes');
+        t.equal(sh.posted.filter((m) => m.type === 'saveCommands').length, 1, 'cmd-save',
+            'nothing is posted twice');
+    }
+
+    // ---- Child items in the Commands editor (a submenu entry the bar copied, 2026-09-30) --------
+    // "if the Menu top level items have child items, they should also render in the command bar as
+    // child items": the bar shows them after their parent, and this table shows them indented with a
+    // marker — and, because nothing in the row's fields expresses hierarchy, the depth rides on the row
+    // so no edit and no save can quietly promote a child to a top-level item.
+    {
+        const sh = setup();
+        const item = (kind, name, text, child) => ({
+            kind, name, text, width: '', height: '', icon: kind === 'IconButton' ? 'open' : '',
+            iconFile: '', iconSize: '', group: '', event: '', handler: '', child
+        });
+        sh.msg({
+            type: 'properties', name: 'bar1',
+            properties: [{ key: 'Commands', label: 'Edit items…', kind: 'button', value: 'Edit items…' }],
+            commandInfo: {
+                spacing: '6',
+                kinds: [{ kind: 'IconButton', label: 'Icon Button', caption: true, icon: true, group: false, event: 'Click', hint: 'A button with an icon.' }],
+                icons: [{ name: 'open', label: 'Open folder' }],
+                items: [item('IconButton', 'ico1', 'File', 0), item('IconButton', 'ico2', 'Open...', 1)]
+            }
+        });
+        sh.$('propsBody').querySelector('[data-prop-key="Commands"]')
+            .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const rows = () => [...sh.$('cmdRows').querySelectorAll('tr')];
+        t.equal(rows().length, 2, 'cmd-child', 'both the parent and its child item get a row');
+        t.equal(rows()[0].dataset.child, '0', 'cmd-child', 'the top-level item is depth 0');
+        t.equal(rows()[1].dataset.child, '1', 'cmd-child', 'and the submenu entry is depth 1');
+        t.equal(rows()[1].classList.contains('cmd-child'), true, 'cmd-child',
+            'the child row is marked, so the table can indent it');
+        t.equal(rows()[1].textContent.includes('\u21B3'), true, 'cmd-child',
+            'with the ↳ marker that says it came out of a submenu');
+        t.ok(/cmd-indent-1/.test(rows()[1].querySelectorAll('td')[1].className), 'cmd-child',
+            'and one step of indentation (on the kind cell, where the marker sits)');
+        t.equal(rows()[0].classList.contains('cmd-child'), false, 'cmd-child',
+            'while the parent row is not indented at all');
+
+        // Editing a child item must not lose that: the depth is not one of the fields, it is the row.
+        const text = sh.$('cmdRows').querySelector('[data-field="text"][data-index="1"]');
+        text.value = 'Open file...';
+        text.dispatchEvent(new sh.window.Event('input', { bubbles: true }));
+        sh.$('cmdSave').dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const saved = sh.posted.filter((m) => m.type === 'saveCommands').pop();
+        t.equal(saved.items.map((i) => i.child).join(','), '0,1', 'cmd-child',
+            'Save posts the depths, so a child item stays a child');
+        t.equal(saved.items[1].text, 'Open file...', 'cmd-child', 'along with the caption that was typed');
+
+        // …and a NEW item is always a top-level one: children come from the Menu, not from nowhere.
+        sh.$('propsBody').querySelector('[data-prop-key="Commands"]')
+            .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        sh.$('cmdAdd').dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal(rows()[2].dataset.child, '0', 'cmd-child', 'an item added by hand is top level');
+        // Reordering keeps each item's own depth (the row travels with the item).
+        sh.$('cmdRows').querySelector('[data-move="2"][data-dir="-1"]')
+            .dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal(rows().map((r) => r.dataset.child).join(','), '0,0,1', 'cmd-child',
+            'and ↑ / ↓ move an item without changing what it is');
+    }
 
     t.note('T3 done');
 };

@@ -615,6 +615,113 @@ export async function insertStatusDateClock(axamlUri: vscode.Uri, name: string):
     fs.writeFileSync(filePath, updated, 'utf8');
 }
 
+// ---------------- GrumpyCommandBar sample file dialogs ----------------
+
+/** The two handler names the command bar's sample items carry (`<bar>Open_Click`, `<bar>Save_Click`). */
+export function commandBarFileHandlers(barName: string): { open: string; save: string } {
+    return { open: `${barName}Open_Click`, save: `${barName}Save_Click` };
+}
+
+/** The box the picked path is shown in — the TextBox the bar's snippet carries beside the buttons. */
+function commandBarPathBox(barName: string): string {
+    return `${barName}Path`;
+}
+
+/** The C# body of one sample handler. Types are FULLY QUALIFIED on purpose: a generated code-behind
+ *  carries no `using Avalonia.Platform.Storage;`, and adding one would mean editing the user's own
+ *  using block (the StatusDate clock's generated code is qualified for the same reason). */
+function csFileDialogHandler(handler: string, kind: 'open' | 'save', pathBox: string): string {
+    const findBox = `this.FindControl<Avalonia.Controls.TextBox>("${pathBox}")`;
+    const apply = kind === 'open'
+        ? `if (files.Count > 0 && ${findBox} is { } box)\n            box.Text = files[0].Path.LocalPath;`
+        : `if (file is not null && ${findBox} is { } box)\n            box.Text = file.Path.LocalPath;`;
+    const pick = kind === 'open'
+        ? `var files = await top.StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions\n        {\n            Title = "Open file",\n            AllowMultiple = false\n        });`
+        : `var file = await top.StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions\n        {\n            Title = "Save file",\n            SuggestedFileName = "untitled.txt"\n        });`;
+    return `\n    /// <summary>Sample ${kind === 'open' ? 'Open' : 'Save'} button: Avalonia's own file dialog. `
+        + `The picked path is shown in ${pathBox} (sent by the designer as a starting point — edit or replace it freely).</summary>\n`
+        + `    private async void ${handler}(object sender, Avalonia.Interactivity.RoutedEventArgs e)\n    {\n`
+        + `        var top = Avalonia.Controls.TopLevel.GetTopLevel(this);\n`
+        + `        if (top is null) return;\n`
+        + `        ${pick}\n`
+        + `        ${apply}\n    }\n`;
+}
+
+/** The VB.NET twin of the above. */
+function vbFileDialogHandler(handler: string, kind: 'open' | 'save', pathBox: string): string {
+    const findBox = `Me.FindControl(Of Avalonia.Controls.TextBox)("${pathBox}")`;
+    const apply = kind === 'open'
+        ? `If files.Count > 0 Then\n            Dim box = ${findBox}\n            If box IsNot Nothing Then box.Text = files(0).Path.LocalPath\n        End If`
+        : `If file IsNot Nothing Then\n            Dim box = ${findBox}\n            If box IsNot Nothing Then box.Text = file.Path.LocalPath\n        End If`;
+    const pick = kind === 'open'
+        ? `Dim files = Await top.StorageProvider.OpenFilePickerAsync(New Avalonia.Platform.Storage.FilePickerOpenOptions With {.Title = "Open file", .AllowMultiple = False})`
+        : `Dim file = Await top.StorageProvider.SaveFilePickerAsync(New Avalonia.Platform.Storage.FilePickerSaveOptions With {.Title = "Save file", .SuggestedFileName = "untitled.txt"})`;
+    return `\n    ''' <summary>Sample ${kind === 'open' ? 'Open' : 'Save'} button: Avalonia's own file dialog. `
+        + `The picked path is shown in ${pathBox} (sent by the designer as a starting point — edit or replace it freely).</summary>\n`
+        + `    Private Async Sub ${handler}(sender As Object, e As Avalonia.Interactivity.RoutedEventArgs)\n`
+        + `        Dim top = Avalonia.Controls.TopLevel.GetTopLevel(Me)\n`
+        + `        If top Is Nothing Then Return\n`
+        + `        ${pick}\n`
+        + `        ${apply}\n`
+        + `    End Sub\n`;
+}
+
+/**
+ * Gives a freshly dropped GrumpyCommandBar two handlers that really open files: `OpenFilePickerAsync`
+ * for "File Open..." and `SaveFilePickerAsync` for "File Save...", each showing the picked path in the
+ * bar's own box. This is the sample the toolbox snippet promises — the alternative that shipped first
+ * (copying the form's Menu bar) produced buttons that looked right and did nothing (asked 2026-09-30).
+ *
+ * Idempotent per handler: a handler the form already has is left EXACTLY as it is, so re-dropping a bar
+ * never overwrites code the user has since edited. Creates the code-behind when the form has none.
+ */
+export async function insertCommandBarFileHandlers(axamlUri: vscode.Uri, barName: string): Promise<void> {
+    const { open, save } = commandBarFileHandlers(barName);
+    let filePath = findCodeBehindFile(axamlUri);
+    if (!filePath) {
+        if (!(await createCodeBehind(axamlUri))) return;
+        filePath = findCodeBehindFile(axamlUri);
+        if (!filePath) return;
+    }
+    const language: 'cs' | 'vb' = filePath.toLowerCase().endsWith('.vb') ? 'vb' : 'cs';
+    const original = fs.readFileSync(filePath, 'utf8');
+    const build = language === 'cs' ? csFileDialogHandler : vbFileDialogHandler;
+    const box = commandBarPathBox(barName);
+    const wanted = ([['open', open], ['save', save]] as ['open' | 'save', string][])
+        .filter(([, handler]) => !new RegExp(`\\b(?:void|Sub)\\s+${escapeRe(handler)}\\b`, 'i').test(original))
+        .map(([kind, handler]) => build(handler, kind, box));
+    if (wanted.length === 0) return;
+    const updated = language === 'cs'
+        ? insertCsMethods(original, wanted.join(''))
+        : insertVbMethods(original, wanted.join(''));
+    if (!updated || updated === original) return;
+    fs.writeFileSync(filePath, updated, 'utf8');
+}
+
+/** Inserts whole method texts before the C# class's closing brace. */
+function insertCsMethods(text: string, methods: string): string | undefined {
+    const clsRe = /\b(?:partial\s+)?class\s+(\w+)/;
+    const m = clsRe.exec(text);
+    if (!m) return undefined;
+    const brace = text.indexOf('{', m.index);
+    if (brace < 0) return undefined;
+    const close = matchingBrace(text, brace);
+    if (close < 0) return undefined;
+    return text.slice(0, close) + methods + text.slice(close);
+}
+
+/** Inserts whole method texts before the VB class's `End Class`. */
+function insertVbMethods(text: string, methods: string): string | undefined {
+    const clsRe = /\bClass\s+(\w+)/i;
+    const m = clsRe.exec(text);
+    if (!m) return undefined;
+    const after = text.slice(m.index);
+    const em = /End\s+Class/i.exec(after);
+    if (!em) return undefined;
+    const endIndex = m.index + em.index;
+    return text.slice(0, endIndex) + methods + text.slice(endIndex);
+}
+
 // ---------------- StatusDate clock — Date/Time format (System / Custom) ----------------
 
 /** One part of the clock's tick: `DateTime.Now.ToString(...)` with the OS standard ('d'/'T', current

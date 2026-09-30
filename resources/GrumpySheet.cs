@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.13.3
+// BUNDLED-COPY: 0.13.19
 // GrumpySheet.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpySheet.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs / GrumpyCharts.cs.
 //

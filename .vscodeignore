@@ -48,3 +48,7 @@ tsconfig.json
 # The icon generator (tools/make-activitybar-icon.py) is a developer tool, not runtime code: it draws
 # GrumpyWhite.png from shapes so the glyph can be regenerated or adjusted (NOTES.md §93).
 tools/**
+# The workspace solution exists for the DEVELOPER's tooling (see .vscode/settings.json): it makes C#
+# Dev Kit load the two real projects instead of auto-generating a solution that sweeps in the test
+# suite's transient projects under tests/out. Nothing at runtime reads it.
+*.sln

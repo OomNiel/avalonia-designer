@@ -42,6 +42,10 @@ public class ControlFactory
             ["UniformGrid"] = n => $"<UniformGrid x:Name=\"{n}\" Width=\"160\" Height=\"120\"/>",
             ["CheckBox"] = n => $"<CheckBox x:Name=\"{n}\" Content=\"CheckBox\"/>",
             ["RadioButton"] = n => $"<RadioButton x:Name=\"{n}\" Content=\"RadioButton\"/>",
+            // ToggleButton is not a toolbox tile of its own (Toggle Switch is the idiomatic one), but it
+            // IS one of the GrumpyCommandBar's item kinds — and without an entry here the programmatic
+            // builder drops it: measured 2026-09-29, a bar holding one previewed WITHOUT it.
+            ["ToggleButton"] = n => $"<ToggleButton x:Name=\"{n}\" Content=\"{n}\"/>",
             ["Image"] = n => $"<Image x:Name=\"{n}\" Width=\"100\" Height=\"100\" Stretch=\"Uniform\"/>",
             ["Panel"] = n => $"<Panel x:Name=\"{n}\" Width=\"120\" Height=\"80\"/>",
             ["Grid"] = n => $"<Grid x:Name=\"{n}\" Width=\"160\" Height=\"120\"/>",
@@ -129,6 +133,29 @@ public class ControlFactory
             ["Ellipse"] = n => $"<Ellipse x:Name=\"{n}\" Width=\"100\" Height=\"100\" Fill=\"Transparent\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>",
             // Arc is stroked only (no fill); StartAngle/SweepAngle (degrees) sweep inside its box.
             ["Arc"] = n => $"<Arc x:Name=\"{n}\" Width=\"100\" Height=\"100\" StartAngle=\"0\" SweepAngle=\"270\" Stroke=\"Black\" StrokeThickness=\"1\" ZIndex=\"-1\"/>",
+            // GrumpyCommandBar (Bars, 2026-09-29): the replacement for the withdrawn CommandBar family.
+            // It is the bundled AvaloniaChrome.GrumpyCommandBar — a Border whose Child is a NAMED
+            // horizontal row ({n}Items) holding ordinary Avalonia controls as the items, so the starter
+            // set below is a Label (TextBlock), a Text Box and a Button. The inner row is explicit for
+            // the same reason GrumpyPanel has one: it is what makes the markup compile in VB as well as
+            // C# (a [Content] collection on a Border crashes the VB XAML compiler — see the file header).
+            //
+            // DockPanel.Dock="Top" is CARRIED BY THE SNIPPET, exactly like the Menu / StatusBar /
+            // GrumpyStatus snippets: the designer's drop path docks a control whose snippet already
+            // names an edge into the form's own root DockPanel (in front of the fill child), so a
+            // dropped bar becomes a FULL-WIDTH BAND at once. Without it the bar stayed a floating box
+            // on the Body canvas, sized by the drop, until the Dock row was used — which is what the
+            // user saw as "Dock Top does not fill the complete top space", pointing at the Menu as the
+            // example that gets it right (2026-09-30). Still no Width: a band takes the panel's width.
+            // Height=36 is what the Command Bar could never be — an honest, unfloored height.
+            //
+            // The starter items are a WORKING sample: "File Open..." and "File Save..." icon buttons
+            // that open Avalonia's own file dialogs, plus the read-only box the picked path lands in.
+            // Real dialog code, not an empty stub — the panel's drop path writes both handlers into
+            // the form's code-behind (`insertCommandBarFileHandlers`), so the buttons DO something the
+            // moment the form runs. That replaced the Menu-bar copy, which produced buttons that only
+            // looked right (asked 2026-09-30).
+            ["GrumpyCommandBar"] = n => $"<chrome:GrumpyCommandBar x:Name=\"{n}\" DockPanel.Dock=\"Top\" Height=\"36\" Padding=\"8,0\" Background=\"#F0F0F0\" BorderBrush=\"#909090\" BorderThickness=\"0,0,0,1\" CornerRadius=\"0\">\n    <StackPanel x:Name=\"{n}Items\" Orientation=\"Horizontal\" Spacing=\"6\">\n        <Button x:Name=\"{n}Open\" VerticalAlignment=\"Center\" Click=\"{n}Open_Click\">\n            <StackPanel Orientation=\"Horizontal\" Spacing=\"4\">\n                <PathIcon Data=\"M2,4 L7,4 L9,7 L15,7 L15,13 L2,13 Z\" Width=\"16\" Height=\"16\"/>\n                <TextBlock Text=\"File Open...\" VerticalAlignment=\"Center\"/>\n            </StackPanel>\n        </Button>\n        <Button x:Name=\"{n}Save\" VerticalAlignment=\"Center\" Click=\"{n}Save_Click\">\n            <StackPanel Orientation=\"Horizontal\" Spacing=\"4\">\n                <PathIcon Data=\"M2,2 L12,2 L14,4 L14,14 L2,14 Z M5,2 L5,7 L11,7 L11,2 Z M5,10 L11,10 L11,14 L5,14 Z\" Width=\"16\" Height=\"16\"/>\n                <TextBlock Text=\"File Save...\" VerticalAlignment=\"Center\"/>\n            </StackPanel>\n        </Button>\n        <TextBox x:Name=\"{n}Path\" Width=\"260\" VerticalAlignment=\"Center\"/>\n    </StackPanel>\n</chrome:GrumpyCommandBar>",
             // --- Avalonia 12 controls (GroupBox / HyperlinkButton / CommandBar family) ---
             // The host is now on Avalonia 12.1.1 (same as generated apps), so the snippets below use
             // the REAL tags and the TypeMap instantiates the REAL types. Since the headless string
@@ -244,6 +271,9 @@ public class ControlFactory
         ["TreeViewItem"] = typeof(TreeViewItem),
         ["CheckBox"] = typeof(CheckBox),
         ["RadioButton"] = typeof(RadioButton),
+        // ToggleButton is not a toolbox tile, but it is one of the GrumpyCommandBar's item kinds: with
+        // no entry the programmatic builder silently drops the item from the preview.
+        ["ToggleButton"] = typeof(ToggleButton),
         ["Image"] = typeof(Image),
         ["Panel"] = typeof(Panel),
         ["Grid"] = typeof(Grid),
@@ -264,6 +294,10 @@ public class ControlFactory
         // The bundled GrumpyPanel (a Border subclass in AvaloniaChrome) — linked into the host
         // from resources/GrumpyPanel.cs so the programmatic builder can realise it for real.
         ["GrumpyPanel"] = typeof(GrumpyPanel),
+        // The bundled GrumpyCommandBar (a Border subclass in AvaloniaChrome whose children are its
+        // items) — linked in from resources/GrumpyCommandBar.cs. Without this entry a dropped bar would
+        // fall back to a stand-in and lose the very thing it exists for: an honest Height.
+        ["GrumpyCommandBar"] = typeof(GrumpyCommandBar),
         // The bundled PathPicker (a UserControl in AvaloniaChrome: path TextBox + Browse button) —
         // also linked in from resources/PathPicker.cs so the builder realises the real control.
         ["PathPicker"] = typeof(PathPicker),

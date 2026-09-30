@@ -727,6 +727,12 @@ public class XamlRenderer
         // Recurse into child elements so controls nested inside panels (e.g. a
         // Canvas inside a StackPanel) are created too — otherwise they vanish from
         // the preview. Property elements (Foo.Bar) are skipped by the type map.
+        //
+        // The bundled GrumpyCommandBar needs nothing special here: it is a Border whose single Child is
+        // the named horizontal StackPanel holding the items, so the Decorator branch below hands the
+        // row over and the Panel branch fills it in. (It was special-cased for a while, while the bar
+        // took its items through a [Content] property — that shape is gone: on the VB side it crashed
+        // the XAML compiler. See resources/GrumpyCommandBar.cs.)
         if (ctrl is Panel panel)
         {
             foreach (var child in elem.Elements())
@@ -1423,6 +1429,15 @@ public class XamlRenderer
         Add("Width", Math.Round(c.Bounds.Width).ToString(CultureInfo.InvariantCulture));
         Add("Height", Math.Round(c.Bounds.Height).ToString(CultureInfo.InvariantCulture));
         Add("Margin", c.Margin.ToString());
+
+        // MinWidth / MinHeight as the control ACTUALLY has them — which for a themed control is the
+        // value its ControlTheme set, not 0. Reported because that floor silently beats the user's own
+        // Width/Height: `CommandBar Height="30"` renders 48 tall, because the command bar's theme floors
+        // its height at 48 (measured 2026-09-29: TextBox/ComboBox/CheckBox/NumericUpDown/MaskedTextBox
+        // floor at 32, CommandBarButton/…ToggleButton at 40, CommandBarSeparator at 24). The designer
+        // needs the number to write the companion MinHeight that makes the user's value win.
+        AddViaReflection("MinWidth", InvariantNumber);
+        AddViaReflection("MinHeight", InvariantNumber);
 
         // FontFamily / FontSize / Background / Foreground are not on every Control (they live
         // on TemplatedControl / TextElement), so read them via reflection when present; likewise

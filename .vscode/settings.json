@@ -1,0 +1,9 @@
+{
+    // C# Dev Kit picks the solution to load. WITHOUT this it auto-generates one from EVERY .csproj it
+    // finds in the workspace — including the projects the test suite generates into tests/out/projects
+    // (which are transient: they are deleted and recreated by every run, and a name that stops being
+    // used leaves a stale entry behind). NuGet restore then fails for the whole solution and the
+    // Problems pane fills with "The project file ... was not found" errors that have nothing to do with
+    // the extension or with the app being tested.
+    "dotnet.defaultSolution": "avalonia-designer.sln"
+}
