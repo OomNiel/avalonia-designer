@@ -606,6 +606,7 @@ Drawing shapes that render as vector graphics on the design surface.
 | Control | XAML tag | What it does | Designer |
 |---------|----------|--------------|----------|
 | **Menu** (toolbox) | `Menu` | A horizontal menu bar. | ✅ Toolbox |
+| **Grumpy Command Bar** (toolbox, 0.13.19) | `chrome:GrumpyCommandBar` | A toolbar band whose Child is a **named** horizontal row (`Bar1Items`) of **ordinary** controls — Label, Text Box, Button, Separator, Toggle Button, Radio Button, Icon Button — instead of a command type with its own `PrimaryCommands`. It arrives with `DockPanel.Dock="Top"` and `Height="36"`, so a drop is a full-width band at once, and its built-in icon set (23 path icons) lives beside a **From file…** picker that copies the image into the project's `Assets` and references it as `avares://…`. Its items are built in the **Items Editor** — its own section, first in the Properties panel: one row per item, child items marked `↳` up to three levels. It ships with two **working** sample buttons (*File Open…* / *File Save…*) and the read-only box the path lands in, and the designer writes those two dialog handlers into the code-behind as it places the bar (`insertCommandBarFileHandlers` — only when they are missing, fully qualified, so your `using`/`Imports` block is never touched). Bundled as `resources/GrumpyCommandBar.cs` / `.vb`. It replaced the Avalonia `CommandBar` family (see [Appendix: controls new in Avalonia 12](#appendix-controls-new-in-avalonia-12)). | ✅ Toolbox |
 | **StatusBar** (toolbox) | `Border` + `TextBlock` | Bottom status strip (not a real framework control). | ✅ Toolbox *(pattern)* |
 | **Status Date / Time** (toolbox) | `TextBlock` + timer | A live clock updating every second (not a framework control). | ✅ Toolbox *(composition)* |
 | **GrumpyStatus** (toolbox) | `chrome:GrumpyPanel` strip | A dark status strip built on the **GrumpyPanel** base: docked to the bottom with a status label on the left and a live clock on the right. | ✅ Toolbox *(composition)* |
@@ -626,15 +627,20 @@ Drawing shapes that render as vector graphics on the design surface.
 
 ### Properties panel sections (all controls)
 
-The Properties sidebar groups every control's rows into six sections, in a fixed order and with a
+The Properties sidebar groups every control's rows into **seven** sections, in a fixed order and with a
 canonical order inside each one (`PROP_SECTIONS` in `src/propertyCatalog.ts`):
 
+**Items Editor** (only a **Grumpy Command Bar** has it: its one row, `Commands`, opens the item list) →
 **Editors** (the designer's popup editors) → **Layout & size** (W/H, Min/Max, Left/Top, Margin,
 Padding, Dock, Anchor, Alignments, Grid cell, window sizing) → **Appearance** (all colours/brushes,
 borders, corners, opacity, Theme, shape geometry, images/icons) → **Text & font** (content/captions
 + font, alignment, wrapping, edit options) → **Data** (item sources, selected item, edit permissions,
 Undo-Redo, the File/Folder picker's dialog settings) → **Behavior** (visibility, focus, check state,
 click/selection modes, scroll bars, window flags).
+
+Because the webview prints a heading only where its rows actually are, no other control ever shows an
+empty **Items Editor**. A **non-visual** component (`Timer`, `NON_VISUAL_TAGS`) gets **none** of the
+appearance/font/theme rows — its panel is Name, Type and what the component itself has (since 0.13.14).
 
 **Name** and **Type** stay pinned above the sections. Section headings are **collapsible** and the
 folded set is remembered per control TYPE (webview state); rows whose `advanced` flag is set appear
@@ -986,16 +992,22 @@ has no string-XAML loader, so every form is built from its XML). Controls in thi
 not wired into the toolbox can still be hand-written into XAML; the host simply drops any type it
 isn't told how to realise (no preview for those, but they still compile & run in your app):
 
-> **Toolbox (Avalonia 12 controls):** `GroupBox` (Layout panels), `HyperlinkButton` and the
-> `CommandBar` family — `CommandBar`, `CommandBarButton`, `CommandBarToggleButton`,
-> `CommandBarSeparator` (Buttons & command controls). Saved as the real Avalonia 12 tag and rendered
-> with their real Fluent look by the 12.1.1 host. Drop controls inside a GroupBox to make its content.
-> CommandBar commands belong under `CommandBar.PrimaryCommands` (added in the XAML until a designer
-> editor exists). The Properties panel lists the real properties (Header, Navigate Uri, Label, …).
+> **Toolbox (Avalonia 12 controls):** `GroupBox` (Layout panels) and `HyperlinkButton` (Buttons & command
+> controls). Saved as the real Avalonia 12 tag and rendered with their real Fluent look by the 12.1.1 host.
+> Drop controls inside a GroupBox to make its content. The Properties panel lists the real properties
+> (Header, Navigate Uri, …).
+>
+> **Withdrawn from the Toolbox (0.13.19) — the `CommandBar` family:** `CommandBar`, `CommandBarButton`,
+> `CommandBarToggleButton` and `CommandBarSeparator`. They exist in Avalonia **12 only**, so a project that
+> received one could not build on Avalonia 11 at all — the worst failure a toolbox can hand out. The types
+> (and their events, in the picker, for markup you write by hand) are still listed below; the toolbox simply
+> no longer offers them. The bundled [**Grumpy Command Bar**](#bars-sidebar-views--designer-only-conveniences)
+> replaces the whole family: the same look, **ordinary controls** as items instead of
+> `CommandBar.PrimaryCommands`, and it builds on both Avalonia lines.
 
 | Control | What it does |
 |---------|--------------|
-| `CommandBar` / `CommandBarButton` / `CommandBarSeparator` / `CommandBarToggleButton` | A command bar with buttons, separators and toggle buttons. |
+| `CommandBar` / `CommandBarButton` / `CommandBarSeparator` / `CommandBarToggleButton` | A command bar with buttons, separators and toggle buttons. *(Avalonia 12 only — **no longer offered in the Toolbox** since 0.13.19; use the bundled Grumpy Command Bar.)* |
 | `Page` / `NavigationPage` / `ContentPage` / `TabbedPage` / `CarouselPage` / `MultiPage` / `SelectingMultiPage` / `PageNavigationHost` / `DrawerPage` | XAML-style page/navigation controls (single-page / multi-page navigation hosts). |
 | `GroupBox` | A group box with a header around its content. |
 | `HyperlinkButton` | A button that navigates to a URI. |

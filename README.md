@@ -47,7 +47,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.13.3`**, so the command above installs it (add `-force` to reinstall, or to
+The current version is **`0.13.19`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -56,11 +56,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.13.3.vsix --force
+code --install-extension avalonia-designer-0.13.19.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.13.3` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.13.19` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -188,6 +188,14 @@ a cross-platform **dark titlebar** (`ChromeWindow`), `GrumpyPanel`, `AnchorHelpe
 `Enabled`, `Start()`/`Stop()`, `Tick`) and is held in the designer's **Component Tray** rather than on the
 canvas. Each is copied into your project the first time it is needed — and re-copied by
 **Code Fix…** for projects that predate it.
+
+The **Grumpy Command Bar** (`GrumpyCommandBar.cs` / `.vb`) joins them: a toolbar band whose **items are
+ordinary controls** — a Label, a Text Box, a Button, a Separator, a Toggle Button, a Radio Button and an
+Icon Button, with 23 built-in path icons or an image you pick from your own machine (copied into `Assets`
+as `avares://…`). It arrives docked `Top` at the form's full width, carrying two **working** sample
+buttons — *File Open…* and *File Save…* — whose file-dialog handlers the designer writes into your
+code-behind as it places the bar, and it is built in its own **Items Editor**, the first section of the
+Properties panel: one row per item, child items marked `↳` up to three levels.
 
 Seven **self-drawing charts** join them in the same bundled file style (`GrumpyCharts.cs` / `.vb`, no
 package, no chart engine, no image — the control draws itself, so it scales and prints): **Line Plot**,
@@ -331,6 +339,16 @@ asks it first and says what it found:
 | **The way out** | **Use it anyway — I know this machine** in ⚙ Settings → AI assist (`assistant.ignoreHostCheck`), for an eGPU, a card that was not detected, or a machine you know can do it. The override is remembered and logged. |
 
 *AI: Status & hardware check* prints the same verdict with the numbers behind it.
+
+**Which model runs is your decision, and its size is the whole question.** The extension ships one default —
+**Qwen2.5-Coder 7B**, a 4.4 GB download whose own requirement (and the picker's minimum) is **16 GB** of
+RAM — and it only ever *offers* a bigger one: after a **Code Fix…** run that ends without a clean build it
+may propose the **30B** step-up, and it checks the machine before it asks. That model is **17.5 GB** of
+weights and wants about **3 GB** of headroom on top of them, so roughly **21 GB free**: 24 GB is tight,
+32 GB is comfortable. Nothing is downloaded for it and nothing is started without your yes — on a smaller
+machine, stay on the 7B, or serve something smaller from LM Studio or Ollama (which have their own memory
+rules). The whole arithmetic, and how to install the runtime the step-up needs, is in
+[USER_MANUAL.md → *Which model will run on your machine*](https://github.com/OomNiel/avalonia-designer/blob/main/USER_MANUAL.md#which-model-will-run-on-your-machine--your-decision).
 
 **The caret is where you write the request.** *Inside a method* (*AI: Implement in Function…*) the model
 returns the **complete method** — same name, signature and indentation — from what you type ("read the row the

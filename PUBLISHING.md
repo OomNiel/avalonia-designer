@@ -233,8 +233,54 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.13.3` (2026-09-29) — packaged, committed, tagged and released on GitHub; **THIS is the file to
+> **`0.13.19` (2026-09-30) — packaged, committed, tagged and released on GitHub; **THIS is the file to
 > upload to the Marketplace.
+>
+> **⚠ This supersedes the `0.13.3` entry below** (and every `0.12.x`/`0.13.x` one): nothing between `0.12.0`
+> and here was ever uploaded — the listing still carries `0.11.0`, last updated 2026-09-20 — so **one** upload
+> of this file brings the Marketplace fully up to date. `0.13.4` … `0.13.18` were built and installed locally
+> many times during this work and **were never published**; the number only ever goes up, so they stay gaps.
+>
+> **Artefact:** `avalonia-designer-0.13.19.vsix`, **1,610,089 bytes**, sha256
+> `137b32480d9ce63b881d28b031a3153fab546c960542ccb97eb83fa78b09f395`, **129 files**, manifest
+> `Version="0.13.19"` (no `preRelease` key at all) and **no `PreRelease` attribute** (a plain, stable upload —
+> the upgrade anyone on `0.11.0` gets). **Verified:** local `sha256sum`; every packaged `resources/*.{cs,vb}`
+> opens with `BUNDLED-COPY: 0.13.19` (**22 stamps** — `GrumpyCommandBar.cs`/`.vb` are the new pair);
+> `activationEvents` inside the package reads exactly `["workspaceContains:**/*.axaml"]`;
+> `extensionDependencies`/`extensionPack` are **absent** from the packaged manifest (deliberate — see the
+> packaging test); `out/codeBehind.js` carries `insertCommandBarFileHandlers`, `out/codeBehindCheck.js`
+> carries `restore-page-canvas` and `usesUnqualified`, `out/propertyCatalog.js` carries
+> `sizeFloorCompanion` and `media/designer.js` the items table's `cmdChild` handling — while the removed
+> menu-copy path (`seedCommandBarFromMenu`) is **not** in the package at all; `avalonia-designer.sln` and the
+> dev docs (`PUBLISHING.md`, `NOTES.md`, `TEST_PLAN.md`, `SESSION.md`) are excluded (`CHANGELOG.md` and
+> `CONTROLS.md` ship, exactly as in every previous release). The installed copy was built too
+> (`~/.vscode/extensions/grumpy.avalonia-designer-0.13.19/host`, 0 warnings / 0 errors).
+> **This document is *not* inside the VSIX** (`.vscodeignore` excludes it with the other dev docs), so the
+> hash above is unambiguously the shipped file's own — no self-reference, and the record can be written after
+> packaging without moving the artefact.
+>
+> **GitHub release:** <https://github.com/OomNiel/avalonia-designer/releases/tag/v0.13.19>, this VSIX attached
+> as its asset.
+>
+> **What it changes** (all of it in `CHANGELOG.md` `[0.13.19]`, `NOTES.md` §169–§170): the Avalonia
+> `CommandBar` family **withdrawn** from the Toolbox and the bundled **`chrome:GrumpyCommandBar`** in its
+> place — a toolbar of ordinary controls, built in a new **Items Editor** section at the top of the properties
+> panel (seven item kinds, 23 built-in icons plus *From file…*, child items, nothing written before **Save**),
+> shipped with two **working** sample buttons (*File Open…* / *File Save…*) whose file-dialog handlers the
+> designer writes into the code-behind; the **Height** row a theme's own `MinHeight` outranked (fixed with a
+> companion size floor, measured against the real host); a **band** that docked as a 76-pixel strip now
+> spanning the form; a **tab page without its `Canvas`** repaired by a new Code Fix (and the XAML-only rules
+> now reaching forms with no code-behind); an `Imports` finding that no longer fires on the `StorageProvider`
+> **property**; the **Timer's** panel stripped of its non-visual Appearance section; the per-control property
+> **audit**; and the manual's AI-assist half plus the new **which model will run on your machine — your
+> decision** section (the 30B wants ~21 GB free, and the user decides).
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.13.19.vsix` → leave **Pre-release unchecked**
+> → then confirm with the gallery query below that the version is `0.13.19` and the listing is live, and
+> replace this paragraph with the verified line, exactly like the entries before it.
+
+> **`0.13.3` (2026-09-29) — packaged, committed, tagged and released on GitHub; **⚠ SUPERSEDED by `0.13.19`
+> above; do not upload this file.**
 >
 > **⚠ This supersedes the `0.13.1` entry below** (and every `0.12.x`/`0.13.0` one): nothing between `0.12.0`
 > and here was ever uploaded — the listing still carries `0.11.0`, last updated 2026-09-20 — so **one** upload

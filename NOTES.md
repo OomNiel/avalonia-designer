@@ -4856,3 +4856,135 @@ generated project carries **`.vscode/extensions.json`** with the two ids that fi
 for C#; Avalonia + the VB.NET Companion for VB) — ids only, so the file stays portable (§66), pinned in
 `t2-logic/projectScaffold`.
 
+### §169 — a bar of our own, the box that builds it, and four older faults it uncovered (2026-09-30, 0.13.4 → 0.13.18)
+
+**The family went out, and the reason is a build.** `CommandBar`, `CommandBarButton`,
+`CommandBarToggleButton` and `CommandBarSeparator` are Avalonia **12** controls; a project that received one
+could not compile on Avalonia 11 at all — the user had already hit that — so the tools were withdrawn from the
+Toolbox (`src/toolboxProvider.ts`), their events left in the catalogue for hand-written markup, and the space
+given to a control of ours. The `CommandBar` was also where the *Height* complaint came from (below), so for
+one session it was “the control that acts weirdly”: it looks like a bar, and every part of it has a mind of its
+own.
+
+**`chrome:GrumpyCommandBar` is a `Border` whose Child is a NAMED row.** `Bar1Items` is a `StackPanel`
+(`Orientation="Horizontal"`) holding **ordinary controls** — that is the whole design, and it is what makes
+items editable (`TextBox`, `Button`, `Separator` are things the designer already understands) and what makes
+the markup compile in **VB** as well as C# (a `[Content]` collection on a `Border` crashes the VB XAML
+compiler — the same reason `GrumpyPanel` has an explicit inner row; §…). The snippet carries
+`DockPanel.Dock="Top" Height="36"`, so a drop is a full-width band at once, and **36 is honest**: the snippet
+ownership of `Dock`/`Height` was checked against how `Menu`/`StatusBar`/`GrumpyStatus` already work, and there
+is deliberately no `Width` (a band takes the panel's width).
+
+**The Height row was not lying, it was outranked.** *“the Height adjustment property for the Command Bar
+control is ignored”*: the XAML carried `Height="30"` and the control rendered 48 because the Fluent
+`ControlTheme` for `CommandBar` carries **`MinHeight="48"`** — and in Avalonia a **minimum wins over an
+explicit Height**. Measured one control at a time against the real host (a theme is not something to reason
+about): `CommandBar` 48, `TextBox`/`ComboBox`/`CheckBox`/`NumericUpDown`/`MaskedTextBox` **32** (+ `MinWidth`
+64), the two CommandBar buttons 40, the separator 24, a plain `Button` **none** — which is exactly why it looked
+like a CommandBar quirk. The fix is a **companion**: `sizeFloorCompanion` writes `MinHeight`/`MinWidth` equal to
+the number the user typed, so the row means what it says. `t1-preview/sizeFloor.test.js` measures the host,
+`t2-logic/propertyCatalog` pins the rule and its write sites.
+
+**The Items Editor exists because the user said where it goes.** *“Please place the Editor in a separate
+section at the top of the properties rows. Name it 'Items Editor'”* — so `'itemsEditor'` is now
+`PROP_SECTIONS[0]`, keyed on `Commands` alone (only a bar carries that row, so no other control ever shows an
+empty section). Its dialog is **one row per item** (Kind, Name, Text, Width, Height, Icon, Icon size, Group,
+Event, Handler, ✕); **seven kinds**, each writing a real control — Label is a `TextBlock` (Avalonia has no
+Label) and a **Separator is a `Border`**, because the themed `Separator`'s own margin would push it off the
+row; a field a kind does not use stays **visible but disabled** so the columns keep their place; **23 built-in
+path icons** beside **From file…**, which copies the image into `Assets` and references `avares://…` so a moved
+form keeps its icons. **Child items** came next (*“If the Menu top level items have child items, they should
+also render in the command bar as child items”*): `cmdChildN` classes + a left `Margin` (12 px a level, three
+levels), read back from both the file and the table so a hand-edited bar survives. Nothing is written until
+**Save**, which posts the whole list; a control the editor does not know is shown as **Other** and left alone.
+
+**The menu-copy feature lasted one build.** It copied the Menu's top-level items into a new bar — captions,
+icons, children — and it produced buttons that **looked right and did nothing** (no handlers, and no honest way
+to invent them). *“Remove the auto populate feature and replace it with 'File Open...' and 'File Save...' sample
+buttons. Those buttons must implement file open and file save dialogs.”* The replacement is a **working
+sample** — folder/disk `PathIcon`s, `Bar1Open`, `Bar1Save`, `Bar1Path` — and `insertCommandBarFileHandlers`
+writes **two real handlers** per language into the code-behind as the bar is placed: `TopLevel.GetTopLevel(this)`,
+`Avalonia.Platform.Storage.*`, the picked path into the box, `null` handled when the dialog is cancelled, added
+**only when the methods are missing** (a user's own version is never overwritten), the code-behind created if
+there is none, and every type **fully qualified** so the user's `using`/`Imports` block is never edited. The
+copying path (`seedCommandBarFromMenu` + eight helpers) was **deleted**, not flagged off.
+
+**Those `Click="…"` attributes are an `AVLN3000` risk until a compiler says otherwise.** `t0-build/cmdbar.test.js`
+generates a project per language, drops the bar's snippet and both handlers in, and **builds it** — C# *and* VB,
+because only one of the two would have caught what it caught: the first generated bodies were **under-indented**
+inside the method, which C# accepted and a reader would have hated. The test exists in both languages on purpose.
+
+**A band is placed where it can span.** *“Dock Top does not fill the complete top space”*, with the Menu named
+as the tool that gets it right. A `DockPanel` hands each child its slice out of **what is left, in order**, and
+a child with **no** `Dock` is a *left*-docked one — so a bar appended after a left-docked control got the
+leftovers: measured **76 × 24 at x = 724** against the Menu's **0, 54 800 × 24**. `placeDockedBand` inserts a
+**Top**/**Bottom** band **in front of** the first sibling that would eat its width, and `normaliseDockBands`
+repairs a form that already carries the old arrangement — every read-from-disk path goes through one
+`loadModel`, so no entry point can miss it.
+
+**A tab page without its `Canvas` cannot place anything.** *“On the Buttons tab, I can't freely relocate the
+controls, why?”* — the page's `Canvas` had been deleted, so every control on it was a DockPanel child, and a
+drag can only nudge a band by its `Margin` (`18,11,0,0` → `58,41,0,0` for a 40,30 drag). A new Code Fix
+(`restore-page-canvas`) puts the Canvas back as the page's fill child and moves the undocked controls into it
+at the positions the host measured — and the *rule* was tightened after its first version nagged about **three**
+of the demo's pages (two of them legitimately filled by their single child): it now only fires when the page has
+more than one undocked child or `LastChildFill="False"`. The same pass made the **XAML-only** rules reachable on
+a form with **no code-behind** (`xamlOnlyIssues`), which they never were — a markup fault on such a form went
+unreported.
+
+**`\b` matches after a dot.** *“Imports Avalonia.Platform.Storage is missing”* on a form that only **read** the
+`StorageProvider` property: a property whose name ends in a type's name looked exactly like that type. The rule
+now demands an **unqualified** use (`usesUnqualified`, `(?<![\w.])Name\b`) over a type-only list.
+
+**Two tests that had to be able to fail.** The per-control audit in `t2-logic/propertyCatalog` walks ~56
+controls through six rules each — and the Timer's `Theme` row was **re-injected** to prove the audit reports it
+(it did), because a rule-check that cannot fail is worth nothing. `t2-logic/commandItems` pins the kinds, the
+class prefix and the indent **and** the webview's own copy of the name prefix, which was the first thing to
+drift between the two halves.
+
+**The stale PROBLEMS pane had a cause worth writing down.** The C# Dev Kit generates a solution from every
+`.csproj` it finds, including the ten probe projects under `tests/out/projects/…`; NuGet restore failed for the
+whole solution, and the failure surfaced as *“the type or namespace could not be found”* over files that
+`dotnet build` compiled cleanly (0/0) — the same class of staleness as the VB companion notes. The fix is a real
+`avalonia-designer.sln` holding exactly the two projects this repo builds, plus
+`"dotnet.defaultSolution"` in `.vscode/settings.json`; a **window reload** clears what is already in the pane.
+
+### §170 — the docs, the RAM question, and the release (2026-09-30, 0.13.19)
+
+**The last thing asked for in the session was the first thing the docs were missing.** *“The 30B model can only
+work on machines with adequate ram. The user must decide which model will run on their machine.”* — a
+**decision**, not a feature: so the manual got a section of its own (`#### Which model will run on your machine
+— your decision`, right before the bundled-runtime instructions) that puts the two models' arithmetic side by
+side — the **7B** is a **4.4 GB** download whose own requirement (and the picker's `minRamGb`) is **16 GB** of
+RAM; the **30B** is **17.5 GB** of weights plus the extension's own **3 GB** headroom, so roughly **21 GB free**
+— and says plainly what a machine can be: 24 GB tight, **32 GB comfortable**, 16 GB **cannot load it at all**.
+The same page records the rule the extension actually applies (a model at least **1.5×** the local one, the
+headroom, a `llama-server` unit naming a `.gguf`, five minutes of patience) and that it **only ever offers** the
+step-up — never downloads, never starts anything without a yes. The README carries a shorter version of the
+same paragraph, because that is the page a stranger reads first.
+
+**Everything else the release needed.** The manual's AI-assist half had already been written this session (how
+to get a working `llama-server`, and the 30B step-up end to end); this pass added the two **new features** to
+the places a user looks for them — §5 documents the **Grumpy Command Bar** and why the Avalonia family was
+withdrawn, §8 documents the **Items Editor** column by column, §12's finding table gained the page-Canvas
+repair, §15 explains band placement with the measurement, §6 explains why a Timer's panel has no Appearance
+section — and `CHANGELOG.md` gained **one** entry for the whole span `0.13.4 → 0.13.19`, because that is what
+one upload carries.
+
+**The version number, and why it is `0.13.19`.** Nothing between `0.13.3` and here was published, and sixteen
+local builds happened in between; the project's own convention (a plain `major.minor.patch` sequence that only
+ever goes up, gaps left behind unpublished builds) makes the release the **next number above the current
+local**, exactly as `0.13.3` followed a local `0.13.2`. `tools/bump-stamps.js` re-stamped **22 of 22** bundled
+twins, which matters beyond tidiness: the `BUNDLED-COPY:` marker **is** the staleness question, so projects
+holding the old copies are offered the update — and this release really did change a twin (`GrumpyCommandBar`
+arrived as a pair, and the **Timer's** surface shrank when its unused properties were removed, which is a
+change the extension has to hand to projects that already carry the old file).
+
+**What was verified, and what was deliberately not.** `npx tsc -p ./` clean, `dotnet build
+host/PreviewerHost.csproj` **0 warnings / 0 errors**, no errors in the PROBLEMS pane after the edits, and the
+**targeted layers** that cover the changed code: T0 (including the new bar test), T1 (including the size-floor
+test), T2, T3 and the VB matrix. **The full unfiltered suite was not run** — the user's rule is that it needs
+their permission, and it is the one thing the release notes do not claim.
+
+
+

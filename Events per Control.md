@@ -15,13 +15,22 @@ take and the class that declares the event, so a hand-written handler is copy-pa
   (§1) is listed there once instead of repeated for all 100+ controls.
 - **(asks on placement)** — dropping that control pops the event picker. All other controls are
   placed silently, but right-click → **Add event…** offers their events anyway.
-- The three bundled helpers (`chrome:PathPicker`, `chrome:GrumpyPanel`, `chrome:ChromeWindow`) are
-  our own `AvaloniaChrome` types: they expose the events of their base class — `UserControl`,
-  `Border` and `Window` respectively — and nothing of their own. The two bundled charts
+- The four bundled helpers (`chrome:PathPicker`, `chrome:GrumpyPanel`, `chrome:ChromeWindow`,
+  `chrome:GrumpyCommandBar`) are our own `AvaloniaChrome` types: they expose the events of their base
+  class — `UserControl`, `Border`, `Window` and `Border` respectively — and nothing of their own. The
+  two bundled charts
   (`charts:GrumpyLinePlot`, `charts:GrumpyXYPlot`, namespace `AvaloniaCharts`) likewise expose only
   what their base class `Control` provides — no events of their own; what looks like interaction
   (the legend's tick boxes, the draggable cursors, the in-chart "…" picker) is handled inside the
   control's own input methods, so there is no handler for the designer to wire.
+- **The `CommandBar` family is no longer in the Toolbox** (withdrawn in 0.13.19 —
+  `CommandBar`, `CommandBarButton`, `CommandBarToggleButton`, `CommandBarSeparator` exist in Avalonia
+  **12 only**, so a project that received one could not build on Avalonia 11). Their sections below are
+  kept because the types still exist and their events are still in the picker for markup you write by
+  hand — but the tool that replaces the family is the bundled **`chrome:GrumpyCommandBar`**, whose items
+  are **ordinary controls**: a Label/Text Box/Button/Separator/Toggle Button/Radio Button/Icon Button in
+  its row, each with the events listed for that type (§ Buttons, § Text input), wired from the **Items
+  Editor** (`btn1_Click` and friends).
 
 ## 0. Index
 

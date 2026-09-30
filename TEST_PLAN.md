@@ -1,6 +1,29 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-29 · Status: **full suite green on this machine — 9,876 passed / 0 failed / 0 skipped (81 s)**
+Date: 2026-09-30 · Status: **targeted layers green — 10,125 passed / 0 failed / 0 skipped across T0, T1, T2,
+T3 and T5; the **full** (unfiltered) suite was deliberately NOT run for this release, because that needs the
+user's permission. The last full run was **9,876 / 0 / 0 (81 s)** on 2026-09-29, for `0.13.3`.**
+
+> 2026-09-30: **`0.13.19`** — a command bar of our own, the Items Editor that builds it, and the four older
+> faults the work uncovered. The Avalonia `CommandBar` family left the Toolbox (12-only, so a project that
+> received one could not build on Avalonia 11) and the bundled **`chrome:GrumpyCommandBar`** replaced it: a
+> `Border` whose Child is a **named** row of ordinary controls, docked `Top` at an honest `Height="36"`, with
+> two **working** sample buttons (*File Open…* / *File Save…*) whose dialog handlers the designer writes into
+> the code-behind. New pins: the bar **compiles** in a generated C# *and* VB project (T0 `cmdbar`, 11 checks —
+> this is the `AVLN3000` class of failure, and it caught under-indented generated bodies); the item model
+> (T2 `commandItems`, 113 — the seven kinds and what each writes, the name prefixes, the child class + indent +
+> depth clamp, and the webview's own copy of the prefix); the **per-control audit** (T2 `propertyCatalog`,
+> ~56 controls × six rules, proven able to fail by re-injecting the Timer's `Theme` row); the companion size
+> floor measured against the real host (T1 `sizeFloor` — `CommandBar` 48, the text inputs 32 + `MinWidth` 64,
+> the CommandBar buttons 40, the separator 24, a plain `Button` none); band placement (T2 `xamlModel`:
+> `placeDockedBand`, `normaliseDockBands` — `76 × 24 at x = 724` became `800 × 24`); the two generated dialog
+> handlers and the `restore-page-canvas` Code Fix (T2 `codeBehind`); the import rule that no longer fires on
+> the `StorageProvider` **property**; the items table in the webview (T3 `designer`, 1,075) and the VB matrix
+> compiling the bar into a real form (T5 `vb-all-controls`, 1,934). **Layer tallies for this release:**
+> T0 **55**, T1 **442**, T2 **6,619**, T3 **1,075**, T5 **1,934** — 10,125 checks, 0 failed. T4 (runtime) and
+> the unfiltered suite were not run. Verified alongside: `npx tsc -p ./` clean, `dotnet build
+> host/PreviewerHost.csproj` **0 warnings / 0 errors**, stamps 22/22, and no PROBLEMS-pane errors in any
+> changed file.
 
 > 2026-09-29: **`0.13.3`** — a Timer and the tray that holds it, three dock faults and the follow-up that
 > would not start, the Code Fix that repairs the forms the old dock left behind, a settings panel renamed and
@@ -598,6 +621,30 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.13.19 (2026-09-30) — the bar of our own, the Items Editor, and four older faults it uncovered
+
+**Why this release added two new test files and a per-control audit:** the new bar is generated **code** as
+well as markup (`Click="…"` attributes and two handlers written into a code-behind), which is the one class of
+mistake a unit test cannot see and a **compiler** can — so the checks go from the item model outward, through
+the table the webview renders, to a real `dotnet build` of a real generated project.
+
+| Layer | What it pins |
+|---|---|
+| **T0 `cmdbar.test.js`** *(new)* | The bar and both generated handlers **compile** — once in a generated **C#** project and once in a generated **VB** one, because only one of the two would have caught what it caught: the first generated bodies were under-indented inside the method, which C# accepted. This is the `AVLN3000` class of failure, and a compiler is the only thing that sees it. |
+| **T2 `commandItems.test.js`** *(new)* | The **seven kinds** and what each writes: the tag (`Label` is a `TextBlock`, `Separator` is a `Border`), where the caption goes, whether the kind can carry an icon, whether it needs a `GroupName`, and the event it offers. Plus the name prefixes, the child class prefix + indent + depth clamp, the read-back from the file and from the table, and the **webview's own copy** of the name prefix (a separate constant, pinned so the two halves cannot drift — it was the first thing to). |
+| **T2 `propertyCatalog.test.js`** | The **per-control audit**: ~56 controls through six rules each — every row's key is defined for that type, no Appearance row on a non-visual component, no leftover section on a type that has none, no duplicate key inside a section, and the section list itself. It was proven **able to fail** by re-injecting the Timer's `Theme` row. Plus `sizeFloorCompanion`: the companion `MinHeight`/`MinWidth` is written where it is needed, and a value the user typed is never overwritten. |
+| **T2 `xamlModel.test.js`** | `placeDockedBand` — a Top/Bottom band goes **in front of** the first sibling that would eat its width, a band that already spans is left alone, and no dock is invented where none was set — and `normaliseDockBands`, the document-wide repair and the count it returns. |
+| **T2 `codeBehind.test.js`** | `insertCommandBarFileHandlers`: both handlers per language, the fully-qualified types (so the user's `using`/`Imports` block is never touched), the `…Path` box name, the file written when a code-behind exists **and** created when it does not, idempotence — and **a user's own handler left alone**. Plus the `restore-page-canvas` finding (reported for a page with several undocked children or `LastChildFill="False"`, *not* for a page whose single child fills it; the repair keeps every measured position) and the import rule (`StorageProvider` never asks for `Avalonia.Platform.Storage`; a bare `FilePickerFileTypes` does). |
+| **T1 `sizeFloor.test.js`** *(new)* | The themes' own floors, **measured against the real host**: `CommandBar` 48, `TextBox`/`ComboBox`/`CheckBox`/`NumericUpDown`/`MaskedTextBox` 32 (plus `MinWidth` 64), the two CommandBar buttons 40, the separator 24, a plain `Button` **none** — and the companion `MinHeight` making the rendered height the number the user typed. |
+| **T3 `designer.test.js`** | The items table in the webview: a row per kind, the fields a kind does not use staying visible but **disabled**, the icon column, **From file…**, the `↳` marker and the indent class at each depth, add/remove/re-order, and the save payload (nothing is sent before **Save**). |
+| **T5 `vb-all-controls.test.js`** | The VB matrix compiles a real form holding the **Grumpy Command Bar** — the bar, its items **and** both dialog handlers, through the VB compiler. |
+
+**Kept on the record:** the page-Canvas rule's **first** version was wrong — it reported **three** of the
+demo's tab pages and only one of them was a real fault. It was the user's own file, not the suite, that showed
+it: a page whose single child fills it is a deliberate layout, so the rule now demands more than one undocked
+child or `LastChildFill="False"`. The same lesson as §“a test that cannot fail is worth nothing”: a rule that
+fires on healthy files trains its reader to ignore it.
 
 ### 0.13.3 (2026-09-29) — the Timer, the docks that did not fill, and a panel that explains itself
 

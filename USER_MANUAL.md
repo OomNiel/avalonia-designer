@@ -24,6 +24,7 @@
 4. [Opening a form in the designer](#4-opening-a-form-in-the-designer)
    - [The designer toolbar](#the-designer-toolbar)
 5. [The Toolbox](#5-the-toolbox)
+   - [The Grumpy Command Bar — a toolbar, made of real controls](#the-grumpy-command-bar--a-toolbar-made-of-real-controls)
 6. [Adding a control to the canvas](#6-adding-a-control-to-the-canvas)
    - [Choosing events when you place a control](#choosing-events-when-you-place-a-control)
    - [Components: the Timer, and the Component Tray (since 0.13.3)](#components-the-timer-and-the-component-tray-since-0133)
@@ -33,6 +34,7 @@
    - [List Items (ListBox)](#list-items-listbox)
    - [Items (ComboBox / ListBox / ItemsControl)](#items-combobox--listbox--itemscontrol)
    - [Menu Items (Menu)](#menu-items-menu)
+   - [Items Editor (the Grumpy Command Bar)](#items-editor-the-grumpy-command-bar)
 9. [The "About this control" help panel](#9-the-about-this-control-help-panel)
 10. [The right-click menu (Cut / Copy / Paste / Move / Delete)](#10-the-right-click-menu)
 11. [Creating a new form (templates)](#11-creating-a-new-form-templates)
@@ -43,7 +45,9 @@
     - [AI assist — a local model for the fixes a rule cannot express](#ai-assist--a-local-model-for-the-fixes-a-rule-cannot-express)
       - [No model server? Let the extension bring its own](#no-model-server-let-the-extension-bring-its-own)
       - [Using the GPU for the built-in runtime (optional)](#using-the-gpu-for-the-built-in-runtime-optional)
+      - [Installing llama.cpp — getting `llama-server`](#installing-llamacpp--getting-llama-server)
       - [Your own `llama-server` — the engine you already have](#your-own-llama-server--the-engine-you-already-have)
+      - [The 30B step-up — the model, and the unit that serves it](#the-30b-step-up--the-model-and-the-unit-that-serves-it)
       - [House rules — teach it how *your* code is written](#house-rules--teach-it-how-your-code-is-written)
       - [What the entries in the model list mean](#what-the-entries-in-the-model-list-mean)
     - [Wiring more events later](#wiring-more-events-later)
@@ -172,7 +176,7 @@ search for *Grumpy's WYSIWYG Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.13.3`**, so the command above installs it; add `--force` to
+The current version is **`0.13.19`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -184,7 +188,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.13.3` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.13.19` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -413,6 +417,7 @@ place:
 | TabControl | Tabs |
 | DataGrid | A spreadsheet-like table |
 | Menu | A menu bar (File, Edit, …) |
+| Grumpy Command Bar | A toolbar band whose items are ordinary controls — labels, buttons, separators, a text box. Ships with two **working** sample buttons (File Open… / File Save…). Edited with the **Items Editor** |
 | Status Bar | A bottom status strip |
 | Status Date / Time | A live clock (current date + time, OS format) |
 | DataSet | Design tables & columns visually, then generate a runtime DataSet class + .xsd — **opens the DataSet designer**, not a form control |
@@ -427,6 +432,35 @@ place:
 > and time (in your OS's date/time format) and updates itself every second. The designer writes
 > the small timer code-behind for you, so no code is needed; put one in a Status Bar's `Border`
 > for a classic status-bar clock.
+
+### The Grumpy Command Bar — a toolbar, made of real controls
+
+The **Grumpy Command Bar** (`chrome:GrumpyCommandBar`, listed under *Bars*) is this extension's own toolbar:
+a thin horizontal strip whose items are **ordinary Avalonia controls** — the same kinds of controls you drop on
+a canvas — instead of a command type of its own. Ask for *“a bar with a label, two buttons and a separator”*
+and that is literally what the markup holds.
+
+**Dropping one puts a full-width band at the top of the form.** The tool's snippet already carries
+`DockPanel.Dock="Top"` (the same way the Menu and Status Bar tools work), so the bar is docked into the
+form's root panel as you drop it, **in front of** whatever fills the rest — a bar that takes the form's whole
+width, not a floating box you then have to dock by hand. Prefer it somewhere else? Set **None** in the Dock
+row of the properties panel and drag it where you want it.
+
+Out of the box it is neither empty nor decoration. It arrives with **two working buttons — “File Open…” and
+“File Save…” — and the box the chosen path lands in** (`Bar1Path`), and the designer writes the **two real
+handlers** into the form's code-behind as it places the bar, so the buttons open Avalonia's own file dialogs
+the moment the form runs. The generated code uses `TopLevel.GetTopLevel(this)` and
+`Avalonia.Platform.Storage.*`, fully qualified on purpose (so your own `using`/`Imports` block is never
+touched), and it is written **only when those two methods are missing** — edit them freely; the designer will
+not overwrite your version. Renaming, re-ordering, deleting and adding items is done in the **Items Editor**
+(§8).
+
+> **Note about the Avalonia `CommandBar` family.** The four controls `CommandBar`, `CommandBarButton`,
+> `CommandBarToggleButton` and `CommandBarSeparator` are **no longer offered in the Toolbox** (withdrawn in
+> this release). They exist in Avalonia 12 and their markup still compiles — the designer simply refuses to
+> drop them, because on Avalonia 11 they do not exist at all and a project that received one could not build:
+> the worst failure a toolbox can hand out. The bundled **Grumpy Command Bar** above replaces the whole
+> family — the same look, ordinary controls inside, and it builds on both Avalonia lines.
 
 ### File / Folder Selector — the “…” dialog row
 
@@ -543,6 +577,12 @@ set it up:
 **Setting it up.** A Timer's every-day rows are `Interval` (milliseconds — `1000` is one second; the
 default is `100`, which is fast) and `Enabled` (ticked = it starts running as soon as the form opens).
 `Start()` and `Stop()` are there for code, and the property grid shows them with the rest.
+
+> **A component's panel lists only what the component has** (since 0.13.14). A Timer has no appearance —
+> no size, no colour, no font, no theme — so its panel is **Name**, **Type**, its own **Interval** and
+> **Enabled**, and the `Start()` / `Stop()` methods. There is deliberately **no Appearance section** for
+> it: an unlisted row in a control's panel is noise, and a section that cannot apply to a non-visual
+> component is worse than no section at all.
 
 **Its event is `Tick`** — placing a Timer offers it exactly like a Button's `Click`, and the handler is
 created with the signature Avalonia demands (`Sub(sender As Object, e As EventArgs)`).
@@ -774,6 +814,36 @@ form — including a tree you hand-wrote or saved in an earlier version.
 > A picker item shows the **whole path row** (the box plus the “…” button) inside the menu, exactly
 > like the toolbox File/Folder Selector does on a form; Avalonia sizes the menu item to its content.
 
+### Items Editor (the Grumpy Command Bar)
+
+Select a **Grumpy Command Bar** and the panel's **first section is “Items Editor”** — asked for as *“place the
+Editor in a separate section at the top of the properties rows”*, and it is the top one on purpose: the items
+are what a bar *is*. It holds a single button, **Edit items…**, which opens the item list; the bar's own rows
+(Name, Type, Background, Border, Padding, Dock…) follow below it in the usual groups.
+
+The editor is **one row per item**, and each row becomes a **real Avalonia control inside the bar's row**
+(`Bar1Items`), so an item types, checks and clicks exactly as it will at run time:
+
+| Column | What it does |
+|---|---|
+| **Kind** | what the item *is*: **Label**, **Text Box**, **Button**, **Separator**, **Toggle Button**, **Radio Button** or **Icon Button**. Changing it re-writes that item's control. A field a kind does not use stays **visible but disabled**, so the columns keep their place while your eye moves down them |
+| **Name** | its `x:Name` — new items are numbered the way the designer names everything else (`btn1`, `txt2`, …) |
+| **Text** | a Label's or Text Box's `Text`, or a Button's `Content` |
+| **Width / Height** | a fixed size for that item in pixels; leave it empty and the bar sizes the item |
+| **Icon / Icon size** | for a Button and an Icon Button: any of the **23 built-in path icons**, or **From file…** — which takes an image from this machine, copies it into the project's `Assets` folder and references it as `avares://…`, so the form keeps working when it is moved or shared. The icon's own size defaults to 16 px |
+| **Group** | the `GroupName` that makes Radio Buttons exclusive |
+| **Event / Handler** | the event the designer offers for that kind (a Button's `Click`, a Text Box's `TextChanged`, …) and the method name to generate (`btn1_Click`). An item that asks for an event needs a **Name**; the handler is added to the code-behind for you, and an item whose handler could not be added is saved **without** its event rather than left naming a method that does not exist |
+| **✕** | deletes the row |
+
+A row can also be made a **child of the row above it** — the **↳** marker and the indent show it, up to three
+levels deep — and the child items are written with the same shape the Menu's items use, so the bar reads as
+groups rather than one long line. **Item spacing** (top left) sets the gap between items in the bar.
+
+A control the editor does not know — a ComboBox you dropped into the bar by hand, or markup you wrote
+yourself — is shown as **Other** and left exactly as it is. **Save** writes the whole list at once (nothing is
+written while you edit), **Cancel** or **Esc** discards it, and reopening the editor shows what is really in
+the form.
+
 ### DataGrid — Rows & Columns editors
 
 When you select a **DataGrid**, its properties include two **…** buttons, **Rows** and **Columns**,
@@ -952,6 +1022,7 @@ It is a rule checker, not a compiler: a wrong type, a wrong API call or a missin
 building, which is what **Build to verify** in the AI flow is for.
 | **Bundled helper missing** | `ExifImageLoader` / `ChromeWindow` / `AnchorHelper` / `GrumpyPanel` / `PathPicker` / `Timer` not in the project | copies the file in |
 | **Docked inside its canvas** | a control the *old* designer wrapped in a `DockPanel` **inside** the canvas it was dropped on (since 0.13.3) — the form runs, but `Dock=Fill` there fills nothing | moves the control into the panel that owns the canvas, in front of the canvas, and removes the wrapper |
+| **A tab page with nowhere to place a control** | a page panel (`Body1`…) left with **no `Canvas`** — the page's free-placement surface (since 0.13.17) — because several controls (or `LastChildFill="False"`) live in it | puts the page's `<Canvas x:Name="…BodyNCanvas"/>` back as the page's fill child and moves the controls that have no `Dock` into it, at the positions the host last measured |
 | **Missing `Imports`** | `BC30002 'Line' is not defined'` | adds the `Imports`/`using` |
 | **ChromeWindow mismatch** | root is `<chrome:ChromeWindow>` but the class still `Inherits Window` | changes the base class |
 | **Writing beside the app** | `File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "log.txt"), …)` | reported only — an installed app's folder is read-only |
@@ -1211,6 +1282,36 @@ block was cut off*), **Show the raw answer** opens exactly what the model said i
 same text goes to the *Grumpy's WYSIWYG Designer* output channel. A model that rambles or repeats itself is
 usually a sign of a model too small for the job — try the 7B, or a code-specialised one.
 
+#### Which model will run on your machine — your decision
+
+A code model is only as useful as the machine that has to hold it, and **nothing here decides that for you**.
+The extension ships *one* default (the 7B below, the smallest thing that produced code this project could
+compile) and it will only ever *offer* a bigger one; whether that bigger one can run at all is a question
+about your RAM, and you are the one who knows how much of it you have to spare. Two models, two very
+different machines:
+
+| | 7B — the default | 30B — the step-up |
+|---|---|---|
+| Weights on disk | 4.4 GB | **17.5 GB** (Q4_K_S) |
+| What the extension asks for | **16 GB** RAM (`minRamGb`, the table below) | the model's own size **+ 3 GB** headroom — about **21 GB free** |
+| A machine that runs it | 16 GB, CPU or GPU | 24 GB is tight, **32 GB is comfortable**; this extension was developed and tested against a 30B on a 28 GB machine |
+| On 16 GB | yes | **no** — it cannot be loaded, and the extension says so instead of thrashing the machine |
+
+**How the extension decides, before it asks you anything.** The step-up is only offered when the machine
+passes its own checks — a model at least **1.5×** the size of the local one, **3 GB** of headroom, a
+`llama-server` unit that names a `.gguf` it can actually find — and the run gives up after **five minutes**
+(a cold load of 17 GB is minutes, not seconds). If the checks fail you get the reason, not a hung panel.
+**AI: Status and hardware check** prints the same arithmetic for your machine at any time: free RAM plus a
+*discrete* card's VRAM is the budget, and an integrated GPU's carve-out is deliberately **not** counted,
+because it comes out of the same system RAM.
+
+> **If your machine is small**, stay on the 7B — or serve something smaller from LM Studio or Ollama, which
+> have their own memory rules and their own swapping problems. A 3B is a real option: it answers in seconds
+> and gets the boilerplate out of the way. **If your machine is large** (and you have the disk), the 30B is
+> markedly better at the same Code Fix runs, which is exactly why it is offered — but it is slower per answer
+> and it evicts the 7B while it runs. Neither choice is made for you, and neither is permanent: switching
+> back is the same picker you came in through.
+
 #### No model server? Let the extension bring its own
 
 Having no AI at all is the case this feature exists for, so it does not require LM Studio or Ollama:
@@ -1238,7 +1339,8 @@ either native build:
    > try once more with a bigger model — your own `llama-server` unit, which already has its weights. The
    > question states what it costs: the 7B is unloaded first, the unit is started, about 20 GB and about a
    > minute. Every step is shown while it happens (unloading, starting, waiting for the weights with the seconds
-   > counting, then the retry), it is offered **once**, and answering **No** changes nothing.
+   > counting, then the retry), it is offered **once**, and answering **No** changes nothing. *The 30B step-up*
+   > below is the section that gets the weights and the unit in place.
 
    You can also point it at a `.gguf` file you already have, or paste the address of one.
 3. Wait for the download — the line under the buttons counts it out in bytes (`1.2 GB of 4.4 GB · 26%
@@ -1299,11 +1401,46 @@ separate programs with their own settings, and nothing here touches them. Switch
 built-in runtime, because a process that is already up was started with the old build — the next request starts
 it again with the new one.
 
+#### Installing llama.cpp — getting `llama-server`
+
+The section below assumes you already have **llama.cpp**. This is how to get it, and it is a one-time job —
+after it the extension finds the binary by itself.
+
+1. **Build it from source.** This produces exactly the layout the extension looks in first, so nothing has to
+   be configured afterwards:
+
+   ```bash
+   sudo apt install build-essential cmake git      # Debian/Ubuntu.  Arch: sudo pacman -S base-devel cmake git
+   git clone https://github.com/ggml-org/llama.cpp ~/llama.cpp
+   cd ~/llama.cpp
+   cmake -B build                                   # CPU build — enough for everything described here
+   cmake --build build --config Release -j "$(nproc)"
+   ~/llama.cpp/build/bin/llama-server --version     # prove it runs
+   ```
+
+   The binary lands in `~/llama.cpp/build/bin/llama-server` — the first folder in the search list of the next
+   section, which is why it is named there. Keep the whole `build/bin` folder together: llama.cpp also builds
+   the shared libraries beside it, and the program needs them at run time.
+
+2. **A GPU build is optional — and for a *big* model it is often the wrong choice.** Add `-DGGML_VULKAN=ON`
+   (or `-DGGML_CUDA=ON`) to the `cmake -B build` line and rebuild. But the box this feature was written on
+   serves its 30B **on the CPU on purpose** (`--device none -ngl 0` in the unit further down), because a GPU
+   that shares its memory with the CPU is slower for a model that size. Small models on a discrete GPU are
+   the case where the GPU build earns its keep.
+
+3. **Or use your distribution's package, if it has one.** The extension only requires that the program is
+   called `llama-server`; where it came from makes no difference.
+
+> **Don't build it inside a project folder.** `llama-server` is looked for in `~/llama.cpp/build/bin`,
+> `~/.local/bin`, `/usr/local/bin`, `/usr/bin` and on your `PATH` — a copy sitting in a project directory is
+> invisible to the extension.
+
 #### Your own `llama-server` — the engine you already have
 
 If you built (or installed) **llama.cpp**, the fastest option is usually your own `llama-server`: it is
 compiled for your machine, it is already yours, and on the machine this feature was written on it answered
-faster and better than anything else. Run **AI: Start My llama-server…** from the Command Palette:
+faster and better than anything else. (Building it is *Installing llama.cpp* just above.)
+Run **AI: Start My llama-server…** from the Command Palette:
 
 1. **The binary is looked for** in the usual build folders (`~/llama.cpp/build/bin/llama-server`,
    `~/.local/bin`, `/usr/local/bin`, `/usr/bin`) and on your `PATH`. If none is found, the message offers to
@@ -1365,6 +1502,106 @@ runtime.
 > immediately, and the extension starts it once more without the cosmetic `--alias` rather than reporting a
 > version problem; a failure that is *not* about our arguments (a missing file, a bad quantisation) is reported
 > with the command line, which is also what goes to the *Grumpy's WYSIWYG Designer* log.
+
+#### The 30B step-up — the model, and the unit that serves it
+
+**What it is.** When a **Code Fix…** run ends without a clean build, the panel makes one offer: try the same
+errors again with a bigger model. It is *your* model — the extension starts your own `llama-server` unit,
+because that unit's `ExecStart` already names the big `.gguf`, so starting the unit *is* loading the model.
+The 7B is unloaded first (two models of this size do not fit in 28 GB of RAM), every step is announced with
+the seconds counting, and answering **No** changes nothing.
+
+**What the extension needs from your machine.** It checks all four of these before offering anything, and
+says which one failed rather than offering a step-up that cannot work:
+
+| Check | Value on this machine |
+|---|---|
+| A user unit whose `ExecStart` runs a `llama-server` and names a `.gguf` | `~/.config/systemd/user/llama-server.service` |
+| That file is a real step up | **≥ 1.5 ×** the local model's size |
+| Room for it | the model's size **+ 3 GB** for the editor and the OS |
+| Patience | it gives up after **five minutes** — a cold load of 17 GB takes minutes |
+
+All of it is visible in **AI: Status & Hardware Check**, and a refusal is written to the log with its reason
+(`30B step-up not offered: …`).
+
+**Which model.** The one this feature was developed against is **Qwen3-Coder-30B-A3B-Instruct, Q4_K_S** —
+**17.5 GB**. It is a *mixture of experts*: 30B of weights, about 3B active per token, which is why it answers
+with 30B quality at something close to 3B speed on a CPU, and why a cold load is minutes rather than seconds.
+
+1. **Download it.** Three ways, in the order most people want them:
+
+   - **Through this extension** — *AI: Add a Model from Hugging Face…* and paste
+     `https://huggingface.co/n00b001/Qwen3-Coder-30B-A3B-Instruct-Q4_K_S-GGUF`. The size and the SHA-256 are
+     read from Hugging Face and the download is verified. (The step-up itself still needs the unit below — it
+     is defined as "start the thing you already have" — but the file is then also selectable like any other
+     model.)
+   - **Plain `curl`**, with no extra tools (the same file):
+     ```bash
+     mkdir -p ~/models
+     curl -L -o ~/models/qwen3-coder-30b-a3b-instruct-q4_k_s.gguf \
+       https://huggingface.co/n00b001/Qwen3-Coder-30B-A3B-Instruct-Q4_K_S-GGUF/resolve/main/qwen3-coder-30b-a3b-instruct-q4_k_s.gguf
+     ```
+   - **LM Studio's model browser**, or `hf download` if you have `huggingface_hub` installed. All of them
+     produce the same `.gguf`, and the extension does not care which one you used.
+
+   > A file inside the Hugging Face *cache* is a symlink into `blobs/` — that works (this machine's unit
+   > points at one), but deleting the cache entry later breaks the unit. `~/models/…` is the sturdier choice,
+   > and the one the unit below uses.
+
+2. **Teach a unit to serve it.** Save this as `~/.config/systemd/user/llama-server.service`, replacing
+   `<you>` with your user name (`echo $HOME` prints the prefix — systemd does not expand `~`):
+
+   ```ini
+   [Unit]
+   Description=llama.cpp big model for the designer
+   After=default.target
+
+   [Service]
+   Type=simple
+   ExecStart=/home/<you>/llama.cpp/build/bin/llama-server \
+       -m /home/<you>/models/qwen3-coder-30b-a3b-instruct-q4_k_s.gguf \
+       --device none \
+       -c 16384 \
+       -np 1 \
+       -ngl 0 \
+       -nr \
+       --host 127.0.0.1 \
+       --port 8080 \
+       --alias qwen3-coder-local
+
+   Restart=on-failure
+   RestartSec=10
+
+   [Install]
+   WantedBy=default.target
+   ```
+
+   The flags, each for a reason: `--device none` and `-ngl 0` keep the weights on the **CPU**, which for a
+   model this size is usually faster than a shared-memory GPU; `-c 16384` is 16 K of context (the panel's
+   context-length field is passed as `--ctx-size` when the extension starts a *window's* server, so keep the
+   two in step); `-np 1` is one slot, because this server has one customer, and `-nr` skips the warm-up
+   request; `--alias` is the name the server reports; `127.0.0.1:8080` is the address the extension expects
+   for llama.cpp.
+
+3. **Start it, and make it come back after a reboot:**
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user enable --now llama-server.service
+   systemctl --user status llama-server.service            # active (running)
+   journalctl --user -u llama-server.service -f            # watch the weights load
+   ```
+   The first load is the slow one; after that the model stays resident until you stop it. This is the *unit*
+   option the panel describes: it starts at login, and **its own `ExecStart` decides which model and flags it
+   serves**, so the Model box in the panel has no say in it.
+
+4. **Let the extension see it.** Run **AI: Status & Hardware Check**: it names the unit, the `.gguf` that unit
+   serves, its size, whether it is running and since when, and whether it returns at login. To use a
+   *different* unit, name it in `avaloniaDesigner.assistant.llamaServerService` (empty means *find it*).
+   **Start My llama-server…** proves the whole chain with a one-line test request before it says *Ready*.
+
+Nothing here is hidden behind a setting you have to remember twice: the offer appears only when a repair run
+has actually failed, it states what it will cost (unload the 7B, start the unit, about 20 GB, about a minute),
+it is made **once**, and declining leaves your machine exactly as it was.
 
 #### House rules — teach it how *your* code is written
 
@@ -1595,6 +1832,13 @@ A typical layout:
 >   was created *inside* the canvas, and a canvas sizes its child to the child's own wish, so nothing
 >   filled.) Forms made with the old designer can be repaired in one click: **🩺 Code Fix…** reports
 >   *“x is docked inside its Canvas, not inside the panel”* and moves it for you (§12).
+> - **A band is placed where it can actually span** (since 0.13.10). A DockPanel hands each child its slice
+>   out of what is **left**, in order — and a child with **no** `Dock` is a *left*-docked one. A bar (or a
+>   Menu, or a Status Bar) appended after a left-docked control was therefore given the leftovers: measured
+>   as a **76 × 24 strip at x = 724** instead of a full-width band. A **Top** / **Bottom** band is now
+>   inserted **in front of** the first sibling that would eat its width, and a form that already carries the
+>   old arrangement is repaired the next time the designer opens it — so dropping the Grumpy Command Bar
+>   gives you the full-width bar at once.
 
 ### Split panels (the SplitPanel tool)
 
@@ -1705,7 +1949,7 @@ Worth knowing before you trust a green build. These are the limits of the featur
   restructure a project, add packages, or fix design-level problems.
 - **Windows-first assumptions.** AI-written file and drive code tends to assume `\` and drive letters; on
   Linux the path handling needs a human look.
-- **Time and determinism.** A cold 16 GB model load is minutes, and the 30B step-up gives up after five; the
+- **Time and determinism.** A cold 17 GB model load is minutes, and the 30B step-up gives up after five; the
   same error can get different answers from one run to the next.
 
 - **Changes need a reload** — after installing/updating the extension, reload the window.

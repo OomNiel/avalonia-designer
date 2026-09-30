@@ -17,7 +17,64 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
-## Where the last session left off (2026-09-29, eighteenth session — 0.13.3: a Timer, docks that fill, and a panel that names itself)
+## Where the last session left off (2026-09-30, nineteenth session — 0.13.19: a command bar of our own, the Items Editor, and the release)
+
+The session where a bug report about a control became a control of our own. The user alternated between
+requests, reports from testing them, and two documentation questions, and the pattern that worked — again —
+was **measure, then fix the cause, then pin it**: the real previewer host for every layout claim, `dotnet
+build` of a generated project for anything the XAML compiler has an opinion about, and a test that is *proven
+able to fail* before it is trusted.
+
+- **The Avalonia `CommandBar` family left the Toolbox** (12-only: a project that received one could not build
+  on Avalonia 11). Withdrawn with the reason recorded, events kept for hand-written markup, replaced by the
+  bundled **`chrome:GrumpyCommandBar`** (both twins) — a `Border` whose Child is a **named** row of ordinary
+  controls, docked `Top` at `Height="36"` by its own snippet.
+- **The Height that looked dead** was a theme's own `MinHeight` (48) outranking the explicit one; measured per
+  control against the host, fixed with a **companion** `MinHeight`/`MinWidth` (`sizeFloorCompanion`), pinned by
+  a new T1 test and by the catalog test.
+- **The Items Editor** (asked for by name and position): `'itemsEditor'` is the first property section;
+  seven item kinds, 23 built-in icons plus **From file…** (copied into `Assets`, `avares://…`), child items
+  (`↳`, three levels), nothing written before **Save**, unknown controls left as **Other**.
+- **The menu-copy feature lasted one build.** It produced buttons that looked right and did nothing, so it was
+  replaced — on the user's instruction — by **two working sample buttons** (*File Open…* / *File Save…*) whose
+  real dialog handlers the designer writes into the code-behind (`insertCommandBarFileHandlers`, idempotent,
+  never overwriting a user's version). The copying path was **deleted**, not switched off.
+- **A new T0 test compiles the bar in C# *and* VB** — the only check that catches an `AVLN3000`-class
+  signature error, and it caught under-indented generated bodies.
+- **A band now docks where it can span** (`placeDockedBand`, plus `normaliseDockBands` on every read-from-disk
+  path): measured `76 × 24 at x = 724` before, `800 × 24` after.
+- **A tab page without its `Canvas` gets one back** (`restore-page-canvas` Code Fix) — and the rule was
+  tightened after its first version flagged three of the demo's pages, two of them healthy. The XAML-only rules
+  are now reachable on forms with **no code-behind** too.
+- **An `Imports` finding fired on a property** (`StorageProvider` vs the type `IStorageProvider`) — `\b` matches
+  after a dot; the rule now demands an unqualified name.
+- **The Timer's panel lost its Appearance section** (a non-visual component has no appearance) and the catalog
+  gained a **per-control audit** — ~56 controls × six rules, proven by re-injecting the row it exists to catch.
+- **The stale PROBLEMS pane was caused by the C# Dev Kit's auto-generated solution** scanning the
+  `tests/out/projects/*` probes; fixed with a real `avalonia-designer.sln` + `dotnet.defaultSolution`.
+- **The manual's AI-assist half was written** (installing `llama.cpp` / getting a working `llama-server`, the
+  30B step-up) and then the question the user asked afterwards became a section of its own: **which model will
+  run on your machine — your decision**, with the two models' arithmetic side by side (7B: 4.4 GB / 16 GB;
+  30B: 17.5 GB + ~3 GB ≈ 21 GB free — 24 GB tight, 32 GB comfortable — measured here on 28 GB) and the rule
+  that the extension ships one default and only ever *offers* the bigger one.
+- **Docs:** `CHANGELOG.md` `[0.13.19]`, README (version refs, the bar, the model-choice paragraph), `CONTROLS.md`
+  (the bar row, the withdrawn family, the seven panel sections), `USER_MANUAL.md` (§5 the bar, §8 Items Editor,
+  §12 the new finding, §15 band placement, §6 the Timer panel, the model section, version refs), `TEST_PLAN.md`
+  (the 0.13.19 build-order entry), `NOTES.md` §169–§170, `PUBLISHING.md`'s record, `Events per Control.md`
+  (the bundled bar, the withdrawn family), this file.
+- **The release:** version **0.13.19** (numbers only go up; `0.13.4`…`0.13.18` were local builds, so they stay
+  gaps), stamps **22/22** (the marker moves, so projects holding the older twins are offered the update), the
+  VSIX packaged and installed locally, the commit/tag/GitHub release made with the VSIX attached.
+- **The Marketplace upload is the user's step**: the listing still carries `0.11.0`, so **one** upload of
+  `avalonia-designer-0.13.19.vsix` brings it fully up to date.
+- **State:** version **0.13.19** (installed locally from the packaged VSIX), stamps **22/22**, `npx tsc -p ./`
+  clean, `dotnet build host/PreviewerHost.csproj` **0/0**, PROBLEMS pane clean for every changed file, and the
+  layers that cover the release green — **10,125 checks, 0 failed** (T0 55 · T1 442 · T2 6,619 · T3 1,075 ·
+  T5 1,934). **The full unfiltered suite was NOT run** (the user's rule: it needs their permission); the last
+  full run was 9,876 / 0 / 0 on 2026-09-29. For the next session: a full run now means those five layers **plus
+  T4**.
+
+## The session before that (2026-09-29, eighteenth session — 0.13.3: a Timer, docks that fill, and a panel that names itself)
 
 Long, mixed session: the user alternated between feature requests, bug reports from testing them, and one
 question about what the extension actually needs installed. The pattern that worked, again: **reproduce and
