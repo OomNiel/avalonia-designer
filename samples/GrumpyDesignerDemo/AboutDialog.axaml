@@ -1,0 +1,37 @@
+<chrome:ChromeWindow xmlns="https://github.com/avaloniaui"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                     xmlns:chrome="using:AvaloniaChrome"
+                     x:Class="GrumpyDesignerDemo.AboutDialog"
+                     Title="About this app"
+                     TitleBarTitle="About"
+                     TitleBarIcon="avares://GrumpyDesignerDemo/Assets/DesignerIcon.png"
+                     Width="470"
+                     SizeToContent="Height"
+                     CanResize="False"
+                     ShowInTaskbar="False"
+                     WindowStartupLocation="CenterOwner"
+                     Background="Transparent"
+                     CornerRadius="8"
+                     BorderBrush="#0A0593"
+                     BorderThickness="2,2,2,2">
+    <StackPanel Margin="24,16,24,22" Spacing="10">
+        <Image Width="128" Height="128" HorizontalAlignment="Center"
+               Source="avares://GrumpyDesignerDemo/Assets/DesignerIcon.png"/>
+        <TextBlock Text="Grumpy's WYSIWYG Designer for VS Code"
+                   FontSize="18" FontWeight="SemiBold"
+                   HorizontalAlignment="Center" TextAlignment="Center"/>
+        <TextBlock Text="This form was built and edited with the designer extension for Visual Studio Code."
+                   TextWrapping="Wrap" TextAlignment="Center"
+                   Foreground="#5A5A5A"/>
+        <Separator Margin="0,4,0,4"/>
+        <TextBlock x:Name="VersionText" FontSize="15" FontWeight="SemiBold"
+                   HorizontalAlignment="Center"/>
+        <TextBlock Text="Source code, documentation and every release:"
+                   Foreground="#5A5A5A" HorizontalAlignment="Center"/>
+        <HyperlinkButton x:Name="RepoLink" HorizontalAlignment="Center"/>
+        <HyperlinkButton x:Name="ReleaseLink" HorizontalAlignment="Center"/>
+        <Button Content="Close" Click="Close_Click"
+                IsDefault="True" IsCancel="True"
+                MinWidth="96" Margin="0,6,0,0" HorizontalAlignment="Center"/>
+    </StackPanel>
+</chrome:ChromeWindow>

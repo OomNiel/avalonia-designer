@@ -1,0 +1,25 @@
+{
+    // F5-ready .NET (coreclr) debugging — works on Linux, macOS and Windows. The program is the
+    // BUILT ASSEMBLY (no ".exe" — that Windows convention doesn't apply on Linux/macOS), and F5
+    // runs the "build" task first (with task.saveBeforeRun on, all open files are saved too).
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/Debug/net10.0/${workspaceFolderBasename}.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Attach",
+            "type": "coreclr",
+            "request": "attach",
+            "processId": "${command:pickProcess}"
+        }
+    ]
+}

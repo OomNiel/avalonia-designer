@@ -18,6 +18,11 @@ host/obj/
 host/**/bin/
 host/**/obj/
 
+# The sample app builds like any other Avalonia project, so keep ITS output out of the repository (the
+# host/*/bin patterns above match one level deep only and do not cover samples/).
+samples/**/bin/
+samples/**/obj/
+
 # VS Code extension packaging
 *.vsix
 

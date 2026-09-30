@@ -23,6 +23,10 @@ PUBLISHING.md
 # (vsce's own default-ignore list contains a bare `.github`, but default patterns are NOT
 # folder-expanded the way `.vscodeignore` entries are, so they never match nested files.)
 .github/**
+# The sample app (samples/GrumpyDesignerDemo) is a demonstration project for the repository: it is a whole
+# Avalonia app with its own csproj, bundled helper copies and assets. Nothing at runtime reads it, and it would
+# add ~1.2 MB of sources and a NuGet-restoreable project to every install.
+samples/**
 # Dev-only docs (kept out of the package; README/USER_MANUAL/CONTROLS stay in).
 NOTES.md
 NOTES_ARCHIVE.md

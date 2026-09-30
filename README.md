@@ -500,6 +500,28 @@ just what the settings point at, so "did my load take?" is answerable from the p
 - A **generated** catalog rather than hand-maintained lists, so the code, the signatures and the
   reference document cannot drift apart.
 
+## The demo app — every feature in one window
+
+[`samples/GrumpyDesignerDemo`](samples/GrumpyDesignerDemo) is a **real, buildable Avalonia 12 app** whose whole
+form was built with the designer: a menu bar with a *File ▸ Open…* path picker, an **About** dialog that reports
+the extension version with its icon and this repository's link, working application **Exit**, a **Grumpy
+command bar** with its two sample file-dialog buttons, four tab pages holding the everyday input controls, a
+three-pane **SplitPanel**, a **DataGrid bound to a DataSet**, the bundled **spreadsheet** and **charts**, and a
+status strip with a live clock — all inside the bundled `ChromeWindow` chrome.
+
+```bash
+git clone https://github.com/OomNiel/avalonia-designer.git
+cd avalonia-designer/samples/GrumpyDesignerDemo
+dotnet run          # or open that folder in VS Code and press F5
+```
+
+It builds and runs on its own — no reference back to this repository and nothing else to install. The bundled
+helper files it contains (`ChromeWindow`, `GrumpyPanel`, `GrumpyCommandBar`, `GrumpyCharts`, `GrumpySheet`, …)
+are **copies the extension put there**, the same way it does for your projects, each stamped with the version
+that copied it — which is what the designer compares when it offers *Update now*.
+
+[**What each tab shows →**](samples/GrumpyDesignerDemo/README.md)
+
 ## Status and prerequisites
 
 - **Published on the

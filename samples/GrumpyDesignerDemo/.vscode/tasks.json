@@ -1,0 +1,17 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // Default build task (Ctrl+Shift+B, or F5's preLaunchTask). With the global
+            // task.saveBeforeRun setting on, every open file is saved before this runs.
+            "label": "build",
+            "type": "shell",
+            "command": "dotnet build",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$msCompile"
+        }
+    ]
+}

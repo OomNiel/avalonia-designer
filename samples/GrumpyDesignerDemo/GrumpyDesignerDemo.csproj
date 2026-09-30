@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <RootNamespace>GrumpyDesignerDemo</RootNamespace>
+    <!-- Compiles the bundled GrumpyCharts.cs "Print…"/"Print to PDF…" menu entries + methods
+         (Avae.Printables + AvaloniaUI.PrintToPDF). Omitted in the headless PreviewerHost, which
+         links the same file but carries no printer packages. -->
+    <DefineConstants>$(DefineConstants);PRINT_SUPPORT</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.1" />
+    <!-- Hardcopy output for the chart controls (see GrumpyCharts.cs #if PRINT_SUPPORT). -->
+    <PackageReference Include="Avae.Printables" Version="3.0.7" />
+    <PackageReference Include="AvaloniaUI.PrintToPDF" Version="0.6.0" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+      <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.1" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
+</ItemGroup>
+</Project>
