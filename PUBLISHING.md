@@ -255,7 +255,11 @@ listing when that release is uploaded — a repo-only README edit does not.
 > host/PreviewerHost.csproj` **0 warnings / 0 errors**; PROBLEMS pane clean after the edits.
 >
 > **GitHub release:** <https://github.com/OomNiel/avalonia-designer/releases/tag/v0.14.0>, this VSIX attached
-> as the asset, marked **Latest**.
+> as the asset, marked **Latest** — verified with `gh release view` (`isDraft: false`, `isPrerelease: false`,
+> asset `avalonia-designer-0.14.0.vsix`, **1,657,403 bytes**, the same size as the built file) and with
+> `gh release list --limit 4`, then the asset was **downloaded back** (`gh release download`) and `cmp`-compared
+> with the local file: **byte-identical**. Commits `3b09169` (feature, plus `6c03dfa` for the demo app's data
+> and pictures) and `b7d4d45` (docs), tag **`v0.14.0`** on `main`.
 >
 > **What it changes** (all of it in `CHANGELOG.md` `[0.14.0]`, `NOTES.md` §171–§172): a chart's data can come
 > from a **CSV/TSV** file, a **JSON** file, or a **folder** of files (one sampleset per file, natural order),
