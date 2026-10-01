@@ -86,8 +86,17 @@ public partial class MainWindow : AvaloniaChrome.ChromeWindow
 
         if (DataGrid1.SelectedItem is ImagesRow selectedRow && !string.IsNullOrEmpty(selectedRow.File))
         {
-            //Set the Image file to the Image control
-            Image1.Source = new Avalonia.Media.Imaging.Bitmap(selectedRow.File);
+            //Set the Image file to the Image control.
+            // The sample's rows carry a path RELATIVE to this app ("Pictures/…", copied beside the
+            // executable by the .csproj); an ABSOLUTE path — what the designer's own “Choose file…”
+            // dialog writes into a DataSet — is used exactly as it is. ExifImageLoader is the bundled
+            // helper that bakes a JPEG's EXIF orientation tag in upright, and a missing file only
+            // leaves the image blank instead of taking the window down.
+            var file = System.IO.Path.IsPathRooted(selectedRow.File)
+                ? selectedRow.File
+                : System.IO.Path.Combine(System.AppContext.BaseDirectory, selectedRow.File);
+            try { Image1.Source = ExifImageLoader.LoadImageOriented(file); }
+            catch { /* file missing or unreadable — leave the image blank */ }
         }
 
         if (_images.Count > 0)

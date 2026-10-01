@@ -28,4 +28,15 @@
       <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.1" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
 </ItemGroup>
+
+  <!-- The sample's own data, copied BESIDE the executable:
+         * Pictures\** — the DataGrid rows load a real FILE (ExifImageLoader / Bitmap), so these cannot
+           live under Assets\ (that folder is embedded as an avares:// resource, not written to disk);
+         * DemoDataSet.db — RuntimeStorage adopts the database from beside the executable when the
+           per-user copy (~/.local/share/GrumpyDesignerDemo) does not exist yet, which is what gives a
+           fresh clone the five sample rows instead of an empty grid. -->
+  <ItemGroup>
+    <None Update="Pictures\**" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="DemoDataSet.db" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
