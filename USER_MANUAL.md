@@ -12,7 +12,7 @@
 > guided: every control has a plain-language explanation, properties have a helpful editor and
 > a hover description.
 >
-> **This document is kept up to date as the extension grows.** (Latest revision: 2026-09-29)
+> **This document is kept up to date as the extension grows.** (Latest revision: 2026-10-01)
 
 ---
 
@@ -72,6 +72,7 @@
     - [The waterfall chart (since 0.11.12)](#1912-the-waterfall-chart-since-01112)
     - [The surface chart 3D (since 0.11.14)](#1913-the-surface-chart-3d-since-01114)
     - [Printing a chart — hardcopy and PDF (since 0.12.0; page, PNG and Ctrl+P since 0.12.1; Linux printing and Print Legend since 0.12.2; Print Ink since 0.12.7)](#1914-printing-a-chart--hardcopy-and-pdf-since-0120)
+    - [Reading a chart's data from a file (since 0.14.0)](#1915-reading-a-charts-data-from-a-file-since-0140)
 20. [The spreadsheet (GrumpySheet)](#20-the-spreadsheet-grumpysheet) (since 0.12.9; formatting 0.12.10; fixes + Ctrl+Arrow 0.12.11; right-click menu 0.12.12; formulas, Dock and the sizing handles 0.12.15; toolbar, .xlsx load/save and the formula list 0.12.16; addresses that move with a fill 0.13.0; cell borders and colours 0.13.1)
     - [Placing a sheet](#201-placing-a-sheet)
     - [Typing the cells in: the Cells editor](#202-typing-the-cells-in-the-cells-editor)
@@ -176,7 +177,7 @@ search for *Grumpy's WYSIWYG Designer*, and install it. Or from a terminal:
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.13.19`**, so the command above installs it; add `--force` to
+The current version is **`0.14.0`**, so the command above installs it; add `--force` to
 reinstall or to update a copy that is already on the machine. (VS Code also updates extensions by itself:
 *Extensions* view → the **⟳ Check for Extension Updates** button.)
 
@@ -188,7 +189,7 @@ code --install-extension avalonia-designer-<version>.vsix --force
 ```
 
 > **One number everywhere.** The GitHub tag, the release title and the Marketplace listing all carry the same
-> `major.minor.patch` (`0.13.19` right now), so there is only ever one version to look at. It only ever goes up,
+> `major.minor.patch` (`0.14.0` right now), so there is only ever one version to look at. It only ever goes up,
 > which is what lets VS Code update you automatically. The `CHANGELOG.md` in the repository says what changed in
 > each release.
 
@@ -2213,6 +2214,13 @@ Chart1.AddPoint(6, 7);                       // appends one sample
 Chart1.Reload();                             // re-reads the workbook right now
 ```
 
+**C. A data file (`.csv` / `.tsv` / `.json`, or a folder of them)**
+
+Since **0.14.0** the numbers may come from a **data file** instead of a workbook — chosen in the same **Data
+Selector** — with each column addressed by its **header name**. The settings that matter are the same **X
+Column** and **Y Column** (plus **Header Row** / **First Data Row**); everything else in this chapter applies
+unchanged. §19.15 is the full story.
+
 ### 19.3 The Series editor — one line per series
 
 Select the chart and click the **Series — Edit series…** row at the top of the Properties panel.
@@ -2486,10 +2494,9 @@ list. It is the one place where a chart's data source is chosen:
   this editor existed, so old forms behave as they always did.
 - A page that is not in the workbook is **refused with the reason printed under the dropdown**
   (`"Book.xlsx" has no page called "Nope".`) rather than quietly reading the first sheet instead.
-- **Data source = Data Files** is the place for **data files such as CSVs**. The file you pick is stored on
-  the chart (`DataFile`) and shown in the editor, with a line saying it is not read yet — the charts keep
-  drawing whatever the spreadsheet gives them until that reader lands. Nothing is lost by trying it: the
-  choice is remembered in the form.
+- **Data source = Data Files** is the place for **data files** — a CSV, a TSV or a JSON file, or a **folder**
+  of them. The file you pick is stored on the chart (`DataFile`) and read by the chart itself; §19.15 has the
+  whole story, from what the reader accepts to the button that copies a file into your project.
 
 **A 3D chart takes its whole page, not just its first columns** (since 0.11.18). Choosing a page for a
 **Surface Chart 3D** or a **Waterfall** writes **one series per data column** of that page, so the form
@@ -2785,6 +2792,86 @@ entries, and the designer's offer above is the shortcut.
 > and the `#If PRINT_SUPPORT Then` block is compiled out *while the build stays green*. The `DefineConstants`
 > line above is the one that reaches the compiler — checked 2026-09-25 on the .NET 10 SDK, where the switch
 > vbc receives ends in `…,PLATFORM="AnyCPU",,PRINT_SUPPORT,_MyType="Empty"`.
+
+### 19.15 Reading a chart's data from a file (since 0.14.0)
+
+**Data source = Data Files** in the Data Selector is a real source now: a chart can read its numbers from a
+**text file** or a **JSON file** instead of a spreadsheet. Everything else — the Series, Axis and Legend
+editors, the cursors (19.8), printing (19.14) — works exactly as it does for a workbook.
+
+| What you point it at | How the columns are named |
+|---|---|
+| **`.csv`** (also `;`, TAB or `|` separated — the delimiter is detected) | the **header row** |
+| **`.tsv`** / **`.txt`** (tab-separated, others detected as well) | the header row |
+| **`.json`** — an array of records, a column block, one record, or JSON Lines | the **keys** |
+| **`.jsonl`** / **`.ndjson`** — one object per line, one sample each | the keys |
+| **A folder** — **one file per sampleset** (see below) | the header row of the first file |
+
+**A column is addressed by its header name first** — `Time`, `Current` — and by **letter** (`A`, `B`, `C` …)
+when there is no such header. So `X Column = Time`, `Y Column = Current` in the Series editor is what a real
+CSV wants, while a plain `x,y` file with no header row works with `A` and `B`. The chart's **Header Row**
+and **First Data Row** settings (defaults **1** and **2**) still say which physical line is which, exactly as
+they do for a workbook: row 1 names the columns, data starts on row 2.
+
+**Numbers, gaps and quoting.** A cell that is empty, `-`, `#N/A`, `NaN` or `Infinity` is a **missing
+sample** — the line breaks there, it never becomes a zero. Numbers are read as plain `1.5`, and — in a file
+separated by `;` or TAB, where a comma cannot be a separator anyway — `1,5` is read as `1.5` too, which is
+what a European Excel writes. `"quoted text, with a comma"` is one field, a quoted field may span lines, and
+`""` inside it is one quote character (RFC 4180). Both **LF and CRLF** end a line, and a UTF-8 file (with or
+without a BOM) and a **UTF-16** file (what Excel's *Unicode text* writes) are read correctly.
+
+**What it refuses, and why.** The reader is strict where silence would mislead. A line with **more fields
+than the header** is refused **with its line number** — that is a broken file (an unescaped delimiter), not
+data to guess at — while a line with **fewer** fields is simply missing values. A JSON syntax error names
+the line it was found on, and a file above **64 MB** is refused with its size instead of being read into
+memory. The sentence appears in the Data Selector, and in the preview and the running app for a chart that
+has nothing to draw. There is **no comment syntax**: `#` is a legal first character.
+
+**Dates on the X axis.** If the X column holds dates — `2026-09-30`, `2026-09-30 14:05`,
+`2026-09-30T14:05:12` or the dotted `30.09.2026 14:05:12` — the chart plots them as **time**, so samples
+logged at uneven intervals are spaced as they were taken. They are read as **UTC**: a logged clock is a data
+value, not your time zone. The axis labels follow the span on screen — seconds, then minutes, then days,
+then months, then years — and a cursor's **ΔX** is printed as a **duration** (`1 h 30 min`) instead of a
+number.
+
+**A folder is one file per sampleset** — the shape a capture writes: one CSV per sweep, per run, per pass.
+Point **Data file** at the **folder** and the chart takes one sampleset per file, in **natural order**
+(`run2.csv` before `run10.csv`, not after), using only `.csv`, `.tsv` and `.txt` — so a `README.md` beside
+them is not a sampleset. This is exactly what the waterfall (19.12) and the surface chart (19.13) want. The
+folder is **watched** while the app runs: drop in a new run, save it, and the chart redraws.
+
+**Include in the project** — the button under the file row, offered when the file lives outside your project
+folder — copies the file into your project's **`data/` folder** (never overwriting a *different* file of the
+same name; it tells you instead), adds the item that puts it next to the built app, and stores the chart's
+path **relative**. That is what makes the project portable: a relative path is looked for **beside the app**
+at run time and **at your project folder** in the designer, so the folder can be handed to someone else — or
+moved — and the chart still finds its data. A *folder* of samplesets is carried over as a folder.
+
+**What the Data Selector shows you.** It reads your file with the **same reader the chart uses**, so the
+preview is the truth rather than an illustration:
+
+- the **delimiter** it detected, in words (`semicolon`, `tab`, …);
+- the **header names**, as the chart sees them — this is what a series matches;
+- the **first rows**, with every cell that is *not* a number shown **dimmed**, so a column read as text (a
+  stray unit, the wrong delimiter, a date in the wrong shape) is visible at a glance;
+- the **key names** for a JSON file, and the **file list** for a folder;
+- the reader's own **error sentence**, if there is one.
+
+> **Start from a sample.** A header row and one numeric column are enough:
+>
+> ```csv
+> Time,Current,Voltage
+> 0,0.981,5.02
+> 1,1.004,5.01
+> ```
+>
+> Point a **Line Plot** at it, set **X Column = Time** and **Y Column = Current**, and it draws. A second
+> series reading `Voltage` gives two lines and a legend naming both.
+
+> **A one-column file still draws.** If the Y column turns out to be empty, the chart falls back to the X
+> column for its values, so a file with numbers in a single column is a working chart (the X axis is then the
+> sample number). A **text** X cell — not a number, not a date — becomes the point's **name**: a bar chart's
+> category, an area chart's tick label.
 
 ---
 

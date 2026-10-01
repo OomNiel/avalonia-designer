@@ -233,8 +233,45 @@ listing when that release is uploaded — a repo-only README edit does not.
 > `flags: 914` must show `0.10.0` and `Microsoft.VisualStudio.Services.VsixSha256` must equal the hash above —
 > and then replace this paragraph with the verified line, exactly like the entries before it.
 
-> **`0.13.19` (2026-09-30) — packaged, committed, tagged and released on GitHub; **THIS is the file to
+> **`0.14.0` (2026-10-01) — packaged, committed, tagged and released on GitHub; **THIS is the file to
 > upload to the Marketplace.
+>
+> **⚠ This supersedes the `0.13.19` entry below** (and every `0.12.x`/`0.13.x` one): nothing between `0.12.0`
+> and here was ever uploaded — the listing still carries `0.11.0`, last updated 2026-09-20 — so **one** upload
+> of this file brings the Marketplace fully up to date. `0.13.19` … `0.14.0` were consecutive local numbers;
+> the number only ever goes up.
+>
+> **Artefact:** `avalonia-designer-0.14.0.vsix`, **1,657,403 bytes**, sha256
+> `064f2245944d47095fb4cfb4b67d8964a48aafa64035e78e2e4b400f95ef484e`, **130 files**, manifest
+> `Version="0.14.0"` (no `preRelease` key at all) and **no `PreRelease` attribute** (a plain, stable upload —
+> `activationEvents` is exactly `["workspaceContains:**/*.axaml"]`, and there is no `extensionDependencies` or
+> `extensionPack`). Read back **from inside the zip**: **22 bundled stamps** at `0.14.0`, the new reader
+> symbols in **both twins** (`DelimitedTextReader`, `JsonDataReader`, `ChartDates`, `SliceFolder`,
+> `SourcePathResolver`) and `includeDataFile` / `tableResult` / `applySlicePlan` / `df-preview` on the
+> extension side.
+>
+> **Verified before packaging:** the **full suite — 10,771 checks, 0 failed, 0 skipped (108.9 s)**, all seven
+> layers (T0…T6), run with the user's permission for this release; `npx tsc -p ./` clean; `dotnet build
+> host/PreviewerHost.csproj` **0 warnings / 0 errors**; PROBLEMS pane clean after the edits.
+>
+> **GitHub release:** <https://github.com/OomNiel/avalonia-designer/releases/tag/v0.14.0>, this VSIX attached
+> as the asset, marked **Latest**.
+>
+> **What it changes** (all of it in `CHANGELOG.md` `[0.14.0]`, `NOTES.md` §171–§172): a chart's data can come
+> from a **CSV/TSV** file, a **JSON** file, or a **folder** of files (one sampleset per file, natural order),
+> and its X column may hold **dates** (real time axis, span-appropriate labels, `ΔX` as a duration). Relative
+> data paths resolve **beside the app** in the running program and at the project folder while designing, and
+> *Include in the project* copies a file into `data/`, writes the `CopyToOutputDirectory` item and stores a
+> relative path. The Data Selector reads the file **with the chart's own reader** and shows the delimiter,
+> the header names, the first rows with non-numeric cells dimmed, a folder's file list, a JSON file's keys —
+> or the reader's own error sentence.
+>
+> **Upload:** publisher portal → *Update* → `avalonia-designer-0.14.0.vsix` → leave **Pre-release unchecked**
+> → confirm with the gallery query below that the version is `0.14.0` and
+> `Microsoft.VisualStudio.Services.VsixSha256` equals the hash above.
+
+> **`0.13.19` (2026-09-30) — packaged, committed, tagged and released on GitHub; ⚠ SUPERSEDED by `0.14.0`
+> (upload that one instead).
 >
 > **⚠ This supersedes the `0.13.3` entry below** (and every `0.12.x`/`0.13.x` one): nothing between `0.12.0`
 > and here was ever uploaded — the listing still carries `0.11.0`, last updated 2026-09-20 — so **one** upload

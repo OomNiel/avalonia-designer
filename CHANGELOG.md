@@ -6,11 +6,120 @@ Format: based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/) — with one wrinkle, see the note below.
 
 > **One version number per release.** The GitHub tag, the release title and `package.json` all carry the same
-> `major.minor.patch` — `0.13.19` now — and that is the number the Visual Studio Marketplace shows and compares
+> `major.minor.patch` — `0.14.0` now — and that is the number the Visual Studio Marketplace shows and compares
 > (it accepts nothing else: a suffix like a pre-release name is rejected outright). The number is a plain
 > sequence, so it only ever goes up; `1.0.0` is still reserved for the first stable release, because a
 > published version can never be reused. Releases before `0.10.0` used a separate `v1.0.0-beta.N` tag for the
 > GitHub release while the listing carried `0.9.x`; the entries below keep that history exactly as it shipped.
+
+## [0.14.0] - 2026-10-01 · *a chart's data comes from a file — CSV, TSV or JSON, one file per sampleset, and real dates*
+
+The Data Selector's **Data Files** source stopped being a promise. A chart can now be pointed at a
+**delimited text file** (CSV/TSV), at a **JSON file**, or at a **folder of files** — one sampleset per file,
+which is how a bench capture names its runs — and its X column may hold **dates**, drawn as real time with
+labels that suit the span on screen. The reader lives in the bundled chart file (both twins, no new
+dependency) and the designer's own preview reads the file **through that same reader**, so what the dialog
+shows is what the chart will plot.
+
+### Added — a chart reads its data from a file
+
+- **CSV and TSV** (`DelimitedTextReader`, in both twins). The delimiter is sniffed from the first line
+  (`,`, `;`, TAB, `|` — Excel writes `;` where a comma is the decimal separator) and the header row names
+  the columns, so a series picks its column **by name** (`Current`) or by letter (`C`) when there is no such
+  header. Quoting follows RFC 4180 — `"a,b"` is one field, a quoted field may hold newlines, `""` is one
+  quote — UTF-8 (with or without a BOM) and UTF-16 files are read by their order mark, and both LF and CRLF
+  end a line. Numbers are invariant, plus a comma decimal when the delimiter is `;` or TAB (`1,5` → `1.5`).
+  A cell that is empty, `-`, `#N/A`, `NaN` or `Infinity` is a **missing sample**, never a zero, and there is
+  **no comment syntax** — `#` is a legal first character. A line with **more fields than the header** is
+  refused with its line number (an unescaped delimiter is a broken file, not data to guess at), while a line
+  with fewer fields is simply missing values; a file above 64 MB is refused with its size instead of being
+  read into memory.
+- **JSON** (`JsonDataReader`) — the same table model out of four shapes: an array of records
+  (`[{"t":0,"v":1}]`), the **column form** (`{"t":[0,1],"v":[2,3]}`), a single record, and **JSON
+  Lines** (`.jsonl`/`.ndjson`, one object per line). Keys are addressed like column names
+  (case-insensitively); a nested object, `null` or a boolean is a missing sample, a **quoted number counts
+  as a number**, and a syntax error names the line it was found on. `.json` is always tried as JSON — the
+  content decides the shape, not the extension.
+- **A folder is one file per sampleset** — the shape a capture writes (one CSV per sweep). The files are
+  read in **natural order**, so `run2` comes before `run10` and not after it; only `.csv`, `.tsv` and `.txt`
+  are used; a `README.md` sitting beside them is not a slice; every file shares the header row's columns;
+  and the chart's live watcher watches the **folder** — drop a new run in while the app runs and it redraws.
+- **Dates on the X axis** (`ChartDates`). An X column may hold `2026-09-30`, `2026-09-30 14:05`,
+  `2026-09-30T14:05:12` or the dotted `30.09.2026 14:05:12`, read as **UTC** — a logged clock is a data
+  value, not your time zone — and it is plotted as time, so unevenly spaced samples land where they belong.
+  The axis labels change with the span on screen (`HH:mm:ss` → `HH:mm` → `MM-dd` → `yyyy-MM` → `yyyy`) and
+  the cursor's ΔX readout prints a **duration** (`1 h 30 min`) instead of a number.
+- **The Data Selector reads the file too**, live, as you pick it: the delimiter it found, the header names,
+  the first rows with every **non-numeric cell dimmed** so a mis-parsed column shows at a glance, the
+  reader's own error sentence (`data.csv, line 7: 3 fields where the header has 4`), the key names of a JSON
+  file, or the file list of a folder. A chart with nothing to draw shows the reason instead of an empty frame.
+- **A one-column file still draws** (the reader's own fallback, in both twins): when the Y column turns out
+  to be empty the chart falls back to the X column for its values, and a **text** X cell becomes the point's
+  name — a bar chart's category, an area chart's tick label.
+- **Relative data paths are portable** (`SourcePathResolver`, both twins): a relative `SourceFile`/
+  `DataFile` is looked for **beside the app's executable** first — which is where the build puts a copied
+  data file, see the next bullet — then in the working directory. While designing, the host anchors the same
+  relative path at the **project folder**, so the preview reads the file you picked.
+- **Include in the project** — one action in the Data Selector, for a data file that lives outside the
+  project folder: it copies the file into the project's `data/` folder (never overwriting a *different* file
+  of the same name — the dialog says so instead), writes the
+  `<None Include="…" CopyToOutputDirectory="PreserveNewest" />` item that puts it beside the built app, and
+  stores the chart's path **relative**, so the project keeps working on another machine and a folder of
+  samplesets is carried over as a folder.
+- **Defaults for a data-file chart**: switching the source to **Data Files** fills **X Column = A** and
+  **Y Column = B** only when the chart names no column of its own, so a column choice you made for the
+  spreadsheet is never silently rewritten.
+
+### Changed
+
+- The Data Selector's **Data Files** help text now describes what happens instead of saying the reader is
+  still to come. The picker takes `.csv`, `.tsv`, `.txt`, `.json`, `.jsonl`, `.ndjson` — and folders.
+- A chart's data cache is keyed by the **kind of source** as well as the file name, so a chart that
+  switches between its spreadsheet and its data file cannot show the previous file's numbers.
+- `ChartBase.TickLabels` gained a date path and the cursor readout prints dates and durations; for a numeric
+  axis nothing changed.
+
+### Fixed
+
+- **The date axis printed nonsense** — `12-31` and `23:59` for every point — because the seconds→date
+  conversion clamped anything more than ±3000 **days** from 1970 (a date in 2026 is ~20,700 days past it)
+  to the end of year 9999. **Both twins agreed on the wrong answer**, so only asserting the *values* caught
+  it; the clamp is now the epoch's own bounds.
+- **`<None Update="…" CopyToOutputDirectory="PreserveNewest" />` copies nothing** in a project that sets
+  `EnableDefaultItems="false"` (the generated projects do): MSBuild has no such item to update. *Include in
+  the project* therefore writes `<None Include="…" />`, proven by building a real generated project and
+  looking in `bin/Debug/net10.0/data/`.
+- **The host's XAML probe threw on a dictionary body** (`TargetParameterCountException`): reflecting over the
+  members of a `Dictionary<,>` found its **indexer** and called it with no arguments. Dictionary bodies are
+  now serialised directly and indexers are skipped — which is what made the JSON preview possible at all.
+- **VB twin specifics**: a local inside `Function Files` may not itself be named `files` (BC30290), and
+  `c = ControlChars.Lf` assigns an `Integer` to a `Char` (BC30452) — the comparison needs
+  `AscW(ControlChars.Lf)`.
+- **The `t2` `chartAxisNames` fixture could fail for a reason outside the repo**: its search for the
+  project folder walks up four directories, so a scratch `probe.csproj` in `/tmp` became "the project" and
+  the rule reported the bundled file as missing. The fixture now writes its own project file and a stub copy
+  of the helper it links.
+- **The `t2` `chartWorkbook` wiring check counted a reader that was not there** — the *“one `FileStream`
+  per reader”* rule sliced the C# and VB files between `class DelimitedTextReader` and `class Plot`, and
+  when the **JSON** reader was added between those two names its opener was counted as a second one for the
+  text reader (both twins, 2 reported failures in the first full run of this release). The slices now end at
+  `class JsonDataReader`, so the rule covers **three** readers instead of two — and it caught nothing else,
+  which is the point of running the whole suite before a release.
+
+### Verified
+
+- **The full, unfiltered suite: 10,771 checks, 0 failed, 0 skipped** (108.9 s, all seven layers) — including
+  the new `t2` `chartTextReader` (143: the reader contract, the path resolver, the folder rules, the JSON
+  rules and the date rules, asserted against **both** twins), `t1` `chartDataFile` (91, with the
+  rendered-pixel cases: a trace per sampleset, natural order, a folder of one file) and `t2` `dataSelector`
+  (132); `t0` `datacopy` (14) builds a **real generated project** and finds the copied data file in
+  `bin/Debug/net10.0/data/`.
+- `dotnet build host/PreviewerHost.csproj` — 0 warnings, 0 errors; `npx tsc -p ./` — 0 errors.
+- The twins were proven **identical, not merely similar**: every fixture (CSV, TSV, semicolon-decimal,
+  quoted, BOM/CRLF, ragged, header-only, dates, times, and JSON's four shapes) was dumped through both
+  readers and the C# and VB dumps diffed to **0 lines**.
+- The packaged `avalonia-designer-0.14.0.vsix` was opened and inspected: version `0.14.0`, no pre-release
+  flag, **22 bundled stamps** at `0.14.0`, and the new reader symbols present.
 
 ## [0.13.19] - 2026-09-30 · *a command bar of our own, the box that builds it, and a height that is a height*
 

@@ -47,7 +47,7 @@ Listed below is the list of the features of this extension. Feel free to enjoy a
 code --install-extension grumpy.avalonia-designer
 ```
 
-The current version is **`0.13.19`**, so the command above installs it (add `--force` to reinstall, or to
+The current version is **`0.14.0`**, so the command above installs it (add `--force` to reinstall, or to
 update a copy that is already on the machine; *Extensions → ⟳ Check for Extension Updates* is the
 no-terminal way to see it).
 
@@ -56,11 +56,11 @@ no-terminal way to see it).
 its version, so it is obvious which build you downloaded):
 
 ```bash
-code --install-extension avalonia-designer-0.13.19.vsix --force
+code --install-extension avalonia-designer-0.14.0.vsix --force
 ```
 
 > **One version number everywhere.** The GitHub tag, the release title and the listing all carry the same
-> number — `0.13.19` now — and the marketplace updates you automatically when a newer one is published.
+> number — `0.14.0` now — and the marketplace updates you automatically when a newer one is published.
 > [CHANGELOG.md](https://github.com/OomNiel/avalonia-designer/blob/main/CHANGELOG.md) says what changed in
 > each release, and
 > [PUBLISHING.md](https://github.com/OomNiel/avalonia-designer/blob/main/PUBLISHING.md) records every version
@@ -210,7 +210,17 @@ view (*Elevation*, *Azimuth*, *Z Spacing*, *Zoom*) and a two-slider **range wind
 and the SLICES on show (the view re-fits, so a selection zooms into the sheet).
 Numbers come from a **spreadsheet** you point at (an absolute path — the workbook is not copied
 into your project and stays yours to edit) or from typed-in values; **Live Update** re-reads a sheet on
-save, including while Excel or LibreOffice has it open. Four editors in the Properties panel build the
+save, including while Excel or LibreOffice has it open.
+
+Since **0.14.0** the numbers may also come from a **data file** instead of a spreadsheet, chosen in the same
+**Data Selector**: a **CSV or TSV** (delimiter sniffed, header row names the columns, RFC 4180 quoting,
+BOM/CRLF, missing samples as `#N/A` or `-`), a **JSON** file (an array of records, the column form, a single
+record or JSON Lines) or a **folder of files** — one file per sampleset, the shape a capture writes, read in
+natural order (`run2` before `run10`) — with an X column that may hold **dates**, drawn as real time (UTC,
+with span-appropriate labels and a duration readout at the cursor). The reader is part of the bundled chart
+file in both languages, the Data Selector **shows the file as it will be read** (delimiter, header names, the
+first rows with non-numeric cells dimmed, the reader's own error sentence) and **Include in the project**
+copies a file from outside the project into `data/` and switches the chart to a portable relative path. Four editors in the Properties panel build the
 rest: **Series** (one line per series, its own columns and its own axis), **Axis** (sides, ticks, labels and
 per-series scales, and three independent colours — the axis line, its tick labels and its name), **Legend**
 (side, font size and a rounded frame; the entries switch traces on and off at runtime) and **Cursors** — up

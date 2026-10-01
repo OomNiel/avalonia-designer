@@ -17,6 +17,56 @@
 - **Copilot repo memory** (`/memories/repo/avalonia-designer-extension.md`) — auto-loads each
   session with the authoritative, cross-session gotchas and feature log.
 
+## Where the last session left off (2026-10-01, twentieth session — 0.14.0: a chart reads its data from a file)
+
+The session where *“Data Files”* — a real choice in the Data Selector since 0.11.7 that stored a path and read
+nothing — became a reader, and then three more things the reader implied: JSON, a folder of samplesets, and a
+date axis. The pattern that worked was **write the contract first, then make both twins obey it**: the rules
+went into a comment above `DelimitedTextReader` (header name before letter, delimiter sniffed from the first
+line, RFC 4180 quoting, UTF-8 ± BOM / UTF-16, invariant numbers plus the `;`/TAB comma decimal, and empty /
+`-` / `#N/A` / `NaN` / `Infinity` as MISSING rather than `0`), and every later decision was checked against it
+— including the deliberately **asymmetric** error rule (*more* fields than the header is a refused line with
+its number; *fewer* is just missing values) and the deliberate absence of a comment syntax.
+
+- **What landed:** `DelimitedTextReader`, `JsonDataReader`, `SliceFolder` and `ChartDates` in **both twins**
+  (`resources/GrumpyCharts.cs` / `.vb`, stamps moved to `0.14.0`), the host probe behind the Data Selector's
+  live preview (`requestTable`, `mode == "folder"`, the `dates` mode), portable relative paths
+  (`SourcePathResolver` beside the app, `XamlRenderer.ApplyDataPaths` at the project folder while designing)
+  and the **Include in the project** action (`src/chartDataFile.ts`: copy into `data/`, write the
+  `<None Include=… CopyToOutputDirectory="PreserveNewest" />` item, store the relative path).
+- **The bug worth remembering:** the date axis printed `12-31` / `23:59` for **every** point because the
+  seconds→date clamp was written as if the number were **days** (±3000) instead of seconds — a real 2026 date
+  is ~20,700 days past 1970, so every value was clamped to the end of year 9999. Both twins did it
+  **identically**, so the twin dump-diff said *identical* and the pixel tests looked fine: only a **value**
+  assertion could see it. `ChartDates.FromSeconds` now clamps to the epoch's own bounds, and
+  `t2/chartTextReader` asserts `FromSeconds`/`PatternFor`/`DurationText` by value. See `NOTES.md` §172.
+- **The twins were proven identical, not merely similar:** console dumps through both languages
+  (`/tmp/cscheck`, `/tmp/vbcheck`) over CSV, TSV, `;`-decimal, quoted, BOM/CRLF, ragged, header-only, dates,
+  times and JSON's four shapes diffed to **0 lines**.
+- **The full suite ran** (the user's permission, asked for with the release): **10,771 passed / 0 failed / 0
+  skipped (108.9 s)**, all seven layers. It earned the run by finding **two** failures — the `t2`
+  `chartWorkbook` wiring rule sliced each twin from `class DelimitedTextReader` to `class Plot`, so the JSON
+  reader added between those names was counted as the text reader's **second** opener. The code was right and
+  the rule was right; the slice was stale. Fixed (now three readers, 40/0), `TEST_PLAN.md ### 0.14.0` records
+  it.
+- **The release:** version **`0.14.0`**, `avalonia-designer-0.14.0.vsix` — **130 files, 1,657,403 bytes**,
+  sha256 `064f2245944d47095fb4cfb4b67d8964a48aafa64035e78e2e4b400f95ef484e` — opened and read back from inside
+  the zip (version `0.14.0`, **no** `preRelease`, `activationEvents` exactly
+  `["workspaceContains:**/*.axaml"]`, no `extensionDependencies`/`extensionPack`, **22 bundled stamps** at
+  `0.14.0`, and the new symbols present in both twins plus `includeDataFile`/`tableResult`/`applySlicePlan` on
+  the extension side). Tag `v0.14.0` + GitHub release marked **Latest**; see `PUBLISHING.md`.
+- **Docs:** `CHANGELOG.md` `[0.14.0]`, README (version refs + the data-file paragraph), `USER_MANUAL.md`
+  **§19.15** plus a pointer from §19.2, `CONTROLS.md`'s chart *Data* row, `TEST_PLAN.md` (status line +
+  `### 0.14.0`), `NOTES.md` §171–§172, `SESSION.md` (this entry) and `PUBLISHING.md`'s record.
+- **Left for the user (unchanged rule):** the **Marketplace upload**. The listing still carries **`0.11.0`**
+  (2026-09-20), so **one** portal upload of this VSIX brings it up to date across `0.12.0`…`0.14.0`. There is
+  no `vsce` login/PAT for publisher `grumpy` on this machine — portal → *Update* → pick the file → leave
+  **Pre-release unchecked** → confirm the gallery shows `0.14.0` and the same sha256.
+- **Open items for the next session:** none blocking. The natural next steps are the ones this feature leaves
+  on the table — a **`.xlsx` export of a data file** (round-trip), a **per-series `DataFile`** (today the file
+  is per chart, not per series), and widening the reader's date formats if a real logger turns up with
+  something other than ISO/dotted. Nothing was half-done: every layer is green and the artefact is verified.
+
 ## Where the last session left off (2026-09-30, nineteenth session — 0.13.19: a command bar of our own, the Items Editor, and the release)
 
 The session where a bug report about a control became a control of our own. The user alternated between

@@ -1,8 +1,20 @@
 # Test Script Plan — Grumpy's WYSIWYG Designer Extension
 
-Date: 2026-09-30 · Status: **targeted layers green — 10,125 passed / 0 failed / 0 skipped across T0, T1, T2,
-T3 and T5; the **full** (unfiltered) suite was deliberately NOT run for this release, because that needs the
-user's permission. The last full run was **9,876 / 0 / 0 (81 s)** on 2026-09-29, for `0.13.3`.**
+Date: 2026-10-01 · Status: **the FULL suite is green — 10,771 passed / 0 failed / 0 skipped (108.9 s, all
+seven layers: T0, T1, T2, T3, T4, T5 and T6).** It was run with the user's permission, for the `0.14.0`
+release — the first full run since 2026-09-29, and it was worth it: it found **two** failing checks that were
+the *test's* fault, not the code's, and they are fixed (see `### 0.14.0` below).
+
+> 2026-10-01: **`0.14.0`** — a chart's data comes from a file: **CSV/TSV** (`DelimitedTextReader`, delimiter
+> sniffed, header names or letters, RFC 4180 quoting, UTF-8 ± BOM / UTF-16, invariant numbers, missing cells
+> never `0`), **JSON** in four shapes (`JsonDataReader`, line-numbered syntax errors, no dependency), a
+> **folder** of files as **one sampleset per file** in natural order, and a **date X axis** (`ChartDates`:
+> real time values, span-appropriate labels, `ΔX` as a duration). New pins: the reader's whole **contract**
+> asserted against **both twins** (T2 `chartTextReader`, 143), the reader **shown in the Data Selector** and
+> in the rendered chart (T1 `chartDataFile`, 91 — including the pixels of a folder of samplesets and of a
+> relative path), the selector's own panel (T2 `dataSelector`, 132), the **MSBuild** half of *Include in the
+> project* (T0 `datacopy`, 14 — a real generated project, and the file really in `bin/Debug/net10.0/data/`),
+> and the same behaviours through the **VB** twin. See the table in `### 0.14.0`.
 
 > 2026-09-30: **`0.13.19`** — a command bar of our own, the Items Editor that builds it, and the four older
 > faults the work uncovered. The Avalonia `CommandBar` family left the Toolbox (12-only, so a project that
@@ -331,6 +343,54 @@ This is the part that needs the §7 decision. Content:
   - StatusDate clock ticking; bindings compiling and data flowing.
 - **Persistence**: form size/position saved and restored on relaunch.
 
+## 6b. Area 4b — T6 all-controls integration (C# + VB.NET, headless/live)
+
+The **T6 layer** (`tests/t6-allcontrols/`) is an end-to-end integration test that exercises every
+placeable visual control in both **C#** and **VB.NET**. It is the spiritual successor to T5 (VB-only
+compile matrix) but adds **compilation + headless runtime verification** (the T4 driver pattern)
+and, crucially, **C# coverage** which T5 deliberately skipped.
+
+**What it does:**
+
+1. Starts the production `PreviewerHost` (the C# ModelHost LLM server — see §1 note below).
+2. Fetches the **50 production snippets** for every placeable visual control (excluding DataSet,
+   CustomTitleBar, Timer) across **11 toolbox categories**, once, and caches them to
+   `tests/out/t6-snippets.json` so the stateful host counter is never re-triggered.
+3. For each language (`cs`, `vb`, or `both` via `T6_LANG`):
+   - Generates a blank .NET 10 / Avalonia 12.1.1 project (`C#`/`VB.NET`).
+   - Populates `MainWindow.axaml` with a single `TabControl` whose `TabItem`s correspond to
+     toolbox categories. Every placeable control from a category is placed on its tab's `Canvas`
+     via the production snippet. A second `XYTracker2` (form-mode clock) is added to the Dev
+     Helpers tab, and a `Menu` + `PathPickers` are added to the Bars tab.
+   - Wires code-behind: StatusDate clock, GrumpyStatus embedded clock, GrumpyCommandBar file-dialog
+     handlers, XYTracker clocks (container + form mode), 8 event-picker stubs (verifying exact
+     EventArgs types via regex), and `ItemsSource` binding for ListBox/ComboBox/ItemsControl.
+   - Compiles (`dotnet build` → must be **0 errors / 0 warnings**).
+   - Builds a net10 `Avalonia.Headless` harness that `ProjectReference`s the generated project,
+     then `dotnet run`s the driver (`driver.cs.tpl`) which: instantiates `MainWindow`, selects
+     every tab (`IsSelected = true`), `FindControl`s every placed control by name, and asserts
+     non-zero bounds on each.
+4. Writes a checkpoint to `tests/out/t6-state.json` after each phase; `T6_RESUME=1` skips
+   completed phases. SIGINT/SIGTERM sets a flag that the test checks between phases.
+
+**Switches:**
+
+| Switch | Values | Default | Meaning |
+|--------|--------|---------|---------|
+| `T6_LANG` | `cs` \| `vb` \| `both` | `both` | Which language(s) to test |
+| `T6_LIVE` | `0` \| `1` | `0` | `0` = `Avalonia.Headless`; `1` = `UsePlatformDetect` (live display via Xvfb on Linux) |
+| `T6_RESUME` | `0` \| `1` | `0` | Skip phases already marked done in the checkpoint |
+
+**npm scripts:** `npm run test:allcontrols` (both), `:cs`, `:vb`, `:live`, `:resume`.
+
+**Cleanup:** On successful completion, the test removes all temporary build artefacts (generated
+projects, harness, binaries, state file, snippets cache) from `tests/out/`, leaving only
+`tests/out/log.jsonl` and `tests/out/report.md`. If interrupted (SIGINT/SIGTERM), the checkpoint
+and snippets cache are preserved for resume.
+
+**Result:** 109 checks, 0 failures — both languages compile 0/0, both pass the headless runtime
+driver with 11 tabs selected, 51 controls (50 + XYTracker2) found and sized, `RESULT PASS`.
+
 ## 7. Decision needed — T4 runtime-UI approach
 
 **RESOLVED 2026-08-30 — user approved Option (a): full Avalonia.Headless driver.**
@@ -380,10 +440,11 @@ tests/
   t2-logic/            # model / codeBehind / catalog / assets / generator probes
   t3-webview/          # jsdom interaction tests
   t4-runtime/          # (after §7 decision) runtime driver or manual checklist
+  t6-allcontrols/      # end-to-end: every placeable control, C# + VB.NET, compile + headless run
   fixtures/            # sample .adset, sample projects, sample images
   out/                 # log.jsonl, report.md, failure artifacts
   TEST_PLAN.md         # this document
-package.json           # npm test (T0–T3), npm run test:runtime (T4)
+package.json           # npm test (T0–T3), npm run test:runtime (T4), npm run test:allcontrols (T6)
 ```
 
 ## 10. Suggested build order (after approval)
@@ -621,6 +682,34 @@ name** with exactly two exceptions (the DataSet recogniser, which must accept fi
 and the README's single *"Formerly …"* line). The recogniser is then proved to accept both spellings and to
 still ignore hand-written files. A rename that misses one menu, one message or that matcher now fails here
 instead of being found by a user.
+
+### 0.14.0 (2026-10-01) — a chart's data out of a file, and the two failures the full run found
+
+**Why the suite grew by more than 500 checks for one feature:** reading data from a file is a **contract**, and
+a contract is exactly what a test can pin — where the workbook reader is one format read one way, this is two
+formats, a folder, a date axis, a relative path, a *preview* that must agree with the chart, and a project
+change (the copy-to-output item) that only MSBuild can prove. The one thing that made it tractable: the
+designer's preview calls the **same reader** as the chart, so a single set of assertions about the reader
+covers both halves.
+
+| Layer | What it pins |
+|---|---|
+| **T2 `chartTextReader.test.js`** *(new, 143)* | The whole reader contract against **both twins**: delimiter sniffing (`,`, `;`, TAB, `|`), header name → letter fallback, RFC 4180 quoting (embedded delimiters, newlines, `""`), UTF-8 ± BOM and UTF-16, LF and CRLF, invariant numbers plus the `;`/TAB comma decimal, and the missing-cell set (empty, `-`, `#N/A`, `NaN`, `Infinity`) — never `0`. The asymmetric error rule: **more** fields than the header is refused **with its line number**, **fewer** is just missing values; the 64 MB cap; no comment syntax. The four JSON shapes, line-numbered syntax errors and quoted-number handling. The **folder** rules: which extensions count, that a `README` is not a slice, natural order (`run2` before `run10`), a shared header across files. The **date** rules: formats, UTC, `PatternFor(span)`, `DurationText`, and the epoch clamp. Plus the path resolver's order (beside the app first) and **one resolver call site per reader** (3 — which is what made the stale `chartWorkbook` count visible). |
+| **T1 `chartDataFile.test.js`** *(new, 91)* | The feature **as drawn**, through the real host: a CSV gives a trace whose bounding box matches the numbers; a **folder** of two runs draws **two** traces and a `README.md` adds none; the runs are drawn in **natural** order (the taller second run's ink is above the first's); a folder with **one** file draws a shorter single trace (the control case that proves the order assertion is measuring the order and not just “two traces exist”). Plus the relative-path cases (beside the exe vs the project folder) and the JSON/date previews. |
+| **T2 `dataSelector.test.js`** *(132)* | The panel the user actually sees: the source dropdown, the `.csv`/`.tsv`/`.txt`/`.json`/`.jsonl`/`.ndjson`/folder picker, the A/B defaults written **only** when the chart names no column, the `requestTable` round trip, and — for every preview — the delimiter word, the header row, the dimming of non-numeric cells, the file list of a folder, the key list of a JSON file and the reader's error sentence reaching the dialog unchanged. |
+| **T0 `datacopy.test.js`** *(new, 14)* | *Include in the project* through **real MSBuild**: a generated project in each shape (Window / UserControl), the file copied into `data/`, the item written, the build run, and the bytes found in `bin/Debug/net10.0/data/`. This is the test that proved `<None Update=…>` copies **nothing** under `EnableDefaultItems="false"`. |
+| **T2 `chartWorkbook.test.js`** | The wiring rules, **corrected**: one `FileStream` per reader with the tolerant share mode — now sliced per reader, `class DelimitedTextReader` → `class JsonDataReader` → `class Plot`, so the JSON reader cannot be counted as the text reader's second opener. |
+| **T2 `chartTextReader` / `chartWorkbook` / `chartAxisNames`** | The regression nets around the new code: the workbook reader unchanged, the axis-name rules, and the fixture that stopped inheriting a stray `/tmp/probe.csproj`. |
+
+**What the first full run of this release actually found — and it was the test, not the code.** The
+`chartWorkbook` wiring check counted `FileStream(` occurrences in a slice of each twin that ran from
+`class DelimitedTextReader` to `class Plot`. Adding the JSON reader **between those two names** put a second
+opener inside that slice, so the check reported *“C#/VB text opens its file in exactly one place —
+expected=1 actual=2”*. The code was right and the rule was right; the **slice** was stale, and nothing short of
+the full suite was going to say so, because every targeted run of the reader and the JSON tests passes. That
+is the argument for the user's rule — targeted runs while working, one full run before a release — written
+down here rather than in a commit message. (Two checks fixed; the count went **10,765 / 2 → 10,771 / 0**, the
+six new assertions being the JSON reader's own opener and share mode in both twins.)
 
 ### 0.13.19 (2026-09-30) — the bar of our own, the Items Editor, and four older faults it uncovered
 

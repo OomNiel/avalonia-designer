@@ -170,12 +170,26 @@ See **USER_MANUAL §19, "The charting tools"** for the full walkthrough.
   waterfall written by hand (`"1,2,3; 4,5,6"` = two sets of three samples), or `SourceFile`
   → an `.xlsx` workbook (row 1 names the columns, data from row 2; columns `B/C`, `D/E`, `F/G` … per series).
   `LiveUpdate` re-reads the file on save. The **Data Selector** button (`Data — Select data…`) picks the
-  **source** (`Spreadsheet` or, not read yet, `Data Files`), the **workbook** and — new in 0.11.7 — **which
+  **source** (`Spreadsheet` or `Data Files`), the **workbook** and — new in 0.11.7 — **which
   PAGE** of it to read, by the workbook's own sheet names (`SourceKind`, `SourceFile`, `SourceSheet`,
   `DataFile`). Since **0.12.8** the row is the **first row of the Data section** in the Properties panel (it
   used to appear under *Appearance*, because it shared the key `Data` with the shape controls' geometry row;
   the chart row is keyed `DataSelector` now). `ShowBrowse` and its surface button were retired in 0.11.2 and the property is now a no-op
   kept only so older forms still compile.
+- **`Data Files` (since 0.14.0)** — `DataFile` names a **CSV/TSV** file, a **JSON** file, or a **folder** of
+  them, and the chart reads it itself (`DelimitedTextReader` / `JsonDataReader` in the bundled file):
+  delimiter sniffed from the first line (`,`, `;`, TAB, `|`), a column addressed **by header name first and
+  by letter when there is no such header**, RFC 4180 quoting, UTF-8 ± BOM and UTF-16, LF and CRLF, and a
+  cell that is empty / `-` / `#N/A` / `NaN` / `Infinity` read as **missing** rather than `0`. A line with
+  **more** fields than the header is an error naming the line; **fewer** is just missing values. A
+  **folder** is **one file per sampleset** (`.csv`/`.tsv`/`.txt`, natural order so `run2` precedes `run10`,
+  a `README.md` is not a slice) — the shape the waterfall and the surface want. An **X column of dates**
+  (`2026-09-30`, `…T14:05:12`, `30.09.2026 14:05:12`, read as UTC) becomes a **time axis** with
+  span-appropriate labels and a **ΔX** readout in durations. A **relative** path is read beside the app
+  (`SourcePathResolver`) and, while designing, at the project folder; **Include in the project** copies a
+  file from outside into `data/`, adds the `<None Include=… CopyToOutputDirectory="PreserveNewest" />` item
+  and stores the relative path. The Data Selector previews the file with the chart's own reader (delimiter,
+  header names, the first rows with non-numeric cells dimmed, the reader's error sentence).
 - **Series** (`Series — Edit series…`): one line per series, each with its own columns, colour, thickness,
   line style, markers, `AxisMode` (Common / Per series) and `Visible` switch. Order in the list = draw
   order. **On a waterfall each row is one SAMPLESET** — its own **Z Column** and its own legend name — and

@@ -4986,5 +4986,99 @@ host/PreviewerHost.csproj` **0 warnings / 0 errors**, no errors in the PROBLEMS 
 test), T2, T3 and the VB matrix. **The full unfiltered suite was not run** — the user's rule is that it needs
 their permission, and it is the one thing the release notes do not claim.
 
+### §171 — the contract for reading a chart's data out of a file (2026-10-01, 0.13.19 → 0.14.0)
+
+**What was asked for was a reader; what mattered was writing its contract down first.** *“Data Files”* had
+been a real choice in the Data Selector since 0.11.7 that stored a path and read nothing — the honest thing to
+do in a form, but a promise in the UI. The work started by fixing the rules in a comment above the new
+`DelimitedTextReader`, and every later decision was checked against it: a column is addressed **by header name
+first and by letter when there is no such header** (the way `sysstat -dH` exports and every field-mapping
+library are actually used); the **delimiter is sniffed** from the first line (`,`, `;`, TAB, `|`) because
+Excel's own *Save as CSV* writes `;` wherever a comma is the decimal separator; quoting is **RFC 4180**,
+including newlines inside a quoted field and `""` for one quote; **UTF-8 ± BOM and UTF-16 by order mark**,
+both LF and CRLF; numbers are **invariant**, plus a comma decimal when the delimiter is `;` or TAB; and a cell
+that is empty, `-`, `#N/A`, `NaN` or `Infinity` is **MISSING, never 0**. The two error rules are asymmetric
+*on purpose*: a line with **more** fields than the header is a broken file (an unescaped delimiter) and is
+refused **with its line number**, while a line with **fewer** fields is just missing values. There is **no
+comment syntax** — nothing in RFC 4180 defines one and `#` is a legal first character — which is exactly the
+kind of thing a reader written from intuition gets wrong.
+
+**The same contract, twice, and the proof it is the same.** The reader lives in the bundled chart file, so it
+exists as a C# and a VB twin, and this project's rule is that the two are *behaviourally* identical rather
+than *probably* identical. `DelimitedTextReader` and `JsonDataReader` were therefore exercised through dumps
+— `/tmp/cscheck` and `/tmp/vbcheck`, thin console projects that link the twin and print every field, row
+number, error sentence, label and date for every fixture — and the two outputs diffed to **0 lines**. That is
+worth more than a shape test: the twins were *byte-identical in what they report*, over CSV, TSV, `;`-decimal,
+quoted, BOM/CRLF, ragged, header-only, dates, times and JSON's four shapes.
+
+**A folder is one file per sampleset, and the rules for it are the same kind of contract.** How a capture
+writes its data — one CSV per sweep, per run, per pass — is what the waterfall and the surface want, so
+`DataFile` may name a **folder**: `.csv`/`.tsv`/`.txt` only (a `README.md` beside the runs is *not* slice 1),
+**natural order** so `run2` comes before `run10` (a digit run is compared as a number — get that wrong and
+the traces are drawn in the wrong order, which t1 catches in pixels), all files sharing the header row's
+columns, and the watcher watching the **folder** rather than the file. The first attempt was wrong in exactly
+that last place: it watched the *first file*, so a new run dropped in while the app was running changed
+nothing.
+
+**Portable paths took three attempts to get right, and all three are needed.** A relative `DataFile` must work
+in the running app (resolved **beside the executable**, then in the working directory — `SourcePathResolver`,
+in both twins) *and* in the designer (the host anchors the same relative path at the **project folder**:
+`ApplyDataPaths` over `SourceFile`/`DataFile`) *and* when the file lives outside the project at all (the
+**Include in the project** action: copy into `data/`, add the item that puts it beside the built app, store
+the path relative). The MSBuild trap in that last one is worth remembering: `<None Update="…"
+CopyToOutputDirectory="PreserveNewest" />` copies **nothing** in a project that sets
+`EnableDefaultItems="false"` — the generated projects do — because there is no item to update; `<None
+Include="…" />` is what works, proven by building a real generated project and finding the file in
+`bin/Debug/net10.0/data/` (`t0-build/datacopy`, a slow real-MSBuild test, exists so that can never regress
+silently).
+
+**The designer's own preview reads the file with the chart's reader.** Not a re-implementation — the host
+probe calls the same `DelimitedTextReader`/`JsonDataReader` the chart does, which is why the dialog can say
+which delimiter it found, show the header names a series will match, dim every cell that is **not** a number,
+print the file list of a folder, or hand over the reader's own error sentence. It is also how the preview can
+claim anything at all: “what the dialog shows is what the chart will plot” is only true because there is one
+reader. The JSON half needed a host fix on the way — reflection over a `Dictionary<,>` body called its
+**indexer** with no arguments (`TargetParameterCountException`), so the probe now serialises a dictionary
+directly and never touches an indexer.
+
+### §172 — the date axis both twins agreed on, wrongly (2026-10-01, 0.14.0)
+
+**The worst bug of the session passed every pixel test it was under.** An X column of dates is converted from
+seconds to a `DateTimeOffset`, and that conversion carried a sanity clamp — *“more than ±3000 from 1970 is
+nonsense, so clamp it”* — written as if the number were **days**. A date in 2026 is ~20,700 days past 1970, so
+**every real date** was clamped to the end of year 9999: the axis drew `12-31`, the cursor printed `23:59`,
+and the chart still looked like a chart. Both twins did it **identically**, so the dump-diff — the strongest
+“are the two languages the same?” tool this project has — said *identical*, because they were. The fix is one
+line of arithmetic (`ChartDates.FromSeconds` clamps to the epoch's own bounds), and the lesson is the durable
+part: **a silent clamp is invisible to a rendered-pixel test and to a twin diff**; only an assertion about the
+*values* (`FromSeconds` round-tripping a known timestamp, `PatternFor` on a real span) can see it. Every date
+assertion in `t2/chartTextReader` is a value assertion for exactly that reason.
+
+**And a smaller one of the same shape.** The Data Selector's `Data Files` source had said *“not read yet”*
+since 0.11.7 — a promise in the UI, nothing behind it. The reader landed in this session and the help text now
+describes what happens. For that class of lie the direction is fixed: either build it or stop saying it.
+
+**What the release is.** Version `0.14.0`, the next number above the current local per this project's
+convention (numbers only go up; nothing between `0.13.19` and here was published, so the gaps stay gaps).
+`tools/bump-stamps.js` re-stamped **22 of 22** bundled twins, which is not tidiness: the `BUNDLED-COPY:` marker
+**is** the staleness question, so every project holding an older `GrumpyCharts.cs`/`.vb` gets offered the
+update — and this release really did change both files (the readers, the dates, the path resolver). **The full
+suite: 10,771 checks, 0 failed, 0 skipped (108.9 s)**, run with the user's permission and earning it by
+finding the two stale-slice failures written up in `TEST_PLAN.md ### 0.14.0`. `npx tsc -p ./` clean, host
+**0 warnings / 0 errors**, PROBLEMS pane clean after the edits.
+
+**Docs, this time as part of the release rather than after it.** `CHANGELOG.md` `[0.14.0]` — whose *Added*
+section is the reader's contract, because the contract *is* the feature — README (version refs + a data-file
+paragraph in the charts section), `USER_MANUAL.md` **§19.15 “Reading a chart's data from a file”** (a table of
+what it can be pointed at, then the rules: names, numbers and gaps, what it refuses and why, dates, the folder
+rule, *Include in the project*, and what the Data Selector shows you) plus a pointer from §19.2's *getting data
+into a chart*, `CONTROLS.md`'s chart *Data* rows, `TEST_PLAN.md`'s status line and `### 0.14.0`, and
+`PUBLISHING.md`'s artefact record. The manual's revision date moved to 2026-10-01.
+
+**The one step that is not mine.** The Marketplace listing still carries **0.11.0** (uploaded 2026-09-20), so
+**one** portal upload of `avalonia-designer-0.14.0.vsix` brings it up to date across `0.12.0`…`0.14.0`. There
+is no `vsce` login or PAT for publisher `grumpy` on this machine, so that upload is the user's step — recorded
+in `PUBLISHING.md` with the hash to compare against.
+
 
 
