@@ -82,11 +82,29 @@ module.exports = async (t) => {
     t.ok(/data\.Error = ReadFailure\(path, ex\)/.test(vb), 'wiring',
         'and the VB catch too');
 
-    // --- 5. nothing else opens the workbook, so no path can bypass the fix ---
+    // --- 5. every opener in the chart set is a single, tolerant one ---
     // (Case-insensitive: VB spells it `New FileStream(`, C# `new FileStream(`.)
-    const opens = (source) => (source.match(/FileStream\(/gi) || []).length;
-    t.equal(opens(cs), 1, 'wiring', 'the C# reader opens the file in exactly one place');
-    t.equal(opens(vb), 1, 'wiring', 'the VB reader too');
+    // There are THREE readers now — the workbook, the delimited text file and the JSON file — so the count
+    // is per READER, and each slice must END where its reader ends. (The JSON reader was added AFTER the
+    // text one, and while it still sat inside the text reader's slice this check counted two openers there
+    // and reported a wiring fault that did not exist — 2026-10-01. The class that follows each reader is
+    // the boundary: DelimitedTextReader → JsonDataReader → Plot.)
+    // What must not happen is a second, casual FileStream somewhere that bypasses the share fix, so as
+    // well as counting each reader's openers, every one of them must carry the tolerant share mode.
+    const readers = [
+        ['C# workbook', between(cs, 'class SpreadsheetReader', 'class DelimitedTextReader')],
+        ['VB workbook', between(vb, 'Class SpreadsheetReader', 'Class DelimitedTextReader')],
+        ['C# text', between(cs, 'class DelimitedTextReader', 'class JsonDataReader')],
+        ['VB text', between(vb, 'Class DelimitedTextReader', 'Class JsonDataReader')],
+        ['C# JSON', between(cs, 'class JsonDataReader', 'class Plot')],
+        ['VB JSON', between(vb, 'Class JsonDataReader', 'Class Plot')]
+    ];
+    for (const [name, block] of readers) {
+        t.equal((block.match(/FileStream\(/gi) || []).length, 1, 'wiring',
+            `${name} opens its file in exactly one place`);
+        t.ok(/FileStream\([^)]*FileShare\.ReadWrite (\||Or) FileShare\.Delete/s.test(block), 'wiring',
+            `${name} opens it tolerating a writer and a rename`);
+    }
 
     // --- 6. the file-picker filter still offers .xlsx in both twins (the other way in) ---
     t.ok(/Patterns = new\[\] \{ "\*\.xlsx" \}/.test(cs), 'picker',

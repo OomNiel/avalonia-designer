@@ -195,6 +195,118 @@ module.exports = async (t) => {
     }
     t.ok(/SourceSheet/.test(cs) && /SourceSheet/.test(vb), 'reader', 'both twins know the page attribute');
 
+    // ---------------------------------------------------------------- the Data Files source READS now
+    // (2026-10-01: the chart reads CSV/TSV itself — resources/GrumpyCharts.cs `DelimitedTextReader`, with
+    // the VB twin). The editor therefore shows what the file holds BEFORE anything is saved: the
+    // delimiter the reader sniffs, the header names, and the first rows with each cell marked as a
+    // number or not. That preview is the whole point — "the chart draws nothing" is almost always a
+    // column of words, and it has to be visible in the dialog rather than guessed at from the chart.
+    t.ok(/case "table"/.test(host), 'datafile', 'the host answers a table request');
+    t.ok(/DelimitedTextReader\.ReadRecords/.test(host), 'datafile',
+        'by reading the file with the CHART\'s own parser (the host links the bundled file)');
+    t.ok(/async table\(file: string/.test(hostClient), 'datafile', 'the client exposes it as table(file, opts)');
+    t.ok(/r\.type !== 'tableResult'/.test(hostClient) && /rebuild it/.test(hostClient), 'datafile',
+        'and an OLD host (unknown verb) is reported as needing a rebuild, not as "unreadable file"');
+    t.ok(/case 'requestTable'/.test(panel) && /host\.table\(/.test(panel), 'datafile',
+        'the panel answers the editor\'s data-file request through the host');
+    t.ok(/type: 'tableResult'/.test(panel) && /case 'tableResult'/.test(web), 'datafile',
+        'and the answer goes back as tableResult');
+    t.ok(/type: 'requestTable'/.test(web) && /case 'tableResult'/.test(web), 'datafile',
+        'the editor asks when the file changes and handles the reply');
+    t.ok(/dataEdit\.dataFile === msg\.file/.test(web), 'datafile',
+        'a late answer for a file the user moved on from is ignored');
+
+    // The dialog itself: the old "not implemented yet" note is gone, and the preview is real.
+    t.ok(!/not implemented yet/.test(web), 'datafile',
+        'the "reading a data file is not implemented yet" note is gone');
+    t.ok(/df-preview/.test(web) && /df-preview/.test(css), 'datafile',
+        'the first rows are shown as a preview table (with styles)');
+    t.ok(/df-nonnum/.test(web) && /df-nonnum/.test(css), 'datafile',
+        'a cell the reader does NOT read as a number is marked (so a column of words stands out)');
+    t.ok(/df-line/.test(web) && /df-line/.test(css), 'datafile',
+        'each preview row carries the file\'s physical line number (what the error sentences quote)');
+    t.ok(/delimiterWord/.test(web) && /'semicolon'/.test(web), 'datafile',
+        'the sniffed delimiter is named in words the user reads (comma, semicolon, tab, pipe)');
+    t.ok(/function dataFileHint/.test(web) && /info\.error/.test(web), 'datafile',
+        'and the reader\'s own error sentence is shown in place of the preview');
+    t.ok(/function refreshTable/.test(web) && /refreshTable\(\)/.test(web), 'datafile',
+        'the editor re-reads the file whenever it changes (typing, Browse, or opening the dialog)');
+
+    // The COLUMNS a data file is read from: stated in the dialog, defaulted by the writer.
+    t.equal(charts.DATA_FILE_DEFAULTS.xColumn + charts.DATA_FILE_DEFAULTS.yColumn, 'AB', 'datafile',
+        'a data file defaults to its first two columns (a workbook would use B/C)');
+    const df = model('SourceKind="DataFiles" DataFile="/tmp/log.csv"');
+    charts.writeChartDataSource(df, df.findByName('c1'), { kind: 'DataFiles', file: '', sheet: '', dataFile: '/tmp/log.csv' });
+    const dfXml = df.serialize();
+    t.ok(dfXml.includes('XColumn="A"') && dfXml.includes('YColumn="B"'), 'datafile',
+        'switching a chart that names no columns to a data file writes the A/B defaults');
+    const dfChosen = model('SourceKind="DataFiles" DataFile="/tmp/log.csv" XColumn="D" YColumn="E"');
+    charts.writeChartDataSource(dfChosen, dfChosen.findByName('c1'), { kind: 'DataFiles', file: '', sheet: '', dataFile: '/tmp/log.csv' });
+    const chosenXml = dfChosen.serialize();
+    t.ok(chosenXml.includes('XColumn="D"') && chosenXml.includes('YColumn="E"'), 'datafile',
+        'but a column the author chose is left exactly as it is');
+    const bookAgain = model('SourceKind="DataFiles" DataFile="/tmp/log.csv" XColumn="D"');
+    charts.writeChartDataSource(bookAgain, bookAgain.findByName('c1'), { kind: 'Spreadsheet', file: '/tmp/Book.xlsx', sheet: '', dataFile: '' });
+    t.ok(bookAgain.serialize().includes('XColumn="D"'), 'datafile',
+        'switching back to a workbook leaves the column the author set alone');
+    // The dialog STATES the columns rather than duplicating the X/Y Column rows: one owner per value.
+    t.ok(/xColumn: el\.getAttribute\('XColumn'\)/.test(panel) && /dataEdit\.xColumn/.test(web), 'datafile',
+        'the dialog is told the chart\'s own columns and shows them');
+
+    // ---------------------------------------------------------------- portable forms (2026-10-01)
+    // A relative DataFile is read from beside the app (GrumpyCharts' SourcePathResolver), so while
+    // designing the same string has to mean the PROJECT folder — in the renderer for the chart itself,
+    // and in the panel for the dialog's own preview. Miss the second and the dialog reports a missing
+    // file the app finds perfectly well.
+    const renderer = read('host/XamlRenderer.cs');
+    t.ok(/private static void ApplyDataPaths/.test(renderer) && /ApplyDataPaths\(window, projectPath\)/.test(renderer),
+        'portable', 'the renderer anchors a relative chart data path at the project folder');
+    t.ok(/DataPathProperties = \{ "SourceFile", "DataFile" \}/.test(renderer), 'portable',
+        'for both data sources (the workbook and the delimited text file)');
+    t.ok(/Path\.IsPathRooted\(value\)/.test(renderer), 'portable',
+        'and leaves an absolute path exactly as the user wrote it');
+    t.ok(/const resolved = folder && !path\.isAbsolute\(wanted\) \? path\.join\(folder, wanted\) : wanted;/.test(panel),
+        'portable', 'the dialog previews a relative data file from the project folder too');
+    t.ok(/host\.table\(resolved, /.test(panel), 'portable', 'so the host is asked about the real file');
+
+    // 'Include in the project': copy the file in (when it lives elsewhere) + the copy-to-output item +
+    // point the form at it relatively. One action, because either half alone is a form that only works
+    // on this machine.
+    t.ok(/case 'includeDataFile'/.test(panel) && /includeDataFile\(proj\.projectUri\.fsPath, wanted\)/.test(panel),
+        'portable', 'the panel includes the file through src/chartDataFile.ts');
+    t.ok(/kind: 'DataFiles', dataFile: result\.relative/.test(panel), 'portable',
+        'and points the form at the relative path with the same writer the dialog saves through');
+    t.ok(/type: 'dataFileIncluded'/.test(panel) && /case 'dataFileIncluded'/.test(web), 'portable',
+        'the answer goes back to the dialog');
+    t.ok(/type: 'includeDataFile'/.test(web) && /df-include/.test(web), 'portable',
+        'which offers the row and asks for it');
+    t.ok(/dataEdit\.dataFile = String\(msg\.relative \|\| dataEdit\.dataFile\)/.test(web), 'portable',
+        'and re-points its own field at the relative path (or the next Save would undo the include)');
+    t.ok(/dataEdit\.include = String\(msg\.error\)/.test(web), 'portable',
+        'a refusal (a different file of the same name) is shown, never swallowed');
+
+    // ---------------- a FOLDER of samplesets (one file per slice) ----------------
+    // The 3-D charts' other data shape: a capture logs one run per file, so the path may be a folder. The
+    // dialog lists what the CHART's own rule found (same extensions, same natural order) instead of cells,
+    // and saving the source loads one series per file — the folder's "load the whole dataset".
+    t.ok(/mode == "folder"/.test(host) && /SliceFolder\.Files\(file\)/.test(host), 'folder',
+        'the host lists a folder through the chart\'s own SliceFolder rule');
+    t.ok(/\["files"\] = found\.Select/.test(host), 'folder', 'and answers with the file names');
+    t.ok(/files: Array\.isArray\(r\.files\)/.test(hostClient), 'folder',
+        'the client carries the listing through');
+    t.ok(/isFolderPath\(resolved\)/.test(panel) && /asFolder \? \{ mode: 'folder' \}/.test(panel), 'folder',
+        'the panel asks for the listing when the path IS a folder');
+    t.ok(/folder: asFolder/.test(panel) && /folder: !!msg\.folder/.test(web), 'folder',
+        'and the dialog is told which of the two it is showing');
+    t.ok(/folder of samplesets|Folder of samplesets/i.test(web), 'folder',
+        'the dialog names what it is: a folder of samplesets, one slice per file');
+    t.ok(/sliceSeriesPlanForCount\(kids, listing\.files\.length\)/.test(panel), 'folder',
+        'saving a folder source loads one series per FILE (the folder\'s whole dataset)');
+    t.ok(/export function sliceSeriesPlanForCount/.test(chartSeriesSource), 'folder',
+        'through a plan that needs no column letters (every file holds the same columns)');
+    t.ok(/hasRangeLegend\(localName\(el\.tagName\)\)[\s\S]{0,200}setProperty\(el, 'MaxZ', ''\)/.test(panel), 'folder',
+        'and the stale Z window is cleared too, so the loaded slices are actually SEEN');
+
     // ---------------------------------------------------------------- the staleness marker moved again
     // (it is on `BandTriangle` now: the surface's band fill became triangle pairs on 2026-09-24, because a
     // folded single figure could not fill itself and showed the plot's backcolour through the sheet — a

@@ -4193,5 +4193,168 @@ module.exports = async (t) => {
             'and ↑ / ↓ move an item without changing what it is');
     }
 
+    // ---- the Data Selector's Data Files source (2026-10-01) ------------------------------------------
+    // The chart reads CSV/TSV itself now, so the dialog has to SHOW the file rather than describe it:
+    // it asks the extension (which reads it in the host, with the chart's own parser) for the sniffed
+    // delimiter, the header names and the first rows, and marks every cell the reader does NOT read as
+    // a number. That mark is the point — "the chart draws nothing" is nearly always a column of words,
+    // and this is where it becomes visible before anything is saved.
+    {
+        const sh = setup();
+        sh.msg({
+            type: 'properties', name: 'Chart1',
+            properties: [{ key: 'DataSelector', label: 'Data Selector', kind: 'button', value: 'Select data…' }],
+            dataSource: { kind: 'DataFiles', file: '', sheet: '', dataFile: '/tmp/log.csv', xColumn: '', yColumn: '' }
+        });
+        const open = sh.$('propsBody').querySelector('[data-prop-key="DataSelector"]');
+        t.ok(!!open, 'data-selector', 'the Data Selector row renders a button (or the dialog is unreachable)');
+        open.dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        t.equal(sh.$('dataModal').hidden, false, 'data-selector', 'clicking it opens the dialog');
+
+        // A file the chart already names is read as soon as the dialog opens (no save needed to look).
+        const asked = sh.posted.filter((m) => m.type === 'requestTable').pop();
+        t.ok(!!asked && asked.file === '/tmp/log.csv', 'data-selector',
+            'the dialog asks the extension what the file holds');
+
+        sh.msg({
+            type: 'tableResult', file: '/tmp/log.csv', delimiter: ';',
+            header: ['Zeit', 'Temperatur'],
+            rows: [
+                { line: 2, cells: [{ text: '0', number: true }, { text: '18,5', number: true }] },
+                { line: 3, cells: [{ text: '1', number: true }, { text: 'n/a', number: false }] }
+            ],
+            error: null
+        });
+        const table = sh.$('dataFields').querySelector('table');
+        t.ok(!!table, 'data-selector', 'the file\'s first rows are drawn as a preview');
+        t.equal(table.querySelectorAll('tr').length, 3, 'data-selector',
+            'one header row plus the two data rows');
+        t.equal(table.querySelectorAll('th')[1].textContent, 'Zeit', 'data-selector',
+            'the header names come from the file itself');
+        t.equal(table.querySelectorAll('tr')[1].querySelectorAll('td')[0].textContent, '2', 'data-selector',
+            'each row carries its own line number (what the reader\'s errors quote)');
+        t.equal(table.querySelectorAll('tr')[2].querySelectorAll('td')[2].className, 'df-nonnum', 'data-selector',
+            'a cell the reader does not read as a number is marked');
+        t.equal(table.querySelectorAll('tr')[1].querySelectorAll('td')[2].className, '', 'data-selector',
+            'while a numeric one — 18,5 in a semicolon file — is not');
+        t.ok(/semicolon/.test(sh.$('dataFields').textContent), 'data-selector',
+            'and the sniffed delimiter is spelled out for the user');
+
+        // The reader's own error replaces the preview: a file it cannot read is a sentence, not silence.
+        sh.msg({
+            type: 'tableResult', file: '/tmp/log.csv', delimiter: ',', header: [], rows: [],
+            error: 'Row 3 of "log.csv" has 5 fields but the header names 4'
+        });
+        t.equal(sh.$('dataFields').querySelectorAll('table').length, 0, 'data-selector',
+            'an unreadable file shows no preview at all');
+        t.ok(/has 5 fields/.test(sh.$('dataFields').textContent), 'data-selector',
+            'the parser\'s own sentence is shown instead');
+
+        // Save carries the source it was opened with; the COLUMN defaults are the writer's job (t2).
+        sh.$('dataSave').dispatchEvent(new sh.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const saved = sh.posted.filter((m) => m.type === 'saveChartDataSource').pop();
+        t.ok(!!saved, 'data-selector', 'Save posts the data source');
+        t.equal(saved.values.kind + '|' + saved.values.dataFile, 'DataFiles|/tmp/log.csv', 'data-selector',
+            'with the kind and the file it names');
+        t.equal(sh.$('dataModal').hidden, true, 'data-selector', 'and the dialog closes');
+
+        // ---- 'Include in the project': the action that makes a form portable (2026-10-01) -------------
+        // A relative DataFile is read from beside the app, so the project has to carry the file AND copy
+        // it to the output folder. The row does both in one click, and the reply has to re-point the
+        // dialog at the RELATIVE path — otherwise the next Save writes the old absolute one back.
+        const sh2 = setup();
+        sh2.msg({
+            type: 'properties', name: 'Chart1',
+            properties: [{ key: 'DataSelector', label: 'Data Selector', kind: 'button', value: 'Select data…' }],
+            dataSource: { kind: 'DataFiles', file: '', sheet: '', dataFile: '/home/me/logs/log.csv', xColumn: '', yColumn: '' }
+        });
+        sh2.$('propsBody').querySelector('[data-prop-key="DataSelector"]')
+            .dispatchEvent(new sh2.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const include = sh2.$('dataFields').querySelector('.df-include');
+        t.ok(!!include, 'data-selector', 'the dialog offers to include the file in the project');
+        t.equal(include.disabled, false, 'data-selector', 'enabled because a file is chosen');
+        include.dispatchEvent(new sh2.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const includeAsk = sh2.posted.filter((m) => m.type === 'includeDataFile').pop();
+        t.ok(!!includeAsk && includeAsk.file === '/home/me/logs/log.csv', 'data-selector',
+            'clicking it asks the extension to include that file');
+
+        sh2.msg({ type: 'dataFileIncluded', file: '/home/me/logs/log.csv', relative: 'data/log.csv', copied: true, added: true, error: null });
+        t.ok(/data\/log\.csv/.test(sh2.$('dataFields').textContent), 'data-selector',
+            'the dialog then shows the relative path the form now carries');
+        t.ok(/Copied into the project/.test(sh2.$('dataFields').textContent), 'data-selector',
+            'and says the file was copied in');
+        sh2.$('dataSave').dispatchEvent(new sh2.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const saved2 = sh2.posted.filter((m) => m.type === 'saveChartDataSource').pop();
+        t.equal(saved2.values.dataFile, 'data/log.csv', 'data-selector',
+            'so Save writes the relative path, not the old absolute one');
+
+        // A refusal (a different file of the same name) is shown, and the field is left alone.
+        const sh3 = setup();
+        sh3.msg({
+            type: 'properties', name: 'Chart1',
+            properties: [{ key: 'DataSelector', label: 'Data Selector', kind: 'button', value: 'Select data…' }],
+            dataSource: { kind: 'DataFiles', file: '', sheet: '', dataFile: '/home/me/logs/log.csv', xColumn: '', yColumn: '' }
+        });
+        sh3.$('propsBody').querySelector('[data-prop-key="DataSelector"]')
+            .dispatchEvent(new sh3.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        sh3.msg({
+            type: 'dataFileIncluded', file: '/home/me/logs/log.csv', relative: '',
+            copied: false, added: false, error: 'The project already holds a different data/log.csv'
+        });
+        t.ok(/already holds a different/.test(sh3.$('dataFields').textContent), 'data-selector',
+            'a refusal is shown in the dialog (never silently swallowed)');
+        sh3.$('dataSave').dispatchEvent(new sh3.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        const saved3 = sh3.posted.filter((m) => m.type === 'saveChartDataSource').pop();
+        t.equal(saved3.values.dataFile, '/home/me/logs/log.csv', 'data-selector',
+            'and the file the user picked is still the one the form carries');
+        // ---- a FOLDER of samplesets: the dialog lists the runs, not cells (2026-10-01) --------------
+        const sh4 = setup();
+        sh4.msg({
+            type: 'properties', name: 'Chart1',
+            properties: [{ key: 'DataSelector', label: 'Data Selector', kind: 'button', value: 'Select data…' }],
+            dataSource: { kind: 'DataFiles', file: '', sheet: '', dataFile: '/home/me/runs', xColumn: '', yColumn: '' }
+        });
+        sh4.$('propsBody').querySelector('[data-prop-key="DataSelector"]')
+            .dispatchEvent(new sh4.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        sh4.msg({
+            type: 'tableResult', file: '/home/me/runs', delimiter: ',', header: [], rows: [],
+            files: ['run2.csv', 'run10.csv'], folder: true, error: null
+        });
+        t.ok(/2 file\(s\)/.test(sh4.$('dataFields').textContent), 'data-selector',
+            'a folder shows how many samplesets it holds');
+        t.ok(/run2\.csv, run10\.csv/.test(sh4.$('dataFields').textContent), 'data-selector',
+            'and names them in the order the chart will read them');
+        t.equal(sh4.$('dataFields').querySelectorAll('table').length, 0, 'data-selector',
+            'with no cell preview (there are no cells to show for a folder)');
+        sh4.msg({
+            type: 'tableResult', file: '/home/me/runs', delimiter: ',', header: [], rows: [],
+            files: [], folder: true, error: null
+        });
+        t.ok(/holds no readable data files/.test(sh4.$('dataFields').textContent), 'data-selector',
+            'an empty folder says so (rather than looking like a healthy source)');
+
+        // A JSON source reports KEYS, not a delimiter (the host reads it with the chart's JSON reader).
+        const sh5 = setup();
+        sh5.msg({
+            type: 'properties', name: 'Chart1',
+            properties: [{ key: 'DataSelector', label: 'Data Selector', kind: 'button', value: 'Select data…' }],
+            dataSource: { kind: 'DataFiles', file: '', sheet: '', dataFile: '/home/me/log.json', xColumn: '', yColumn: '' }
+        });
+        sh5.$('propsBody').querySelector('[data-prop-key="DataSelector"]')
+            .dispatchEvent(new sh5.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        sh5.msg({
+            type: 'tableResult', file: '/home/me/log.json', delimiter: '',
+            header: ['time', 'temp'],
+            rows: [{ line: 1, cells: [{ text: '0', number: true }, { text: '18.5', number: true }] }],
+            files: [], folder: false, json: true, error: null
+        });
+        t.ok(/JSON — columns \(by key\): time, temp/.test(sh5.$('dataFields').textContent), 'data-selector',
+            'a JSON file is described by its keys, not by a delimiter');
+        t.ok(!/delimiter/i.test(sh5.$('dataFields').textContent), 'data-selector',
+            'and no delimiter is mentioned for it (there is none to report)');
+        t.equal(sh5.$('dataFields').querySelectorAll('table tbody tr').length, 0, 'data-selector',
+            'the preview table itself is built from the rows that arrived');
+    }
+
     t.note('T3 done');
 };

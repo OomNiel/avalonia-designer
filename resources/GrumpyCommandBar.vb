@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.13.19
+' BUNDLED-COPY: 0.14.0
 ' ============================================================================
 '  GrumpyCommandBar.vb — Reusable Avalonia command bar ("GrumpyCommandBar").
 '

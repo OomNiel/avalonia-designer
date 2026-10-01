@@ -74,6 +74,13 @@ export interface SqliteResult {
     rows: (string | number | boolean | null)[][];
 }
 
+/** One line of a delimited data file as the Data Selector's preview shows it: its physical line
+ *  number and its cells, each with the text and whether the chart's reader counts it as a number. */
+export interface TableRow {
+    line: number;
+    cells: { text: string; number: boolean }[];
+}
+
 interface Pending {
     resolve: (v: Record<string, unknown>) => void;
     reject: (e: Error) => void;
@@ -242,6 +249,39 @@ export class HostClient {
         return {
             rows: Number(r.rows ?? 0) || 0,
             columns: r.columns ? String(r.columns) : '',
+            error
+        };
+    }
+
+    /**
+     * A delimited TEXT file (CSV/TSV) read with the CHART's own parser, for the Data Selector's
+     * Data Files source: the delimiter it sniffs, the header line's names and the first rows — each
+     * cell as its text plus whether it reads as a NUMBER, which is what shows a column that holds
+     * words before the chart draws nothing. `error` is the reader's own sentence when the file cannot
+     * be read (missing, a folder, too many fields on a line), never a thrown exception.
+     */
+    async table(file: string, opts: {
+        delimiter?: string; headerRow?: number; firstDataRow?: number; maxRows?: number; mode?: string;
+    } = {}): Promise<{
+        delimiter: string; header: string[]; rows: TableRow[]; files: string[]; json: boolean;
+        error: string | null;
+    }> {
+        const r = await this.request('table', { file, ...opts });
+        // An old host answers an unknown verb with a plain error, and the cure is a REBUILD (the
+        // extension ships the host's source), so say that rather than "the file could not be read".
+        const error = r.error
+            ? String(r.error)
+            : r.type !== 'tableResult'
+                ? 'The previewer host is too old to read a data file — rebuild it (dotnet build host/PreviewerHost.csproj).'
+                : null;
+        return {
+            delimiter: r.delimiter ? String(r.delimiter) : ',',
+            header: Array.isArray(r.header) ? r.header.map(String) : [],
+            rows: Array.isArray(r.rows) ? (r.rows as unknown as TableRow[]) : [],
+            // A FOLDER of samplesets answers with its files instead of cells (mode 'folder').
+            files: Array.isArray(r.files) ? r.files.map(String) : [],
+            // A JSON file has no delimiter and no header LINE: its column names are the record keys.
+            json: !!r.json,
             error
         };
     }

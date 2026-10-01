@@ -2478,9 +2478,22 @@ export function propertyDefsFor(
         // A command bar places its own items — see `insideCommandBar`.
         !(insideCommandBar && (t.key === 'DockPanel.Dock' || t.key === 'Canvas.Left' || t.key === 'Canvas.Top')) &&
         // A Line's size IS its Start/End geometry — Width/Height would clip it, not stretch it
-        // (resize is done by dragging the selection handles, which scale the points instead).
-        !(tag === 'Line' && (t.key === 'Width' || t.key === 'Height'))
+        // (resize is done by dragging the selection handles, which scale the points instead). The four
+        // Min/Max rows go with them: they clamp a layout slot the geometry does not use, so all they
+        // can change is the selection box drawn around a line whose picture has not moved.
+        !(tag === 'Line'
+            && ['Width', 'Height', 'MinWidth', 'MinHeight', 'MaxWidth', 'MaxHeight'].includes(t.key))
     );
+    // The Theme row (System / Custom) is the panel's promise that a control's fixed colours can be
+    // dropped so it follows the OS theme: 'System' REMOVES every THEME_COLOR_KEYS attribute and
+    // 'Custom' restores the backup (see the `__theme__` branch of the panel's setProperty). A control
+    // whose panel offers NO theme-coloured row has nothing for either answer to act on — and the row's
+    // own wording, "use the colours you set below", points at colours that are not there. That is the
+    // same rule that removed the Timer's Appearance section (asked 2026-09-30: "Only relevant items
+    // must be listed"), applied to the controls whose colours live OUTSIDE the theme keys: the shapes
+    // (Fill / Stroke), the Image (no colour row at all), the Slider, the two PathPickers and the
+    // spreadsheet (its own CellBackColor / TextColor / GridColor).
+    const offersThemeColor = templates.some((t) => THEME_COLOR_KEYS.indexOf(t.key) >= 0);
     const seen = new Set<string>();
     // Editor 'action' buttons the user reaches for most often (DataGrid Rows/Columns, SplitPanel
     // Split Layout/Splitters) are promoted to the TOP of the Properties list — above Name/Type and
@@ -2493,8 +2506,9 @@ export function propertyDefsFor(
         // ways of colouring a control that draws nothing. Leaving it on the Timer put an Appearance
         // section on the panel with a single row whose two answers are indistinguishable (asked
         // 2026-09-30: "remove the Appearance section from the Timer properties panel. Only relevant
-        // items must be listed"). The identity rows that describe the ELEMENT stay.
-        ...(isComponent ? [] : [{
+        // items must be listed"). The identity rows that describe the ELEMENT stay. `offersThemeColor`
+        // extends the same rule to controls that DO draw but in colours the theme keys do not cover.
+        ...(isComponent || !offersThemeColor ? [] : [{
             key: '__theme__', label: 'Theme', kind: 'dropdown', options: ['System', 'Custom'],
             value: hasCustomColors(el) ? 'Custom' : 'System', advanced: false,
             desc: 'System: follow the OS theme (no fixed colours). Custom: use the colours you set below.'
@@ -2602,9 +2616,10 @@ export function propertyDefsFor(
             value: 'Select data…',
             desc: 'Chooses where this chart gets its data. **Spreadsheet** reads a page of an .xlsx '
                 + 'workbook: pick the file, then the page from the list of its own sheet names (leave it '
-                + 'on <first page> to keep reading the first sheet). **Data Files** is the place for data '
-                + 'files such as CSVs — the file is remembered in the form, and the charts will start '
-                + 'reading it when that reader lands.'
+                + 'on <first page> to keep reading the first sheet). **Data Files** reads a delimited '
+                + 'text file — CSV or TSV, with the delimiter, quoted fields and a European comma '
+                + 'decimal handled — and the columns are then named the same way (a header name, or '
+                + 'a letter).'
         });
     }
     // 'Series' opens the multi-series editor for either chart: one line per entry, each with its own

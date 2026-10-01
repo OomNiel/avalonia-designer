@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.13.19
+' BUNDLED-COPY: 0.14.0
 ' ============================================================================
 '  Timer.vb — a NON-VISUAL Timer component for a form (the WinForms Timer idea).
 '  (The C# twin is resources/Timer.cs — keep the two in step.)

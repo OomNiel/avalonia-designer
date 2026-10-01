@@ -377,10 +377,13 @@ module.exports = async (t) => {
             'the webview hides advanced rows until Show advanced is ticked');
     }
 
-    // --- The Theme row belongs to controls that DRAW something (a component has no Appearance) ---
-    // It is a component's only Appearance row, so leaving it on the Timer left the panel with a
-    // one-row section whose two answers mean the same thing (asked 2026-09-30). Every real control
-    // keeps it, because there the row decides whether the fixed colours below it are used.
+    // --- The Theme row belongs to controls whose panel offers a THEME-COLOURED row ---
+    // System = drop the fixed colours and follow the OS theme; Custom = restore them. Both answers work
+    // through THEME_COLOR_KEYS (Background / Foreground / BorderBrush / CaretBrush / …), so a control
+    // whose panel offers none of those rows has two answers with nothing to act on — and the row's own
+    // wording, "use the colours you set below", points at colours that are not there. The Timer (a
+    // component) came first (asked 2026-09-30); this is the same rule for the shapes, whose colours are
+    // Fill / Stroke, and for the Image, Slider, PathPickers and spreadsheet, whose colours are their own.
     {
         const timer = elFrom('<DockPanel><chrome:Timer x:Name="tm1"/></DockPanel>');
         const timerRows = propertyDefsFor(childEls(timer)[0]);
@@ -388,12 +391,38 @@ module.exports = async (t) => {
             'the Timer (a component that draws nothing) has no Theme row');
         t.equal(timerRows.some((r) => r.sectionId === 'appearance'), false, 'theme',
             'and therefore no Appearance section');
-        for (const xml of ['<Canvas><Button x:Name="b9" Content="Go"/></Canvas>',
+        const keeps = ['<Canvas><Button x:Name="b9" Content="Go"/></Canvas>',
             '<Canvas><TextBlock x:Name="t9" Text="hi"/></Canvas>',
-            '<chrome:GrumpyPanel x:Name="gp9"/>', '<Canvas><Border x:Name="bd9"/></Canvas>']) {
+            '<chrome:GrumpyPanel x:Name="gp9"/>',
+            '<Canvas><Separator x:Name="sp9"/></Canvas>',
+            '<Canvas><Border x:Name="bd9"/></Canvas>'];
+        for (const xml of keeps) {
             const p = propertyDefsFor(childEls(elFrom(xml))[0] || elFrom(xml));
             t.equal(!!keyOf(p, '__theme__'), true, 'theme',
-                `${xml.split(' ')[0].replace(/[<:]/g, '')} keeps its Theme row (it draws colours)`);
+                `${xml.split(' ')[0].replace(/[<:]/g, '')} keeps its Theme row (it offers a theme colour)`);
+        }
+        // Colours that are NOT theme keys: the Theme row goes, the control's own colour rows stay, and
+        // the Appearance section stays with them (Opacity is not a colour).
+        const noTheme = [
+            ['Image', '<Canvas><Image x:Name="i9"/></Canvas>', null, 'it offers no colour row at all'],
+            ['Slider', '<Canvas><Slider x:Name="s9"/></Canvas>', null, 'it offers no colour row at all'],
+            ['PathPicker', '<chrome:PathPicker x:Name="pp9"/>', null, 'it offers no colour row at all'],
+            ['Line', '<Canvas><Line x:Name="l9"/></Canvas>', 'Stroke', 'Stroke is not a theme key'],
+            ['Rectangle', '<Canvas><Rectangle x:Name="r9"/></Canvas>', 'Fill', 'Fill / Stroke are not theme keys'],
+            ['Arc', '<Canvas><Arc x:Name="a9"/></Canvas>', 'Stroke', 'Stroke is not a theme key'],
+            ['Polyline', '<Canvas><Polyline x:Name="pl9"/></Canvas>', 'Stroke', 'Stroke is not a theme key'],
+            ['GrumpySheet', '<chrome:GrumpySheet x:Name="gs9"/>', 'GridColor', 'its GridColour / CellBackColor are its own']
+        ];
+        for (const [name, xml, ownColour, why] of noTheme) {
+            const p = propertyDefsFor(childEls(elFrom(xml))[0] || elFrom(xml));
+            t.equal(!!keyOf(p, '__theme__'), false, 'theme',
+                `${name} has no Theme row (${why})`);
+            if (ownColour) {
+                t.equal(!!keyOf(p, ownColour), true, 'theme',
+                    `${name} still offers its own ${ownColour} colour row`);
+            }
+            t.ok(p.some((r) => r.sectionId === 'appearance'), 'theme',
+                `${name} keeps an Appearance section`);
         }
     }
 
@@ -629,7 +658,7 @@ module.exports = async (t) => {
                 + '<StackPanel x:Name="GrumpyCommandBar1Items" Orientation="Horizontal"/></chrome:GrumpyCommandBar>']
         ]) probes.push([label, xml]);
 
-        const problems = { dupes: [], dead: [], buried: [], leaks: [], order: [], sections: [] };
+        const problems = { dupes: [], dead: [], buried: [], leaks: [], order: [], sections: [], themeNoColor: [] };
         // Where the popup editors live. Most are in the SAME section as the thing they edit (the
         // sheet's Cells in Data, a chart's Gradient in Appearance, its DataSelector in Data) — that is
         // deliberate, so they are reported rather than failed; what the audit does enforce is that a
@@ -647,6 +676,9 @@ module.exports = async (t) => {
             const keys = rows.map((r) => r.key);
             const dupes = keys.filter((k, i) => keys.indexOf(k) !== i);
             if (dupes.length) problems.dupes.push(`${label}: ${[...new Set(dupes)].join(', ')}`);
+            // Both answers of the Theme row work through THEME_COLOR_KEYS, so the row is only offered
+            // where one of those rows is (see rule 6b).
+            const hasThemeColor = rows.some((x) => x.key !== '__theme__' && THEME_COLOR_KEYS.indexOf(x.key) >= 0);
 
             for (const r of rows) {
                 // 2) a row that cannot do anything: a dropdown with no options is a dead control; a
@@ -676,6 +708,13 @@ module.exports = async (t) => {
                     'chrome:AnchorHelper.Anchor', 'HorizontalAlignment', 'IsVisible'].includes(r.key)) {
                     problems.dead.push(`${label}.${r.key} (visual row on a component)`);
                 }
+                // 6b) …and the Theme row on a panel with nothing for it to act on: 'System' removes
+                //     every theme colour and 'Custom' restores them, so on a control that offers no
+                //     theme-coloured row both answers change nothing (the shapes' Fill/Stroke, an
+                //     Image, a Slider, the PathPickers, the spreadsheet).
+                if (r.key === '__theme__' && !hasThemeColor) {
+                    problems.themeNoColor.push(label);
+                }
             }
 
             // 7) the sections a panel shows are a subsequence of the canonical order — a panel whose
@@ -696,6 +735,7 @@ module.exports = async (t) => {
         t.equal(problems.leaks, [], 'audit', 'every row comes from the control\'s own template or a shared catalog row');
         t.equal(problems.order, [], 'audit', 'each panel\'s sections appear in the canonical order');
         t.equal(problems.sections, [], 'audit', 'every panel builds, and every row is filed in a section');
+        t.equal(problems.themeNoColor, [], 'audit', 'no Theme row on a panel that offers no theme-coloured row');
         t.note(`${buttonHomes.size} editor buttons, e.g. `
             + [...buttonHomes].filter((b) => !/→ (editors|itemsEditor)$/.test(b)).slice(0, 6).join(', '));
     }

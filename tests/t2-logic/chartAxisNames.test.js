@@ -36,6 +36,17 @@ let seq = 0;
 /** Writes a throwaway form + code-behind so `analyzeCodeBehind` has a real project to look at. */
 function makeProject(body, codeFile = 'TestForm.axaml.cs', code = '') {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), `adb-axnames-${seq++}-`));
+    // A project file of its OWN, always (the same `Proj.csproj` the other checker fixtures write).
+    // `projectDirOf` walks up to four folders looking for one, so without this a fixture inherits
+    // whatever happens to sit above the temp folder: on 2026-10-01 a stray /tmp/probe.csproj made
+    // EVERY fixture here "a project missing GrumpyCharts.cs", and this test went red for a reason that
+    // had nothing to do with axis names. Declaring the project makes the answer the most local one.
+    fs.writeFileSync(path.join(dir, 'Proj.csproj'), '<Project Sdk="Microsoft.NET.Sdk"/>\n');
+    // …and the bundled chart file the form's <charts:…> tags need: the code check's rule 10 insists a
+    // project holding a chart control HOLDS the helper (otherwise the saved form cannot compile), so a
+    // fixture without it is "a broken project" by design. The rule checks that the file exists, not
+    // what is in it — a real project has the 7,000-line bundled copy.
+    fs.writeFileSync(path.join(dir, 'GrumpyCharts.cs'), '// fixture stub — see the note above\n');
     const xaml = `<Window ${NS} x:Class="Proj.TestForm" Title="t">
   <Canvas Name="Holder">
 ${body}

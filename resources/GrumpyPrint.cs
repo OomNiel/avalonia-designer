@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.13.19
+// BUNDLED-COPY: 0.14.0
 // GrumpyPrint.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyPrint.vb). Copied into a project
 // next to GrumpyCharts.cs / ChromeWindow.cs / PathPicker.cs / … and linked into the PreviewerHost.
 //

@@ -1945,6 +1945,53 @@ body.pv-dark #menuDummies .menu-dummy-sep {
     flex: 0 0 auto;
 }
 
+/* The Data Selector's data-file PREVIEW: the first rows of the file as the chart's reader sees them.
+   A cell the reader does NOT count as a number is dimmed and italic, so a column that holds words —
+   the one reason a chart of a CSV draws nothing — is visible here instead. The left column is the
+   file's own physical line number, because that is what the reader's error sentences quote. */
+.df-preview {
+    max-height: 168px;
+    overflow: auto;
+    border: 1px solid var(--vscode-panel-border, #444);
+    border-radius: 3px;
+    margin: 2px 0 6px;
+}
+
+.df-preview table {
+    border-collapse: collapse;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.df-preview th,
+.df-preview td {
+    padding: 1px 6px;
+    border-bottom: 1px solid var(--vscode-panel-border, #333);
+    border-right: 1px solid var(--vscode-panel-border, #333);
+    text-align: left;
+}
+
+.df-preview th {
+    background: var(--vscode-editor-background, #1e1e1e);
+}
+
+.df-preview .df-line {
+    opacity: 0.5;
+    text-align: right;
+}
+
+.df-preview .df-nonnum {
+    opacity: 0.45;
+    font-style: italic;
+}
+
+/* The columns a data file is read from (stated, not edited: the X/Y Column rows own them). */
+.df-columns {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+}
+
 .grid-defs-col h4 {
     margin: 2px 0 6px;
     font-size: 12px;

@@ -2,7 +2,7 @@
   "name": "avalonia-designer",
   "displayName": "Grumpy's WYSIWYG Designer for VS Code",
   "description": "Create Avalonia projects (C# / VB.NET) and design forms visually with a WYSIWYG drag-and-drop designer and toolbox — with an optional local AI assist that writes handlers and repairs code from a sentence, on your own machine.",
-  "version": "0.13.19",
+  "version": "0.14.0",
   "publisher": "grumpy",
   "license": "MIT",
   "icon": "Grumpy.png",
@@ -669,7 +669,12 @@
     "test:build": "node tests/runner.js --layer t0-build",
     "test:preview": "node tests/runner.js --layer t1-preview",
     "test:webview": "node tests/runner.js --layer t3-webview",
-    "test:runtime": "node tests/runner.js --layer t4-runtime"
+    "test:runtime": "node tests/runner.js --layer t4-runtime",
+    "test:allcontrols": "node tests/runner.js --layer t6-allcontrols",
+    "test:allcontrols:cs": "T6_LANG=cs node tests/runner.js --layer t6-allcontrols",
+    "test:allcontrols:vb": "T6_LANG=vb node tests/runner.js --layer t6-allcontrols",
+    "test:allcontrols:live": "T6_LIVE=1 node tests/runner.js --layer t6-allcontrols",
+    "test:allcontrols:resume": "T6_RESUME=1 node tests/runner.js --layer t6-allcontrols"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.8.10",

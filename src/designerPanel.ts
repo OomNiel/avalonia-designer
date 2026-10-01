@@ -8,7 +8,7 @@ import {
     isChartTag, chartSeriesOf, writeChartSeries, chartAxesOf, writeChartAxes, chartLegendOf, writeChartLegend,
     chartCursorsOf, writeChartCursors, chartBrushOf, writeChartBrush, chartSlicesOf, writeChartSlices,
     chartDataSourceOf, writeChartDataSource, supportsCursors, hasRangeLegend, chartDataRangeOf,
-    chartSeriesChildren, sliceSeriesPlan, applySliceSeries, isSliceChartTag
+    chartSeriesChildren, sliceSeriesPlan, applySliceSeries, isSliceChartTag, sliceSeriesPlanForCount
 } from './chartSeries';
 import { PreviewerHostManager, FrameResult, HostControlInfo, ShapeHandle, DOTNET_SDK_MISSING_MESSAGE } from './hostClient';
 import { createNewForm } from './newForm';
@@ -25,6 +25,7 @@ import { bigModelOffer, escalateToBigModel, llamaUnitText, type EscalationResult
 import { markCodeEdited, codeEditedSinceBuild, codeEditedReason, clearCodeEdited } from './writeStamp';
 import { withDesignerHeader } from './xamlHeader';
 import { lastPickerFolder, rememberPickerFile, type PickerKind } from './pickerFolders';
+import { includeDataFile, DATA_FOLDER, isFolderPath, isJsonPath } from './chartDataFile';
 import { controlInfoFor } from './controlInfo';
 import { asksForEventOnPlace, eventsFor, eventArgsFor, isKnownEvent } from './controlEvents';
 import { findProject, ProjectInfo } from './projectParser';
@@ -3574,8 +3575,8 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                 }
                 case 'saveChartDataSource': {
                     // 'Data Selector' on any chart: the source kind, the workbook, the PAGE of it to
-                    // read and the (not read yet) data file. Every one is a plain chart attribute, so
-                    // writing a value equal to the renderer's default removes it again.
+                    // read and the DATA FILE of the other source kind. Every one is a plain chart
+                    // attribute, so writing a value equal to the renderer's default removes it again.
                     const el = msg.name ? doc.model.findByName(msg.name) : undefined;
                     if (!el || !isChartTag(localName(el.tagName))) return;
                     const before = doc.model.serialize(true);
@@ -3690,6 +3691,90 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
                             error: `Could not read the workbook: ${String((e as Error).message ?? e)}`
                         });
                     }
+                    return;
+                }
+                case 'requestTable': {
+                    // The Data Selector's Data Files source asks what a delimited text file actually
+                    // holds, so the editor can show the sniffed delimiter, the header names and the
+                    // first rows before anything is saved. The HOST reads it — with the CHART's own
+                    // parser, since its build links the bundled GrumpyCharts.cs — so what the preview
+                    // shows is exactly what the chart will plot, including the reader's error wording.
+                    const wanted = String(msg.file ?? '');
+                    if (!wanted) {
+                        void panel.webview.postMessage({
+                            type: 'tableResult', file: '', delimiter: ',', header: [], rows: [], error: null
+                        });
+                        return;
+                    }
+                    // A RELATIVE path is what a portable form carries, and while designing it means the
+                    // project folder — the same anchor the renderer applies to the chart itself
+                    // (host ApplyDataPaths). The reader, left to itself, would look beside the HOST's own
+                    // executable and report a missing file that the app finds perfectly well.
+                    const proj = findProject(doc.uri);
+                    const folder = proj ? path.dirname(proj.projectUri.fsPath) : '';
+                    const resolved = folder && !path.isAbsolute(wanted) ? path.join(folder, wanted) : wanted;
+                    // A FOLDER of samplesets (one file per slice for the 3-D charts) answers with its file
+                    // list rather than cells, read through the chart's own SliceFolder rule so the dialog
+                    // shows exactly the slices the chart will draw.
+                    const asFolder = isFolderPath(resolved);
+                    try {
+                        const host = await this.host.getClient();
+                        const answer = await host.table(resolved, asFolder ? { mode: 'folder' } : {
+                            headerRow: Number(msg.headerRow ?? 1) || 1,
+                            firstDataRow: Number(msg.firstDataRow ?? 2) || 2,
+                            maxRows: Number(msg.maxRows ?? 12) || 12
+                        });
+                        void panel.webview.postMessage({
+                            type: 'tableResult', file: wanted, delimiter: answer.delimiter,
+                            header: answer.header, rows: answer.rows, files: answer.files,
+                            folder: asFolder, json: isJsonPath(resolved), error: answer.error
+                        });
+                    } catch (e) {
+                        void panel.webview.postMessage({
+                            type: 'tableResult', file: wanted, delimiter: ',', header: [], rows: [],
+                            error: `Could not read the data file: ${String((e as Error).message ?? e)}`
+                        });
+                    }
+                    return;
+                }
+                case 'includeDataFile': {
+                    // 'Include in the project' in the Data Selector: the data file becomes part of the
+                    // project (copied into data/ when it lives elsewhere) and the chart is pointed at it
+                    // RELATIVELY. That is what makes the form portable — the reader looks a relative path
+                    // up beside the app, where the new copy-to-output item puts the file — and it is why
+                    // the item and the path are one action: either alone leaves a form that only works on
+                    // this machine. The column defaults come from the same writer the dialog's Save uses.
+                    const el = msg.name ? doc.model.findByName(msg.name) : undefined;
+                    if (!el || !isChartTag(localName(el.tagName))) return;
+                    const proj = findProject(doc.uri);
+                    const wanted = String(msg.file ?? '');
+                    if (!proj) {
+                        void panel.webview.postMessage({
+                            type: 'dataFileIncluded', file: wanted, error: 'This form is not part of a project.'
+                        });
+                        return;
+                    }
+                    if (!wanted) {
+                        void panel.webview.postMessage({
+                            type: 'dataFileIncluded', file: '', error: 'Pick a data file first.'
+                        });
+                        return;
+                    }
+                    const result = includeDataFile(proj.projectUri.fsPath, wanted);
+                    if (!result.error) {
+                        const before = doc.model.serialize(true);
+                        writeChartDataSource(doc.model, el, {
+                            ...chartDataSourceOf(el), kind: 'DataFiles', dataFile: result.relative
+                        });
+                        this.ensureGrumpyChartsHelper(doc);
+                        this.notifyEdit(doc, panel, before);
+                        await this.render(doc, panel);
+                        await this.sendProperties(doc, panel, msg.name);
+                    }
+                    void panel.webview.postMessage({
+                        type: 'dataFileIncluded', file: wanted, relative: result.relative,
+                        copied: result.copied, added: result.added, error: result.error ?? null
+                    });
                     return;
                 }
                 case 'pickChartSource': {
@@ -5641,7 +5726,13 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
             msg.sliceInfo = chartSlicesOf(el);
             // The Data Selector editor's working copy (source kind, file, page, data file). The page
             // LIST is not here: it comes from the workbook via the host, when the editor asks for it.
-            msg.dataSource = chartDataSourceOf(el);
+            // The COLUMNS are, because a data file is read from A/B by default and the editor says so;
+            // they are the chart's own attributes, empty when the form names none.
+            msg.dataSource = {
+                ...chartDataSourceOf(el),
+                xColumn: el.getAttribute('XColumn') ?? '',
+                yColumn: el.getAttribute('YColumn') ?? ''
+            };
         }
         // GrumpySheet: the cells editor's working copy — the grid size and every non-blank cell, sorted
         // by row then column, so the webview can draw the sheet without asking for anything else.
@@ -5678,31 +5769,44 @@ export class AvaloniaDesignerProvider implements vscode.CustomEditorProvider<Des
     private async loadSliceSeries(doc: DesignerDocument, el: Element): Promise<string | null> {
         if (!isSliceChartTag(localName(el.tagName))) return null;
         const source = chartDataSourceOf(el);
-        if (source.kind !== 'Spreadsheet' || !source.file || !source.sheet) return null;
         const kids = chartSeriesChildren(el);
-        // An authored list is not merely left alone — the workbook is not even read for it.
+        // An authored list is not merely left alone — the source is not even read for it.
         if (kids.some((kid) => kid.attributes.length > 0 || kid.childNodes.length > 0)) return null;
         try {
             const host = await this.host.getClient();
+            if (source.kind === 'DataFiles' && isFolderPath(source.dataFile)) {
+                // A FOLDER of samplesets: one file per slice is the whole dataset, so the list becomes one
+                // bare series per file (bare = it reads the chart's own columns, from its own file).
+                const listing = await host.table(source.dataFile, { mode: 'folder' });
+                if (listing.error) {
+                    return kids.length === 0 ? `Could not load the slices of this folder: ${listing.error}` : null;
+                }
+                const plan = sliceSeriesPlanForCount(kids, listing.files.length);
+                if (plan) this.applySlicePlan(doc, el, plan);
+                return null;
+            }
+            if (source.kind !== 'Spreadsheet' || !source.file || !source.sheet) return null;
             const shape = await host.sheetShape(source.file, source.sheet);
             if (shape.error) return kids.length === 0 ? `Could not load the slices of this page: ${shape.error}` : null;
             const plan = sliceSeriesPlan(kids, el.getAttribute('XColumn') || 'B', shape.columns);
-            if (plan) {
-                applySliceSeries(doc.model, el, plan);
-                // "The full dataset should be loaded" means SEEN, not merely present: a slice window left
-                // over from an older, narrower page hides most of what was just loaded (a form carrying
-                // MaxZ="9" drew two slices of a hundred, which looks exactly like a chart that never got
-                // the data). The WIDTH window (MinX/MaxX) is deliberately left alone — it is a range the
-                // author can see in the picture, not a count of slices.
-                if (hasRangeLegend(localName(el.tagName))) {
-                    doc.model.setProperty(el, 'MinZ', '');
-                    doc.model.setProperty(el, 'MaxZ', '');
-                }
-            }
+            if (plan) this.applySlicePlan(doc, el, plan);
             return null;
         } catch (e) {
             const why = String((e as Error).message ?? e);
-            return kids.length === 0 ? `Could not load the slices of this page: ${why}` : null;
+            return kids.length === 0 ? `Could not load the slices: ${why}` : null;
+        }
+    }
+
+    /** Applies a slice plan and clears a stale Z window: "load the whole dataset" means SEEN, and a window
+     *  left over from an older, narrower source hides most of what was just loaded (a form carrying
+     *  MaxZ="9" drew two slices of a hundred, which looks exactly like a chart that never got the data).
+     *  The WIDTH window (MinX/MaxX) is deliberately left alone — it is a range the author can see, not a
+     *  count of slices. */
+    private applySlicePlan(doc: DesignerDocument, el: Element, plan: { drop: Element[]; add: number }): void {
+        applySliceSeries(doc.model, el, plan);
+        if (hasRangeLegend(localName(el.tagName))) {
+            doc.model.setProperty(el, 'MinZ', '');
+            doc.model.setProperty(el, 'MaxZ', '');
         }
     }
 
@@ -8403,9 +8507,9 @@ ${publishButtons}      <span class="sep"></span>
         <p class="modal-hint">Where this chart gets its data. <b>Spreadsheet</b> reads a page of an
           .xlsx workbook: pick the file, then the page from the workbook's own sheet names — leave the
           page on <b>(first page)</b> to keep reading the first sheet, which is what every form did
-          before this editor existed. <b>Data Files</b> is the place for data files such as CSVs: the
-          file you pick is remembered in the form, and the charts will start reading it when that
-          reader lands (until then the chart keeps drawing whatever the spreadsheet gives it).</p>
+          before this editor existed. <b>Data Files</b> reads a delimited text file instead — CSV or
+          TSV, with the delimiter, quoted fields and a European comma decimal handled — using the
+          same column settings (a header name, or a letter).</p>
         <div class="data-rows">
           <h4>Source</h4>
           <div id="dataKind" class="series-fields data-fields"></div>

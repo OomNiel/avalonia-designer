@@ -1,4 +1,4 @@
-' BUNDLED-COPY: 0.13.19
+' BUNDLED-COPY: 0.14.0
 ' GrumpyCharts.vb — BUNDLED RESOURCE (the C# twin is resources/GrumpyCharts.cs). Copied into every
 ' generated project, next to ChromeWindow.vb / PathPicker.vb / GrumpyPanel.vb.
 '
@@ -33,6 +33,7 @@ Imports System.Globalization
 Imports System.IO
 Imports System.IO.Compression
 Imports System.Linq
+Imports System.Text
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports System.Xml.Linq
@@ -190,7 +191,7 @@ Namespace Global.AvaloniaCharts
     Public Enum DataSourceKind
         ''' <summary>A page of an .xlsx workbook (the default): see SourceFile and SourceSheet.</summary>
         Spreadsheet
-        ''' <summary>A data file such as a CSV — named by DataFile, not read yet.</summary>
+        ''' <summary>A data file such as a CSV or TSV — named by DataFile and read by DelimitedTextReader.</summary>
         DataFiles
     End Enum
 
@@ -563,6 +564,13 @@ Namespace Global.AvaloniaCharts
         ''' <summary>Why this series has nothing to draw, or Nothing when it is fine.</summary>
         Public Property [Error] As String = Nothing
 
+        ''' <summary>
+        ''' True when Xs holds DATES (seconds since 1970) rather than plain numbers — set by a reader that
+        ''' found a date column, and what makes the X axis label its ticks as dates instead of as ten-digit
+        ''' numbers (see ChartDates). Friend: a reader's business, not something a form sets.
+        ''' </summary>
+        Friend XsAreDates As Boolean
+
         ''' <summary>True when the series carries at least one point.</summary>
         Public ReadOnly Property HasData As Boolean
             Get
@@ -848,6 +856,7 @@ Namespace Global.AvaloniaCharts
         ''' chart that re-reads on every save (Live Update) should not flash an error for it.
         ''' </summary>
         Friend Shared Function OpenWorkbook(path As String) As ZipArchive
+            path = SourcePathResolver.Resolve(path)
             Const attempts As Integer = 4
             Dim attempt As Integer = 1
             Do
@@ -1010,6 +1019,1215 @@ Namespace Global.AvaloniaCharts
             End If
             Return Double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, value) OrElse
                    Double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.CurrentCulture, value)
+        End Function
+    End Class
+
+    ''' <summary>
+    ''' A FOLDER of samplesets: the other way to give a 3-D chart its data, and the one a capture usually
+    ''' writes — one file per sweep/slice, each holding the same columns (an X and a Y), because a bench
+    ''' instrument logs one run per file. The folder is named by the same DataFile property a single CSV is:
+    ''' what the path POINTS AT decides which of the two it is (a folder, or a file).
+    '''
+    ''' Only files a chart can read count (CSV/TSV/TXT), so a README or a screenshot in the folder cannot
+    ''' shift every slice along by one, and the order is the one a person would list them in — digits
+    ''' compared as NUMBERS, so run2.csv comes before run10.csv rather than after it.
+    ''' </summary>
+    Friend NotInheritable Class SliceFolder
+
+        ''' <summary>The extensions a slice can be read from (the delimited text reader's formats).</summary>
+        Private Shared ReadOnly Extensions As String() = {".csv", ".tsv", ".txt"}
+
+        ''' <summary>True when the path names an existing FOLDER — the caller then reads one file per slice.</summary>
+        Friend Shared Function IsFolder(path As String) As Boolean
+            If String.IsNullOrWhiteSpace(path) Then Return False
+            Try
+                Return Directory.Exists(path)
+            Catch
+                Return False
+            End Try
+        End Function
+
+        ''' <summary>The readable files in the folder, in natural order. An unreadable folder is an empty
+        ''' list: the reader then reports "the folder holds no data files", which is an answer.</summary>
+        Friend Shared Function Files(folder As String) As List(Of String)
+            ' Not named 'files': VB matches a local against the enclosing function's name (case-insensitively).
+            Dim found As New List(Of String)()
+            Try
+                For Each path In Directory.EnumerateFiles(folder)
+                    Dim extension = System.IO.Path.GetExtension(path)
+                    For Each wanted In Extensions
+                        If String.Equals(wanted, extension, StringComparison.OrdinalIgnoreCase) Then
+                            found.Add(path)
+                            Exit For
+                        End If
+                    Next
+                Next
+            Catch
+                Return found
+            End Try
+            found.Sort(AddressOf ByName)
+            Return found
+        End Function
+
+        ''' <summary>Natural order by file name: runs of digits compare as numbers, letters
+        ''' case-insensitively.</summary>
+        Private Shared Function ByName(a As String, b As String) As Integer
+            Dim an = System.IO.Path.GetFileName(a)
+            Dim bn = System.IO.Path.GetFileName(b)
+            Dim i = 0
+            Dim j = 0
+            While i < an.Length AndAlso j < bn.Length
+                If Char.IsDigit(an(i)) AndAlso Char.IsDigit(bn(j)) Then
+                    Dim startA = i
+                    Dim startB = j
+                    While i < an.Length AndAlso Char.IsDigit(an(i))
+                        i += 1
+                    End While
+                    While j < bn.Length AndAlso Char.IsDigit(bn(j))
+                        j += 1
+                    End While
+                    Dim digitsA = an.Substring(startA, i - startA).TrimStart("0"c)
+                    Dim digitsB = bn.Substring(startB, j - startB).TrimStart("0"c)
+                    If digitsA.Length <> digitsB.Length Then Return digitsA.Length - digitsB.Length
+                    Dim byDigit = String.CompareOrdinal(digitsA, digitsB)
+                    If byDigit <> 0 Then Return byDigit
+                    Continue While
+                End If
+                Dim byChar = Char.ToUpperInvariant(an(i)).CompareTo(Char.ToUpperInvariant(bn(j)))
+                If byChar <> 0 Then Return byChar
+                i += 1
+                j += 1
+            End While
+            Return (an.Length - i).CompareTo(bn.Length - j)
+        End Function
+    End Class
+
+    ''' <summary>
+    ''' Where a chart's data path points at RUN TIME. An absolute path is used exactly as written; a
+    ''' RELATIVE one is looked for beside the app's own executable first — that is where a project's
+    ''' copy-to-output item puts the file, which is what makes a form portable — and in the folder the app
+    ''' was started from second, which is what a relative path used to mean. When neither exists the
+    ''' beside-the-exe candidate is returned, so the reader's error sentence names the file the app
+    ''' expected instead of a mystery path. (At DESIGN time the designer anchors the same relative path at
+    ''' the project folder, so the preview reads the file the user sees — see the host's ApplyDataPaths.)
+    ''' </summary>
+    Friend NotInheritable Class SourcePathResolver
+
+        Friend Shared Function Resolve(path As String) As String
+            If String.IsNullOrWhiteSpace(path) OrElse System.IO.Path.IsPathRooted(path) Then Return If(path, String.Empty)
+            Dim besideExe As String
+            Try
+                besideExe = System.IO.Path.GetFullPath(System.IO.Path.Combine(AppContext.BaseDirectory, path))
+            Catch
+                Return path   ' an unusable path is the reader's to report, unchanged
+            End Try
+            Try
+                If File.Exists(besideExe) OrElse Directory.Exists(besideExe) Then Return besideExe
+            Catch
+                ' fall through
+            End Try
+            Try
+                If File.Exists(path) OrElse Directory.Exists(path) Then Return path
+            Catch
+                ' fall through
+            End Try
+            Return besideExe
+        End Function
+    End Class
+
+    ''' <summary>
+    ''' Reads a delimited TEXT file — the data-file half of Read from data files (an .xlsx is
+    ''' SpreadsheetReader's job). Plain IO, no package: a CSV is what a logger, a bench instrument or a
+    ''' database dump writes, and it is what the Data Selector points DataFile at.
+    ''' The contract (decided 2026-10-01: how the other charting tools read files — see NOTES):
+    '''   * a column is addressed by its HEADER NAME ("Temp") first, and by its LETTER ("B") when there is
+    '''     no such header — the way sysstat's -dH exports and every field-mapping library are used;
+    '''   * the delimiter is SNIFFED (',' ';' TAB '|') from the first line, because Excel's own "Save as
+    '''     CSV" writes ';' in the locales that write ',' as the decimal separator;
+    '''   * RFC 4180 quoting: a quoted field may contain the delimiter, newlines, and "" for one quote;
+    '''   * UTF-8 (with or without a BOM) and UTF-16 BY ORDER MARK (what Excel's "Unicode text" writes);
+    '''     both LF and CRLF end a line;
+    '''   * numbers are INVARIANT, plus a comma decimal when the delimiter is ';' or TAB (1,5 gives 1.5).
+    '''     A cell that is empty, "-", "#N/A", "NaN" or "Infinity" is MISSING, never 0;
+    '''   * there is NO comment syntax — nothing in RFC 4180 defines one and '#' is a legal first character;
+    '''   * a line with MORE fields than the header is an ERROR naming the line: that is a broken file (an
+    '''     unescaped delimiter), not data to guess at. A line with fewer fields is just missing values.
+    ''' </summary>
+    Friend NotInheritable Class DelimitedTextReader
+
+        ''' <summary>Refuse an absurd file with a sentence instead of exhausting memory.</summary>
+        Friend Const MaxBytes As Long = 64L * 1024 * 1024
+
+        ''' <summary>The file's delimiter: the one the caller forced, else the commonest of , ; TAB | on the
+        ''' first line, else ','. Counting only the first line is enough in practice — a DELIMITED file that
+        ''' does not use its delimiter in its header is not one a header-mapped chart could read anyway.
+        ''' </summary>
+        Friend Shared Function DelimiterOf(path As String, Optional forced As Char? = Nothing) As Char
+            If forced.HasValue AndAlso forced.Value <> ChrW(0) Then Return forced.Value
+            Try
+                Using reader = OpenText(path)
+                    Dim counts As New Dictionary(Of Char, Integer) From {
+                        {","c, 0}, {";"c, 0}, {ControlChars.Tab, 0}, {"|"c, 0}}
+                    For Each ch In If(reader.ReadLine(), String.Empty)
+                        If counts.ContainsKey(ch) Then counts(ch) += 1
+                    Next
+                    Dim best = ","c
+                    For Each pair In counts
+                        If pair.Value > counts(best) Then best = pair.Key
+                    Next
+                    Return best
+                End Using
+            Catch
+                Return ","c   ' the read itself reports the failure a moment later
+            End Try
+        End Function
+
+        ''' <summary>
+        ''' Reads one series from a data file, with the SAME rules as the workbook reader: a line series
+        ''' reads only the Y column and numbers its samples, a text X cell becomes the point's NAME (a bar
+        ''' chart's category, an area chart's tick label), and a Y column that turns out to be empty falls
+        ''' back to the X column so a ONE-COLUMN file still draws.
+        ''' </summary>
+        Friend Shared Function Read(path As String, xColumn As String, yColumn As String,
+                                    headerRow As Integer, firstDataRow As Integer,
+                                    xFromIndex As Boolean, Optional delimiter As Char? = Nothing) As ChartData
+            Dim data As New ChartData()
+            Try
+                Dim delim = DelimiterOf(path, delimiter)
+                Dim records = ReadRecords(path, delim)
+                If records.Count = 0 Then
+                    data.Error = """" & System.IO.Path.GetFileName(path) & """ holds no rows."
+                    Return data
+                End If
+
+                Dim header = HeaderRecord(records, headerRow)
+                Dim headers = HeadersOf(header)
+                Dim xi = ColumnIndexFor(xColumn, headers)
+                Dim yi = ColumnIndexFor(yColumn, headers)
+                Dim commaDecimal = (delim = ";"c OrElse delim = ControlChars.Tab)
+                Dim headerWidth = If(header Is Nothing, 0, header.Fields.Length)
+
+                Dim xs As New List(Of Double)()
+                Dim ys As New List(Of Double)()
+                Dim labels As New List(Of String)()
+                Dim xsFallback As New List(Of Double)()
+                Dim ysFallback As New List(Of Double)()
+                Dim dates = False
+                Dim xTitle = String.Empty
+                Dim yTitle = String.Empty
+
+                For Each record In records
+                    If record.Line = headerRow Then
+                        xTitle = Field(record, xi)
+                        yTitle = Field(record, yi)
+                        Continue For
+                    End If
+                    If firstDataRow > 0 AndAlso record.Line < firstDataRow Then Continue For
+                    If headerWidth > 0 AndAlso record.Fields.Length > headerWidth Then
+                        data.Error = TooManyFields(path, record.Line, record.Fields.Length, headerWidth)
+                        Return data
+                    End If
+
+                    Dim xText = Field(record, xi)
+                    Dim yText = Field(record, yi)
+                    Dim xVal As Double = 0
+                    Dim yVal As Double = 0
+                    Dim hasX = TryNumber(xText, commaDecimal, xVal)
+                    Dim hasY = TryNumber(yText, commaDecimal, yVal)
+                    ' A DATE in the X column is a real value, not text: an X,Y chart of a capture has to keep
+                    ' the spacing the timestamps have. Only this path takes it — a category axis (xFromIndex)
+                    ' labels its samples with the X text, and there the date IS the label.
+                    Dim xDate As Double = 0
+                    Dim hasDate = Not hasX AndAlso Not xFromIndex AndAlso ChartDates.TryParse(xText, xDate)
+
+                    If xFromIndex Then
+                        ' A line series only needs one column: prefer Y, and when the file has the values in
+                        ' the X column instead take those rather than drawing nothing. The X cell is read
+                        ' either way — when it holds TEXT it is this point's NAME.
+                        If hasY Then
+                            xs.Add(ys.Count)
+                            ys.Add(yVal)
+                            labels.Add(xText)
+                        ElseIf hasX Then
+                            xsFallback.Add(ysFallback.Count)
+                            ysFallback.Add(xVal)
+                        End If
+                    ElseIf (hasX OrElse hasDate) AndAlso hasY Then
+                        xs.Add(If(hasX, xVal, xDate))
+                        ys.Add(yVal)
+                        labels.Add(If(hasX, xText, String.Empty))
+                        If hasDate Then dates = True
+                    End If
+                Next
+
+                If xFromIndex AndAlso ys.Count = 0 AndAlso ysFallback.Count > 0 Then
+                    xs = xsFallback
+                    ys = ysFallback
+                End If
+
+                data.Xs = xs.ToArray()
+                data.Ys = ys.ToArray()
+                data.Labels = labels.ToArray()
+                data.XTitle = xTitle
+                data.YTitle = yTitle
+                data.XsAreDates = dates
+                If data.Ys.Length = 0 Then
+                    Dim columns = If(xFromIndex, yColumn, xColumn & "/" & yColumn)
+                    data.Error = "No numbers found in column " & columns & " of """ &
+                                 System.IO.Path.GetFileName(path) & """ from row " &
+                                 firstDataRow.ToString(CultureInfo.InvariantCulture) & "."
+                End If
+            Catch ex As Exception
+                data.Error = ReadFailure(path, ex)
+            End Try
+            Return data
+        End Function
+
+        ''' <summary>
+        ''' LABEL + VALUE pairs out of a data file — what a pie (and any category axis) needs: the value
+        ''' column must hold numbers, the label column may hold anything, and an empty label falls back to
+        ''' the cell's own address. Keeps a row whose label is TEXT, which is the whole point of reading
+        ''' categories.
+        ''' </summary>
+        Friend Shared Function ReadLabels(path As String, labelColumn As String, valueColumn As String,
+                                          headerRow As Integer, firstDataRow As Integer,
+                                          Optional delimiter As Char? = Nothing) As ChartData
+            Dim data As New ChartData()
+            Try
+                Dim delim = DelimiterOf(path, delimiter)
+                Dim records = ReadRecords(path, delim)
+                If records.Count = 0 Then
+                    data.Error = """" & System.IO.Path.GetFileName(path) & """ holds no rows."
+                    Return data
+                End If
+
+                Dim header = HeaderRecord(records, headerRow)
+                Dim headers = HeadersOf(header)
+                Dim li = ColumnIndexFor(labelColumn, headers)
+                Dim vi = ColumnIndexFor(valueColumn, headers)
+                Dim commaDecimal = (delim = ";"c OrElse delim = ControlChars.Tab)
+                Dim headerWidth = If(header Is Nothing, 0, header.Fields.Length)
+
+                Dim xs As New List(Of Double)()
+                Dim ys As New List(Of Double)()
+                Dim labels As New List(Of String)()
+                Dim labelTitle = String.Empty
+                Dim valueTitle = String.Empty
+
+                For Each record In records
+                    If record.Line = headerRow Then
+                        labelTitle = Field(record, li)
+                        valueTitle = Field(record, vi)
+                        Continue For
+                    End If
+                    If firstDataRow > 0 AndAlso record.Line < firstDataRow Then Continue For
+                    If headerWidth > 0 AndAlso record.Fields.Length > headerWidth Then
+                        data.Error = TooManyFields(path, record.Line, record.Fields.Length, headerWidth)
+                        Return data
+                    End If
+                    Dim value As Double = 0
+                    If Not TryNumber(Field(record, vi), commaDecimal, value) Then Continue For   ' a slice needs a number
+                    Dim labelText = Field(record, li)
+                    labels.Add(If(labelText.Length = 0,
+                                  ColumnName(vi) & record.Line.ToString(CultureInfo.InvariantCulture),
+                                  labelText))
+                    xs.Add(ys.Count)
+                    ys.Add(value)
+                Next
+
+                data.Xs = xs.ToArray()
+                data.Ys = ys.ToArray()
+                data.Labels = labels.ToArray()
+                data.XTitle = labelTitle
+                data.YTitle = valueTitle
+                If data.Ys.Length = 0 Then
+                    data.Error = "No numbers found in column " & valueColumn & " of """ &
+                                 System.IO.Path.GetFileName(path) & """ from row " &
+                                 firstDataRow.ToString(CultureInfo.InvariantCulture) & "."
+                End If
+            Catch ex As Exception
+                data.Error = ReadFailure(path, ex)
+            End Try
+            Return data
+        End Function
+
+        ''' <summary>
+        ''' One line's NUMERIC cells, keyed by column LETTER — how the 3-D charts read the Z value a data
+        ''' file gives each of their slices. An empty or textual cell is absent from the result, so the
+        ''' caller falls back to its own numbering (exactly like SpreadsheetReader.RowNumbers).
+        ''' </summary>
+        Friend Shared Function RowNumbers(path As String, row As Integer,
+                                          Optional delimiter As Char? = Nothing) As Dictionary(Of String, Double)
+            Dim values As New Dictionary(Of String, Double)(StringComparer.OrdinalIgnoreCase)
+            Try
+                If row <= 0 Then Return values
+                Dim delim = DelimiterOf(path, delimiter)
+                Dim commaDecimal = (delim = ";"c OrElse delim = ControlChars.Tab)
+                For Each record In ReadRecords(path, delim)
+                    If record.Line <> row Then Continue For
+                    For i = 0 To record.Fields.Length - 1
+                        Dim value As Double = 0
+                        If TryNumber(record.Fields(i), commaDecimal, value) Then values(ColumnName(i)) = value
+                    Next
+                    Exit For
+                Next
+            Catch
+                ' A Z row that cannot be read is not an error: the chart numbers the slices itself.
+            End Try
+            Return values
+        End Function
+
+        ''' <summary>One line of the file: its 1-based PHYSICAL line number (blank lines count, so a
+        ''' diagnostic points at what an editor shows) and its fields.</summary>
+        Friend NotInheritable Class Record
+            Friend Sub New(line As Integer, fields As String())
+                Me.Line = line
+                Me.Fields = fields
+            End Sub
+
+            Friend ReadOnly Line As Integer
+            Friend ReadOnly Fields As String()
+        End Class
+
+        ''' <summary>
+        ''' Tokenizes the whole file in one pass: records separated by LF (CRLF's CR is dropped), fields by
+        ''' the delimiter, quotes per RFC 4180. A blank line becomes a record with NO fields, so "missing
+        ''' row" and "one empty cell" stay distinguishable. A quoted field may span lines, which is why this
+        ''' is a scanner rather than a split on newlines.
+        ''' </summary>
+        Friend Shared Function ReadRecords(path As String, delimiter As Char) As List(Of Record)
+            Dim records As New List(Of Record)()
+            Using reader = OpenText(path)
+                Dim fields As New List(Of String)()
+                Dim field As New StringBuilder()
+                Dim line = 1
+                Dim recordLine = 1
+                Dim inQuotes = False
+                Dim fieldWasQuoted = False
+                Dim hasContent = False
+
+                Dim read = reader.Read()
+                While read >= 0
+                    Dim c = ChrW(read)
+                    If inQuotes Then
+                        If c = """"c Then
+                            If reader.Peek() = AscW(""""c) Then
+                                field.Append(""""c)
+                                reader.Read()
+                            Else
+                                inQuotes = False
+                            End If
+                        Else
+                            If c = ControlChars.Lf Then line += 1
+                            field.Append(c)
+                        End If
+                    ElseIf c = """"c AndAlso field.Length = 0 AndAlso Not fieldWasQuoted Then
+                        inQuotes = True
+                        fieldWasQuoted = True
+                        hasContent = True
+                    ElseIf c = delimiter Then
+                        fields.Add(field.ToString())
+                        field.Clear()
+                        fieldWasQuoted = False
+                        hasContent = True
+                    ElseIf c = ControlChars.Cr Then
+                        ' CRLF: the LF ends the record (a lone CR is not a line ending here).
+                    ElseIf c = ControlChars.Lf Then
+                        fields.Add(field.ToString())
+                        If hasContent OrElse fields.Count > 1 OrElse fields(0).Length > 0 Then
+                            records.Add(New Record(recordLine, fields.ToArray()))
+                        End If
+                        fields.Clear()
+                        field.Clear()
+                        fieldWasQuoted = False
+                        hasContent = False
+                        line += 1
+                        recordLine = line
+                    Else
+                        field.Append(c)
+                        If Not Char.IsWhiteSpace(c) Then hasContent = True
+                    End If
+                    read = reader.Read()
+                End While
+
+                ' The last line, when the file does not end with a newline.
+                If field.Length > 0 OrElse fields.Count > 0 OrElse hasContent Then
+                    fields.Add(field.ToString())
+                    If hasContent OrElse fields.Count > 1 OrElse fields(0).Length > 0 Then
+                        records.Add(New Record(recordLine, fields.ToArray()))
+                    End If
+                End If
+            End Using
+            Return records
+        End Function
+
+        ''' <summary>The record that names the columns, or Nothing when headerRow names none.</summary>
+        Private Shared Function HeaderRecord(records As List(Of Record), headerRow As Integer) As Record
+            If headerRow <= 0 Then Return Nothing
+            For Each record In records
+                If record.Line = headerRow Then Return record
+            Next
+            Return Nothing
+        End Function
+
+        ''' <summary>Header text (trimmed) to field index. The FIRST column of a duplicated name wins, and a
+        ''' blank header names nothing.</summary>
+        Private Shared Function HeadersOf(header As Record) As Dictionary(Of String, Integer)
+            Dim map As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase)
+            If header Is Nothing Then Return map
+            For i = 0 To header.Fields.Length - 1
+                Dim name = header.Fields(i).Trim()
+                If name.Length > 0 AndAlso Not map.ContainsKey(name) Then map(name) = i
+            Next
+            Return map
+        End Function
+
+        ''' <summary>A column setting as an index: a header NAME when one matches, else the LETTER(s) the
+        ''' workbook reader uses ("A" = the first field). -1 when the setting names nothing at all.</summary>
+        Private Shared Function ColumnIndexFor(column As String, headers As Dictionary(Of String, Integer)) As Integer
+            Dim wanted = If(column, String.Empty).Trim()
+            If wanted.Length = 0 Then Return -1
+            Dim byName As Integer = 0
+            If headers.TryGetValue(wanted, byName) Then Return byName
+            Return SpreadsheetReader.ColumnIndex(wanted)
+        End Function
+
+        ''' <summary>One field of a record, trimmed; an absent field (a short line) reads as empty.</summary>
+        Private Shared Function Field(record As Record, index As Integer) As String
+            If index >= 0 AndAlso index < record.Fields.Length Then Return record.Fields(index).Trim()
+            Return String.Empty
+        End Function
+
+        ''' <summary>The letter(s) of a zero-based field index ("A", "B", … "AA").</summary>
+        Private Shared Function ColumnName(index As Integer) As String
+            If index <= 0 Then Return "A"
+            Return SpreadsheetReader.ColumnAfter("A", index)
+        End Function
+
+        ''' <summary>A cell as a number. Invariant first, then — only where the file's own delimiter says the
+        ''' writer uses a comma decimal (';' or TAB) — one comma with no dot is read as the decimal separator.
+        ''' A value that means "no value" (empty, "-", "#N/A", "NaN", "Infinity", "#DIV/0!") stays missing.
+        ''' </summary>
+        Private Shared Function TryNumber(text As String, commaDecimal As Boolean, ByRef value As Double) As Boolean
+            value = 0
+            Dim s = If(text, String.Empty).Trim()
+            If s.Length = 0 Then Return False
+            If s(0) = "#"c OrElse s = "-" OrElse s = "NaN" OrElse s = "Infinity" OrElse
+               String.Equals(s, "-Infinity", StringComparison.OrdinalIgnoreCase) Then Return False
+            If Double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, value) AndAlso
+               Not Double.IsNaN(value) AndAlso Not Double.IsInfinity(value) Then Return True
+            If commaDecimal AndAlso s.IndexOf(","c) >= 0 AndAlso s.IndexOf("."c) < 0 Then
+                Dim swapped = s.Replace(","c, "."c)
+                If Double.TryParse(swapped, NumberStyles.Float, CultureInfo.InvariantCulture, value) AndAlso
+                   Not Double.IsNaN(value) AndAlso Not Double.IsInfinity(value) Then Return True
+            End If
+            value = 0
+            Return False
+        End Function
+
+        ''' <summary>True when a cell reads as a number under the file's own delimiter — what the Data
+        ''' Selector's preview shows per cell, so a mis-typed column is visible before the chart draws
+        ''' nothing.</summary>
+        Friend Shared Function IsNumber(text As String, delimiter As Char) As Boolean
+            Dim value As Double = 0
+            Return TryNumber(text, (delimiter = ";"c OrElse delimiter = ControlChars.Tab), value)
+        End Function
+
+        ''' <summary>The sentence for a line that does not fit the header — the one failure a hand-edited CSV
+        ''' usually has (an unescaped delimiter inside a quoted-looking value).</summary>
+        Private Shared Function TooManyFields(path As String, line As Integer, got As Integer, width As Integer) As String
+            Return "Row " & line.ToString(CultureInfo.InvariantCulture) & " of """ &
+                   System.IO.Path.GetFileName(path) & """ has " & got.ToString(CultureInfo.InvariantCulture) &
+                   " fields but the header names " & width.ToString(CultureInfo.InvariantCulture) &
+                   " — check for a missing quote or a stray delimiter in that line."
+        End Function
+
+        ''' <summary>
+        ''' Opens the file for reading, honouring a byte order mark (UTF-8 or UTF-16) the way every text
+        ''' tool does — Excel's "Unicode text" export is UTF-16, and its BOM also keeps a UTF-8 file's first
+        ''' header name from starting with an invisible character. Reads through a writer the same way the
+        ''' workbook reader does (a logger may still be appending to the file the chart is drawing).
+        ''' </summary>
+        Private Shared Function OpenText(path As String) As StreamReader
+            path = SourcePathResolver.Resolve(path)
+            If Directory.Exists(path) Then
+                Throw New IOException("that path is a FOLDER — point DataFile at a file")
+            End If
+            Dim info As New FileInfo(path)
+            If info.Exists AndAlso info.Length > MaxBytes Then
+                Throw New IOException("the file is " & (info.Length \ (1024 * 1024)).ToString(CultureInfo.InvariantCulture) &
+                                      " MB — larger than the " & (MaxBytes \ (1024 * 1024)).ToString(CultureInfo.InvariantCulture) &
+                                      " MB a chart reads")
+            End If
+            Dim stream As New FileStream(path, FileMode.Open, FileAccess.Read,
+                                         FileShare.ReadWrite Or FileShare.Delete)
+            Return New StreamReader(stream, Encoding.UTF8, True)
+        End Function
+
+        ''' <summary>The chart's own words for a data file it could not read — the same shape of sentence the
+        ''' workbook reader gives, so a form shows the same kind of message either way.</summary>
+        Private Shared Function ReadFailure(path As String, ex As Exception) As String
+            Dim name = System.IO.Path.GetFileName(path)
+            If SpreadsheetReader.IsFileInUse(ex) Then
+                Return """" & name & """ is open in another program — close it (or save it again) and this " &
+                       "chart reloads by itself."
+            End If
+            If TypeOf ex Is FileNotFoundException OrElse TypeOf ex Is DirectoryNotFoundException Then
+                Return """" & name & """ was not found — check the Data File path."
+            End If
+            Return "Cannot read """ & name & """: " & ex.Message
+        End Function
+    End Class
+
+    ''' <summary>
+    ''' Reads chart data out of a JSON file — the second format the Data Selector's Data Files source accepts
+    ''' (see DelimitedTextReader for the delimited one). No dependency and no schema: the shapes an export or a
+    ''' logger actually writes are all understood —
+    '''
+    '''   [ {"time": 0, "temp": 18.5}, … ]      an ARRAY of records (the commonest)
+    '''   {"time": [0, 1], "temp": [18.5, …]}   COLUMNS of equal length, side by side
+    '''   {"time": 0, "temp": 18.5}             a single record — one point
+    '''   {"time": 0, …} then {"time": 1, …}    JSON Lines / NDJSON, one record per line
+    '''
+    ''' A column is addressed by the record's own KEY ("temp") — the same rule as the delimited reader, with a
+    ''' LETTER as the positional fallback (A = the first key, in the order the first record writes them) — so
+    ''' every chart keeps the column settings it already has.
+    '''
+    ''' Numbers are invariant and may also arrive as STRINGS ("18.5" counts too, because an export that quotes
+    ''' everything still plots). A value that is null, true/false, or a nested object/array is MISSING, like an
+    ''' empty cell in a CSV. There is no header row and no first-data-row setting to apply: a record names its
+    ''' own columns, and the first record is the first point.
+    ''' </summary>
+    Friend NotInheritable Class JsonDataReader
+
+        ''' <summary>True for the extensions this reader owns (the folder-of-samplesets rule stays CSV/TSV/TXT:
+        ''' a .json file in a run folder is the capture's own metadata far more often than a 97th sampleset).
+        ''' </summary>
+        Friend Shared Function Matches(path As String) As Boolean
+            Dim extension = System.IO.Path.GetExtension(If(path, String.Empty))
+            Return extension.Equals(".json", StringComparison.OrdinalIgnoreCase) OrElse
+                   extension.Equals(".jsonl", StringComparison.OrdinalIgnoreCase) OrElse
+                   extension.Equals(".ndjson", StringComparison.OrdinalIgnoreCase)
+        End Function
+
+        ''' <summary>One value of the file. A small model on purpose: the reader only ever needs to tell a
+        ''' number, a string, a missing value, and the two containers apart.</summary>
+        Private NotInheritable Class Value
+            Friend Number As Double
+            Friend IsNumber As Boolean
+            Friend Text As String = Nothing
+            Friend IsObject As Boolean
+            Friend Items As List(Of Value) = Nothing
+            Friend Fields As Dictionary(Of String, Value) = Nothing
+
+            ' 'Nothing' is a VB keyword, hence Absent: null, true and false all read as one missing value.
+            Friend Shared ReadOnly Property Absent As New Value()
+
+            Friend Shared Function OfNumber(number As Double) As Value
+                Return New Value With {.Number = number, .IsNumber = True}
+            End Function
+
+            Friend Shared Function OfText(text As String) As Value
+                Return New Value With {.Text = text}
+            End Function
+
+            Friend ReadOnly Property ItemsOrEmpty As Value()
+                Get
+                    Return If(Items IsNot Nothing, Items.ToArray(), Array.Empty(Of Value)())
+                End Get
+            End Property
+        End Class
+
+        ''' <summary>One cell of the preview: its text, whether the reader counts it as a number, and the number
+        ''' itself (which the read needs and the preview ignores).</summary>
+        Friend Class Cell
+            Friend Sub New(text As String, isNumber As Boolean, Optional number As Double = 0)
+                Me.Text = text
+                Me.IsNumber = isNumber
+                Me.Number = number
+            End Sub
+
+            Friend ReadOnly Text As String
+            Friend ReadOnly IsNumber As Boolean
+            Friend ReadOnly Number As Double
+        End Class
+
+        ''' <summary>The whole file as a plain table — the shape the Data Selector's preview needs.</summary>
+        Friend Class Table
+            Friend ReadOnly Columns As New List(Of String)()
+            Friend ReadOnly Rows As New List(Of List(Of Cell))()
+        End Class
+
+        ''' <summary>
+        ''' The file as columns and rows. Everything that can go wrong is an exception here (a syntax error, a
+        ''' missing file) and a sentence at the caller's end, exactly like the delimited reader.
+        ''' </summary>
+        Friend Shared Function Read(path As String) As Table
+            Dim documents = Parse(path)
+            If documents.Count = 0 Then Throw New InvalidDataException("the file is empty")
+            If documents.Count = 1 AndAlso documents(0).Items IsNot Nothing Then documents = documents(0).Items
+
+            Dim table As New Table()
+            If documents.Count = 1 AndAlso documents(0).IsObject AndAlso AllColumns(documents(0)) Then
+                ' COLUMN form: {"x": […], "y": […]}. The rows are as long as the SHORTEST column, so a ragged
+                ' column cannot invent a row that the other columns do not have.
+                Dim fields = documents(0).Fields
+                Dim names = fields.Keys.ToList()
+                Dim shortest = names.Min(Function(name) fields(name).ItemsOrEmpty.Length)
+                For Each name In names
+                    table.Columns.Add(name)
+                Next
+                For row = 0 To shortest - 1
+                    Dim cells As New List(Of Cell)()
+                    For Each name In names
+                        cells.Add(ToCell(fields(name).ItemsOrEmpty(row)))
+                    Next
+                    table.Rows.Add(cells)
+                Next
+                Return table
+            End If
+
+            For Each record In documents
+                AddRecord(table, record)
+            Next
+            Return table
+        End Function
+
+        ''' <summary>One series, with the SAME rules as the delimited reader: xFromIndex numbers the samples and
+        ''' treats the X value as the point's NAME, and a Y column that is empty falls back to the X column so a
+        ''' one-column file still draws.</summary>
+        Friend Shared Function ReadSeries(path As String, xColumn As String, yColumn As String,
+                                          xFromIndex As Boolean) As ChartData
+            Dim data As New ChartData()
+            Try
+                Dim table = Read(path)
+                If table.Rows.Count = 0 Then
+                    data.Error = """" & System.IO.Path.GetFileName(path) & """ holds no records."
+                    Return data
+                End If
+
+                Dim xi = ColumnIndexFor(table, xColumn)
+                Dim yi = ColumnIndexFor(table, yColumn)
+                Dim xs As New List(Of Double)()
+                Dim ys As New List(Of Double)()
+                Dim labels As New List(Of String)()
+                Dim xsFallback As New List(Of Double)()
+                Dim ysFallback As New List(Of Double)()
+                Dim dates = False
+
+                For Each row In table.Rows
+                    Dim xCell = CellAt(row, xi)
+                    Dim yCell = CellAt(row, yi)
+                    Dim hasX = xCell.IsNumber
+                    Dim hasY = yCell.IsNumber
+                    ' A DATE in the X column is a real value, not text (see the delimited reader's own note).
+                    Dim xDate As Double = 0
+                    Dim hasDate = Not hasX AndAlso Not xFromIndex AndAlso ChartDates.TryParse(xCell.Text, xDate)
+                    If xFromIndex Then
+                        If hasY Then
+                            xs.Add(ys.Count)
+                            ys.Add(yCell.Number)
+                            labels.Add(xCell.Text)
+                        ElseIf hasX Then
+                            xsFallback.Add(ysFallback.Count)
+                            ysFallback.Add(xCell.Number)
+                        End If
+                    ElseIf (hasX OrElse hasDate) AndAlso hasY Then
+                        xs.Add(If(hasX, xCell.Number, xDate))
+                        ys.Add(yCell.Number)
+                        labels.Add(If(hasX, xCell.Text, String.Empty))
+                        If hasDate Then dates = True
+                    End If
+                Next
+
+                If xFromIndex AndAlso ys.Count = 0 AndAlso ysFallback.Count > 0 Then
+                    xs = xsFallback
+                    ys = ysFallback
+                End If
+
+                data.Xs = xs.ToArray()
+                data.Ys = ys.ToArray()
+                data.Labels = labels.ToArray()
+                data.XTitle = ColumnTitle(table, xi)
+                data.YTitle = ColumnTitle(table, yi)
+                data.XsAreDates = dates
+                If data.Ys.Length = 0 Then
+                    Dim columns = If(xFromIndex, yColumn, xColumn & "/" & yColumn)
+                    data.Error = "No numbers found in column " & columns & " of """ &
+                                 System.IO.Path.GetFileName(path) & """."
+                End If
+            Catch ex As Exception
+                data.Error = ReadFailure(path, ex)
+            End Try
+            Return data
+        End Function
+
+        ''' <summary>LABEL + VALUE pairs, for a pie (and any category axis): the value must be a number and the
+        ''' label may be anything, so a JSON file of names works exactly like a CSV of them.</summary>
+        Friend Shared Function ReadLabels(path As String, labelColumn As String,
+                                          valueColumn As String) As ChartData
+            Dim data As New ChartData()
+            Try
+                Dim table = Read(path)
+                If table.Rows.Count = 0 Then
+                    data.Error = """" & System.IO.Path.GetFileName(path) & """ holds no records."
+                    Return data
+                End If
+
+                Dim li = ColumnIndexFor(table, labelColumn)
+                Dim vi = ColumnIndexFor(table, valueColumn)
+                Dim xs As New List(Of Double)()
+                Dim ys As New List(Of Double)()
+                Dim labels As New List(Of String)()
+
+                For Each row In table.Rows
+                    Dim value = CellAt(row, vi)
+                    If Not value.IsNumber Then Continue For   ' a slice needs a number
+                    Dim label = CellAt(row, li)
+                    labels.Add(If(label.Text.Length = 0,
+                                  ColumnName(vi) & (ys.Count + 1).ToString(CultureInfo.InvariantCulture),
+                                  label.Text))
+                    xs.Add(ys.Count)
+                    ys.Add(value.Number)
+                Next
+
+                data.Xs = xs.ToArray()
+                data.Ys = ys.ToArray()
+                data.Labels = labels.ToArray()
+                data.XTitle = ColumnTitle(table, li)
+                data.YTitle = ColumnTitle(table, vi)
+                If data.Ys.Length = 0 Then
+                    data.Error = "No numbers found in column " & valueColumn & " of """ &
+                                 System.IO.Path.GetFileName(path) & """."
+                End If
+            Catch ex As Exception
+                data.Error = ReadFailure(path, ex)
+            End Try
+            Return data
+        End Function
+
+        ''' <summary>One RECORD's numeric cells, keyed by column letter — how a 3-D chart reads the Z value a file
+        ''' gives each of its slices. The record number is 1-based, like the delimited reader's row number.
+        ''' </summary>
+        Friend Shared Function RowNumbers(path As String, row As Integer) As Dictionary(Of String, Double)
+            Dim values As New Dictionary(Of String, Double)(StringComparer.OrdinalIgnoreCase)
+            Try
+                If row <= 0 Then Return values
+                Dim table = Read(path)
+                If row > table.Rows.Count Then Return values
+                Dim cells = table.Rows(row - 1)
+                For i = 0 To cells.Count - 1
+                    If cells(i).IsNumber Then values(ColumnName(i)) = cells(i).Number
+                Next
+            Catch
+                ' A Z record that cannot be read is not an error: the chart numbers the slices itself.
+            End Try
+            Return values
+        End Function
+
+        ' ---------------------------------------------------------------- the table itself
+
+        ''' <summary>Adds one top-level value as a record: an object names its columns, an array is positional,
+        ''' and a bare number or string is a single value in the first column.</summary>
+        Private Shared Sub AddRecord(table As Table, record As Value)
+            If record.IsObject Then
+                Dim cells As New List(Of Cell)()
+                For Each field In record.Fields
+                    Dim index = table.Columns.IndexOf(field.Key)
+                    If index < 0 Then
+                        table.Columns.Add(field.Key)
+                        index = table.Columns.Count - 1
+                    End If
+                    While cells.Count < index
+                        cells.Add(New Cell(String.Empty, False))
+                    End While
+                    If cells.Count = index Then
+                        cells.Add(ToCell(field.Value))
+                    Else
+                        cells(index) = ToCell(field.Value)
+                    End If
+                Next
+                table.Rows.Add(cells)
+                Return
+            End If
+            If record.Items IsNot Nothing Then
+                Dim cells As New List(Of Cell)()
+                For Each item In record.Items
+                    cells.Add(ToCell(item))
+                Next
+                table.Rows.Add(cells)
+                While table.Columns.Count < record.Items.Count
+                    table.Columns.Add(ColumnName(table.Columns.Count))
+                End While
+                Return
+            End If
+            table.Rows.Add(New List(Of Cell) From {ToCell(record)})
+            If table.Columns.Count = 0 Then table.Columns.Add("A")
+        End Sub
+
+        Private Shared Function ToCell(value As Value) As Cell
+            If value.IsNumber Then
+                Return New Cell(value.Number.ToString("R", CultureInfo.InvariantCulture), True, value.Number)
+            End If
+            If value.Text Is Nothing Then Return New Cell(String.Empty, False)   ' null / true / false / nested
+            Dim text = value.Text
+            Dim number As Double = 0
+            If Double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, number) AndAlso
+               Not Double.IsNaN(number) AndAlso Not Double.IsInfinity(number) Then
+                Return New Cell(text, True, number)   ' a quoted number is still a number
+            End If
+            Return New Cell(text, False)
+        End Function
+
+        Private Shared Function AllColumns(document As Value) As Boolean
+            If document.Fields Is Nothing OrElse document.Fields.Count = 0 Then Return False
+            For Each value In document.Fields.Values
+                If value.Items Is Nothing Then Return False
+            Next
+            Return True
+        End Function
+
+        Private Shared Function CellAt(row As List(Of Cell), index As Integer) As Cell
+            If index >= 0 AndAlso index < row.Count Then Return row(index)
+            Return New Cell(String.Empty, False)
+        End Function
+
+        Private Shared Function ColumnTitle(table As Table, index As Integer) As String
+            If index >= 0 AndAlso index < table.Columns.Count Then Return table.Columns(index)
+            Return String.Empty
+        End Function
+
+        ''' <summary>A column setting as an index: a KEY name when one matches (case-insensitively, first wins),
+        ''' else the LETTER(s) the workbook reader uses ("A" = the first column).</summary>
+        Private Shared Function ColumnIndexFor(table As Table, column As String) As Integer
+            Dim wanted = If(column, String.Empty).Trim()
+            If wanted.Length = 0 Then Return -1
+            Dim byName = table.Columns.FindIndex(Function(name) String.Equals(name, wanted, StringComparison.OrdinalIgnoreCase))
+            If byName >= 0 Then Return byName
+            Return SpreadsheetReader.ColumnIndex(wanted)
+        End Function
+
+        Private Shared Function ColumnName(index As Integer) As String
+            If index <= 0 Then Return "A"
+            Return SpreadsheetReader.ColumnAfter("A", index)
+        End Function
+
+        ''' <summary>The chart's own words for a JSON file it could not read — the same shape of sentence the
+        ''' other readers give, so a form shows the same kind of message whichever format it names.</summary>
+        Private Shared Function ReadFailure(path As String, ex As Exception) As String
+            Dim name = System.IO.Path.GetFileName(path)
+            If SpreadsheetReader.IsFileInUse(ex) Then
+                Return """" & name & """ is open in another program — close it (or save it again) and this " &
+                       "chart reloads by itself."
+            End If
+            If TypeOf ex Is FileNotFoundException OrElse TypeOf ex Is DirectoryNotFoundException Then
+                Return """" & name & """ was not found — check the Data File path."
+            End If
+            If TypeOf ex Is InvalidDataException Then
+                Return """" & name & """ is not valid JSON — " & ex.Message & "."
+            End If
+            Return "Cannot read """ & name & """: " & ex.Message
+        End Function
+
+        ''' <summary>Opens the file: the same rules as the delimited reader (a folder is named as such, an absurd
+        ''' file is refused with its size, the BOM picks the encoding, and a writer may still hold it).</summary>
+        Private Shared Function Open(path As String) As StreamReader
+            path = SourcePathResolver.Resolve(path)
+            If Directory.Exists(path) Then
+                Throw New IOException("that path is a FOLDER — a folder of samplesets holds CSV/TSV/TXT files")
+            End If
+            Dim info As New FileInfo(path)
+            If info.Exists AndAlso info.Length > DelimitedTextReader.MaxBytes Then
+                Throw New IOException("the file is " & (info.Length \ (1024 * 1024)).ToString(CultureInfo.InvariantCulture) &
+                                      " MB — larger than the " &
+                                      (DelimitedTextReader.MaxBytes \ (1024 * 1024)).ToString(CultureInfo.InvariantCulture) &
+                                      " MB a chart reads")
+            End If
+            Dim stream As New FileStream(path, FileMode.Open, FileAccess.Read,
+                                         FileShare.ReadWrite Or FileShare.Delete)
+            Return New StreamReader(stream, Encoding.UTF8, True)
+        End Function
+
+        ''' <summary>Parses the file into its top-level values. A sequence is allowed on purpose: JSON Lines is
+        ''' one record per line and has no enclosing array, and a file with several values is read in order.
+        ''' </summary>
+        Private Shared Function Parse(path As String) As List(Of Value)
+            Using reader = Open(path)
+                Return New Parser(reader).ReadDocument()
+            End Using
+        End Function
+
+        Private NotInheritable Class Parser
+            Private ReadOnly _reader As TextReader
+            Private _buffered As Integer = -2   ' -2 = nothing read ahead
+            Private _line As Integer = 1
+
+            Friend Sub New(reader As TextReader)
+                _reader = reader
+            End Sub
+
+            Private Function Peek() As Integer
+                If _buffered = -2 Then _buffered = _reader.Read()
+                Return _buffered
+            End Function
+
+            Private Function Take() As Integer
+                Dim c = Peek()
+                _buffered = -2
+                ' AscW: ControlChars.Lf is a Char, and 'c' is the character code the reader works in.
+                If c = AscW(ControlChars.Lf) Then _line += 1
+                Return c
+            End Function
+
+            Private Sub SkipWhite()
+                While Peek() >= 0 AndAlso Char.IsWhiteSpace(ChrW(Peek()))
+                    Take()
+                End While
+            End Sub
+
+            Private Function Bad(what As String) As Exception
+                Return New InvalidDataException("line " & _line.ToString(CultureInfo.InvariantCulture) & ": expected " & what)
+            End Function
+
+            Friend Function ReadDocument() As List(Of Value)
+                Dim values As New List(Of Value)()
+                SkipWhite()
+                While Peek() >= 0
+                    Dim value = ReadValue()
+                    If value Is Nothing Then Throw Bad("a value")
+                    values.Add(value)
+                    SkipWhite()
+                End While
+                Return values
+            End Function
+
+            Private Function ReadValue() As Value
+                SkipWhite()
+                Dim c = Peek()
+                If c < 0 Then Return Nothing
+                Select Case ChrW(c)
+                    Case "{"c
+                        Return ReadObject()
+                    Case "["c
+                        Return ReadArray()
+                    Case """"c
+                        Return Value.OfText(ReadString())
+                    Case "t"c
+                        Return ReadWord("true", Value.Absent)
+                    Case "f"c
+                        Return ReadWord("false", Value.Absent)
+                    Case "n"c
+                        Return ReadWord("null", Value.Absent)
+                    Case Else
+                        Return ReadNumber()
+                End Select
+            End Function
+
+            Private Function ReadWord(word As String, result As Value) As Value
+                For Each expected In word
+                    If Take() <> AscW(expected) Then Throw Bad("""" & word & """")
+                Next
+                Return result
+            End Function
+
+            Private Function ReadObject() As Value
+                Take()   ' {
+                Dim value As New Value With {.IsObject = True, .Fields = New Dictionary(Of String, Value)(StringComparer.Ordinal)}
+                SkipWhite()
+                If Peek() = AscW("}"c) Then
+                    Take()
+                    Return value
+                End If
+                Do
+                    SkipWhite()
+                    If Peek() <> AscW(""""c) Then Throw Bad("a key in double quotes")
+                    Dim key = ReadString()
+                    SkipWhite()
+                    If Take() <> AscW(":"c) Then Throw Bad("':' after the key")
+                    Dim field = ReadValue()
+                    If field Is Nothing Then Throw Bad("a value for the key")
+                    value.Fields(key) = field
+                    SkipWhite()
+                    Dim nextChar = Take()
+                    If nextChar = AscW(","c) Then Continue Do
+                    If nextChar = AscW("}"c) Then Return value
+                    Throw Bad("',' or '}'")
+                Loop
+            End Function
+
+            Private Function ReadArray() As Value
+                Take()   ' [
+                Dim value As New Value With {.Items = New List(Of Value)()}
+                SkipWhite()
+                If Peek() = AscW("]"c) Then
+                    Take()
+                    Return value
+                End If
+                Do
+                    Dim item = ReadValue()
+                    If item Is Nothing Then Throw Bad("a value in the array")
+                    value.Items.Add(item)
+                    SkipWhite()
+                    Dim nextChar = Take()
+                    If nextChar = AscW(","c) Then Continue Do
+                    If nextChar = AscW("]"c) Then Return value
+                    Throw Bad("',' or ']'")
+                Loop
+            End Function
+
+            Private Function ReadString() As String
+                Take()   ' the opening quote
+                Dim text As New Text.StringBuilder()
+                Do
+                    Dim c = Take()
+                    If c < 0 Then Throw Bad("the end of the string")
+                    If c = AscW(""""c) Then Return text.ToString()
+                    If c <> AscW("\"c) Then
+                        text.Append(ChrW(c))
+                        Continue Do
+                    End If
+                    Dim escape = Take()
+                    Select Case ChrW(escape)
+                        Case """"c
+                            text.Append(""""c)
+                        Case "\"c
+                            text.Append("\"c)
+                        Case "/"c
+                            text.Append("/"c)
+                        Case "b"c
+                            text.Append(ControlChars.Back)
+                        Case "f"c
+                            text.Append(ChrW(12))
+                        Case "n"c
+                            text.Append(ControlChars.Lf)
+                        Case "r"c
+                            text.Append(ControlChars.Cr)
+                        Case "t"c
+                            text.Append(ControlChars.Tab)
+                        Case "u"c
+                            Dim hex As New Text.StringBuilder()
+                            For i = 0 To 3
+                                Dim digit = Take()
+                                If digit < 0 Then Throw Bad("four hex digits after \u")
+                                hex.Append(ChrW(digit))
+                            Next
+                            Dim code As UShort = 0
+                            If Not UShort.TryParse(hex.ToString(), NumberStyles.HexNumber,
+                                                   CultureInfo.InvariantCulture, code) Then
+                                Throw Bad("four hex digits after \u")
+                            End If
+                            text.Append(ChrW(code))
+                        Case Else
+                            Throw Bad("a valid escape (\"" \\ \/ \b \f \n \r \t \uXXXX)")
+                    End Select
+                Loop
+            End Function
+
+            Private Function ReadNumber() As Value
+                Dim text As New Text.StringBuilder()
+                Dim c = Peek()
+                If c = AscW("-"c) OrElse c = AscW("+"c) Then text.Append(ChrW(Take()))
+                Do
+                    c = Peek()
+                    If c < 0 Then Exit Do
+                    Dim ch = ChrW(c)
+                    If Not Char.IsDigit(ch) AndAlso ch <> "."c AndAlso ch <> "e"c AndAlso ch <> "E"c AndAlso
+                       ch <> "+"c AndAlso ch <> "-"c Then Exit Do
+                    text.Append(ChrW(Take()))
+                Loop
+                Dim raw = text.ToString()
+                Dim number As Double = 0
+                If raw.Length = 0 OrElse
+                   Not Double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, number) OrElse
+                   Double.IsNaN(number) OrElse Double.IsInfinity(number) Then
+                    Throw Bad("a number, but found """ & raw & """")
+                End If
+                Return Value.OfNumber(number)
+            End Function
+        End Class
+    End Class
+
+    ''' <summary>
+    ''' DATES on an axis (2026-10-01). An X,Y chart whose X column holds dates plots them as REAL time: the
+    ''' values become seconds since 1970 (UTC), so unevenly spaced measurements are unevenly spaced on
+    ''' screen, and the tick labels are written as dates instead of as ten-digit numbers. A category axis
+    ''' (a line/bar/area chart, which numbers its samples and labels them with the X column's text) keeps
+    ''' its own behaviour — there the date IS the label, which is what a category axis wants.
+    '''
+    ''' Only unambiguous, culture-independent spellings are accepted: ISO 8601 with a dash or a T, with or
+    ''' without seconds and a time, and the German dot form (01.10.2026 12:30). A slashed date is read as
+    ''' text on purpose — 03/04/2026 is two different days depending on the reader, and a chart must not
+    ''' guess between them.
+    ''' </summary>
+    Friend NotInheritable Class ChartDates
+
+        ''' <summary>The formats a data file's date cell may use (all invariant, all unambiguous).</summary>
+        Private Shared ReadOnly Formats As String() = {
+            "yyyy-MM-dd", "yyyy-MM-ddTHH:mm", "yyyy-MM-ddTHH:mm:ss", "yyyy-MM-dd HH:mm",
+            "yyyy-MM-dd HH:mm:ss", "dd.MM.yyyy", "dd.MM.yyyy HH:mm", "dd.MM.yyyy HH:mm:ss"}
+
+        ''' <summary>A cell as a date (seconds since 1970, UTC), when it is written as one.</summary>
+        Friend Shared Function TryParse(text As String, ByRef seconds As Double) As Boolean
+            seconds = 0
+            Dim value = If(text, String.Empty).Trim()
+            If value.Length < 8 Then Return False   ' the shortest form is 2026-10-01
+            Dim parsed As DateTime
+            If Not DateTime.TryParseExact(value, Formats, CultureInfo.InvariantCulture,
+                                          DateTimeStyles.AssumeUniversal Or DateTimeStyles.AdjustToUniversal,
+                                          parsed) Then
+                Return False
+            End If
+            seconds = New DateTimeOffset(parsed, TimeSpan.Zero).ToUnixTimeSeconds()
+            Return True
+        End Function
+
+        ''' <summary>
+        ''' The pattern a time axis uses for a span of the given seconds: the LABEL only has to say what
+        ''' changes from one tick to the next, so a year-long capture shows months and a minute-long one
+        ''' shows seconds.
+        ''' </summary>
+        Friend Shared Function PatternFor(span As Double) As String
+            If Not (span > 0) OrElse Double.IsNaN(span) OrElse Double.IsInfinity(span) Then Return "yyyy-MM-dd HH:mm:ss"
+            If span < 300 Then Return "HH:mm:ss"
+            If span < 2 * 86400 Then Return "HH:mm"
+            If span < 200 * 86400 Then Return "MM-dd"
+            If span < 5 * 365 * 86400 Then Return "yyyy-MM"
+            Return "yyyy"
+        End Function
+
+        ''' <summary>One value on a time axis, written for a span (see PatternFor).</summary>
+        Friend Shared Function Format(seconds As Double, span As Double) As String
+            Return FromSeconds(seconds).ToString(PatternFor(span), CultureInfo.InvariantCulture)
+        End Function
+
+        ''' <summary>A DISTANCE between two times, as a person reads it (a readout says "1 d 4 h", not
+        ''' "100800").</summary>
+        Friend Shared Function DurationText(seconds As Double) As String
+            Dim total = Math.Abs(seconds)
+            If total < 1 Then Return "0 s"
+            If total < 120 Then Return total.ToString("0.#", CultureInfo.InvariantCulture) & " s"
+            Dim minutes = total / 60
+            If minutes < 120 Then Return minutes.ToString("0.#", CultureInfo.InvariantCulture) & " min"
+            Dim hours = minutes / 60
+            If hours < 48 Then Return hours.ToString("0.#", CultureInfo.InvariantCulture) & " h"
+            Dim days = hours / 24
+            If days < 60 Then Return days.ToString("0.#", CultureInfo.InvariantCulture) & " d"
+            Dim years = days / 365
+            Return years.ToString("0.#", CultureInfo.InvariantCulture) & " y"
+        End Function
+
+        ''' <summary>Seconds since 1970 as a UTC time. A value outside the calendar is clamped rather than
+        ''' throwing: an axis window may be dragged past the ends of time, and a label is not worth a crash.
+        ''' (The bounds are the epoch seconds of year 1 and year 9999 — NOT a span in days: the first version
+        ''' of this guard used 3000 days, which clamped every real date to the year 9999 and printed every
+        ''' label as "12-31".)</summary>
+        Private Shared Function FromSeconds(seconds As Double) As DateTime
+            Try
+                Dim whole = Math.Clamp(seconds, -62135596800.0, 253402300799.0)
+                Return DateTimeOffset.FromUnixTimeSeconds(CLng(whole)).UtcDateTime
+            Catch
+                Return DateTime.MinValue
+            End Try
         End Function
     End Class
 
@@ -1289,9 +2507,9 @@ Namespace Global.AvaloniaCharts
             AvaloniaProperty.Register(Of ChartBase, String)(NameOf(SourceFile), String.Empty)
 
         ''' <summary>Where the data comes from: Spreadsheet (the default, the workbook in SourceFile)
-        ''' or DataFiles — a data file such as a CSV, which the Data Selector editor can already name in
-        ''' DataFile and which the charts will read when that reader lands. Choosing DataFiles today
-        ''' simply means the chart keeps drawing whatever SourceFile gives it.</summary>
+        ''' or DataFiles — a delimited text file such as a CSV or TSV, named in DataFile and read by
+        ''' DelimitedTextReader (its column settings work the same way: by header NAME first, by letter
+        ''' otherwise, and HeaderRow / FirstDataRow are the file's own lines).</summary>
         Public Shared ReadOnly SourceKindProperty As StyledProperty(Of DataSourceKind) =
             AvaloniaProperty.Register(Of ChartBase, DataSourceKind)(NameOf(SourceKind), DataSourceKind.Spreadsheet)
 
@@ -1301,9 +2519,8 @@ Namespace Global.AvaloniaCharts
         Public Shared ReadOnly SourceSheetProperty As StyledProperty(Of String) =
             AvaloniaProperty.Register(Of ChartBase, String)(NameOf(SourceSheet), String.Empty)
 
-        ''' <summary>The data FILE for the DataFiles source (a CSV today, other formats as they are
-        ''' added). Declared so a form can carry the Data Selector's choice and still compile; nothing
-        ''' reads it yet.</summary>
+        ''' <summary>The data FILE for the DataFiles source: a delimited text file (CSV/TSV — the
+        ''' delimiter is sniffed), read by DelimitedTextReader. Ignored while SourceKind is Spreadsheet.</summary>
         Public Shared ReadOnly DataFileProperty As StyledProperty(Of String) =
             AvaloniaProperty.Register(Of ChartBase, String)(NameOf(DataFile), String.Empty)
 
@@ -1886,7 +3103,7 @@ Namespace Global.AvaloniaCharts
             End Set
         End Property
 
-        ''' <summary>The data file for the DataFiles source — carried in the form, not read yet.</summary>
+        ''' <summary>The data file for the DataFiles source — see DataFileProperty.</summary>
         Public Property DataFile As String
             Get
                 Return GetValue(DataFileProperty)
@@ -2236,31 +3453,86 @@ Namespace Global.AvaloniaCharts
 
         Private ReadOnly _cache As New Dictionary(Of String, ChartData)()
         Private _cacheFile As String = Nothing
+        Private _sliceFolderFor As String = Nothing
+        Private _sliceFolder As New List(Of String)()
         Private _lastPlotCount As Integer = 0
 
-        ''' <summary>
-        ''' The data for one series (cached per column pair and workbook). labelPairs reads label + value
-        ''' pairs instead of two numeric columns, which is what a pie's slices are — and it is only that
-        ''' chart that asks for it.
-        ''' </summary>
-        Private Protected Function DataFor(xColumn As String, yColumn As String, xFromIndex As Boolean,
-                                          Optional labelPairs As Boolean = False) As ChartData
-            Dim file = SourceFile
-            If String.IsNullOrWhiteSpace(file) Then Return InlineData()
+        ''' <summary>The path the chart is reading RIGHT NOW: DataFile when SourceKind asks for a data
+        ''' file, else the workbook in SourceFile. One place for that rule, so the reader, the per-file
+        ''' cache and the live watcher can never disagree about which file is on screen.</summary>
+        Private Protected Function SourcePath() As String
+            If SourceKind = AvaloniaCharts.DataSourceKind.DataFiles AndAlso Not String.IsNullOrWhiteSpace(DataFile) Then
+                Return SourcePathResolver.Resolve(DataFile)
+            End If
+            Return SourcePathResolver.Resolve(SourceFile)
+        End Function
 
-            Dim key = xColumn & "|" & yColumn & "|" & xFromIndex.ToString() & "|" & labelPairs.ToString() & "|" & SourceSheet
-            If _cacheFile <> file Then
+        ''' <summary>True when the chart's data path names a FOLDER — one file per sampleset (see
+        ''' SliceFolder), which is what a capture that logs one run per file gives.</summary>
+        Private Protected ReadOnly Property HasSliceFolder As Boolean
+            Get
+                Return SliceFolder.IsFolder(SourcePath())
+            End Get
+        End Property
+
+        ''' <summary>
+        ''' The file the given SLICE reads when the source is a folder, else Nothing (the source is then one
+        ''' file for the whole chart). The listing is cached per folder and dropped with the rest of the
+        ''' cache, so a sampleset added while the app runs appears as soon as the watcher fires.
+        ''' </summary>
+        Private Protected Function SliceFile(index As Integer) As String
+            Dim folder = SourcePath()
+            If Not SliceFolder.IsFolder(folder) Then Return Nothing
+            If _sliceFolderFor <> folder Then
+                _sliceFolder = SliceFolder.Files(folder)
+                _sliceFolderFor = folder
+            End If
+            If index >= 0 AndAlso index < _sliceFolder.Count Then Return _sliceFolder(index)
+            Return Nothing
+        End Function
+
+        Private Protected Function DataFor(xColumn As String, yColumn As String, xFromIndex As Boolean,
+                                          Optional labelPairs As Boolean = False,
+                                          Optional sliceIndex As Integer = -1) As ChartData
+            Dim source = SourcePath()
+            If String.IsNullOrWhiteSpace(source) Then Return InlineData()
+
+            ' A slice chart pointed at a FOLDER reads one file per sampleset: the file is what changes with
+            ' the index, not the column (every file of a capture has the same layout). When the folder has
+            ' no file for this slice the read falls through to the folder itself, which reports that in words.
+            Dim file = If(sliceIndex >= 0, If(SliceFile(sliceIndex), source), source)
+
+            Dim useDataFile = (SourceKind = AvaloniaCharts.DataSourceKind.DataFiles)
+            ' Which reader a data file needs is decided by its EXTENSION, in one place: the delimited reader
+            ' owns CSV/TSV/TXT, the JSON reader owns .json/.jsonl/.ndjson (see JsonDataReader.Matches).
+            Dim json = useDataFile AndAlso JsonDataReader.Matches(file)
+            ' The FILE NAME is part of the key: with a folder, several slices live in the cache at once, and
+            ' they must not answer for each other. A change of SOURCE (a new file or folder) clears it.
+            Dim key = If(useDataFile, If(json, "json", "data"), "book") & "|" & System.IO.Path.GetFileName(file) & "|" & xColumn & "|" & yColumn & "|" & xFromIndex.ToString() & "|" & labelPairs.ToString() & "|" & SourceSheet
+            If _cacheFile <> source Then
                 _cache.Clear()
-                _cacheFile = file
+                _cacheFile = source
             End If
             Dim cached As ChartData = Nothing
             If _cache.TryGetValue(key, cached) Then Return cached
 
-            ' The PAGE the form asks for, by name; empty means the workbook's first worksheet.
+            ' The PAGE the form asks for, by name; empty means the workbook's first worksheet (a data
+            ' file has no pages — its first line is the header, and a JSON record names its own columns).
             Dim page = SourceSheet
-            Dim loaded = If(labelPairs,
+            Dim loaded As ChartData
+            If json Then
+                loaded = If(labelPairs,
+                            JsonDataReader.ReadLabels(file, xColumn, yColumn),
+                            JsonDataReader.ReadSeries(file, xColumn, yColumn, xFromIndex))
+            ElseIf useDataFile Then
+                loaded = If(labelPairs,
+                            DelimitedTextReader.ReadLabels(file, xColumn, yColumn, HeaderRow, FirstDataRow),
+                            DelimitedTextReader.Read(file, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex))
+            Else
+                loaded = If(labelPairs,
                             SpreadsheetReader.ReadLabels(file, xColumn, yColumn, HeaderRow, FirstDataRow, page),
                             SpreadsheetReader.Read(file, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex, page))
+            End If
             _cache(key) = loaded
             Return loaded
         End Function
@@ -2517,6 +3789,8 @@ Namespace Global.AvaloniaCharts
         Private Sub InvalidateCache()
             _cache.Clear()
             _cacheFile = Nothing
+            ' A folder can gain or lose a sampleset while the app runs, so its listing goes with the data.
+            _sliceFolderFor = Nothing
             InvalidateVisual()
         End Sub
 
@@ -3294,17 +4568,20 @@ Namespace Global.AvaloniaCharts
 
         Private Sub RestartWatcher()
             StopWatcher()
-            Dim file = SourceFile
+            Dim file = SourcePath()   ' the file (or the FOLDER of samplesets) the chart is drawing
             If Not LiveUpdate OrElse String.IsNullOrWhiteSpace(file) Then Return
 
             Try
                 Dim full = Path.GetFullPath(file)
-                Dim folder = Path.GetDirectoryName(full)
+                Dim isFolder = SliceFolder.IsFolder(full)
+                Dim folder = If(isFolder, full, Path.GetDirectoryName(full))
                 If String.IsNullOrEmpty(folder) OrElse Not Directory.Exists(folder) Then Return
 
                 ' Editors save by writing a temp file and renaming it over the original, so watch the
-                ' FOLDER for the file name rather than the file handle itself.
-                _watcher = New FileSystemWatcher(folder, Path.GetFileName(full)) With {
+                ' FOLDER for the file name rather than the file handle itself. When the source IS a folder
+                ' (one file per sampleset) the folder itself is what to watch: a new file is a new slice,
+                ' and the listing is rebuilt on the next read.
+                _watcher = New FileSystemWatcher(folder, If(isFolder, "*", Path.GetFileName(full))) With {
                     .NotifyFilter = NotifyFilters.LastWrite Or NotifyFilters.Size Or NotifyFilters.FileName Or NotifyFilters.CreationTime,
                     .EnableRaisingEvents = True
                 }
@@ -3730,7 +5007,7 @@ Namespace Global.AvaloniaCharts
             DrawYAxis(context, plotRect, commonPlot.YRange, commonY, yOnRight, 0,
                       TickLabels(commonY, commonPlot.YRange), AxisName(commonY, YAxisTitle, commonPlot.Data.YTitle))
             DrawXAxis(context, plotRect, commonPlot.XRange, commonX, xOnTop, 0,
-                      TickLabels(commonX, commonPlot.XRange, XNames(commonPlot.Data)), AxisName(commonX, XAxisTitle, commonPlot.Data.XTitle))
+                      TickLabels(commonX, commonPlot.XRange, XNames(commonPlot.Data), commonPlot.Data.XsAreDates), AxisName(commonX, XAxisTitle, commonPlot.Data.XTitle))
 
             Dim leftUsed As Double = If(yOnRight, 0, commonYWidth)
             Dim rightUsed As Double = If(yOnRight, commonYWidth, 0)
@@ -3749,12 +5026,12 @@ Namespace Global.AvaloniaCharts
             Next
             For Each one In topBlocks
                 DrawXAxis(context, plotRect, one.XRange, one.XAxis, True, topUsed,
-                          TickLabels(one.XAxis, one.XRange, XNames(one.Data)), AxisName(one.XAxis, Nothing, one.Data.XTitle))
+                          TickLabels(one.XAxis, one.XRange, XNames(one.Data), one.Data.XsAreDates), AxisName(one.XAxis, Nothing, one.Data.XTitle))
                 topUsed += XBlockHeight(one.XAxis, one.XRange, Nothing, one.Data.XTitle)
             Next
             For Each one In bottomBlocks
                 DrawXAxis(context, plotRect, one.XRange, one.XAxis, False, bottomUsed,
-                          TickLabels(one.XAxis, one.XRange, XNames(one.Data)), AxisName(one.XAxis, Nothing, one.Data.XTitle))
+                          TickLabels(one.XAxis, one.XRange, XNames(one.Data), one.Data.XsAreDates), AxisName(one.XAxis, Nothing, one.Data.XTitle))
                 bottomUsed += XBlockHeight(one.XAxis, one.XRange, Nothing, one.Data.XTitle)
             Next
 
@@ -3803,8 +5080,14 @@ Namespace Global.AvaloniaCharts
         ''' <summary>The tick label texts of an axis (empty when it draws no labels). When NAMES are given
         ''' the axis is a list of CATEGORIES, so each tick is labelled with the name of the point it
         ''' sits on instead of the number.</summary>
-        Private Shared Function TickLabels(axis As Axis, range As AxisRange, Optional names As String() = Nothing) As List(Of String)
+        Private Shared Function TickLabels(axis As Axis, range As AxisRange, Optional names As String() = Nothing,
+                                           Optional dates As Boolean = False) As List(Of String)
             If Not axis.ShowTickLabels Then Return New List(Of String)()
+            ' A TIME axis: every tick is written as a date, whatever the point names are — a tick's value is
+            ' a real time here, so "1780000000" (or a name that belongs to a different sample) would be a lie.
+            If dates Then
+                Return range.Ticks().Select(Function(v) ChartDates.Format(v, range.Max - range.Min)).ToList()
+            End If
             If names Is Nothing OrElse names.Length = 0 Then
                 Return range.Ticks().Select(Function(v) FormatNumber(v, range.TickStep)).ToList()
             End If
@@ -4135,6 +5418,10 @@ Namespace Global.AvaloniaCharts
             Dim trace = SelectedTrace(traces)
             If trace Is Nothing Then Return
             Dim x = If(Double.IsNaN(cursor.X), common.XRange.Mid, cursor.X)
+            ' A time axis reports the crossing as a date, and its distance to the other cursor as a duration:
+            ' "1780000000" and "100800" are exactly the numbers a person cannot read at a glance.
+            Dim dated = trace.Data.XsAreDates
+            Dim span = trace.XRange.Max - trace.XRange.Min
             ' The SAME values the crossing was drawn from (see DrawCursors), so the numbers and the
             ' handle always agree.
             Dim value = ValueAt(trace.Data, x)
@@ -4161,13 +5448,14 @@ Namespace Global.AvaloniaCharts
             If _cursorHits.Count >= 2 Then
                 Dim first = _cursorHits(0)
                 Dim second = _cursorHits(1)
-                delta = "ΔX " & FormatCursor(Math.Abs(first.X - second.X)) &
+                delta = "ΔX " & If(dated, ChartDates.DurationText(Math.Abs(first.X - second.X)),
+                                 FormatCursor(Math.Abs(first.X - second.X))) &
                         "   ΔY " & FormatCursor(Math.Abs(first.Y - second.Y))
                 deltaColor = If(first.Index = index, second.DrawnColor, first.DrawnColor)
             End If
 
             Dim parts As New List(Of String)()
-            If cursor.XValues Then parts.Add("X " & FormatCursor(x))
+            If cursor.XValues Then parts.Add("X " & If(dated, ChartDates.Format(x, span), FormatCursor(x)))
             If cursor.YValues Then parts.Add("Y " & If(value.HasValue, FormatCursor(value.Value), "–"))
             Dim name = LegendName(trace, plots.IndexOf(trace))
             Dim tag = "C" & (index + 1)
@@ -6331,7 +7619,7 @@ Namespace Global.AvaloniaCharts
                     Next
                 Else
                     plots.Add(New Plot With {
-                        .Data = Sampleset(Nothing, If(YColumn, "C")),
+                        .Data = Sampleset(Nothing, If(YColumn, "C"), 0),
                         .LineColor = LineColor,
                         .LineThickness = LineThickness,
                         .LineStyle = LineStyle})
@@ -6340,7 +7628,7 @@ Namespace Global.AvaloniaCharts
                 For i = 0 To Series.Count - 1
                     Dim one = Series(i)
                     plots.Add(New Plot With {
-                        .Data = Sampleset(one, SamplesetColumn(one, i)),
+                        .Data = Sampleset(one, SamplesetColumn(one, i), i),
                         .Definition = one,
                         .LineColor = one.LineColor,
                         .LineThickness = one.LineThickness,
@@ -6372,17 +7660,23 @@ Namespace Global.AvaloniaCharts
         End Function
 
         ''' <summary>The column one sampleset reads: the series' own, else the chart's YColumn and then the next
-        ''' column along (C, D, E …).</summary>
+        ''' column along (C, D, E …).
+        '''
+        ''' A FOLDER changes the second half: every file of a capture holds the same columns, so walking to the
+        ''' next column per sampleset would read a different column in a different FILE — meaningless. One file
+        ''' per sampleset means one COLUMN for all of them.</summary>
         Private Function SamplesetColumn(one As ChartSeries, index As Integer) As String
             If Not String.IsNullOrWhiteSpace(one.YColumn) Then Return one.YColumn
+            If HasSliceFolder Then Return If(YColumn, "C")
             Return SpreadsheetReader.ColumnAfter(If(YColumn, "C"), index)
         End Function
 
         ''' <summary>One sampleset's values, with the samples numbered the way an analyser numbers them: the
         ''' reader counts rows from 0, a waterfall counts sample POINTS from 1. The result is a copy, because
         ''' what was read is cached for every chart that reads those columns.</summary>
-        Private Function Sampleset(one As ChartSeries, yColumn As String) As ChartData
-            Dim data = DataFor(If(XColumn, "B"), yColumn, True)
+        Private Function Sampleset(one As ChartSeries, yColumn As String,
+                                   Optional index As Integer = 0) As ChartData
+            Dim data = DataFor(If(XColumn, "B"), yColumn, True, False, index)
             If data.Error IsNot Nothing Then Return data
             Return New ChartData With {
                 .Xs = data.Xs.Select(Function(x) x + 1).ToArray(),
@@ -7914,10 +9208,13 @@ Namespace Global.AvaloniaCharts
             Dim column As String
             If slice IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(slice.YColumn) Then
                 column = slice.YColumn
+            ElseIf HasSliceFolder Then
+                ' A folder holds one FILE per slice, with the same columns in every file.
+                column = If(YColumn, "C")
             Else
                 column = SpreadsheetReader.ColumnAfter(If(YColumn, "C"), index)
             End If
-            Return DataFor(If(XColumn, "B"), column, False)
+            Return DataFor(If(XColumn, "B"), column, False, False, index)
         End Function
 
         ''' <summary>The Z of every slice: the sheet's OWN numbers when it has them (one row of them, one per
@@ -7926,9 +9223,18 @@ Namespace Global.AvaloniaCharts
         Private Sub ReadSlicePositions(plots As List(Of Plot))
             _sliceZ.Clear()
             Dim fromSheet As New Dictionary(Of String, Double)(StringComparer.OrdinalIgnoreCase)
-            Dim file = SourceFile
-            If Not String.IsNullOrWhiteSpace(file) AndAlso plots.Count > 0 Then
-                fromSheet = SpreadsheetReader.RowNumbers(file, If(ZRow > 0, ZRow, Math.Max(1, HeaderRow)), SourceSheet)
+            Dim file = SourcePath()
+            ' A FOLDER has no Z row to read (its slices ARE the files), so the slices number themselves from
+            ' ZStart — which is what the fallback below does for every slice anyway.
+            If Not String.IsNullOrWhiteSpace(file) AndAlso plots.Count > 0 AndAlso Not HasSliceFolder Then
+                Dim row = If(ZRow > 0, ZRow, Math.Max(1, HeaderRow))
+                If SourceKind <> AvaloniaCharts.DataSourceKind.DataFiles Then
+                    fromSheet = SpreadsheetReader.RowNumbers(file, row, SourceSheet)
+                ElseIf JsonDataReader.Matches(file) Then
+                    fromSheet = JsonDataReader.RowNumbers(file, row)
+                Else
+                    fromSheet = DelimitedTextReader.RowNumbers(file, row)
+                End If
             End If
 
             For i = 0 To plots.Count - 1

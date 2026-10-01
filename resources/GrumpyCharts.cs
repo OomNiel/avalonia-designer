@@ -1,4 +1,4 @@
-// BUNDLED-COPY: 0.13.19
+// BUNDLED-COPY: 0.14.0
 // GrumpyCharts.cs — BUNDLED RESOURCE (the VB twin is resources/GrumpyCharts.vb). Copied into every
 // generated project, next to ChromeWindow.cs / PathPicker.cs / GrumpyPanel.cs.
 //
@@ -85,6 +85,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -255,7 +256,8 @@ public enum DataSourceKind
 {
     /// <summary>A page of an .xlsx workbook (the default): see SourceFile and SourceSheet.</summary>
     Spreadsheet,
-    /// <summary>A data file such as a CSV — named by DataFile, not read yet.</summary>
+    /// <summary>A data file such as a CSV — named by DataFile and read by
+    /// <see cref="DelimitedTextReader"/> (header names, sniffed delimiter, RFC 4180 quoting).</summary>
     DataFiles
 }
 
@@ -604,6 +606,14 @@ public sealed class ChartData
     /// <summary>Why this series has nothing to draw, or <c>null</c> when it is fine.</summary>
     public string? Error { get; set; }
 
+    /// <summary>
+    /// True when <see cref="Xs"/> holds DATES (seconds since 1970) rather than plain numbers — set by a
+    /// reader that found a date column, and what makes the X axis label its ticks as dates instead of as
+    /// ten-digit numbers (see <see cref="ChartDates"/>). Internal: a reader's business, not something a
+    /// form sets.
+    /// </summary>
+    internal bool XsAreDates;
+
     /// <summary>True when the series carries at least one point.</summary>
     public bool HasData => Xs.Length > 0 && Xs.Length == Ys.Length;
 }
@@ -878,6 +888,7 @@ internal static class SpreadsheetReader
     /// </summary>
     internal static ZipArchive OpenWorkbook(string path)
     {
+        path = SourcePathResolver.Resolve(path);
         const int attempts = 4;
         for (var attempt = 1; ; attempt++)
         {
@@ -1043,6 +1054,1159 @@ internal static class SpreadsheetReader
         if (string.IsNullOrWhiteSpace(text)) { value = 0; return false; }
         return double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value)
                || double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.CurrentCulture, out value);
+    }
+}
+
+/// <summary>
+/// A FOLDER of samplesets: the other way to give a 3-D chart its data, and the one a capture usually
+/// writes — one file per sweep/slice, each holding the same columns (an X and a Y), because a bench
+/// instrument logs one run per file. The folder is named by the same <c>DataFile</c> property a single
+/// CSV is: what the path POINTS AT decides which of the two it is (a folder, or a file).
+///
+/// Only files a chart can read count (CSV/TSV/TXT), so a README or a screenshot in the folder cannot
+/// shift every slice along by one, and the order is the one a person would list them in — digits
+/// compared as NUMBERS, so <c>run2.csv</c> comes before <c>run10.csv</c> rather than after it.
+/// </summary>
+internal static class SliceFolder
+{
+    /// <summary>The extensions a slice can be read from (the delimited text reader's formats).</summary>
+    private static readonly string[] Extensions = { ".csv", ".tsv", ".txt" };
+
+    /// <summary>True when the path names an existing FOLDER — the caller then reads one file per slice.</summary>
+    internal static bool IsFolder(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        try { return Directory.Exists(path); } catch { return false; }
+    }
+
+    /// <summary>The readable files in the folder, in natural order. An unreadable folder is an empty
+    /// list: the reader then reports "the folder holds no data files", which is an answer.</summary>
+    internal static List<string> Files(string folder)
+    {
+        var files = new List<string>();
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(folder))
+            {
+                var extension = Path.GetExtension(path);
+                if (Array.Exists(Extensions, e => string.Equals(e, extension, StringComparison.OrdinalIgnoreCase)))
+                    files.Add(path);
+            }
+        }
+        catch { return files; }
+        files.Sort(ByName);
+        return files;
+    }
+
+    /// <summary>Natural order by file name: runs of digits compare as numbers, letters case-insensitively.
+    /// </summary>
+    private static int ByName(string a, string b)
+    {
+        var an = Path.GetFileName(a);
+        var bn = Path.GetFileName(b);
+        int i = 0, j = 0;
+        while (i < an.Length && j < bn.Length)
+        {
+            if (char.IsDigit(an[i]) && char.IsDigit(bn[j]))
+            {
+                var startA = i;
+                var startB = j;
+                while (i < an.Length && char.IsDigit(an[i])) i++;
+                while (j < bn.Length && char.IsDigit(bn[j])) j++;
+                var digitsA = an.Substring(startA, i - startA).TrimStart('0');
+                var digitsB = bn.Substring(startB, j - startB).TrimStart('0');
+                if (digitsA.Length != digitsB.Length) return digitsA.Length - digitsB.Length;
+                var byDigit = string.CompareOrdinal(digitsA, digitsB);
+                if (byDigit != 0) return byDigit;
+                continue;
+            }
+            var byChar = char.ToUpperInvariant(an[i]).CompareTo(char.ToUpperInvariant(bn[j]));
+            if (byChar != 0) return byChar;
+            i++;
+            j++;
+        }
+        return (an.Length - i).CompareTo(bn.Length - j);
+    }
+}
+
+/// <summary>
+/// Where a chart's data path points at RUN TIME. An absolute path is used exactly as written; a
+/// RELATIVE one is looked for beside the app's own executable first — that is where a project's
+/// copy-to-output item puts the file, which is what makes a form portable — and in the folder the app
+/// was started from second, which is what a relative path used to mean. When neither exists the
+/// beside-the-exe candidate is returned, so the reader's error sentence names the file the app
+/// expected instead of a mystery path. (At DESIGN time the designer anchors the same relative path at
+/// the project folder, so the preview reads the file the user sees — see the host's ApplyDataPaths.)
+/// </summary>
+internal static class SourcePathResolver
+{
+    internal static string Resolve(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || Path.IsPathRooted(path)) return path ?? string.Empty;
+        string besideExe;
+        try { besideExe = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, path)); }
+        catch { return path; }   // an unusable path is the reader's to report, unchanged
+        try { if (File.Exists(besideExe) || Directory.Exists(besideExe)) return besideExe; } catch { /* fall through */ }
+        try { if (File.Exists(path) || Directory.Exists(path)) return path; } catch { /* fall through */ }
+        return besideExe;
+    }
+}
+
+/// <summary>
+/// Reads chart data out of a DELIMITED TEXT file (CSV / TSV) — the <see cref="DataSourceKind.DataFiles"/>
+/// source kind, whose path the form carries in <c>DataFile</c>. Plain text and no dependencies, exactly
+/// like <see cref="SpreadsheetReader"/>: a CSV's FIELDS are the workbook's columns (A = the first field),
+/// and its physical LINES are the rows the <c>HeaderRow</c> / <c>FirstDataRow</c> / <c>ZRow</c> settings
+/// already name — so every chart keeps the column settings it has, and a plain <c>x,y</c> file needs none.
+///
+/// The contract (decided 2026-10-01: how the other charting tools read files — see NOTES):
+///   * a column is addressed by its HEADER NAME ("Temp") first, and by its LETTER ("B") when there is no
+///     such header — the way sysstat's `-dH` exports and every field-mapping library are used;
+///   * the delimiter is SNIFFED (',' ';' TAB '|') from the first line, because Excel's own "Save as CSV"
+///     writes ';' in the locales that write ',' as the decimal separator;
+///   * RFC 4180 quoting: a quoted field may contain the delimiter, newlines, and "" for one quote;
+///   * UTF-8 (with or without a BOM) and UTF-16 BY ORDER MARK (what Excel's "Unicode text" writes);
+///     both LF and CRLF end a line;
+///   * numbers are INVARIANT, plus a comma decimal when the delimiter is ';' or TAB (1,5 → 1.5). A cell
+///     that is empty, "-", "#N/A", "NaN" or "Infinity" is MISSING, never 0;
+///   * there is NO comment syntax — nothing in RFC 4180 defines one and '#' is a legal first character;
+///   * a line with MORE fields than the header is an ERROR naming the line: that is a broken file (an
+///     unescaped delimiter), not data to guess at. A line with fewer fields is just missing values.
+/// </summary>
+internal static class DelimitedTextReader
+{
+    /// <summary>Refuse an absurd file with a sentence instead of exhausting memory.</summary>
+    internal const long MaxBytes = 64L * 1024 * 1024;
+
+    /// <summary>The file's delimiter: the one the caller forced, else the commonest of , ; TAB | on the
+    /// first line, else ','. Counting only the first line is enough in practice — a DELIMITED file that
+    /// does not use its delimiter in its header is not one a header-mapped chart could read anyway.</summary>
+    internal static char DelimiterOf(string path, char? forced = null)
+    {
+        if (forced is { } f && f != '\0') return f;
+        try
+        {
+            using var reader = OpenText(path);
+            var counts = new Dictionary<char, int> { [','] = 0, [';'] = 0, ['\t'] = 0, ['|'] = 0 };
+            foreach (var ch in reader.ReadLine() ?? string.Empty)
+                if (counts.ContainsKey(ch)) counts[ch]++;
+            var best = ',';
+            foreach (var pair in counts) if (pair.Value > counts[best]) best = pair.Key;
+            return best;
+        }
+        catch
+        {
+            return ',';   // the read itself reports the failure a moment later
+        }
+    }
+
+    /// <summary>
+    /// Reads one series from a data file, with the SAME rules as the workbook reader: a line series reads
+    /// only the Y column and numbers its samples, a text X cell becomes the point's NAME (a bar chart's
+    /// category, an area chart's tick label), and a Y column that turns out to be empty falls back to the
+    /// X column so a ONE-COLUMN file still draws.
+    /// </summary>
+    internal static ChartData Read(string path, string xColumn, string yColumn,
+                                   int headerRow, int firstDataRow, bool xFromIndex, char? delimiter = null)
+    {
+        var data = new ChartData();
+        try
+        {
+            var delim = DelimiterOf(path, delimiter);
+            var records = ReadRecords(path, delim);
+            if (records.Count == 0)
+            {
+                data.Error = $"\"{Path.GetFileName(path)}\" holds no rows.";
+                return data;
+            }
+
+            var header = HeaderRecord(records, headerRow);
+            var headers = HeadersOf(header);
+            var xi = ColumnIndexFor(xColumn, headers);
+            var yi = ColumnIndexFor(yColumn, headers);
+            var commaDecimal = delim is ';' or '\t';
+            var headerWidth = header?.Fields.Length ?? 0;
+
+            var xs = new List<double>();
+            var ys = new List<double>();
+            var labels = new List<string>();
+            var xsFallback = new List<double>();
+            var ysFallback = new List<double>();
+            var dates = false;
+            var xTitle = string.Empty;
+            var yTitle = string.Empty;
+
+            foreach (var record in records)
+            {
+                if (record.Line == headerRow)
+                {
+                    xTitle = Field(record, xi);
+                    yTitle = Field(record, yi);
+                    continue;
+                }
+                if (firstDataRow > 0 && record.Line < firstDataRow) continue;
+                if (headerWidth > 0 && record.Fields.Length > headerWidth)
+                {
+                    data.Error = TooManyFields(path, record.Line, record.Fields.Length, headerWidth);
+                    return data;
+                }
+
+                var xText = Field(record, xi);
+                var yText = Field(record, yi);
+                var hasX = TryNumber(xText, commaDecimal, out var xVal);
+                var hasY = TryNumber(yText, commaDecimal, out var yVal);
+                // A DATE in the X column is a real value, not text: an X,Y chart of a capture has to keep
+                // the spacing the timestamps have. Only this path takes it — a category axis (xFromIndex)
+                // labels its samples with the X text, and there the date IS the label.
+                var xDate = 0d;
+                var hasDate = !hasX && !xFromIndex && ChartDates.TryParse(xText, out xDate);
+
+                if (xFromIndex)
+                {
+                    if (hasY) { xs.Add(ys.Count); ys.Add(yVal); labels.Add(xText); }
+                    else if (hasX) { xsFallback.Add(ysFallback.Count); ysFallback.Add(xVal); }
+                }
+                else if ((hasX || hasDate) && hasY)
+                {
+                    xs.Add(hasX ? xVal : xDate);
+                    ys.Add(yVal);
+                    labels.Add(hasX ? xText : string.Empty);
+                    if (hasDate) dates = true;
+                }
+            }
+
+            if (xFromIndex && ys.Count == 0 && ysFallback.Count > 0)
+            {
+                xs = xsFallback;
+                ys = ysFallback;
+            }
+
+            data.Xs = xs.ToArray();
+            data.Ys = ys.ToArray();
+            data.Labels = labels.ToArray();
+            data.XTitle = xTitle;
+            data.YTitle = yTitle;
+            data.XsAreDates = dates;
+            if (data.Ys.Length == 0)
+            {
+                data.Error = $"No numbers found in column {(xFromIndex ? yColumn : $"{xColumn}/{yColumn}")} " +
+                             $"of \"{Path.GetFileName(path)}\" from row {firstDataRow}.";
+            }
+        }
+        catch (Exception ex)
+        {
+            data.Error = ReadFailure(path, ex);
+        }
+        return data;
+    }
+
+    /// <summary>
+    /// LABEL + VALUE pairs out of a data file — what a pie (and any category axis) needs: the value column
+    /// must hold numbers, the label column may hold anything, and an empty label falls back to the cell's
+    /// own address. Keeps a row whose label is TEXT, which is the whole point of reading categories.
+    /// </summary>
+    internal static ChartData ReadLabels(string path, string labelColumn, string valueColumn,
+                                         int headerRow, int firstDataRow, char? delimiter = null)
+    {
+        var data = new ChartData();
+        try
+        {
+            var delim = DelimiterOf(path, delimiter);
+            var records = ReadRecords(path, delim);
+            if (records.Count == 0)
+            {
+                data.Error = $"\"{Path.GetFileName(path)}\" holds no rows.";
+                return data;
+            }
+
+            var header = HeaderRecord(records, headerRow);
+            var headers = HeadersOf(header);
+            var li = ColumnIndexFor(labelColumn, headers);
+            var vi = ColumnIndexFor(valueColumn, headers);
+            var commaDecimal = delim is ';' or '\t';
+            var headerWidth = header?.Fields.Length ?? 0;
+
+            var xs = new List<double>();
+            var ys = new List<double>();
+            var labels = new List<string>();
+            var labelTitle = string.Empty;
+            var valueTitle = string.Empty;
+
+            foreach (var record in records)
+            {
+                if (record.Line == headerRow)
+                {
+                    labelTitle = Field(record, li);
+                    valueTitle = Field(record, vi);
+                    continue;
+                }
+                if (firstDataRow > 0 && record.Line < firstDataRow) continue;
+                if (headerWidth > 0 && record.Fields.Length > headerWidth)
+                {
+                    data.Error = TooManyFields(path, record.Line, record.Fields.Length, headerWidth);
+                    return data;
+                }
+                if (!TryNumber(Field(record, vi), commaDecimal, out var value)) continue;   // a slice needs a number
+                var labelText = Field(record, li);
+                labels.Add(labelText.Length == 0 ? $"{ColumnName(vi)}{record.Line}" : labelText);
+                xs.Add(ys.Count);
+                ys.Add(value);
+            }
+
+            data.Xs = xs.ToArray();
+            data.Ys = ys.ToArray();
+            data.Labels = labels.ToArray();
+            data.XTitle = labelTitle;
+            data.YTitle = valueTitle;
+            if (data.Ys.Length == 0)
+            {
+                data.Error = $"No numbers found in column {valueColumn} " +
+                             $"of \"{Path.GetFileName(path)}\" from row {firstDataRow}.";
+            }
+        }
+        catch (Exception ex)
+        {
+            data.Error = ReadFailure(path, ex);
+        }
+        return data;
+    }
+
+    /// <summary>
+    /// One line's NUMERIC cells, keyed by column LETTER — how the 3-D charts read the Z value a file gives
+    /// each of their slices. An empty or textual cell is absent from the result, so the caller falls back
+    /// to its own numbering (exactly like <see cref="SpreadsheetReader.RowNumbers"/>).
+    /// </summary>
+    internal static Dictionary<string, double> RowNumbers(string path, int row, char? delimiter = null)
+    {
+        var values = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (row <= 0) return values;
+            var delim = DelimiterOf(path, delimiter);
+            var commaDecimal = delim is ';' or '\t';
+            foreach (var record in ReadRecords(path, delim))
+            {
+                if (record.Line != row) continue;
+                for (var i = 0; i < record.Fields.Length; i++)
+                {
+                    if (TryNumber(record.Fields[i], commaDecimal, out var value))
+                        values[ColumnName(i)] = value;
+                }
+                break;
+            }
+        }
+        catch (Exception)
+        {
+            // A Z row that cannot be read is not an error: the chart numbers the slices itself.
+        }
+        return values;
+    }
+
+    // ---------------------------------------------------------------- the table itself
+
+    /// <summary>One line of the file: its 1-based PHYSICAL line number (blank lines count, so a diagnostic
+    /// points at what an editor shows) and its fields.</summary>
+    internal readonly struct Record
+    {
+        internal Record(int line, string[] fields) { Line = line; Fields = fields; }
+        internal int Line { get; }
+        internal string[] Fields { get; }
+    }
+
+    /// <summary>
+    /// Tokenizes the whole file in one pass: records separated by LF (CRLF's CR is dropped), fields by
+    /// <paramref name="delimiter"/>, quotes per RFC 4180. A blank line becomes a record with NO fields, so
+    /// "missing row" and "one empty cell" stay distinguishable. A quoted field may span lines, which is why
+    /// this is a scanner rather than a split on newlines.
+    /// </summary>
+    internal static List<Record> ReadRecords(string path, char delimiter)
+    {
+        var records = new List<Record>();
+        using var reader = OpenText(path);
+        var fields = new List<string>();
+        var field = new StringBuilder();
+        var line = 1;
+        var recordLine = 1;
+        var inQuotes = false;
+        var fieldWasQuoted = false;
+        var hasContent = false;
+
+        int read;
+        while ((read = reader.Read()) >= 0)
+        {
+            var c = (char)read;
+            if (inQuotes)
+            {
+                if (c == '"')
+                {
+                    if (reader.Peek() == '"') { field.Append('"'); reader.Read(); }
+                    else inQuotes = false;
+                }
+                else
+                {
+                    if (c == '\n') line++;
+                    field.Append(c);
+                }
+                continue;
+            }
+
+            if (c == '"' && field.Length == 0 && !fieldWasQuoted)
+            {
+                inQuotes = true;
+                fieldWasQuoted = true;
+                hasContent = true;
+                continue;
+            }
+            if (c == delimiter)
+            {
+                fields.Add(field.ToString());
+                field.Clear();
+                fieldWasQuoted = false;
+                hasContent = true;
+                continue;
+            }
+            if (c == '\r') continue;   // CRLF: the LF ends the record (a lone CR is not a line ending here)
+            if (c == '\n')
+            {
+                fields.Add(field.ToString());
+                if (hasContent || fields.Count > 1 || fields[0].Length > 0)
+                    records.Add(new Record(recordLine, fields.ToArray()));
+                fields.Clear();
+                field.Clear();
+                fieldWasQuoted = false;
+                hasContent = false;
+                line++;
+                recordLine = line;
+                continue;
+            }
+            field.Append(c);
+            if (!char.IsWhiteSpace(c)) hasContent = true;
+        }
+
+        // The last line, when the file does not end with a newline.
+        if (field.Length > 0 || fields.Count > 0 || hasContent)
+        {
+            fields.Add(field.ToString());
+            if (hasContent || fields.Count > 1 || fields[0].Length > 0)
+                records.Add(new Record(recordLine, fields.ToArray()));
+        }
+        return records;
+    }
+
+    /// <summary>The record that names the columns, or null when <paramref name="headerRow"/> names none.</summary>
+    private static Record? HeaderRecord(List<Record> records, int headerRow)
+    {
+        if (headerRow <= 0) return null;
+        foreach (var record in records) if (record.Line == headerRow) return record;
+        return null;
+    }
+
+    /// <summary>Header text (trimmed) to field index. The FIRST column of a duplicated name wins, and a
+    /// blank header names nothing.</summary>
+    private static Dictionary<string, int> HeadersOf(Record? header)
+    {
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (header is not { } record) return map;
+        for (var i = 0; i < record.Fields.Length; i++)
+        {
+            var name = record.Fields[i].Trim();
+            if (name.Length > 0 && !map.ContainsKey(name)) map[name] = i;
+        }
+        return map;
+    }
+
+    /// <summary>A column setting as an index: a header NAME when one matches, else the LETTER(s) the
+    /// workbook reader uses ("A" = the first field). -1 when the setting names nothing at all.</summary>
+    private static int ColumnIndexFor(string? column, Dictionary<string, int> headers)
+    {
+        var wanted = (column ?? string.Empty).Trim();
+        if (wanted.Length == 0) return -1;
+        if (headers.TryGetValue(wanted, out var byName)) return byName;
+        return SpreadsheetReader.ColumnIndex(wanted);
+    }
+
+    /// <summary>One field of a record, trimmed; an absent field (a short line) reads as empty.</summary>
+    private static string Field(Record record, int index)
+        => index >= 0 && index < record.Fields.Length ? record.Fields[index].Trim() : string.Empty;
+
+    /// <summary>The letter(s) of a zero-based field index ("A", "B", … "AA").</summary>
+    private static string ColumnName(int index)
+        => index <= 0 ? "A" : SpreadsheetReader.ColumnAfter("A", index);
+
+    /// <summary>A cell as a number. Invariant first, then — only where the file's own delimiter says the
+    /// writer uses a comma decimal (';' or TAB) — one comma with no dot is read as the decimal separator.
+    /// A value that means "no value" (empty, "-", "#N/A", "NaN", "Infinity", "#DIV/0!") stays missing.</summary>
+    private static bool TryNumber(string? text, bool commaDecimal, out double value)
+    {
+        value = 0;
+        var s = (text ?? string.Empty).Trim();
+        if (s.Length == 0) return false;
+        if (s[0] == '#' || s is "-" or "NaN" or "Infinity" || s.Equals("-Infinity", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+            && !double.IsNaN(value) && !double.IsInfinity(value)) return true;
+        if (commaDecimal && s.IndexOf(',') >= 0 && s.IndexOf('.') < 0)
+        {
+            var swapped = s.Replace(',', '.');
+            if (double.TryParse(swapped, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                && !double.IsNaN(value) && !double.IsInfinity(value)) return true;
+        }
+        value = 0;
+        return false;
+    }
+
+    /// <summary>
+    /// True when a cell reads as a number under the file's own delimiter — what the Data Selector's
+    /// preview shows per cell, so a mis-typed column is visible before the chart draws nothing.
+    /// </summary>
+    internal static bool IsNumber(string? text, char delimiter)
+        => TryNumber(text, delimiter is ';' or '\t', out _);
+
+    /// <summary>The sentence for a line that does not fit the header — the one failure a hand-edited CSV
+    /// usually has (an unescaped delimiter inside a quoted-looking value).</summary>
+    private static string TooManyFields(string path, int line, int got, int width)
+        => $"Row {line} of \"{Path.GetFileName(path)}\" has {got} fields but the header names {width} — " +
+           "check for a missing quote or a stray " + "delimiter in that line.";
+
+    /// <summary>Opens the file for reading, honouring a byte order mark (UTF-8 or UTF-16) the way every
+    /// text tool does — Excel's "Unicode text" export is UTF-16, and its BOM also keeps a UTF-8 file's
+    /// first header name from starting with an invisible character.</summary>
+    private static StreamReader OpenText(string path)
+    {
+        path = SourcePathResolver.Resolve(path);
+        if (Directory.Exists(path))
+            throw new IOException("that path is a FOLDER — point DataFile at a file");
+        var info = new FileInfo(path);
+        if (info.Exists && info.Length > MaxBytes)
+            throw new IOException($"the file is {info.Length / (1024 * 1024)} MB — larger than the "
+                + $"{MaxBytes / (1024 * 1024)} MB a chart reads");
+        var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        return new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+    }
+
+    /// <summary>The chart's own words for a data file it could not read — the same shape of sentence the
+    /// workbook reader gives, so a form shows the same kind of message either way.</summary>
+    private static string ReadFailure(string path, Exception ex)
+    {
+        var name = Path.GetFileName(path);
+        if (SpreadsheetReader.IsFileInUse(ex))
+        {
+            return $"\"{name}\" is open in another program — close it (or save it again) and this chart "
+                + "reloads by itself.";
+        }
+        if (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return $"\"{name}\" was not found — check the Data File path.";
+        }
+        return $"Cannot read \"{name}\": {ex.Message}";
+    }
+}
+
+/// <summary>
+/// Reads chart data out of a JSON file — the second format the Data Selector's Data Files source accepts
+/// (see <see cref="DelimitedTextReader"/> for the delimited one). No dependency and no schema: the shapes an
+/// export or a logger actually writes are all understood —
+///
+///   [ {"time": 0, "temp": 18.5}, … ]      an ARRAY of records (the commonest)
+///   {"time": [0, 1], "temp": [18.5, …]}   COLUMNS of equal length, side by side
+///   {"time": 0, "temp": 18.5}             a single record — one point
+///   {"time": 0, …}\n{"time": 1, …}        JSON Lines / NDJSON, one record per line
+///
+/// A column is addressed by the record's own KEY ("temp") — the same rule as the delimited reader, with a
+/// LETTER as the positional fallback (A = the first key, in the order the first record writes them) — so
+/// every chart keeps the column settings it already has.
+///
+/// Numbers are invariant and may also arrive as STRINGS ("18.5" counts too, because an export that quotes
+/// everything still plots). A value that is null, true/false, or a nested object/array is MISSING, like an
+/// empty cell in a CSV. There is no header row and no first-data-row setting to apply: a record names its
+/// own columns, and the first record is the first point.
+/// </summary>
+internal static class JsonDataReader
+{
+    /// <summary>True for the extensions this reader owns (the folder-of-samplesets rule stays CSV/TSV/TXT:
+    /// a .json file in a run folder is the capture's own metadata far more often than a 97th sampleset).</summary>
+    internal static bool Matches(string? path)
+    {
+        var extension = Path.GetExtension(path ?? string.Empty);
+        return extension.Equals(".json", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".jsonl", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".ndjson", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>One value of the file. A small model on purpose: the reader only ever needs to tell a
+    /// number, a string, a missing value, and the two containers apart.</summary>
+    private sealed class Value
+    {
+        internal double Number;
+        internal bool IsNumber;
+        internal string? Text;
+        internal bool IsObject;
+        internal List<Value>? Items;
+        internal Dictionary<string, Value>? Fields;
+
+        internal static readonly Value Nothing = new();
+
+        internal static Value OfNumber(double number) => new() { Number = number, IsNumber = true };
+        internal static Value OfText(string text) => new() { Text = text };
+        internal Value[] ItemsOrEmpty => Items is { } list ? list.ToArray() : Array.Empty<Value>();
+    }
+
+    /// <summary>One cell of the preview: its text and whether the reader counts it as a number (and the
+    /// number itself, which the read needs and the preview ignores).</summary>
+    internal readonly struct Cell
+    {
+        internal Cell(string text, bool isNumber, double number = 0)
+        {
+            Text = text;
+            IsNumber = isNumber;
+            Number = number;
+        }
+
+        internal string Text { get; }
+        internal bool IsNumber { get; }
+        internal double Number { get; }
+    }
+
+    /// <summary>The whole file as a plain table — the shape the Data Selector's preview needs.</summary>
+    internal sealed class Table
+    {
+        internal List<string> Columns { get; } = new();
+        internal List<List<Cell>> Rows { get; } = new();
+    }
+
+    /// <summary>
+    /// The file as columns and rows. Everything that can go wrong is an exception here (a syntax error, a
+    /// missing file) and a sentence at the caller's end, exactly like the delimited reader.
+    /// </summary>
+    internal static Table Read(string path)
+    {
+        var documents = Parse(path);
+        if (documents.Count == 0) throw new InvalidDataException("the file is empty");
+        if (documents.Count == 1 && documents[0].Items is { } array) documents = array;   // an array of records
+
+        var table = new Table();
+        if (documents.Count == 1 && documents[0].IsObject && AllColumns(documents[0]))
+        {
+            // COLUMN form: {"x": [...], "y": [...]}. The rows are as long as the SHORTEST column, so a
+            // ragged column cannot invent a row that other columns do not have.
+            var names = documents[0].Fields!.Keys.ToList();
+            var shortest = names.Min(name => documents[0].Fields![name].ItemsOrEmpty.Length);
+            foreach (var name in names) table.Columns.Add(name);
+            for (var row = 0; row < shortest; row++)
+            {
+                var cells = new List<Cell>();
+                foreach (var name in names) cells.Add(ToCell(documents[0].Fields![name].ItemsOrEmpty[row]));
+                table.Rows.Add(cells);
+            }
+            return table;
+        }
+
+        foreach (var record in documents) AddRecord(table, record);
+        return table;
+    }
+
+    /// <summary>One series, with the SAME rules as the delimited reader: xFromIndex numbers the samples and
+    /// treats the X value as the point's NAME, and a Y column that is empty falls back to the X column so a
+    /// one-column file still draws.</summary>
+    internal static ChartData ReadSeries(string path, string xColumn, string yColumn, bool xFromIndex)
+    {
+        var data = new ChartData();
+        try
+        {
+            var table = Read(path);
+            if (table.Rows.Count == 0)
+            {
+                data.Error = $"\"{Path.GetFileName(path)}\" holds no records.";
+                return data;
+            }
+
+            var xi = ColumnIndexFor(table, xColumn);
+            var yi = ColumnIndexFor(table, yColumn);
+            var xs = new List<double>();
+            var ys = new List<double>();
+            var labels = new List<string>();
+            var xsFallback = new List<double>();
+            var ysFallback = new List<double>();
+            var dates = false;
+
+            foreach (var row in table.Rows)
+            {
+                var xCell = CellAt(row, xi);
+                var yCell = CellAt(row, yi);
+                var hasX = xCell.IsNumber;
+                var hasY = yCell.IsNumber;
+                // A DATE in the X column is a real value, not text (see the delimited reader's own note).
+                var xDate = 0d;
+                var hasDate = !hasX && !xFromIndex && ChartDates.TryParse(xCell.Text, out xDate);
+                if (xFromIndex)
+                {
+                    if (hasY) { xs.Add(ys.Count); ys.Add(yCell.Number); labels.Add(xCell.Text); }
+                    else if (hasX) { xsFallback.Add(ysFallback.Count); ysFallback.Add(xCell.Number); }
+                }
+                else if ((hasX || hasDate) && hasY)
+                {
+                    xs.Add(hasX ? xCell.Number : xDate);
+                    ys.Add(yCell.Number);
+                    labels.Add(hasX ? xCell.Text : string.Empty);
+                    if (hasDate) dates = true;
+                }
+            }
+
+            if (xFromIndex && ys.Count == 0 && ysFallback.Count > 0) { xs = xsFallback; ys = ysFallback; }
+
+            data.Xs = xs.ToArray();
+            data.Ys = ys.ToArray();
+            data.Labels = labels.ToArray();
+            data.XTitle = ColumnTitle(table, xi);
+            data.YTitle = ColumnTitle(table, yi);
+            data.XsAreDates = dates;
+            if (data.Ys.Length == 0)
+            {
+                data.Error = $"No numbers found in column {(xFromIndex ? yColumn : $"{xColumn}/{yColumn}")} " +
+                             $"of \"{Path.GetFileName(path)}\".";
+            }
+        }
+        catch (Exception ex)
+        {
+            data.Error = ReadFailure(path, ex);
+        }
+        return data;
+    }
+
+    /// <summary>LABEL + VALUE pairs, for a pie (and any category axis): the value must be a number and the
+    /// label may be anything, so a JSON file of names works exactly like a CSV of them.</summary>
+    internal static ChartData ReadLabels(string path, string labelColumn, string valueColumn)
+    {
+        var data = new ChartData();
+        try
+        {
+            var table = Read(path);
+            if (table.Rows.Count == 0)
+            {
+                data.Error = $"\"{Path.GetFileName(path)}\" holds no records.";
+                return data;
+            }
+
+            var li = ColumnIndexFor(table, labelColumn);
+            var vi = ColumnIndexFor(table, valueColumn);
+            var xs = new List<double>();
+            var ys = new List<double>();
+            var labels = new List<string>();
+
+            foreach (var row in table.Rows)
+            {
+                var value = CellAt(row, vi);
+                if (!value.IsNumber) continue;   // a slice needs a number
+                var label = CellAt(row, li);
+                labels.Add(label.Text.Length == 0 ? $"{ColumnName(vi)}{ys.Count + 1}" : label.Text);
+                xs.Add(ys.Count);
+                ys.Add(value.Number);
+            }
+
+            data.Xs = xs.ToArray();
+            data.Ys = ys.ToArray();
+            data.Labels = labels.ToArray();
+            data.XTitle = ColumnTitle(table, li);
+            data.YTitle = ColumnTitle(table, vi);
+            if (data.Ys.Length == 0)
+                data.Error = $"No numbers found in column {valueColumn} of \"{Path.GetFileName(path)}\".";
+        }
+        catch (Exception ex)
+        {
+            data.Error = ReadFailure(path, ex);
+        }
+        return data;
+    }
+
+    /// <summary>One RECORD's numeric cells, keyed by column letter — how a 3-D chart reads the Z value a file
+    /// gives each of its slices. The record number is 1-based, like the delimited reader's row number.</summary>
+    internal static Dictionary<string, double> RowNumbers(string path, int row)
+    {
+        var values = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (row <= 0) return values;
+            var table = Read(path);
+            if (row > table.Rows.Count) return values;
+            var cells = table.Rows[row - 1];
+            for (var i = 0; i < cells.Count; i++)
+                if (cells[i].IsNumber) values[ColumnName(i)] = cells[i].Number;
+        }
+        catch
+        {
+            // A Z record that cannot be read is not an error: the chart numbers the slices itself.
+        }
+        return values;
+    }
+
+    // ------------------------------------------------------------------ the table itself
+
+    /// <summary>Adds one top-level value as a record: an object names its columns, an array is positional, and
+    /// a bare number or string is a single value in the first column.</summary>
+    private static void AddRecord(Table table, Value record)
+    {
+        if (record.IsObject)
+        {
+            var cells = new List<Cell>();
+            foreach (var field in record.Fields!)
+            {
+                var index = table.Columns.IndexOf(field.Key);
+                if (index < 0) { table.Columns.Add(field.Key); index = table.Columns.Count - 1; }
+                while (cells.Count < index) cells.Add(new Cell(string.Empty, false));
+                if (cells.Count == index) cells.Add(ToCell(field.Value));
+                else cells[index] = ToCell(field.Value);
+            }
+            table.Rows.Add(cells);
+            return;
+        }
+        if (record.Items is { } items)
+        {
+            table.Rows.Add(items.Select(ToCell).ToList());
+            while (table.Columns.Count < items.Count) table.Columns.Add(ColumnName(table.Columns.Count));
+            return;
+        }
+        table.Rows.Add(new List<Cell> { ToCell(record) });
+        if (table.Columns.Count == 0) table.Columns.Add("A");
+    }
+
+    private static Cell ToCell(Value value)
+    {
+        if (value.IsNumber)
+            return new Cell(value.Number.ToString("R", CultureInfo.InvariantCulture), true, value.Number);
+        if (value.Text is null) return new Cell(string.Empty, false);   // null / true / false / nested
+        var text = value.Text;
+        if (double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+            && !double.IsNaN(number) && !double.IsInfinity(number))
+        {
+            return new Cell(text, true, number);   // a quoted number is still a number
+        }
+        return new Cell(text, false);
+    }
+
+    private static bool AllColumns(Value document)
+        => document.Fields is { Count: > 0 } fields && fields.Values.All(value => value.Items is not null);
+
+    private static Cell CellAt(List<Cell> row, int index)
+        => index >= 0 && index < row.Count ? row[index] : new Cell(string.Empty, false);
+
+    private static string ColumnTitle(Table table, int index)
+        => index >= 0 && index < table.Columns.Count ? table.Columns[index] : string.Empty;
+
+    /// <summary>A column setting as an index: a KEY name when one matches (case-insensitively, first wins),
+    /// else the LETTER(s) the workbook reader uses ("A" = the first column).</summary>
+    private static int ColumnIndexFor(Table table, string? column)
+    {
+        var wanted = (column ?? string.Empty).Trim();
+        if (wanted.Length == 0) return -1;
+        var byName = table.Columns.FindIndex(name => string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase));
+        if (byName >= 0) return byName;
+        return SpreadsheetReader.ColumnIndex(wanted);
+    }
+
+    private static string ColumnName(int index)
+        => index <= 0 ? "A" : SpreadsheetReader.ColumnAfter("A", index);
+
+    /// <summary>The chart's own words for a JSON file it could not read — the same shape of sentence the
+    /// other readers give, so a form shows the same kind of message whichever format it names.</summary>
+    private static string ReadFailure(string path, Exception ex)
+    {
+        var name = Path.GetFileName(path);
+        if (SpreadsheetReader.IsFileInUse(ex))
+        {
+            return $"\"{name}\" is open in another program — close it (or save it again) and this chart "
+                + "reloads by itself.";
+        }
+        if (ex is FileNotFoundException or DirectoryNotFoundException)
+            return $"\"{name}\" was not found — check the Data File path.";
+        if (ex is InvalidDataException)
+            return $"\"{name}\" is not valid JSON — {ex.Message}.";
+        return $"Cannot read \"{name}\": {ex.Message}";
+    }
+
+    /// <summary>Opens the file: the same rules as the delimited reader (a folder is named as such, an absurd
+    /// file is refused with its size, the BOM picks the encoding, and a writer may still hold it).</summary>
+    private static StreamReader Open(string path)
+    {
+        path = SourcePathResolver.Resolve(path);
+        if (Directory.Exists(path))
+            throw new IOException("that path is a FOLDER — a folder of samplesets holds CSV/TSV/TXT files");
+        var info = new FileInfo(path);
+        if (info.Exists && info.Length > DelimitedTextReader.MaxBytes)
+            throw new IOException($"the file is {info.Length / (1024 * 1024)} MB — larger than the "
+                + $"{DelimitedTextReader.MaxBytes / (1024 * 1024)} MB a chart reads");
+        var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        return new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+    }
+
+    private static List<Value> Parse(string path)
+    {
+        using var reader = Open(path);
+        return new Parser(reader).ReadDocument();
+    }
+
+    private sealed class Parser
+    {
+        private readonly TextReader _reader;
+        private int _buffered = -2;   // -2 = nothing read ahead
+        private int _line = 1;
+
+        internal Parser(TextReader reader) { _reader = reader; }
+
+        private int Peek()
+        {
+            if (_buffered == -2) _buffered = _reader.Read();
+            return _buffered;
+        }
+
+        private int Take()
+        {
+            var c = Peek();
+            _buffered = -2;
+            if (c == '\n') _line++;
+            return c;
+        }
+
+        private void SkipWhite()
+        {
+            while (Peek() >= 0 && char.IsWhiteSpace((char)Peek())) Take();
+        }
+
+        private Exception Bad(string what) => new InvalidDataException($"line {_line}: expected {what}");
+
+        internal List<Value> ReadDocument()
+        {
+            var values = new List<Value>();
+            SkipWhite();
+            while (Peek() >= 0)
+            {
+                values.Add(ReadValue() ?? throw Bad("a value"));
+                SkipWhite();
+            }
+            return values;
+        }
+
+        private Value? ReadValue()
+        {
+            SkipWhite();
+            var c = Peek();
+            if (c < 0) return null;
+            return (char)c switch
+            {
+                '{' => ReadObject(),
+                '[' => ReadArray(),
+                '"' => Value.OfText(ReadString()),
+                't' => ReadWord("true", Value.Nothing),
+                'f' => ReadWord("false", Value.Nothing),
+                'n' => ReadWord("null", Value.Nothing),
+                _ => ReadNumber()
+            };
+        }
+
+        private Value ReadWord(string word, Value result)
+        {
+            foreach (var expected in word)
+            {
+                if (Take() != expected) throw Bad($"\"{word}\"");
+            }
+            return result;
+        }
+
+        private Value ReadObject()
+        {
+            Take();   // {
+            var value = new Value { IsObject = true, Fields = new Dictionary<string, Value>(StringComparer.Ordinal) };
+            SkipWhite();
+            if (Peek() == '}') { Take(); return value; }
+            while (true)
+            {
+                SkipWhite();
+                if (Peek() != '"') throw Bad("a key in double quotes");
+                var key = ReadString();
+                SkipWhite();
+                if (Take() != ':') throw Bad("':' after the key");
+                value.Fields![key] = ReadValue() ?? throw Bad("a value for the key");
+                SkipWhite();
+                var next = Take();
+                if (next == ',') continue;
+                if (next == '}') return value;
+                throw Bad("',' or '}'");
+            }
+        }
+
+        private Value ReadArray()
+        {
+            Take();   // [
+            var value = new Value { Items = new List<Value>() };
+            SkipWhite();
+            if (Peek() == ']') { Take(); return value; }
+            while (true)
+            {
+                value.Items!.Add(ReadValue() ?? throw Bad("a value in the array"));
+                SkipWhite();
+                var next = Take();
+                if (next == ',') continue;
+                if (next == ']') return value;
+                throw Bad("',' or ']'");
+            }
+        }
+
+        private string ReadString()
+        {
+            Take();   // the opening quote
+            var text = new StringBuilder();
+            while (true)
+            {
+                var c = Take();
+                if (c < 0) throw Bad("the end of the string");
+                if (c == '"') return text.ToString();
+                if (c != '\\') { text.Append((char)c); continue; }
+                var escape = Take();
+                switch (escape)
+                {
+                    case '"': text.Append('"'); break;
+                    case '\\': text.Append('\\'); break;
+                    case '/': text.Append('/'); break;
+                    case 'b': text.Append('\b'); break;
+                    case 'f': text.Append('\f'); break;
+                    case 'n': text.Append('\n'); break;
+                    case 'r': text.Append('\r'); break;
+                    case 't': text.Append('\t'); break;
+                    case 'u':
+                        var hex = new char[4];
+                        for (var i = 0; i < 4; i++)
+                        {
+                            var digit = Take();
+                            if (digit < 0) throw Bad("four hex digits after \\u");
+                            hex[i] = (char)digit;
+                        }
+                        if (!ushort.TryParse(new string(hex), NumberStyles.HexNumber,
+                                             CultureInfo.InvariantCulture, out var code))
+                        {
+                            throw Bad("four hex digits after \\u");
+                        }
+                        text.Append((char)code);
+                        break;
+                    default: throw Bad("a valid escape (\\\" \\\\ \\/ \\b \\f \\n \\r \\t \\uXXXX)");
+                }
+            }
+        }
+
+        private Value ReadNumber()
+        {
+            var text = new StringBuilder();
+            var c = Peek();
+            if (c == '-' || c == '+') text.Append((char)Take());
+            while (true)
+            {
+                c = Peek();
+                if (c < 0) break;
+                var ch = (char)c;
+                if (!char.IsDigit(ch) && ch != '.' && ch != 'e' && ch != 'E' && ch != '+' && ch != '-') break;
+                text.Append((char)Take());
+            }
+            var raw = text.ToString();
+            if (raw.Length == 0
+                || !double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+                || double.IsNaN(number) || double.IsInfinity(number))
+            {
+                throw Bad($"a number, but found \"{raw}\"");
+            }
+            return Value.OfNumber(number);
+        }
+    }
+}
+
+/// <summary>
+/// DATES on an axis (2026-10-01). An X,Y chart whose X column holds dates plots them as REAL time: the
+/// values become seconds since 1970 (UTC), so unevenly spaced measurements are unevenly spaced on
+/// screen, and the tick labels are written as dates instead of as ten-digit numbers. A category axis
+/// (a line/bar/area chart, which numbers its samples and labels them with the X column's text) keeps
+/// its own behaviour — there the date IS the label, which is what a category axis wants.
+///
+/// Only unambiguous, culture-independent spellings are accepted: ISO 8601 with a dash or a T, with or
+/// without seconds and a time, and the German dot form (01.10.2026 12:30). A slashed date is read as
+/// text on purpose — 03/04/2026 is two different days depending on the reader, and a chart must not
+/// guess between them.
+/// </summary>
+internal static class ChartDates
+{
+    /// <summary>The formats a data file's date cell may use (all invariant, all unambiguous).</summary>
+    private static readonly string[] Formats =
+    {
+            "yyyy-MM-dd", "yyyy-MM-ddTHH:mm", "yyyy-MM-ddTHH:mm:ss", "yyyy-MM-dd HH:mm",
+            "yyyy-MM-dd HH:mm:ss", "dd.MM.yyyy", "dd.MM.yyyy HH:mm", "dd.MM.yyyy HH:mm:ss"
+        };
+
+    /// <summary>A cell as a date (seconds since 1970, UTC), when it is written as one.</summary>
+    internal static bool TryParse(string? text, out double seconds)
+    {
+        seconds = 0;
+        var value = (text ?? string.Empty).Trim();
+        if (value.Length < 8) return false;   // the shortest form is 2026-10-01
+        if (!DateTime.TryParseExact(value, Formats, CultureInfo.InvariantCulture,
+                                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                                    out var parsed))
+        {
+            return false;
+        }
+        seconds = new DateTimeOffset(parsed, TimeSpan.Zero).ToUnixTimeSeconds();
+        return true;
+    }
+
+    /// <summary>
+    /// The pattern a time axis uses for a span of <paramref name="span"/> seconds: the LABEL only has
+    /// to say what changes from one tick to the next, so a year-long capture shows months and a
+    /// minute-long one shows seconds.
+    /// </summary>
+    internal static string PatternFor(double span)
+    {
+        if (!(span > 0) || double.IsNaN(span) || double.IsInfinity(span)) return "yyyy-MM-dd HH:mm:ss";
+        if (span < 300) return "HH:mm:ss";
+        if (span < 2 * 86400) return "HH:mm";
+        if (span < 200 * 86400) return "MM-dd";
+        if (span < 5 * 365 * 86400) return "yyyy-MM";
+        return "yyyy";
+    }
+
+    /// <summary>One value on a time axis, written for a span (see <see cref="PatternFor"/>).</summary>
+    internal static string Format(double seconds, double span)
+        => FromSeconds(seconds).ToString(PatternFor(span), CultureInfo.InvariantCulture);
+
+    /// <summary>A DISTANCE between two times, as a person reads it (a readout says "1 d 4 h", not
+    /// "100800").</summary>
+    internal static string DurationText(double seconds)
+    {
+        var total = Math.Abs(seconds);
+        if (total < 1) return "0 s";
+        if (total < 120) return total.ToString("0.#", CultureInfo.InvariantCulture) + " s";
+        var minutes = total / 60;
+        if (minutes < 120) return minutes.ToString("0.#", CultureInfo.InvariantCulture) + " min";
+        var hours = minutes / 60;
+        if (hours < 48) return hours.ToString("0.#", CultureInfo.InvariantCulture) + " h";
+        var days = hours / 24;
+        if (days < 60) return days.ToString("0.#", CultureInfo.InvariantCulture) + " d";
+        var years = days / 365;
+        return years.ToString("0.#", CultureInfo.InvariantCulture) + " y";
+    }
+
+    /// <summary>Seconds since 1970 as a UTC time. A value outside the calendar is clamped rather than
+    /// throwing: an axis window may be dragged past the ends of time, and a label is not worth a crash.
+    /// (The bounds are the epoch seconds of year 1 and year 9999 — NOT a span in days: the first version
+    /// of this guard used 3000 days, which clamped every real date to the year 9999 and printed every
+    /// label as "12-31".)</summary>
+    private static DateTime FromSeconds(double seconds)
+    {
+        try
+        {
+            var whole = Math.Clamp(seconds, -62135596800d, 253402300799d);
+            return DateTimeOffset.FromUnixTimeSeconds((long)whole).UtcDateTime;
+        }
+        catch
+        {
+            return DateTime.MinValue;
+        }
     }
 }
 
@@ -1320,10 +2484,11 @@ public abstract class ChartBase : Control
         AvaloniaProperty.Register<ChartBase, string?>(nameof(SourceFile), string.Empty);
 
     /// <summary>Where the data comes from: <see cref="DataSourceKind.Spreadsheet"/> (the default, the
-    /// workbook in <see cref="SourceFile"/>) or <see cref="DataSourceKind.DataFiles"/> — a data file
-    /// such as a CSV, which the Data Selector editor can already name in <see cref="DataFile"/> and
-    /// which the charts will start reading when that reader lands. Choosing DataFiles today simply
-    /// means the chart keeps drawing whatever SourceFile gives it.</summary>
+    /// workbook in <see cref="SourceFile"/>) or <see cref="DataSourceKind.DataFiles"/> — the data file
+    /// in <see cref="DataFile"/>, which <see cref="DelimitedTextReader"/> reads as a table (a CSV or TSV:
+    /// the first line names the columns, a column is addressed by that name or by its letter, and the
+    /// delimiter is sniffed). Both sources feed the same series/column settings, so switching one for the
+    /// other keeps the form's XColumn/YColumn/HeaderRow/FirstDataRow as they are.</summary>
     public static readonly StyledProperty<DataSourceKind> SourceKindProperty =
         AvaloniaProperty.Register<ChartBase, DataSourceKind>(nameof(SourceKind), DataSourceKind.Spreadsheet);
 
@@ -1333,9 +2498,9 @@ public abstract class ChartBase : Control
     public static readonly StyledProperty<string?> SourceSheetProperty =
         AvaloniaProperty.Register<ChartBase, string?>(nameof(SourceSheet), string.Empty);
 
-    /// <summary>The data FILE for <see cref="DataSourceKind.DataFiles"/> (a CSV today, other formats
-    /// as they are added). Declared so a form can carry the Data Selector's choice and still compile;
-    /// nothing reads it yet.</summary>
+    /// <summary>The data FILE for <see cref="DataSourceKind.DataFiles"/> — a CSV/TSV (or the tab-separated
+    /// .txt a data logger writes). Read only when <see cref="SourceKind"/> asks for it; the workbook path in
+    /// <see cref="SourceFile"/> is untouched by it, so a form can keep both and switch.</summary>
     public static readonly StyledProperty<string?> DataFileProperty =
         AvaloniaProperty.Register<ChartBase, string?>(nameof(DataFile), string.Empty);
 
@@ -1741,7 +2906,7 @@ public abstract class ChartBase : Control
     /// <summary>Which PAGE of the workbook to read, by sheet name (empty = the first worksheet).</summary>
     public string? SourceSheet { get => GetValue(SourceSheetProperty); set => SetValue(SourceSheetProperty, value); }
 
-    /// <summary>The data file for the DataFiles source — carried in the form, not read yet.</summary>
+    /// <summary>The data file for the DataFiles source (see <see cref="DataSourceKind"/>).</summary>
     public string? DataFile { get => GetValue(DataFileProperty); set => SetValue(DataFileProperty, value); }
 
     /// <summary>Re-read the workbook when it changes on disk.</summary>
@@ -1915,27 +3080,75 @@ public abstract class ChartBase : Control
 
     private readonly Dictionary<string, ChartData> _cache = new();
     private string? _cacheFile;
+    private string? _sliceFolderFor;
+    private List<string> _sliceFolder = new();
 
     /// <summary>
-    /// The data for one series (cached per column pair and workbook). <paramref name="labelPairs"/> reads
-    /// label + value pairs instead of two numeric columns, which is what a pie's slices are — and it is
-    /// only that chart that asks for it.
+    /// The path the chart is reading RIGHT NOW: <see cref="DataFile"/> when <see cref="SourceKind"/> asks
+    /// for a data file, else the workbook in <see cref="SourceFile"/>. One place for that rule, so the
+    /// reader, the per-file cache and the live watcher can never disagree about which file is on screen.
     /// </summary>
-    private protected ChartData DataFor(ChartSeries? series, string xColumn, string yColumn, bool xFromIndex,
-                                        bool labelPairs = false)
-    {
-        var file = SourceFile;
-        if (string.IsNullOrWhiteSpace(file)) return InlineData();
+    private protected string? SourcePath()
+        => SourcePathResolver.Resolve(SourceKind == DataSourceKind.DataFiles && !string.IsNullOrWhiteSpace(DataFile)
+            ? DataFile
+            : SourceFile);
 
-        var key = $"{xColumn}|{yColumn}|{xFromIndex}|{labelPairs}|{SourceSheet}";
-        if (_cacheFile != file) { _cache.Clear(); _cacheFile = file; }
+    /// <summary>True when the chart's data path names a FOLDER — one file per sampleset (see
+    /// <see cref="SliceFolder"/>), which is what a capture that logs one run per file gives.</summary>
+    private protected bool HasSliceFolder => SliceFolder.IsFolder(SourcePath());
+
+    /// <summary>
+    /// The file the given SLICE reads when the source is a folder, else null (the source is then one file
+    /// for the whole chart). The listing is cached per folder and dropped with the rest of the cache, so a
+    /// sampleset added while the app runs appears as soon as the watcher fires.
+    /// </summary>
+    private protected string? SliceFile(int index)
+    {
+        var folder = SourcePath();
+        if (!SliceFolder.IsFolder(folder)) return null;
+        if (_sliceFolderFor != folder)
+        {
+            _sliceFolder = SliceFolder.Files(folder!);
+            _sliceFolderFor = folder;
+        }
+        return index >= 0 && index < _sliceFolder.Count ? _sliceFolder[index] : null;
+    }
+
+    private protected ChartData DataFor(ChartSeries? series, string xColumn, string yColumn, bool xFromIndex,
+                                        bool labelPairs = false, int sliceIndex = -1)
+    {
+        var source = SourcePath();
+        if (string.IsNullOrWhiteSpace(source)) return InlineData();
+
+        // A slice chart pointed at a FOLDER reads one file per sampleset: the file is what changes with
+        // the index, not the column (every file of a capture has the same layout). When the folder has no
+        // file for this slice the read falls through to the folder itself, which reports that in words.
+        var file = sliceIndex >= 0 ? SliceFile(sliceIndex) ?? source : source;
+
+        var useDataFile = SourceKind == DataSourceKind.DataFiles;
+        // Which reader a data file needs is decided by its EXTENSION, in one place: the delimited reader
+        // owns CSV/TSV/TXT, the JSON reader owns .json/.jsonl/.ndjson (see JsonDataReader.Matches).
+        var json = useDataFile && JsonDataReader.Matches(file);
+        // The FILE NAME is part of the key: with a folder, several slices live in the cache at once, and
+        // they must not answer for each other. A change of SOURCE (a new file or folder) clears it.
+        var key = $"{(useDataFile ? (json ? "json" : "data") : "book")}|{Path.GetFileName(file)}|{xColumn}|{yColumn}|{xFromIndex}|{labelPairs}|{SourceSheet}";
+        if (_cacheFile != source) { _cache.Clear(); _cacheFile = source; }
         if (_cache.TryGetValue(key, out var cached)) return cached;
 
-        // The PAGE the form asks for, by name; empty means the workbook's first worksheet.
+        // The PAGE the form asks for, by name; empty means the workbook's first worksheet (a data file
+        // has no pages — its first line is the header, and a JSON record names its own columns).
         var page = SourceSheet;
-        var data = labelPairs
-            ? SpreadsheetReader.ReadLabels(file!, xColumn, yColumn, HeaderRow, FirstDataRow, page)
-            : SpreadsheetReader.Read(file!, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex, page);
+        var data = json
+            ? (labelPairs
+                ? JsonDataReader.ReadLabels(file!, xColumn, yColumn)
+                : JsonDataReader.ReadSeries(file!, xColumn, yColumn, xFromIndex))
+            : useDataFile
+                ? (labelPairs
+                    ? DelimitedTextReader.ReadLabels(file!, xColumn, yColumn, HeaderRow, FirstDataRow)
+                    : DelimitedTextReader.Read(file!, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex))
+                : (labelPairs
+                    ? SpreadsheetReader.ReadLabels(file!, xColumn, yColumn, HeaderRow, FirstDataRow, page)
+                    : SpreadsheetReader.Read(file!, xColumn, yColumn, HeaderRow, FirstDataRow, xFromIndex, page));
         _cache[key] = data;
         return data;
     }
@@ -2162,6 +3375,8 @@ public abstract class ChartBase : Control
     {
         _cache.Clear();
         _cacheFile = null;
+        // A folder can gain or lose a sampleset while the app runs, so its listing goes with the data.
+        _sliceFolderFor = null;
         InvalidateVisual();
     }
 
@@ -2967,18 +4182,21 @@ public abstract class ChartBase : Control
     private void RestartWatcher()
     {
         StopWatcher();
-        var file = SourceFile;
+        var file = SourcePath();   // the file (or the FOLDER of samplesets) the chart is drawing
         if (!LiveUpdate || string.IsNullOrWhiteSpace(file)) return;
 
         try
         {
             var full = Path.GetFullPath(file!);
-            var directory = Path.GetDirectoryName(full);
+            var isFolder = SliceFolder.IsFolder(full);
+            var directory = isFolder ? full : Path.GetDirectoryName(full);
             if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return;
 
             // Editors save by writing a temp file and renaming it over the original, so watch the
-            // FOLDER for the file name rather than the file handle itself (which gets replaced).
-            _watcher = new FileSystemWatcher(directory, Path.GetFileName(full))
+            // FOLDER for the file name rather than the file handle itself (which gets replaced). When the
+            // source IS a folder (one file per sampleset) the folder itself is what to watch: a new file
+            // is a new slice, and the listing is rebuilt on the next read.
+            _watcher = new FileSystemWatcher(directory, isFolder ? "*" : Path.GetFileName(full))
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.CreationTime,
                 EnableRaisingEvents = true
@@ -3185,7 +4403,8 @@ public abstract class ChartBase : Control
         DrawYAxis(context, plot, common.YRange, commonY, yOnRight, 0,
             TickLabels(commonY, common.YRange), AxisName(commonY, YAxisTitle, common.Data.YTitle));
         DrawXAxis(context, plot, common.XRange, commonX, xOnTop, 0,
-            TickLabels(commonX, common.XRange, XNames(common.Data)), AxisName(commonX, XAxisTitle, common.Data.XTitle));
+            TickLabels(commonX, common.XRange, XNames(common.Data), common.Data.XsAreDates),
+            AxisName(commonX, XAxisTitle, common.Data.XTitle));
 
         var leftUsed = yOnRight ? 0 : commonYWidth;
         var rightUsed = yOnRight ? commonYWidth : 0;
@@ -3207,7 +4426,7 @@ public abstract class ChartBase : Control
         foreach (var p in topBlocks)
         {
             DrawXAxis(context, plot, p.XRange, p.XAxis!, true, topUsed,
-                TickLabels(p.XAxis!, p.XRange, XNames(p.Data)), AxisName(p.XAxis!, null, p.Data.XTitle));
+                TickLabels(p.XAxis!, p.XRange, XNames(p.Data), p.Data.XsAreDates), AxisName(p.XAxis!, null, p.Data.XTitle));
             topUsed += XBlockHeight(p.XAxis!, p.XRange, null, p.Data.XTitle);
         }
         foreach (var p in bottomBlocks)
@@ -3264,9 +4483,15 @@ public abstract class ChartBase : Control
     /// themselves still come from the range, so a long category list is thinned out automatically instead
     /// of overprinting itself.
     /// </summary>
-    private static List<string> TickLabels(Axis axis, AxisRange range, string[]? names = null)
+    private static List<string> TickLabels(Axis axis, AxisRange range, string[]? names = null, bool dates = false)
     {
         if (!axis.ShowTickLabels) return new List<string>();
+        // A TIME axis: every tick is written as a date, whatever the point names are — a tick's value is a
+        // real time here, so "1780000000" (or a name that belongs to a different sample) would be a lie.
+        if (dates)
+        {
+            return range.Ticks().Select(v => ChartDates.Format(v, range.Max - range.Min)).ToList();
+        }
         if (names is null || names.Length == 0)
             return range.Ticks().Select(v => FormatNumber(v, range.TickStep)).ToList();
         return range.Ticks().Select(v =>
@@ -3873,7 +5098,11 @@ public abstract class ChartBase : Control
         }
 
         var parts = new List<string>();
-        if (cursor.XValues) parts.Add("X " + FormatCursor(x));
+        // A time axis reports the crossing as a date, and its distance to the other cursor as a duration:
+        // "1780000000" and "100800" are exactly the numbers a person cannot read at a glance.
+        var dated = trace.Data.XsAreDates;
+        var span = trace.XRange.Max - trace.XRange.Min;
+        if (cursor.XValues) parts.Add("X " + (dated ? ChartDates.Format(x, span) : FormatCursor(x)));
         if (cursor.YValues) parts.Add("Y " + (value is null ? "–" : FormatCursor(value.Value)));
         var name = LegendName(trace, plots.IndexOf(trace));
         var tag = "C" + (index + 1);
@@ -3891,7 +5120,8 @@ public abstract class ChartBase : Control
         {
             var first = _cursorHits[0];
             var second = _cursorHits[1];
-            delta = "ΔX " + FormatCursor(Math.Abs(first.X - second.X))
+            delta = "ΔX " + (dated ? ChartDates.DurationText(Math.Abs(first.X - second.X))
+                               : FormatCursor(Math.Abs(first.X - second.X)))
                   + "   ΔY " + FormatCursor(Math.Abs(first.Y - second.Y));
             deltaColor = (first.Index == index ? second : first).DrawnColor;
         }
@@ -5720,7 +6950,7 @@ public class GrumpyWaterfallPlot : ChartBase
             {
                 plots.Add(new Plot
                 {
-                    Data = Sampleset(null, YColumn ?? "C"),
+                    Data = Sampleset(null, YColumn ?? "C", 0),
                     LineColor = LineColor,
                     LineThickness = LineThickness,
                     LineStyle = LineStyle
@@ -5734,7 +6964,7 @@ public class GrumpyWaterfallPlot : ChartBase
                 var series = Series[i];
                 plots.Add(new Plot
                 {
-                    Data = Sampleset(series, SamplesetColumn(series, i)),
+                    Data = Sampleset(series, SamplesetColumn(series, i), i),
                     Definition = series,
                     LineColor = series.LineColor,
                     LineThickness = series.LineThickness,
@@ -5762,19 +6992,24 @@ public class GrumpyWaterfallPlot : ChartBase
     }
 
     /// <summary>The column one sampleset reads: the series' own, else the chart's YColumn and then the next
-    /// column along (C, D, E …).</summary>
+    /// column along (C, D, E …).
+    ///
+    /// A FOLDER changes the second half: every file of a capture holds the same columns, so walking to the
+    /// next column per sampleset would read a different column in a different FILE — meaningless. One file
+    /// per sampleset means one COLUMN for all of them.</summary>
     private string SamplesetColumn(ChartSeries series, int index)
     {
         if (!string.IsNullOrWhiteSpace(series.YColumn)) return series.YColumn!;
+        if (HasSliceFolder) return YColumn ?? "C";
         return SpreadsheetReader.ColumnAfter(YColumn ?? "C", index);
     }
 
     /// <summary>One sampleset's values, with the samples numbered the way an analyser numbers them: the
     /// reader counts rows from 0, a waterfall counts sample POINTS from 1. The result is a copy, because
     /// what was read is cached for every chart that reads those columns.</summary>
-    private ChartData Sampleset(ChartSeries? series, string yColumn)
+    private ChartData Sampleset(ChartSeries? series, string yColumn, int index = 0)
     {
-        var data = DataFor(series, XColumn ?? "B", yColumn, true);
+        var data = DataFor(series, XColumn ?? "B", yColumn, true, false, index);
         if (data.Error is not null) return data;
         return new ChartData
         {
@@ -7048,13 +8283,16 @@ public class GrumpySurfacePlot : ChartBase
     }
 
     /// <summary>One slice's profile: the series' own Y column, else the chart's YColumn and then the next
-    /// column along (C, D, E …) — one column per slice is how a capture is laid out.</summary>
+    /// column along (C, D, E …) — one column per slice is how a capture is laid out. A FOLDER holds one
+    /// FILE per slice instead, with the same columns in every file (see <see cref="SliceFolder"/>).</summary>
     private ChartData ReadSlice(ChartSeries? series, int index)
     {
         var column = series is not null && !string.IsNullOrWhiteSpace(series.YColumn)
             ? series.YColumn!
-            : SpreadsheetReader.ColumnAfter(YColumn ?? "C", index);
-        return DataFor(series, XColumn ?? "B", column, false);
+            : HasSliceFolder
+                ? YColumn ?? "C"
+                : SpreadsheetReader.ColumnAfter(YColumn ?? "C", index);
+        return DataFor(series, XColumn ?? "B", column, false, false, index);
     }
 
     /// <summary>
@@ -7066,9 +8304,18 @@ public class GrumpySurfacePlot : ChartBase
     {
         _sliceZ.Clear();
         var fromSheet = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-        var file = SourceFile;
-        if (!string.IsNullOrWhiteSpace(file) && plots.Count > 0)
-            fromSheet = SpreadsheetReader.RowNumbers(file!, ZRow > 0 ? ZRow : Math.Max(1, HeaderRow), SourceSheet);
+        var file = SourcePath();
+        // A FOLDER has no Z row to read (its slices ARE the files), so the slices number themselves from
+        // ZStart — which is what the fallback below does for every slice anyway.
+        if (!string.IsNullOrWhiteSpace(file) && plots.Count > 0 && !HasSliceFolder)
+        {
+            var row = ZRow > 0 ? ZRow : Math.Max(1, HeaderRow);
+            fromSheet = SourceKind != DataSourceKind.DataFiles
+                ? SpreadsheetReader.RowNumbers(file!, row, SourceSheet)
+                : JsonDataReader.Matches(file)
+                    ? JsonDataReader.RowNumbers(file!, row)
+                    : DelimitedTextReader.RowNumbers(file!, row);
+        }
 
         for (var i = 0; i < plots.Count; i++)
         {

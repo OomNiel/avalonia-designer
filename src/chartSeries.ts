@@ -612,8 +612,7 @@ export function writeChartLegend(model: XamlModel, el: Element, values: Record<s
 
 // ---------------------------------------------------------------- the data source
 /** The data sources the Data Selector offers, in the order the editor shows them. `Spreadsheet` is
- *  the renderer's default; `DataFiles` is declared so a form can carry the choice and still compile,
- *  but nothing reads the file it names yet. */
+ *  the renderer's default; `DataFiles` reads a delimited text file (CSV/TSV) — see DataFile. */
 export const DATA_SOURCE_KINDS = ['Spreadsheet', 'DataFiles'];
 
 /** The data-source fields (key = message/UI name, attr = XAML attribute, def = the renderer's default
@@ -633,12 +632,28 @@ export function chartDataSourceOf(el: Element): Record<string, string> {
     return out;
 }
 
-/** Writes the data source onto the chart element, dropping any value equal to the default. */
+/** Writes the data source onto the chart element, dropping any value equal to the default.
+ *
+ *  A chart switched to a DATA FILE also gets its columns defaulted: a delimited file has no spare
+ *  column A the way a spreadsheet has (a workbook's A column is usually just labels), so the
+ *  workbook defaults B/C would skip the file's first data column and draw a chart with one fewer
+ *  series than it has. Only a chart that names NO column of its own is given A/B — a value the user
+ *  chose (or a value carried over from a workbook) is left exactly as it is, because nothing here
+ *  can tell a deliberate "B" from a forgotten one. */
 export function writeChartDataSource(model: XamlModel, el: Element, values: Record<string, unknown>): void {
     for (const f of CHART_DATA_SOURCE_FIELDS) {
         writeAttr(model, el, f.attr, String(values[f.key] ?? f.def), f.def);
     }
+    const useDataFile = String(values.kind ?? 'Spreadsheet') === 'DataFiles'
+        && String(values.dataFile ?? '').trim() !== '';
+    if (!useDataFile) return;
+    if (!el.getAttribute('XColumn')) writeAttr(model, el, 'XColumn', DATA_FILE_DEFAULTS.xColumn, 'B');
+    if (!el.getAttribute('YColumn')) writeAttr(model, el, 'YColumn', DATA_FILE_DEFAULTS.yColumn, 'C');
 }
+
+/** The columns a delimited DATA FILE is read from when the chart names none: the file's first two
+ *  columns. (A workbook keeps the renderer's own B/C, where column A is the row labels.) */
+export const DATA_FILE_DEFAULTS = { xColumn: 'A', yColumn: 'B' };
 
 // ---------------------------------------------------------------- reading
 /** An attribute, or the renderer's default when it is absent or empty. */
@@ -889,6 +904,17 @@ export function applySliceSeries(model: XamlModel, el: Element, plan: { drop: El
     const tag = seriesTagFor(localName(el.tagName));
     for (const node of plan.drop) el.removeChild(node);
     for (let i = 0; i < plan.add; i++) el.appendChild(model.createElement(`<charts:${tag}/>`));
+}
+
+/** A slice plan for a FOLDER of samplesets: one series per FILE. The files of a capture all hold the same
+ *  columns (the read takes the chart's own Y column from each), so nothing here depends on column letters
+ *  — the count IS the plan, which is why this is a sibling of sliceSeriesPlan rather than a special case
+ *  inside it. An authored list is left untouched, exactly as for a page. */
+export function sliceSeriesPlanForCount(kids: Element[], count: number): { drop: Element[]; add: number } | null {
+    if (count < 1) return null;
+    if (kids.some((kid) => kid.attributes.length > 0 || kid.childNodes.length > 0)) return null;
+    if (kids.length === count) return null;
+    return { drop: kids.slice(), add: count };
 }
 
 /** Rewrites a chart's axes: the two COMMON axes as the chart's own property elements plus one

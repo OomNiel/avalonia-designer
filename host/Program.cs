@@ -285,6 +285,26 @@ internal static class Program
                             error = shapeError
                         });
                     }
+                case "table":
+                    {
+                        // A CSV/TSV as the DATA SELECTOR needs to see it: the sniffed delimiter, the header
+                        // names, and the first rows with each cell's text and whether it is a number. The
+                        // parse is the CHART's own — resources/GrumpyCharts.cs is linked into this host too,
+                        // so DelimitedTextReader is the same code the running chart reads the file with — and
+                        // the answer is deliberately a value, not a throw: an unreadable file is a diagnosis.
+                        var file = root.TryGetProperty("file", out var fe) ? fe.GetString() ?? "" : "";
+                        var delimiter = root.TryGetProperty("delimiter", out var de) ? de.GetString() ?? "" : "";
+                        var headerRow = root.TryGetProperty("headerRow", out var he) && he.TryGetInt32(out var hv) ? hv : 1;
+                        var firstDataRow = root.TryGetProperty("firstDataRow", out var fr) && fr.TryGetInt32(out var fv) ? fv : 2;
+                        var maxRows = root.TryGetProperty("maxRows", out var mr) && mr.TryGetInt32(out var mv) ? mv : 12;
+                        var mode = root.TryGetProperty("mode", out var me) ? me.GetString() ?? "cells" : "cells";
+                        var xColumn = root.TryGetProperty("xColumn", out var xe) ? xe.GetString() ?? "A" : "A";
+                        var yColumn = root.TryGetProperty("yColumn", out var ye) ? ye.GetString() ?? "B" : "B";
+                        var xFromIndex = root.TryGetProperty("xFromIndex", out var xi) && xi.ValueKind == JsonValueKind.True;
+                        var zRow = root.TryGetProperty("zRow", out var ze) && ze.TryGetInt32(out var zv) ? zv : 2;
+                        return Json(id, TableProbe(file, delimiter, headerRow, firstDataRow, maxRows,
+                                                   mode, xColumn, yColumn, xFromIndex, zRow));
+                    }
                 case "fonts":
                     {
                         // Enumerate the system font families Avalonia can actually see (same engine the
@@ -379,9 +399,193 @@ internal static class Program
     private static string Json(long id, object body)
     {
         var dict = new Dictionary<string, object?> { ["id"] = id };
-        foreach (var p in body.GetType().GetProperties())
-            dict[p.Name] = p.GetValue(body);
+        if (body is IDictionary<string, object?> map)
+        {
+            // A probe that builds its fields as it goes (the table read) hands them over as a map: an
+            // indexer has no readable value, so it must not go through the property reflection below.
+            foreach (var pair in map) dict[pair.Key] = pair.Value;
+        }
+        else
+        {
+            foreach (var p in body.GetType().GetProperties())
+                if (p.GetIndexParameters().Length == 0)
+                    dict[p.Name] = p.GetValue(body);
+        }
         return JsonSerializer.Serialize(dict, JsonOpts);
+    }
+
+    /// <summary>
+    /// A delimited text file (CSV/TSV) read with the CHART's own parser, for the Data Selector. `mode`
+    /// picks how much of the chart's read to run:
+    ///   cells  — the sniffed delimiter, the header names and the first rows, each cell as its text plus
+    ///            whether it parses as a number (which is what shows a column that holds words);
+    ///   series — DelimitedTextReader.Read, i.e. exactly the points the running chart will plot;
+    ///   labels — DelimitedTextReader.ReadLabels, the pie/category read of the same file;
+    ///   zrow   — DelimitedTextReader.RowNumbers, the per-column row a 3-D surface uses as its peaks.
+    /// Everything is best effort: a missing or odd file comes back as `error` with whatever was read,
+    /// never as an exception down the WebSocket.
+    /// </summary>
+    private static object TableProbe(string file, string delimiter, int headerRow, int firstDataRow, int maxRows,
+                                     string mode, string xColumn, string yColumn, bool xFromIndex, int zRow)
+    {
+        var answer = new Dictionary<string, object?>
+        {
+            ["type"] = "tableResult",
+            ["file"] = file,
+            ["mode"] = mode,
+            ["delimiter"] = ",",
+            ["header"] = new List<string>(),
+            ["width"] = 0,
+            ["rows"] = new List<Dictionary<string, object?>>(),
+            ["xs"] = new List<double>(),
+            ["ys"] = new List<double>(),
+            ["labels"] = new List<string>(),
+            ["xTitle"] = "",
+            ["yTitle"] = "",
+            ["row"] = new List<Dictionary<string, object?>>(),
+            ["files"] = new List<string>(),
+            ["json"] = false,
+            ["error"] = (string?)null
+        };
+        if (string.IsNullOrWhiteSpace(file))
+        {
+            answer["error"] = "no file";
+            return answer;
+        }
+        try
+        {
+            var forced = delimiter.Length == 1 ? delimiter[0] : (char?)null;
+
+            if (mode == "folder")
+            {
+                // A FOLDER of samplesets (one file per slice, for the 3-D charts). The listing comes from
+                // the chart's own SliceFolder rule — the same extensions and the same natural order — so
+                // what the Data Selector shows is exactly what the chart will read.
+                var found = AvaloniaCharts.SliceFolder.Files(file);
+                answer["files"] = found.Select(f => System.IO.Path.GetFileName(f)!).ToList();
+                return answer;
+            }
+
+            var delim = AvaloniaCharts.DelimitedTextReader.DelimiterOf(file, forced);
+            answer["delimiter"] = delim.ToString();
+
+            if (mode == "zrow")
+            {
+                var peaks = new List<Dictionary<string, object?>>();
+                var rowValues = AvaloniaCharts.JsonDataReader.Matches(file)
+                    ? AvaloniaCharts.JsonDataReader.RowNumbers(file, zRow)
+                    : AvaloniaCharts.DelimitedTextReader.RowNumbers(file, zRow, forced);
+                foreach (var pair in rowValues)
+                    peaks.Add(new Dictionary<string, object?> { ["column"] = pair.Key, ["value"] = pair.Value });
+                answer["row"] = peaks;
+                return answer;
+            }
+
+            if (mode is "series" or "labels")
+            {
+                var json = AvaloniaCharts.JsonDataReader.Matches(file);
+                var data = json
+                    ? (mode == "labels"
+                        ? AvaloniaCharts.JsonDataReader.ReadLabels(file, xColumn, yColumn)
+                        : AvaloniaCharts.JsonDataReader.ReadSeries(file, xColumn, yColumn, xFromIndex))
+                    : mode == "labels"
+                        ? AvaloniaCharts.DelimitedTextReader.ReadLabels(file, xColumn, yColumn, headerRow, firstDataRow, forced)
+                        : AvaloniaCharts.DelimitedTextReader.Read(file, xColumn, yColumn, headerRow, firstDataRow, xFromIndex, forced);
+                answer["xs"] = data.Xs;
+                answer["ys"] = data.Ys;
+                answer["labels"] = data.Labels;
+                answer["xTitle"] = data.XTitle;
+                answer["yTitle"] = data.YTitle;
+                // A date X column is plotted as time: the flag says so (and the axis then labels ticks with
+                // dates instead of ten-digit numbers — see the 'dates' mode for what those look like).
+                answer["dates"] = data.XsAreDates;
+                answer["error"] = data.Error;
+                return answer;
+            }
+
+            if (mode == "dates")
+            {
+                // What the X axis would PRINT for this file: the span picks the pattern (seconds vs days vs
+                // months), so a test — and the Data Selector's own hint — can see the labels without
+                // reading pixels.
+                var series = AvaloniaCharts.JsonDataReader.Matches(file)
+                    ? AvaloniaCharts.JsonDataReader.ReadSeries(file, xColumn, yColumn, false)
+                    : AvaloniaCharts.DelimitedTextReader.Read(file, xColumn, yColumn, headerRow, firstDataRow, false, forced);
+                var labels = new List<string>();
+                var span = 0d;
+                if (series.Xs.Length >= 2)
+                {
+                    var min = series.Xs.Min();
+                    var max = series.Xs.Max();
+                    span = max - min;
+                    foreach (var value in new[] { min, (min + max) / 2, max })
+                        labels.Add(AvaloniaCharts.ChartDates.Format(value, span));
+                }
+                answer["dates"] = series.XsAreDates;
+                answer["span"] = span;
+                answer["pattern"] = AvaloniaCharts.ChartDates.PatternFor(span);
+                answer["labels"] = labels;
+                answer["error"] = series.Error;
+                return answer;
+            }
+
+            if (AvaloniaCharts.JsonDataReader.Matches(file))
+            {
+                // A JSON file has no delimiter and no header LINE: its column names are the record keys, and
+                // its rows are the records (numbered from 1, which is the number a diagnostic would quote).
+                var table = AvaloniaCharts.JsonDataReader.Read(file);
+                answer["json"] = true;
+                answer["delimiter"] = "";
+                answer["header"] = table.Columns;
+                answer["width"] = table.Columns.Count;
+                var jsonRows = new List<Dictionary<string, object?>>();
+                for (var r = 0; r < table.Rows.Count && jsonRows.Count < Math.Max(1, maxRows); r++)
+                {
+                    var cells = new List<Dictionary<string, object?>>();
+                    foreach (var cell in table.Rows[r])
+                        cells.Add(new Dictionary<string, object?> { ["text"] = cell.Text, ["number"] = cell.IsNumber });
+                    jsonRows.Add(new Dictionary<string, object?> { ["line"] = r + 1, ["cells"] = cells });
+                }
+                answer["rows"] = jsonRows;
+                return answer;
+            }
+
+            var records = AvaloniaCharts.DelimitedTextReader.ReadRecords(file, delim);
+            var header = new List<string>();
+            foreach (var record in records)
+            {
+                if (record.Line != headerRow) continue;
+                foreach (var field in record.Fields) header.Add(field.Trim());
+                break;
+            }
+            answer["header"] = header;
+            answer["width"] = header.Count;
+            var rows = new List<Dictionary<string, object?>>();
+            foreach (var record in records)
+            {
+                if (rows.Count >= Math.Max(1, maxRows)) break;
+                if (headerRow > 0 && record.Line < Math.Max(firstDataRow, headerRow + 1)) continue;
+                var cells = new List<Dictionary<string, object?>>();
+                foreach (var field in record.Fields)
+                    cells.Add(new Dictionary<string, object?>
+                    {
+                        ["text"] = field,
+                        ["number"] = AvaloniaCharts.DelimitedTextReader.IsNumber(field, delim)
+                    });
+                rows.Add(new Dictionary<string, object?>
+                {
+                    ["line"] = record.Line,
+                    ["cells"] = cells
+                });
+            }
+            answer["rows"] = rows;
+            return answer;
+        }
+        catch (Exception ex)
+        {
+            answer["error"] = ex.Message;
+            return answer;
+        }
     }
 
     // ---------------- workbook pages (the Data Selector's page list) ----------------

@@ -111,6 +111,14 @@ public class XamlRenderer
             var imageMap = BuildImageMap(xaml, projectPath);
             ApplyImageSources(window, imageMap);
 
+            // A RELATIVE data path in a chart (`DataFile="data/log.csv"`, `SourceFile="Book.xlsx"`) is
+            // written to be portable: at run time the chart looks for it beside the app's own exe (a
+            // project that copies it to the output folder — see the Data Selector's Include row), and
+            // while designing the same string has to mean "the project folder", or the preview would
+            // read the HOST's folder and draw an error the app never shows. Anchor it here, before the
+            // chart reads anything; the form itself keeps the short relative path.
+            ApplyDataPaths(window, projectPath);
+
             // Design-time data: a DataGrid bound to a DataSet table is populated at runtime by the
             // app's code-behind, which the headless preview doesn't run. When the extension supplies
             // rows for a named DataGrid, fill it (read-only) so the designer shows the same data.
@@ -483,6 +491,38 @@ public class XamlRenderer
             if (map.TryGetValue(img.Name!, out var bmp)) img.Source = bmp;
         }
     }
+
+    /// <summary>
+    /// The chart's data paths, anchored at the project folder when they are RELATIVE. The rule the
+    /// running app uses (GrumpyCharts' SourcePathResolver) is "the app's own folder, else the folder it
+    /// was started in"; at design time the equivalent is the project the form belongs to, which is what
+    /// the extension passes as projectPath. An absolute path is left exactly as the user wrote it.
+    /// Every control with a SourceFile or DataFile string property is treated the same way, so a chart
+    /// type added later needs nothing here.
+    /// </summary>
+    private static void ApplyDataPaths(Visual root, string? projectPath)
+    {
+        if (string.IsNullOrWhiteSpace(projectPath)) return;
+        foreach (var desc in root.GetVisualDescendants())
+        {
+            foreach (var name in DataPathProperties)
+            {
+                var prop = desc.GetType().GetProperty(name,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy);
+                if (prop is null || prop.PropertyType != typeof(string) || !prop.CanWrite) continue;
+                string? value;
+                try { value = prop.GetValue(desc) as string; }
+                catch { continue; }
+                if (string.IsNullOrWhiteSpace(value) || Path.IsPathRooted(value)) continue;
+                try { prop.SetValue(desc, Path.GetFullPath(Path.Combine(projectPath, value))); }
+                catch { /* a control that refuses the value keeps the short path (its own error shows) */ }
+            }
+        }
+    }
+
+    /// <summary>The chart properties that name a FILE. Kept in one place so the designer treats every
+    /// data source the same way (the workbook and the delimited text file).</summary>
+    private static readonly string[] DataPathProperties = { "SourceFile", "DataFile" };
 
     /// <summary>Design-time rows for one named DataGrid (from the bound DataSet's .db).</summary>
     public sealed class GridPreviewData

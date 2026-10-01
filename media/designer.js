@@ -3621,12 +3621,53 @@
                 }
                 break;
             }
+            case 'dataFileIncluded': {
+                // The extension's answer to 'Include in the project'. On success the form now carries a
+                // RELATIVE DataFile, so the dialog is re-pointed at that path — otherwise the next Save
+                // would write the old absolute one straight back over it.
+                if (dataEdit && dataEdit.dataFile === msg.file) {
+                    if (msg.error) {
+                        dataEdit.include = String(msg.error);
+                    } else {
+                        dataEdit.dataFile = String(msg.relative || dataEdit.dataFile);
+                        dataEdit.include = msg.copied
+                            ? `Copied into the project and pointed the chart at ${dataEdit.dataFile}.`
+                            : `This project now carries ${dataEdit.dataFile} beside the app.`;
+                    }
+                    renderDataEditor();
+                    refreshTable();
+                }
+                break;
+            }
+            case 'tableResult': {
+                // The extension's answer to the Data Selector's data-file request. A late answer for a
+                // file the user has already changed away from is ignored (the editor is a live dialog).
+                if (dataEdit && dataEdit.dataFile === msg.file) {
+                    dataEdit.table = {
+                        delimiter: String(msg.delimiter || ','),
+                        header: Array.isArray(msg.header) ? msg.header.map(String) : [],
+                        rows: Array.isArray(msg.rows) ? msg.rows : [],
+                        files: Array.isArray(msg.files) ? msg.files.map(String) : [],
+                        folder: !!msg.folder,
+                        json: !!msg.json,
+                        error: msg.error ? String(msg.error) : null,
+                        loading: false
+                    };
+                    renderDataEditor();
+                }
+                break;
+            }
             case 'chartSourcePicked': {
                 // A file the extension's picker returned for the Data Selector's '…' button.
                 if (dataEdit) {
-                    if (msg.which === 'data') dataEdit.dataFile = String(msg.path || '');
-                    else { dataEdit.file = String(msg.path || ''); refreshSheets(); return; }
-                    renderDataEditor();
+                    if (msg.which === 'data') {
+                        dataEdit.dataFile = String(msg.path || '');
+                        refreshTable();
+                        return;
+                    }
+                    dataEdit.file = String(msg.path || '');
+                    refreshSheets();
+                    return;
                 }
                 break;
             }
@@ -6217,15 +6258,17 @@
     });
 
     /* Data Selector (every chart) — where the data comes from. Two sources: a PAGE of an .xlsx
-       workbook (source kind Spreadsheet, the default) or a data file such as a CSV (DataFiles — the
-       file is carried in the form but nothing reads it yet). The page list is the workbook's OWN sheet
-       names, asked for through the extension (which reads them in the host, where the zip reader
-       lives) each time the file changes, so a typo cannot pick a page that is not there. */
+       workbook (source kind Spreadsheet, the default) or a delimited text file such as a CSV/TSV
+       (DataFiles, read by the chart's own reader). The page list is the workbook's OWN sheet names,
+       asked for through the extension (which reads them in the host, where the zip reader lives)
+       each time the file changes, so a typo cannot pick a page that is not there. A data file is
+       read the same way — by the host, with the CHART's parser — so the preview under the file box
+       is exactly what the chart will plot, delimiter sniffing, comma decimals, quoting and all. */
     /* The dropdown's [value, label] pairs — the shape `labelledSelect` expects (the other option
        constants in this file are pairs too). The labels are the words the user reads, so they spell
        out 'Data Files' even though the stored value has no space. */
     const DATA_SOURCE_OPTIONS = [['Spreadsheet', 'Spreadsheet'], ['DataFiles', 'Data Files']];
-    let dataEdit = null; // { name, kind, file, sheet, dataFile, sheets, error, loading } while open
+    let dataEdit = null; // { name, kind, file, sheet, dataFile, sheets, error, loading, table } while open
 
     /** A path row: the text box plus the '…' Browse button (the same pair the panel uses). */
     function dataPathRow(value, which, onSet) {
@@ -6236,7 +6279,9 @@
         txt.value = value || '';
         txt.placeholder = which === 'data' ? 'no data file chosen' : 'no workbook chosen';
         txt.addEventListener('input', () => onSet(txt.value));
-        txt.addEventListener('change', () => { onSet(txt.value); refreshSheets(); });
+        // A typed/committed path is read like a picked one: the workbook asks for its page list and a
+        // data file for its first rows (each ignores the other's emptiness, so nothing is wasted).
+        txt.addEventListener('change', () => { onSet(txt.value); refreshSheets(); refreshTable(); });
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'prop-browse';
@@ -6259,26 +6304,159 @@
         post({ type: 'requestSheets', file: dataEdit.file });
     }
 
+    /** Asks the extension for what a data FILE holds (empty file = just clears the preview). */
+    function refreshTable() {
+        if (!dataEdit) return;
+        dataEdit.table = { delimiter: '', header: [], rows: [], files: [], folder: false, json: false, error: null, loading: false };
+        if (!dataEdit.dataFile) { renderDataEditor(); return; }
+        dataEdit.table.loading = true;
+        renderDataEditor();
+        post({ type: 'requestTable', file: dataEdit.dataFile });
+    }
+
+    /** The delimiter as the user thinks of it: a tab or a pipe is not readable in a sentence. */
+    const delimiterWord = (value) => {
+        if (value === '\t') return 'tab';
+        if (!value) return '';
+        return value === ',' ? 'comma' : value === ';' ? 'semicolon' : value === '|' ? 'pipe' : value;
+    };
+
+    /** What the reader made of the file: the sniffed delimiter, the header names and its own error. */
+    function dataFileHint(info) {
+        const note = document.createElement('p');
+        note.className = 'modal-hint';
+        if (!dataEdit.dataFile) {
+            note.textContent = 'Pick a CSV or TSV file. The chart reads it with the same column rules as a '
+                + 'workbook: a column is named by its header (or by its letter), and numbers may use a '
+                + 'dot or — in a semicolon/tab file — a comma.';
+            return note;
+        }
+        if (!info || info.loading) {
+            note.textContent = 'Reading the data file\u2026';
+            return note;
+        }
+        if (info.error) {
+            note.textContent = info.error;
+            return note;
+        }
+        if (info.folder) {
+            // A FOLDER is the other shape a data source can have: one file per sampleset (slice). The
+            // chart reads them in the order shown, so the list is the only thing worth displaying.
+            const files = info.files || [];
+            note.textContent = files.length
+                ? `Folder of samplesets: ${files.length} file(s), one slice each — ${files.join(', ')}.`
+                + ' Saving loads one series per file.'
+                : 'That folder holds no readable data files (CSV, TSV or TXT), so a chart of it would '
+                + 'draw nothing.';
+            return note;
+        }
+        const names = (info.header || []).filter((n) => String(n).trim());
+        if (info.json) {
+            // JSON has no delimiter and no header LINE: the record keys ARE the columns.
+            note.textContent = names.length
+                ? `JSON — columns (by key): ${names.join(', ')}.`
+                : 'JSON, but no record in it names a column.';
+            return note;
+        }
+        const where = names.length
+            ? `Columns (by header): ${names.join(', ')}.`
+            : 'The file has no header line of names, so name the columns by letter (A, B, \u2026).';
+        note.textContent = `Detected: ${delimiterWord(info.delimiter) || 'comma'} delimiter. ${where}`;
+        return note;
+    }
+
+    /** The first rows as a small table: dimmed cells are the ones the reader does NOT read as numbers. */
+    function dataFilePreview(info) {
+        const wrap = document.createElement('div');
+        wrap.className = 'df-preview';
+        const table = document.createElement('table');
+        const head = document.createElement('tr');
+        const lineCell = document.createElement('th');
+        lineCell.className = 'df-line';
+        head.appendChild(lineCell);
+        (info.header || []).forEach((name, i) => {
+            const th = document.createElement('th');
+            th.textContent = String(name).trim() || String.fromCharCode(65 + i);
+            head.appendChild(th);
+        });
+        table.appendChild(head);
+        (info.rows || []).forEach((row) => {
+            const tr = document.createElement('tr');
+            const num = document.createElement('td');
+            num.className = 'df-line';
+            num.textContent = String(row.line);
+            tr.appendChild(num);
+            (row.cells || []).forEach((cell) => {
+                const td = document.createElement('td');
+                td.textContent = String(cell.text ?? '');
+                if (!cell.number) td.className = 'df-nonnum';
+                tr.appendChild(td);
+            });
+            table.appendChild(tr);
+        });
+        wrap.appendChild(table);
+        return wrap;
+    }
+
     function renderDataEditor() {
         if (!dataEdit) return;
         els.dataKind.innerHTML = '';
         els.dataFields.innerHTML = '';
         els.dataKind.appendChild(seriesField('Data source',
             labelledSelect(DATA_SOURCE_OPTIONS, dataEdit.kind, (v) => { dataEdit.kind = v; renderDataEditor(); }),
-            'Spreadsheet reads a page of an .xlsx workbook. Data Files is for data files such as CSVs — '
-            + 'remembered in the form, not read yet.'));
+            'Spreadsheet reads a page of an .xlsx workbook. Data Files reads a delimited text file '
+            + '(CSV or TSV) with the same column rules — a column named by its header, or by its '
+            + 'letter, and a comma decimal for a semicolon/tab file.'));
 
         if (dataEdit.kind === 'DataFiles') {
             els.dataHead.textContent = 'Data file';
             els.dataFields.appendChild(seriesField('File',
                 dataPathRow(dataEdit.dataFile, 'data', (v) => { dataEdit.dataFile = v; }),
-                'The data file this chart should read (a CSV today; other formats as they are added). '
-                + 'Stored on the chart as DataFile — the charts ignore it for now.'));
-            const note = document.createElement('p');
-            note.className = 'modal-hint';
-            note.textContent = 'Reading a data file is not implemented yet: the chart keeps drawing '
-                + 'whatever its spreadsheet gives it.';
-            els.dataFields.appendChild(note);
+                'The data file this chart reads: CSV or TSV (the delimiter, quotes and a comma decimal '
+                + 'are handled). Stored on the chart as DataFile, and re-read while Live Update is on. '
+                + 'The path is used as written — keep it absolute unless the file is copied next to '
+                + 'the app.'));
+            els.dataFields.appendChild(dataFileHint(dataEdit.table));
+            if (dataEdit.table && !dataEdit.table.error && !dataEdit.table.folder
+                && (dataEdit.table.rows || []).length > 0) {
+                els.dataFields.appendChild(dataFilePreview(dataEdit.table));
+            }
+            // 'Include in the project': one action that both copies the file in (when it lives outside
+            // the project) and writes the copy-to-output item, and points the chart at it relatively.
+            // Either half alone is a form that only works on this machine, which is why this is one row
+            // and not advice in a hint.
+            const includeBtn = document.createElement('button');
+            includeBtn.type = 'button';
+            includeBtn.className = 'prop-browse df-include';
+            includeBtn.textContent = 'Include in the project';
+            includeBtn.disabled = !dataEdit.dataFile;
+            includeBtn.title = 'Copy the file into the project (data/ if it lives elsewhere) and have the'
+                + ' build put it beside the app, so the form works on any machine.';
+            includeBtn.addEventListener('click', () => {
+                includeBtn.disabled = true;
+                dataEdit.include = null;
+                post({ type: 'includeDataFile', name: dataEdit.name, file: dataEdit.dataFile });
+            });
+            els.dataFields.appendChild(seriesField('Portable', includeBtn,
+                'A relative DataFile is read from beside the app when it runs, so the project has to'
+                + ' copy the file to its output folder. This does both in one step: the file comes into'
+                + ' the project and the chart is pointed at it relatively.'));
+            if (dataEdit.include) {
+                const done = document.createElement('p');
+                done.className = 'modal-hint';
+                done.textContent = dataEdit.include;
+                els.dataFields.appendChild(done);
+            }
+            // The columns are the chart's own rows (X Column / Y Column), so they are stated rather
+            // than duplicated here — with the default a data file gets, which is NOT a workbook's B/C.
+            const x = dataEdit.xColumn || 'A';
+            const y = dataEdit.yColumn || 'B';
+            const columns = document.createElement('span');
+            columns.className = 'df-columns';
+            columns.textContent = `${x} (X)  \\u00b7  ${y} (Y)`;
+            els.dataFields.appendChild(seriesField('Columns', columns,
+                `Read from column ${x} (X) and column ${y} (Y). A data file defaults to its first two `
+                + 'columns; set the X Column / Y Column rows to name others (by header name or letter).'));
             return;
         }
 
@@ -6323,14 +6501,19 @@
             file: String(info.file || ''),
             sheet: String(info.sheet || ''),
             dataFile: String(info.dataFile || ''),
+            xColumn: String(info.xColumn || ''),
+            yColumn: String(info.yColumn || ''),
             sheets: [],
             error: null,
-            loading: false
+            loading: false,
+            table: { delimiter: '', header: [], rows: [], files: [], folder: false, json: false, error: null, loading: false },
+            include: ''
         };
         els.dataTitle.textContent = 'Data Selector' + (dataEdit.name ? ' \u2014 ' + dataEdit.name : '');
         renderDataEditor();
         els.dataModal.hidden = false;
         refreshSheets();
+        refreshTable();
     }
     // ---- the spreadsheet editor (GrumpySheet, 2026-09-27) ----------------------------------------
     // The table IS the sheet: a cell is a <td>, the row/column headers are the sticky <th>s, and the

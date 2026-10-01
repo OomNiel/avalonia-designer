@@ -58,10 +58,22 @@ async function startHost(port) {
         ws.send(JSON.stringify({ id: myId, type: 'snippet', tag }));
     });
 
+    /**
+     * Reads a CSV/TSV with the CHART's own parser (host Proc uses the linked copy of the bundled
+     * GrumpyCharts.cs). `opts.mode` picks the read: 'cells' (header + rows + per-cell number flags),
+     * 'series' / 'labels' (the chart's own DataFor read) or 'zrow' (a 3-D surface's row).
+     */
+    const table = (file, opts = {}) => new Promise((res) => {
+        const myId = ++id;
+        pending.set(myId, res);
+        ws.send(JSON.stringify({ id: myId, type: 'table', file, ...opts }));
+    });
+
     return {
         render,
         snippet,
         sqlite,
+        table,
         close: () => { try { ws.close(); } catch { } try { child.kill(); } catch { } }
     };
 }
